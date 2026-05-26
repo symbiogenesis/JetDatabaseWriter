@@ -398,7 +398,7 @@ public sealed class CompoundFileReaderTests
 
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
-        CompoundFileReader.CfbSignature.CopyTo(h);
+        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);          // v3
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
@@ -508,7 +508,7 @@ public sealed class CompoundFileReaderTests
 
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
-        CompoundFileReader.CfbSignature.CopyTo(h);
+        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
@@ -594,7 +594,7 @@ public sealed class CompoundFileReaderTests
 
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
-        CompoundFileReader.CfbSignature.CopyTo(h);
+        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
@@ -754,7 +754,7 @@ public sealed class CompoundFileReaderTests
 
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
-        CompoundFileReader.CfbSignature.CopyTo(h);
+        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);

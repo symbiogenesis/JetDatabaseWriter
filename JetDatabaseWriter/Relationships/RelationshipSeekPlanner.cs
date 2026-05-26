@@ -184,14 +184,15 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
     {
         byte[] tableDefinition = await RelationshipPageReader.ReadOwnedAsync(writer, tdefPage, cancellationToken).ConfigureAwait(false);
 
-        if (tableDefinition[0] != 0x02 || AccessBase.Ru32(tableDefinition, 4) != 0)
+        if (tableDefinition[0] != Constants.PageTypes.TableDefinition || AccessBase.Ru32(tableDefinition, 4) != 0)
         {
             return null;
         }
 
         int numColumns = AccessBase.Ru16(tableDefinition, writer._tdef.NumCols);
         int numRealIndexes = AccessBase.Ri32(tableDefinition, writer._tdef.NumRealIdx);
-        if (numColumns < 0 || numColumns > 4096 || numRealIndexes <= 0 || numRealIndexes > 1000)
+        if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
+            || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {
             return null;
         }

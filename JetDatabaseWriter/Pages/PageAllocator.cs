@@ -657,7 +657,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             return false;
         }
 
-        rowStart = Ru16(page, writer._dataPage.RowsStart) & 0x1FFF;
+        rowStart = Ru16(page, writer._dataPage.RowsStart) & Constants.DataPage.RowOffsetMask;
         int slotTableEnd = writer._dataPage.RowsStart + (maxRows * 2);
         if (rowStart < slotTableEnd || rowStart >= writer._pgSz)
         {
@@ -667,7 +667,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         int rowEnd = writer._pgSz;
         for (int rowIndex = 1; rowIndex < maxRows; rowIndex++)
         {
-            int candidateStart = Ru16(page, writer._dataPage.RowsStart + (rowIndex * 2)) & 0x1FFF;
+            int candidateStart = Ru16(page, writer._dataPage.RowsStart + (rowIndex * 2)) & Constants.DataPage.RowOffsetMask;
             if (candidateStart > rowStart && candidateStart < rowEnd)
             {
                 rowEnd = candidateStart;

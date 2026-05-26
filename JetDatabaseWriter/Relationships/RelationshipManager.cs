@@ -269,7 +269,7 @@ internal sealed class RelationshipManager
             logicalIdxNumThisSide: pkPlan.LogicalIdxNum,
             allocateNewRealIdx: pkPlan.AllocatesNewRealIdx,
             preAllocatedLeafPage: pkPlan.NewLeafPageNumber,
-            relTblTypeThisSide: 0x01,
+            relTblTypeThisSide: Constants.TableDefinition.ParentRelationshipTableType,
             relIdxNumOtherSide: fkPlan.LogicalIdxNum,
             relTblPageOther: foreignTdefPage,
             cascadeUps: 0,
@@ -284,7 +284,7 @@ internal sealed class RelationshipManager
             logicalIdxNumThisSide: fkPlan.LogicalIdxNum,
             allocateNewRealIdx: fkPlan.AllocatesNewRealIdx,
             preAllocatedLeafPage: fkPlan.NewLeafPageNumber,
-            relTblTypeThisSide: 0x02,
+            relTblTypeThisSide: Constants.TableDefinition.ChildRelationshipTableType,
             relIdxNumOtherSide: pkPlan.LogicalIdxNum,
             relTblPageOther: primaryTdefPage,
             cascadeUps: cascadeUpsByte,
@@ -466,25 +466,26 @@ internal sealed class RelationshipManager
             AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
 
             // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
-            for (int slot = 0; slot < 10; slot++)
+            for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
             {
-                int so = phys + 4 + (slot * 3);
+                int so = phys + Constants.TableDefinition.Jet4.RealIdx.ColMapOffset
+                    + (slot * Constants.TableDefinition.ColMapSlotSize);
                 if (slot < columnNumbers.Length)
                 {
                     AccessBase.Wu16(newTd, so, columnNumbers[slot]);
-                    newTd[so + 2] = 0x01; // ascending
+                    newTd[so + 2] = Constants.TableDefinition.ColMapAscendingFlag;
                 }
                 else
                 {
-                    AccessBase.Wu16(newTd, so, 0xFFFF);
-                    newTd[so + 2] = 0x00;
+                    AccessBase.Wu16(newTd, so, Constants.TableDefinition.ColMapPaddingSlot);
+                    newTd[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
                 }
             }
 
             // bytes 34..37 used_pages = 0 initially; MaintainIndexesAsync
             // patches the DAO-shaped index usage-map pointer after rebuilding.
             // bytes 38..41 first_dp = preAllocatedLeafPage
-            AccessBase.Wi32(newTd, phys + 38, checked((int)preAllocatedLeafPage));
+            AccessBase.Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)preAllocatedLeafPage));
 
             // bytes 42..45 unknown(4) = 0
             // byte  46     flags: 0x80 (unknown-flag bit always set per Jackcess)
@@ -505,14 +506,14 @@ internal sealed class RelationshipManager
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart;
         AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
-        AccessBase.Wi32(newTd, newLogEntry + 4, logicalIdxNumThisSide);   // index_num (logical-index number)
-        AccessBase.Wi32(newTd, newLogEntry + 8, realIdxNumThisSide);      // index_num2
-        newTd[newLogEntry + 12] = relTblTypeThisSide;          // rel_tbl_type: 0x01 parent-side, 0x02 child-side
-        AccessBase.Wi32(newTd, newLogEntry + 13, relIdxNumOtherSide);     // rel_idx_num — logical index on the OTHER table
-        AccessBase.Wi32(newTd, newLogEntry + 17, checked((int)relTblPageOther)); // rel_tbl_page
-        newTd[newLogEntry + 21] = cascadeUps;
-        newTd[newLogEntry + 22] = cascadeDels;
-        newTd[newLogEntry + 23] = 0x02;                        // index_type = FK
+        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, logicalIdxNumThisSide);
+        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, realIdxNumThisSide);
+        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblTypeOffset] = relTblTypeThisSide;
+        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset, relIdxNumOtherSide);
+        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset, checked((int)relTblPageOther));
+        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeUpsOffset] = cascadeUps;
+        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeDelsOffset] = cascadeDels;
+        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset] = (byte)IndexKind.ForeignKey;
 
         int existingLogIdxStart = newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
         Buffer.BlockCopy(td, logIdxStart, newTd, existingLogIdxStart, oldLogIdxLen);
@@ -678,7 +679,7 @@ internal sealed class RelationshipManager
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int entry = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int indexNum = AccessBase.Ri32(td, entry + 4);
+            int indexNum = AccessBase.Ri32(td, entry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset);
             if (indexNum > max)
             {
                 max = indexNum;
@@ -1045,7 +1046,7 @@ internal sealed class RelationshipManager
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int realIdxNum = AccessBase.Ri32(td, e + 8);
+            int realIdxNum = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
             if (realIdxNum >= 0 && realIdxNum < layout.NumRealIdx)
             {
                 referenced[realIdxNum] = true;
@@ -1206,7 +1207,7 @@ internal sealed class RelationshipManager
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x02)
+            if (page[0] != Constants.PageTypes.TableDefinition)
             {
                 AccessBase.ReturnPage(page);
                 break;
@@ -1288,7 +1289,7 @@ internal sealed class RelationshipManager
             pageNumbers[pageIndex] = await pageAllocator.AllocatePageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
         }
 
-        logicalBytes[0] = 0x02;
+        logicalBytes[0] = Constants.PageTypes.TableDefinition;
         logicalBytes[1] = 0x01;
         int tdefLen = Math.Max(0, usedLength - 8);
         AccessBase.Wi32(logicalBytes, 8, tdefLen);
@@ -1318,7 +1319,7 @@ internal sealed class RelationshipManager
         for (int pageIndex = 1; pageIndex < pageNumbers.Length; pageIndex++)
         {
             byte[] page = new byte[writer._pgSz];
-            page[0] = 0x02;
+            page[0] = Constants.PageTypes.TableDefinition;
             page[1] = 0x01;
             AccessBase.Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
 
@@ -1362,7 +1363,7 @@ internal sealed class RelationshipManager
     private bool TryParseFkTDefLayout(byte[] td, out FkTDefLayout layout)
     {
         layout = default;
-        if (td.Length < writer._tdef.BlockEnd || td[0] != 0x02)
+        if (td.Length < writer._tdef.BlockEnd || td[0] != Constants.PageTypes.TableDefinition)
         {
             return false;
         }
@@ -1370,9 +1371,9 @@ internal sealed class RelationshipManager
         int numCols = AccessBase.Ru16(td, writer._tdef.NumCols);
         int numIdx = AccessBase.Ri32(td, writer._tdef.NumCols + 2);
         int numRealIdx = AccessBase.Ri32(td, writer._tdef.NumRealIdx);
-        if (numCols < 0 || numCols > 4096
-            || numIdx < 0 || numIdx > 1000
-            || numRealIdx < 0 || numRealIdx > 1000)
+        if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
+            || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes
+            || numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             return false;
         }
@@ -1438,19 +1439,19 @@ internal sealed class RelationshipManager
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            byte indexType = td[e + 23];
-            if (indexType != 0x02)
+            byte indexType = td[e + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset];
+            if (indexType != (byte)IndexKind.ForeignKey)
             {
                 continue;
             }
 
-            int relTblPage = AccessBase.Ri32(td, e + 17);
+            int relTblPage = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset);
             if (relTblPage != otherTdefPage)
             {
                 continue;
             }
 
-            int rin = AccessBase.Ri32(td, e + 8);
+            int rin = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
             if (rin < 0 || rin >= layout.NumRealIdx)
             {
                 continue;

@@ -44,7 +44,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         int numCols = AccessBase.Ru16(tdefBuffer, writer._tdef.NumCols);
         int numIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumCols + 2);
         int numRealIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
+        if (numIdx <= 0 || numRealIdx <= 0
+            || numIdx > Constants.TableDefinition.MaxIndexes
+            || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             return result;
         }

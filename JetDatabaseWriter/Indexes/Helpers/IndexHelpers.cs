@@ -54,14 +54,14 @@ internal static class IndexHelpers
     /// </summary>
     public static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
     {
-        if (phys + 52 > td.Length)
+        if (phys + Constants.TableDefinition.Jet4.RealIdx.PhysSize > td.Length)
         {
             return false;
         }
 
-        for (int slot = 0; slot < 10; slot++)
+        for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
         {
-            int so = phys + 4 + (slot * 3);
+            int so = phys + Constants.TableDefinition.Jet4.RealIdx.ColMapOffset + (slot * Constants.TableDefinition.ColMapSlotSize);
             int cn = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(so, 2));
             if (slot < columnNumbers.Length)
             {
@@ -70,7 +70,7 @@ internal static class IndexHelpers
                     return false;
                 }
             }
-            else if (cn != 0xFFFF)
+            else if (cn != Constants.TableDefinition.ColMapPaddingSlot)
             {
                 return false;
             }

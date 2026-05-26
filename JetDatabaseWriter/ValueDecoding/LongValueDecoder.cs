@@ -60,7 +60,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     private LvalRowLocation ParseLvalRowLocation(byte[] page, int lvalPage, int lvalRow)
     {
-        if (page[0] != 0x01)
+        if (page[0] != Constants.PageTypes.Data)
         {
             return new(page, 0, 0, $"page {lvalPage} not data page");
         }
@@ -156,7 +156,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
-        if (len < 12)
+        if (len < Constants.LongValue.HeaderSize)
         {
             return isOle ? "(OLE)" : "(memo)";
         }
@@ -164,14 +164,14 @@ internal sealed class LongValueDecoder(AccessReader reader)
         byte bitmask = row[start + 3];
         int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
-        switch (bitmask & 0xC0)
+        switch (bitmask & Constants.LongValue.StorageModeMask)
         {
-            case 0x80:
-                int memoStart = start + 12;
+            case Constants.LongValue.InlineStorageMode:
+                int memoStart = start + Constants.LongValue.HeaderSize;
                 int inlineLen = Math.Min(memoLen, row.Length - memoStart);
                 return inlineLen <= 0 ? string.Empty : DecodeLongValue(row, memoStart, inlineLen, isOle);
 
-            case 0x40:
+            case Constants.LongValue.SinglePageStorageMode:
                 LvalRowLocation memoLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, memoLen);
                 return !memoLoc.Failed && memoSize > 0
@@ -188,7 +188,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     internal async ValueTask<byte[]> ReadLongValueRawBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
     {
-        if (len < 12)
+        if (len < Constants.LongValue.HeaderSize)
         {
             return [];
         }
@@ -196,10 +196,10 @@ internal sealed class LongValueDecoder(AccessReader reader)
         byte bitmask = row[start + 3];
         int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
-        switch (bitmask & 0xC0)
+        switch (bitmask & Constants.LongValue.StorageModeMask)
         {
-            case 0x80:
-                int memoStart = start + 12;
+            case Constants.LongValue.InlineStorageMode:
+                int memoStart = start + Constants.LongValue.HeaderSize;
                 int inlineLen = Math.Min(memoLen, row.Length - memoStart);
                 if (inlineLen <= 0)
                 {
@@ -208,7 +208,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
                 return row.AsSpan(memoStart, inlineLen).ToArray();
 
-            case 0x40:
+            case Constants.LongValue.SinglePageStorageMode:
                 LvalRowLocation memoLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, memoLen);
                 if (memoLoc.Failed || memoSize <= 0)
@@ -226,7 +226,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     internal async ValueTask<byte[]> ReadOleValueBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
     {
-        if (len < 12)
+        if (len < Constants.LongValue.HeaderSize)
         {
             return [];
         }
@@ -234,14 +234,14 @@ internal sealed class LongValueDecoder(AccessReader reader)
         byte bitmask = row[start + 3];
         int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
-        switch (bitmask & 0xC0)
+        switch (bitmask & Constants.LongValue.StorageModeMask)
         {
-            case 0x80:
-                int memoStart = start + 12;
+            case Constants.LongValue.InlineStorageMode:
+                int memoStart = start + Constants.LongValue.HeaderSize;
                 int inlineLen = Math.Min(memoLen, row.Length - memoStart);
                 return inlineLen <= 0 ? [] : AccessReader.DecodeOleValueBytes(row, memoStart, inlineLen);
 
-            case 0x40:
+            case Constants.LongValue.SinglePageStorageMode:
                 LvalRowLocation oleLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
                 int oleSize = Math.Min(oleLoc.Size, memoLen);
                 return !oleLoc.Failed && oleSize > 0

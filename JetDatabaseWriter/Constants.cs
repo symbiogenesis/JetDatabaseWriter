@@ -104,6 +104,32 @@ internal static class Constants
     }
 
     /// <summary>
+    /// Bit flags stored in the column descriptor's primary <c>flags</c> byte.
+    /// These are distinct from the Jet4/ACE descriptor <c>extra flags</c> byte
+    /// used for compressed-unicode and calculated-column markers.
+    /// </summary>
+    public static class ColumnDescriptorFlags
+    {
+        /// <summary>Column data lives in the fixed row area. BOOL is special-cased into the null mask.</summary>
+        public const byte Fixed = 0x01;
+
+        /// <summary>Jackcess <c>UNKNOWN_FF_FLAG_MASK</c>; Access/DAO sets this on non-complex descriptors.</summary>
+        public const byte Unknown = 0x02;
+
+        /// <summary>AutoNumber column marker.</summary>
+        public const byte AutoNumber = 0x04;
+
+        /// <summary>Legacy writer-private NOT NULL marker; retained only for back-compat reads.</summary>
+        public const byte LegacyNotNull = 0x08;
+
+        /// <summary>Hyperlink marker used on MEMO columns.</summary>
+        public const byte Hyperlink = 0x80;
+
+        /// <summary>Access marker byte used by complex parent columns instead of normal flag semantics.</summary>
+        public const byte ComplexColumn = Fixed | Unknown | AutoNumber;
+    }
+
+    /// <summary>
     /// Bitmask in the column descriptor's <c>extra flags</c> byte
     /// (descriptor-relative offset 16 in the 25-byte ACE descriptor) that
     /// enables Jet4/ACE compressed-unicode text encoding (<c>0xFF 0xFE</c>
@@ -260,6 +286,15 @@ internal static class Constants
         /// <summary>Observed <c>MSysObjects.Flags</c> value for ODBC-linked table rows.</summary>
         public const int LinkedOdbcFlags = 0x2010_0000;
 
+        /// <summary>MSysObjects.Flags bit indicating a system / hidden object.</summary>
+        public const uint SystemObjectFlag = 0x80000000U;
+
+        /// <summary>Observed <c>MSysObjects.Flags</c> value for complex type-template tables.</summary>
+        public const uint ComplexTypeTemplateFlags = 0x80030000U;
+
+        /// <summary>Observed <c>MSysObjects.Flags</c> value for complex-column flat child tables.</summary>
+        public const uint ComplexFlatTableFlags = 0x800A0000U;
+
         /// <summary>
         /// Bitmask applied to <c>MSysObjects.Flags</c> to detect system tables;
         /// any row whose flags AND this mask is non-zero is treated as a system
@@ -353,6 +388,30 @@ internal static class Constants
     }
 
     /// <summary>
+    /// Page type discriminator bytes stored at offset 0 of JET pages.
+    /// </summary>
+    public static class PageTypes
+    {
+        /// <summary>Regular table data page.</summary>
+        public const byte Data = 0x01;
+
+        /// <summary>Table definition (TDEF) page.</summary>
+        public const byte TableDefinition = 0x02;
+
+        /// <summary>Index intermediate page.</summary>
+        public const byte IndexIntermediate = 0x03;
+
+        /// <summary>Index leaf page.</summary>
+        public const byte IndexLeaf = 0x04;
+
+        /// <summary>Reference-form usage-map page.</summary>
+        public const byte UsageMap = 0x05;
+
+        /// <summary>Freed page marker.</summary>
+        public const byte Freed = 0x09;
+    }
+
+    /// <summary>
     /// Bit flags stored in the <c>grbit</c> column of <c>MSysRelationships</c>
     /// rows. Values per Jackcess <c>RelationshipImpl</c>.
     /// </summary>
@@ -375,8 +434,14 @@ internal static class Constants
     /// </summary>
     public static class CompoundFile
     {
+        /// <summary>Gets OLE / Microsoft Compound File Binary signature at file offset 0.</summary>
+        public static ReadOnlySpan<byte> Signature => [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
         /// <summary>Size of a single directory entry in bytes (128).</summary>
         public const int DirEntrySize = 128;
+
+        /// <summary>Standard CFB mini-stream cutoff in bytes.</summary>
+        public const int StandardMiniStreamCutoff = 4096;
 
         /// <summary>FAT entry value indicating a free / unused sector.</summary>
         public const uint FreeSect = 0xFFFFFFFFu;
@@ -536,11 +601,11 @@ internal static class Constants
     public static class IndexLeafPage
     {
         /// <summary>Page type byte for index leaf pages.</summary>
-        public const byte PageTypeLeaf = 0x04;
+        public const byte PageTypeLeaf = PageTypes.IndexLeaf;
 
         /// <summary>Page type byte for index intermediate pages
         /// (sibling of <see cref="PageTypeLeaf"/> in the same B-tree).</summary>
-        public const byte PageTypeIntermediate = 0x03;
+        public const byte PageTypeIntermediate = PageTypes.IndexIntermediate;
 
         /// <summary>
         /// Per-version field offsets within an index leaf / intermediate page
@@ -606,6 +671,15 @@ internal static class Constants
     /// </summary>
     public static class AgileEncryption
     {
+        /// <summary>Agile <c>EncryptionInfo</c> major version.</summary>
+        public const ushort VersionMajor = 4;
+
+        /// <summary>Agile <c>EncryptionInfo</c> minor version.</summary>
+        public const ushort VersionMinor = 4;
+
+        /// <summary>Agile <c>EncryptionInfo</c> flags value.</summary>
+        public const uint Flags = 0x40;
+
         /// <summary>Salt length in bytes (16).</summary>
         public const int SaltSize = 16;
 
@@ -637,6 +711,12 @@ internal static class Constants
     /// </summary>
     public static class TableDefinition
     {
+        /// <summary>Conservative maximum number of columns accepted while parsing a TDEF.</summary>
+        public const int MaxColumns = 4096;
+
+        /// <summary>Conservative maximum logical / physical index count accepted while parsing a TDEF.</summary>
+        public const int MaxIndexes = 1000;
+
         /// <summary>
         /// Byte offset within a TDEF page header where the live-row count is
         /// stored as a little-endian <c>uint32</c>. Adjusted by every insert /
@@ -644,6 +724,18 @@ internal static class Constants
         /// by walking row offset arrays.
         /// </summary>
         public const int RowCountOffset = 16;
+
+        /// <summary>Byte offset of the owned-pages usage-map row pointer in a TDEF page.</summary>
+        public const int OwnedPagesRowOffset = 0x37;
+
+        /// <summary>Byte offset of the owned-pages usage-map page pointer in a TDEF page.</summary>
+        public const int OwnedPagesPageOffset = 0x38;
+
+        /// <summary>Byte offset of the free-pages usage-map row pointer in a TDEF page.</summary>
+        public const int FreePagesRowOffset = 0x3B;
+
+        /// <summary>Byte offset of the free-pages usage-map page pointer in a TDEF page.</summary>
+        public const int FreePagesPageOffset = 0x3C;
 
         /// <summary>
         /// Byte offset within a TDEF page header where Access stores the
@@ -659,6 +751,18 @@ internal static class Constants
         /// across Jet3 and Jet4/ACE.
         /// </summary>
         public const int ColMapSlotSize = 3;
+
+        /// <summary>Value stored in a <c>col_map</c> order byte for ascending sort order.</summary>
+        public const byte ColMapAscendingFlag = 0x01;
+
+        /// <summary>Value stored in a <c>col_map</c> order byte for descending sort order.</summary>
+        public const byte ColMapDescendingFlag = 0x00;
+
+        /// <summary><c>rel_tbl_type</c> value for the parent side of an FK logical-idx entry.</summary>
+        public const byte ParentRelationshipTableType = 0x01;
+
+        /// <summary><c>rel_tbl_type</c> value for the child side of an FK logical-idx entry.</summary>
+        public const byte ChildRelationshipTableType = 0x02;
 
         /// <summary>
         /// Real-idx <c>flags</c> bit indicating a unique index. Per Jackcess
@@ -853,6 +957,9 @@ internal static class Constants
     /// </summary>
     public static class LongValue
     {
+        /// <summary>Size in bytes of an inline row LVAL header.</summary>
+        public const int HeaderSize = 12;
+
         /// <summary>
         /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk
         /// LVAL header dedicates a 24-bit field to the total length, so values
@@ -863,6 +970,18 @@ internal static class Constants
 
         /// <summary>Minimum row-start offset after the 20-byte LVAL page header area.</summary>
         public const int LvalRowStart = 20;
+
+        /// <summary>Mask applied to the LVAL header bitmask byte to identify storage mode.</summary>
+        public const byte StorageModeMask = 0xC0;
+
+        /// <summary>Storage-mode bits for inline LVAL payloads.</summary>
+        public const byte InlineStorageMode = 0x80;
+
+        /// <summary>Storage-mode bits for payloads stored in one LVAL page.</summary>
+        public const byte SinglePageStorageMode = 0x40;
+
+        /// <summary>Storage-mode bits for chained LVAL pages.</summary>
+        public const byte ChainedStorageMode = 0x00;
     }
 
     /// <summary>
@@ -870,6 +989,15 @@ internal static class Constants
     /// </summary>
     public static class DataPage
     {
+        /// <summary>Mask that extracts the row start offset from a row-offset slot.</summary>
+        public const int RowOffsetMask = 0x1FFF;
+
+        /// <summary>Row-offset high bit indicating a deleted row.</summary>
+        public const int DeletedRowFlag = 0x8000;
+
+        /// <summary>Row-offset high bits that mark rows as non-live.</summary>
+        public const int NonLiveRowFlags = 0xC000;
+
         /// <summary>
         /// Maximum number of rows a single JET data page may hold. JET row IDs
         /// encode the per-page row index as a single byte, so a page can address

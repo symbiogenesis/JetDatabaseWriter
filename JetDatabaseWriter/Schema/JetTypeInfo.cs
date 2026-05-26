@@ -99,7 +99,7 @@ internal static class JetTypeInfo
     /// See <c>docs/design/hyperlink-format-notes.md</c>.
     /// </summary>
     public static bool IsHyperlinkColumn(ColumnInfo col)
-        => col.Type == T_MEMO && (col.Flags & 0x80) != 0;
+        => col.Type == T_MEMO && (col.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0;
 
     /// <summary>
     /// Returns the CLR projection type for a column, accounting for the

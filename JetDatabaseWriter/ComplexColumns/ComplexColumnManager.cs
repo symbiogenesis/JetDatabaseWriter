@@ -123,7 +123,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             tableName,
             columns,
             indexes,
-            Constants.SystemObjects.SystemTableMask & 0x80000000U,
+            Constants.SystemObjects.SystemTableMask & Constants.SystemObjects.SystemObjectFlag,
             cancellationToken,
             reservedTdefPageNumber,
             emitLvProp: false,
@@ -131,7 +131,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     private async ValueTask InsertCoreCatalogRowsAsync(CancellationToken cancellationToken)
     {
-        const uint systemFlags = 0x80000000U;
+        const uint systemFlags = Constants.SystemObjects.SystemObjectFlag;
+
         await _writer.InsertCatalogObjectAsync(
             2,
             Constants.SystemObjects.TablesParentId,
@@ -259,7 +260,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 name,
                 tdefPageNumber,
                 lvProp: null,
-                catalogFlags: 0x80030000U,
+                catalogFlags: Constants.SystemObjects.ComplexTypeTemplateFlags,
                 cancellationToken).ConfigureAwait(false);
         }
 
@@ -365,7 +366,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Constants.SystemTableNames.ComplexColumns,
             columns,
             indexes,
-            catalogFlags: 0x80000000U,
+            catalogFlags: Constants.SystemObjects.SystemObjectFlag,
             cancellationToken,
             reservedTdefPageNumber: 0,
             emitLvProp: false,
@@ -459,7 +460,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -525,7 +526,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 flatTableName,
                 flatCols,
                 indexes: flatIndexes,
-                catalogFlags: 0x800A0000U,
+                catalogFlags: Constants.SystemObjects.ComplexFlatTableFlags,
                 cancellationToken).ConfigureAwait(false);
             await _writer.InsertAceRowsForTableAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -908,7 +909,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -967,7 +968,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -1119,7 +1120,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -1354,7 +1355,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (page[0] != 0x01)
+                    if (page[0] != Constants.PageTypes.Data)
                     {
                         continue;
                     }
@@ -1429,7 +1430,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -1541,7 +1542,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -1623,7 +1624,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -1744,7 +1745,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }

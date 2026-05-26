@@ -400,7 +400,7 @@ internal readonly struct IndexLayout
     public readonly record struct RealIdxSlot(int PhysStart, int FirstDpOffset, byte Flags)
     {
         /// <summary>Gets a value indicating whether the unique flag bit (0x01) is set.</summary>
-        public bool IsUnique => (Flags & 0x01) != 0;
+        public bool IsUnique => (Flags & Constants.TableDefinition.UniqueIndexFlag) != 0;
 
         /// <summary>
         /// Lifts this raw slot into a <see cref="RealIdxEntry"/> by attaching

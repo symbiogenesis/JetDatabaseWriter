@@ -35,10 +35,10 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             return null;
         }
 
-        var buffer = new byte[12 + data.Length];
+        var buffer = new byte[Constants.LongValue.HeaderSize + data.Length];
         AccessBase.WriteUInt24(buffer, 0, data.Length);
-        buffer[3] = 0x80;
-        Buffer.BlockCopy(data, 0, buffer, 12, data.Length);
+        buffer[3] = Constants.LongValue.InlineStorageMode;
+        Buffer.BlockCopy(data, 0, buffer, Constants.LongValue.HeaderSize, data.Length);
         return buffer;
     }
 
@@ -189,7 +189,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         int singleRowMax = pgSz - Constants.LongValue.LvalRowStart;
         int chainRowMax = singleRowMax - 4;
 
-        var header = new byte[12];
+        var header = new byte[Constants.LongValue.HeaderSize];
         AccessBase.WriteUInt24(header, 0, data.Length);
         AccessBase.Wi32(header, 8, unchecked((int)lvalToken));
 
@@ -199,7 +199,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
-                header[3] = 0x40;
+                header[3] = Constants.LongValue.SinglePageStorageMode;
                 uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
                 AccessBase.Wi32(header, 4, (int)lvalDp);
                 return header;
@@ -232,7 +232,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             }
         }
 
-        header[3] = 0x00;
+        header[3] = Constants.LongValue.ChainedStorageMode;
         AccessBase.Wi32(header, 4, (int)nextDp);
         return header;
     }
@@ -247,7 +247,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
 
         byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
         Array.Clear(page, 0, pgSz);
-        page[0] = 0x01; // page_type = data page / long-value page
+        page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
         int rowStart = packRowsAtEnd ? pgSz - payload.Length : Constants.LongValue.LvalRowStart;
         WriteLvalPageHeader(page, lvalToken, rowStart);
@@ -266,7 +266,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
 
         byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
         Array.Clear(page, 0, pgSz);
-        page[0] = 0x01;
+        page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
         int rowStart = packRowsAtEnd ? pgSz - (length + 4) : Constants.LongValue.LvalRowStart;
         WriteLvalPageHeader(page, lvalToken, rowStart);

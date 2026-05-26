@@ -61,7 +61,9 @@ internal static class OfficeCryptoAgile
         uint flags = BinaryPrimitives.ReadUInt32LittleEndian(encryptionInfo.AsSpan(4, 4));
 
         // Agile = (4, 4) with AgileEncryption flag (0x40) set.
-        return major == 4 && minor == 4 && (flags & 0x40) != 0;
+        return major == Constants.AgileEncryption.VersionMajor
+            && minor == Constants.AgileEncryption.VersionMinor
+            && (flags & Constants.AgileEncryption.Flags) != 0;
     }
 
     /// <summary>
@@ -197,12 +199,10 @@ internal static class OfficeCryptoAgile
             byte[] xmlBytes = Encoding.UTF8.GetBytes(xml);
             byte[] encryptionInfo = new byte[8 + xmlBytes.Length];
 
-            // 4-byte version (major=4, minor=4) + 4-byte flags (0x40 = AgileEncryption).
-            encryptionInfo[0] = 0x04;
-            encryptionInfo[1] = 0x00;
-            encryptionInfo[2] = 0x04;
-            encryptionInfo[3] = 0x00;
-            encryptionInfo[4] = 0x40;
+            // 4-byte version + 4-byte flags.
+            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(0, 2), Constants.AgileEncryption.VersionMajor);
+            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(2, 2), Constants.AgileEncryption.VersionMinor);
+            encryptionInfo[4] = (byte)Constants.AgileEncryption.Flags;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
             return (encryptionInfo, encryptedPackage);
@@ -555,7 +555,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }
 
-        const int segmentSize = 4096;
+        const int segmentSize = Constants.AgileEncryption.SegmentSize;
         int blockSize = d.KeyDataBlockSize;
 
         byte[] result = new byte[decryptedSize];
@@ -924,9 +924,9 @@ internal static class OfficeCryptoAgile
 
             byte[] xmlBytes = Encoding.UTF8.GetBytes(xml);
             byte[] encryptionInfo = new byte[8 + xmlBytes.Length];
-            encryptionInfo[0] = 0x04;
-            encryptionInfo[2] = 0x04;
-            encryptionInfo[4] = 0x40;
+            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(0, 2), Constants.AgileEncryption.VersionMajor);
+            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(2, 2), Constants.AgileEncryption.VersionMinor);
+            encryptionInfo[4] = (byte)Constants.AgileEncryption.Flags;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
             return (encryptionInfo, intermediateKey, keyDataSalt);

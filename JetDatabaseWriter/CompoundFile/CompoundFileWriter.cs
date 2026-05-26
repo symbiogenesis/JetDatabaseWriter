@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
 using JetDatabaseWriter.Infrastructure;
-using CfbConstants = JetDatabaseWriter.Constants.CompoundFile;
 
 /// <summary>
 /// Minimal writer for the OLE / Microsoft Compound File Binary (CFB / OLE2)
@@ -35,9 +34,9 @@ internal static class CompoundFileWriter
     {
         return Build(
             streams,
-            sectorSize: CfbConstants.V3.SectorSize,
-            sectorShift: CfbConstants.V3.SectorShift,
-            majorVersion: CfbConstants.V3.MajorVersion,
+            sectorSize: Constants.CompoundFile.V3.SectorSize,
+            sectorShift: Constants.CompoundFile.V3.SectorShift,
+            majorVersion: Constants.CompoundFile.V3.MajorVersion,
             miniStreamCutoff: 0,
             requireRegularFatStreams: false);
     }
@@ -51,10 +50,10 @@ internal static class CompoundFileWriter
     {
         return Build(
             streams,
-            sectorSize: CfbConstants.V4.SectorSize,
-            sectorShift: CfbConstants.V4.SectorShift,
-            majorVersion: CfbConstants.V4.MajorVersion,
-            miniStreamCutoff: 4096,
+            sectorSize: Constants.CompoundFile.V4.SectorSize,
+            sectorShift: Constants.CompoundFile.V4.SectorShift,
+            majorVersion: Constants.CompoundFile.V4.MajorVersion,
+            miniStreamCutoff: Constants.CompoundFile.StandardMiniStreamCutoff,
             requireRegularFatStreams: true);
     }
 
@@ -78,7 +77,7 @@ internal static class CompoundFileWriter
         streams = orderedStreams;
 
         int entriesPerFatSector = sectorSize / 4;
-        int entriesPerDirSector = sectorSize / CfbConstants.DirEntrySize;
+        int entriesPerDirSector = sectorSize / Constants.CompoundFile.DirEntrySize;
         int entriesPerDifatSector = entriesPerFatSector - 1;
 
         // ── Lay out sectors ────────────────────────────────────────────
@@ -107,7 +106,7 @@ internal static class CompoundFileWriter
 
             int sectors = len == 0 ? 0 : (len + sectorSize - 1) / sectorSize;
             streamSectors[i] = sectors;
-            streamStart[i] = sectors == 0 ? unchecked((int)CfbConstants.EndOfChain) : sectorCursor;
+            streamStart[i] = sectors == 0 ? unchecked((int)Constants.CompoundFile.EndOfChain) : sectorCursor;
             sectorCursor += sectors;
         }
 
@@ -125,9 +124,9 @@ internal static class CompoundFileWriter
         {
             totalSectors = dataSectors + numFatSectors + numDifatSectors;
             int needed = (totalSectors + entriesPerFatSector - 1) / entriesPerFatSector;
-            int neededDifat = needed <= CfbConstants.MaxHeaderDifatEntries
+            int neededDifat = needed <= Constants.CompoundFile.MaxHeaderDifatEntries
                 ? 0
-                : (needed - CfbConstants.MaxHeaderDifatEntries + entriesPerDifatSector - 1) / entriesPerDifatSector;
+                : (needed - Constants.CompoundFile.MaxHeaderDifatEntries + entriesPerDifatSector - 1) / entriesPerDifatSector;
             if (needed == numFatSectors && neededDifat == numDifatSectors)
             {
                 break;
@@ -164,18 +163,18 @@ internal static class CompoundFileWriter
         var fat = new uint[(long)numFatSectors * entriesPerFatSector];
         for (long i = 0; i < fat.LongLength; i++)
         {
-            fat[i] = CfbConstants.FreeSect;
+            fat[i] = Constants.CompoundFile.FreeSect;
         }
 
         // Mark FAT sectors themselves.
         for (int i = 0; i < numFatSectors; i++)
         {
-            fat[fatSectorIds[i]] = CfbConstants.FatSect;
+            fat[fatSectorIds[i]] = Constants.CompoundFile.FatSect;
         }
 
         for (int i = 0; i < numDifatSectors; i++)
         {
-            fat[difatSectorIds[i]] = CfbConstants.DifSect;
+            fat[difatSectorIds[i]] = Constants.CompoundFile.DifSect;
         }
 
         // Directory chain.
@@ -209,14 +208,14 @@ internal static class CompoundFileWriter
         WriteRootEntry(file, dirOffset, child: 1);
         for (int i = 0; i < streams.Count; i++)
         {
-            uint right = (i == streams.Count - 1) ? CfbConstants.FreeSect : (uint)(i + 2);
+            uint right = (i == streams.Count - 1) ? Constants.CompoundFile.FreeSect : (uint)(i + 2);
             WriteStreamEntry(
                 file,
-                dirOffset + ((i + 1) * CfbConstants.DirEntrySize),
+                dirOffset + ((i + 1) * Constants.CompoundFile.DirEntrySize),
                 streams[i].Key,
                 startSector: unchecked((uint)streamStart[i]),
                 size: streams[i].Value?.Length ?? 0,
-                leftSibling: CfbConstants.FreeSect,
+                leftSibling: Constants.CompoundFile.FreeSect,
                 rightSibling: right);
         }
 
@@ -224,7 +223,7 @@ internal static class CompoundFileWriter
         int totalDirEntries = numDirSectors * entriesPerDirSector;
         for (int i = dirEntryCount; i < totalDirEntries; i++)
         {
-            WriteUnusedEntry(file, dirOffset + (i * CfbConstants.DirEntrySize));
+            WriteUnusedEntry(file, dirOffset + (i * Constants.CompoundFile.DirEntrySize));
         }
 
         // ── Stream payloads ───────────────────────────────────────────
@@ -246,7 +245,7 @@ internal static class CompoundFileWriter
             for (int j = 0; j < entriesPerFatSector; j++)
             {
                 long fatIdx = ((long)i * entriesPerFatSector) + j;
-                uint v = fatIdx < fat.LongLength ? fat[fatIdx] : CfbConstants.FreeSect;
+                uint v = fatIdx < fat.LongLength ? fat[fatIdx] : Constants.CompoundFile.FreeSect;
                 BinaryPrimitives.WriteUInt32LittleEndian(
                     file.AsSpan(sectorOff + (j * 4), 4),
                     v);
@@ -257,15 +256,15 @@ internal static class CompoundFileWriter
         for (int i = 0; i < numDifatSectors; i++)
         {
             int sectorOff = SectorOffset(difatSectorIds[i], sectorSize);
-            int fatIndexBase = CfbConstants.MaxHeaderDifatEntries + (i * entriesPerDifatSector);
+            int fatIndexBase = Constants.CompoundFile.MaxHeaderDifatEntries + (i * entriesPerDifatSector);
             for (int j = 0; j < entriesPerDifatSector; j++)
             {
                 int fatIndex = fatIndexBase + j;
-                uint v = fatIndex < fatSectorIds.Length ? (uint)fatSectorIds[fatIndex] : CfbConstants.FreeSect;
+                uint v = fatIndex < fatSectorIds.Length ? (uint)fatSectorIds[fatIndex] : Constants.CompoundFile.FreeSect;
                 BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(sectorOff + (j * 4), 4), v);
             }
 
-            uint next = i == numDifatSectors - 1 ? CfbConstants.EndOfChain : (uint)difatSectorIds[i + 1];
+            uint next = i == numDifatSectors - 1 ? Constants.CompoundFile.EndOfChain : (uint)difatSectorIds[i + 1];
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(sectorOff + (entriesPerDifatSector * 4), 4), next);
         }
 
@@ -277,7 +276,7 @@ internal static class CompoundFileWriter
         for (int k = 0; k < sectorCount; k++)
         {
             int sec = startSector + k;
-            fat[sec] = (k == sectorCount - 1) ? CfbConstants.EndOfChain : (uint)(sec + 1);
+            fat[sec] = (k == sectorCount - 1) ? Constants.CompoundFile.EndOfChain : (uint)(sec + 1);
         }
     }
 
@@ -296,34 +295,34 @@ internal static class CompoundFileWriter
     {
         Span<byte> h = file.AsSpan(0, 512);
 
-        CompoundFileReader.CfbSignature.CopyTo(h);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(CfbConstants.HeaderOffsets.MinorVersion, 2), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(CfbConstants.HeaderOffsets.MajorVersion, 2), majorVersion);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(CfbConstants.HeaderOffsets.ByteOrder, 2), 0xFFFE);  // little-endian
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(CfbConstants.HeaderOffsets.SectorShift, 2), sectorShift);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(CfbConstants.HeaderOffsets.MiniSectorShift, 2), 0x0006);  // 6 → 64
+        Constants.CompoundFile.Signature.CopyTo(h);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.MinorVersion, 2), 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.MajorVersion, 2), majorVersion);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.ByteOrder, 2), 0xFFFE);  // little-endian
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.SectorShift, 2), sectorShift);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.MiniSectorShift, 2), 0x0006);  // 6 → 64
         BinaryPrimitives.WriteInt32LittleEndian(
-            h.Slice(CfbConstants.HeaderOffsets.NumDirSectors, 4),
-            majorVersion == CfbConstants.V3.MajorVersion ? 0 : numDirSectors);
-        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.NumFatSectors, 4), fatSectorIds.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.FirstDirSector, 4), firstDirSector);
+            h.Slice(Constants.CompoundFile.HeaderOffsets.NumDirSectors, 4),
+            majorVersion == Constants.CompoundFile.V3.MajorVersion ? 0 : numDirSectors);
+        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.NumFatSectors, 4), fatSectorIds.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.FirstDirSector, 4), firstDirSector);
 
         // 0x34 transaction signature stays 0. No mini-FAT is emitted; callers
         // using the standard cutoff must ensure all streams are large enough
         // to be read from the regular FAT.
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.MiniStreamCutoff, 4), miniStreamCutoff);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.FirstMiniFatSector, 4), CfbConstants.EndOfChain);
-        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.NumMiniFatSectors, 4), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.MiniStreamCutoff, 4), miniStreamCutoff);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.FirstMiniFatSector, 4), Constants.CompoundFile.EndOfChain);
+        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.NumMiniFatSectors, 4), 0);
         BinaryPrimitives.WriteUInt32LittleEndian(
-            h.Slice(CfbConstants.HeaderOffsets.FirstDifatSector, 4),
-            difatSectorIds.Length == 0 ? CfbConstants.EndOfChain : (uint)difatSectorIds[0]);
-        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.NumDifatSectors, 4), difatSectorIds.Length);
+            h.Slice(Constants.CompoundFile.HeaderOffsets.FirstDifatSector, 4),
+            difatSectorIds.Length == 0 ? Constants.CompoundFile.EndOfChain : (uint)difatSectorIds[0]);
+        BinaryPrimitives.WriteInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.NumDifatSectors, 4), difatSectorIds.Length);
 
         // 0x4C..0xFF: 109-entry header DIFAT.
-        for (int i = 0; i < CfbConstants.MaxHeaderDifatEntries; i++)
+        for (int i = 0; i < Constants.CompoundFile.MaxHeaderDifatEntries; i++)
         {
-            uint v = i < fatSectorIds.Length ? (uint)fatSectorIds[i] : CfbConstants.FreeSect;
-            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(CfbConstants.HeaderOffsets.HeaderDifat + (i * 4), 4), v);
+            uint v = i < fatSectorIds.Length ? (uint)fatSectorIds[i] : Constants.CompoundFile.FreeSect;
+            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.HeaderDifat + (i * 4), 4), v);
         }
     }
 
@@ -334,11 +333,11 @@ internal static class CompoundFileWriter
             offset,
             "Root Entry",
             objectType: 5,
-            startSector: CfbConstants.EndOfChain,
+            startSector: Constants.CompoundFile.EndOfChain,
             sizeLow: 0,
             sizeHigh: 0,
-            leftSibling: CfbConstants.FreeSect,
-            rightSibling: CfbConstants.FreeSect,
+            leftSibling: Constants.CompoundFile.FreeSect,
+            rightSibling: Constants.CompoundFile.FreeSect,
             child: child);
     }
 
@@ -361,17 +360,17 @@ internal static class CompoundFileWriter
             sizeHigh: unchecked((uint)((size >> 32) & 0xFFFFFFFFu)),
             leftSibling: leftSibling,
             rightSibling: rightSibling,
-            child: CfbConstants.FreeSect);
+            child: Constants.CompoundFile.FreeSect);
     }
 
     private static void WriteUnusedEntry(byte[] file, int offset)
     {
-        Span<byte> e = file.AsSpan(offset, CfbConstants.DirEntrySize);
+        Span<byte> e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
         e[0x42] = 0x00; // unallocated
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44, 4), CfbConstants.FreeSect);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48, 4), CfbConstants.FreeSect);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C, 4), CfbConstants.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48, 4), Constants.CompoundFile.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C, 4), Constants.CompoundFile.FreeSect);
     }
 
     private static void WriteDirEntry(
@@ -386,7 +385,7 @@ internal static class CompoundFileWriter
         uint rightSibling,
         uint child)
     {
-        Span<byte> e = file.AsSpan(offset, CfbConstants.DirEntrySize);
+        Span<byte> e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
 
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);

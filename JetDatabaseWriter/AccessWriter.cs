@@ -2144,7 +2144,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         for (int colIndex = 0; colIndex < tableDef.Columns.Count; colIndex++)
         {
             ColumnInfo column = tableDef.Columns[colIndex];
-            if ((column.Flags & 0x04) == 0)
+            if ((column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
             {
                 continue;
             }
@@ -2789,7 +2789,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] tempTdef = await ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (tempTdef[0] != 0x02 || Ri32(tempTdef, 4) != 0)
+            if (tempTdef[0] != Constants.PageTypes.TableDefinition || Ri32(tempTdef, 4) != 0)
             {
                 throw new NotSupportedException("Complex table schema rewrite currently requires a single-page rebuilt TDEF.");
             }
@@ -2820,8 +2820,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                bool patchDataPage = page[0] == 0x01 && Ri32(page, _dataPage.TDefOff) == fromTdefPage;
-                bool patchIndexPage = page[0] is 0x03 or 0x04 && Ri32(page, 4) == fromTdefPage;
+                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, _dataPage.TDefOff) == fromTdefPage;
+                bool patchIndexPage = page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf && Ri32(page, 4) == fromTdefPage;
                 if (!patchDataPage && !patchIndexPage)
                 {
                     continue;
@@ -2976,20 +2976,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // wrote into the original column descriptor. Complex columns (T_ATTACHMENT /
         // T_COMPLEX) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
-        bool isAutoIncrement = (column.Flags & 0x04) != 0;
+        bool isAutoIncrement = (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
         bool isNullable = isAutoIncrement
             ? false
             : requiredFromLvProp is bool req
                 ? !req
-                : (column.Flags & 0x08) == 0; // legacy back-compat with older writer revisions
+                : (column.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
 
         ColumnDefinition def = baseDef with
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
-            IsHyperlink = column.Type == T_MEMO && (column.Flags & 0x80) != 0,
+            IsHyperlink = column.Type == T_MEMO && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
             IsCompressedUnicode = column.IsCompressedUnicode,
         };
 
@@ -3090,7 +3090,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
         byte[] page = new byte[_pgSz];
-        page[0] = 0x01;
+        page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
         const int rowSize = 69;
@@ -3343,7 +3343,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != tdefPage)
+                    if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != tdefPage)
                     {
                         continue;
                     }
@@ -3370,7 +3370,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(currentTdefPage, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x02)
+                if (page[0] != Constants.PageTypes.TableDefinition)
                 {
                     break;
                 }
@@ -3391,7 +3391,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (firstTdefPage is not null && _format != DatabaseFormat.Jet3Mdb)
         {
-            int usageMapPage = ReadUInt24(firstTdefPage, 0x38);
+            int usageMapPage = ReadUInt24(firstTdefPage, Constants.TableDefinition.OwnedPagesPageOffset);
             if (usageMapPage > 0)
             {
                 _ = pagesToFree.Add(usageMapPage);
@@ -3424,7 +3424,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] page = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (page[0] != 0x01)
+            if (page[0] != Constants.PageTypes.Data)
             {
                 return;
             }
@@ -3499,7 +3499,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
                 {
                     continue;
                 }
@@ -3659,14 +3659,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (page[0] != 0x02 || Ru32(page, 4) != 0)
+            if (page[0] != Constants.PageTypes.TableDefinition || Ru32(page, 4) != 0)
             {
                 return false;
             }
 
             int numCols = Ru16(page, _tdef.NumCols);
             int numRealIdx = Ri32(page, _tdef.NumRealIdx);
-            if (numCols < 0 || numCols > 4096 || numRealIdx <= 0 || numRealIdx > 1000)
+            if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
             {
                 return false;
             }
@@ -3773,7 +3773,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-test-failures.md.
             int numRealIdx = Ri32(page, _tdef.NumRealIdx);
-            if (numRealIdx > 0 && numRealIdx <= 1000)
+            if (numRealIdx > 0 && numRealIdx <= Constants.TableDefinition.MaxIndexes)
             {
                 int slotEnd = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
@@ -3817,7 +3817,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] == 0x01 && Ri32(page, _dataPage.TDefOff) == tdefPage)
+                if (page[0] == Constants.PageTypes.Data && Ri32(page, _dataPage.TDefOff) == tdefPage)
                 {
                     dataPages.Add(pageNumber);
                 }
@@ -3900,7 +3900,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
+            if (page[0] != Constants.PageTypes.Data)
             {
                 ReturnPage(page);
                 continue;
@@ -3942,7 +3942,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] pageBytes = await ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (pageBytes[0] != 0x01)
+            if (pageBytes[0] != Constants.PageTypes.Data)
             {
                 return null;
             }
@@ -4188,7 +4188,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<LongValueRoot>? longValueRoots = null;
         int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
-        if ((raw & 0xC000) != 0)
+        if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
         {
             ReturnPage(page);
             return;
@@ -4213,7 +4213,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        Wu16(page, offsetPos, raw | 0x8000);
+        Wu16(page, offsetPos, raw | Constants.DataPage.DeletedRowFlag);
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
 
@@ -4254,14 +4254,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             ColumnSlice slice = ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
-            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < 12)
+            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
             {
                 continue;
             }
 
             int valueStart = rowBound.RowStart + slice.DataStart;
-            byte storageMode = (byte)(page[valueStart + 3] & 0xC0);
-            if (storageMode == 0x80)
+            byte storageMode = (byte)(page[valueStart + 3] & Constants.LongValue.StorageModeMask);
+            if (storageMode == Constants.LongValue.InlineStorageMode)
             {
                 continue;
             }
@@ -4272,7 +4272,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            roots.Add(new LongValueRoot(firstDp, IsChained: storageMode != 0x40));
+            roots.Add(new LongValueRoot(firstDp, IsChained: storageMode != Constants.LongValue.SinglePageStorageMode));
         }
 
         return roots;
@@ -4303,7 +4303,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] lvalPage = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (lvalPage[0] == 0x01)
+                if (lvalPage[0] == Constants.PageTypes.Data)
                 {
                     foreach (RowBound rowBound in EnumerateLiveRowBounds(lvalPage))
                     {

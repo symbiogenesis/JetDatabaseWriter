@@ -167,9 +167,8 @@ internal sealed class TableDef
     /// </summary>
     public ColumnInfo FindFlatTableForeignKeyColumn()
     {
-        const byte longType = 0x04; // T_LONG; mirrors AccessBase.T_LONG.
-        return Columns.Find(c => c.Type == longType && c.Name.StartsWith('_'))
-            ?? Columns.Find(c => c.Type == longType)
+        return Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
+            ?? Columns.Find(c => c.Type == T_LONG)
             ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
     }
 }

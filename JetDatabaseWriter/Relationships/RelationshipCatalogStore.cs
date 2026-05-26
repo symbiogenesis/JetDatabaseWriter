@@ -91,7 +91,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -304,7 +304,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }

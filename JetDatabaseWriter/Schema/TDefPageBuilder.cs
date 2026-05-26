@@ -42,7 +42,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             bool isComplex = type == T_ATTACHMENT || type == T_COMPLEX;
             if (isComplex)
             {
-                flags = 0x07;
+                flags = Constants.ColumnDescriptorFlags.ComplexColumn;
             }
             else
             {
@@ -50,10 +50,10 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 // bit on every non-complex column descriptor and refuses to open tables
                 // whose columns lack it ("Unrecognized database format" on the first
                 // OpenRecordset). Set unconditionally to match Access/Jackcess output.
-                flags = 0x02;
+                flags = Constants.ColumnDescriptorFlags.Unknown;
                 if (!variable)
                 {
-                    flags |= 0x01;
+                    flags |= Constants.ColumnDescriptorFlags.Fixed;
                 }
 
                 // NOTE: nullability is NOT encoded in the TDEF flag byte. DAO/Access
@@ -63,7 +63,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 // MSysObjects.LvProp instead. See JetExpressionConverter.ApplyColumn.
                 if (definition.IsAutoIncrement)
                 {
-                    flags |= 0x04;
+                    flags |= Constants.ColumnDescriptorFlags.AutoNumber;
                 }
 
                 bool wantsHyperlink = definition.IsHyperlink || definition.ClrType == typeof(Hyperlink);
@@ -77,7 +77,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                             nameof(columns));
                     }
 
-                    flags |= 0x80;
+                    flags |= Constants.ColumnDescriptorFlags.Hyperlink;
                 }
             }
 
@@ -146,7 +146,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int namePos = colStart + (numCols * writer._colDesc.Size);
         int nameLenSize = jet4 ? 2 : 1;
 
-        page[0] = 0x02;
+        page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
         page[writer._tdef.NumCols - 5] = 0x4E;
         AccessBase.Wu16(page, writer._tdef.NumCols - 4, numCols);
@@ -296,12 +296,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         AccessBase.Wu16(page, so, ri.ColumnNumbers[slot]);
-                        page[so + 2] = ri.Ascending[slot] ? (byte)0x01 : (byte)0x00;
+                        page[so + 2] = ri.Ascending[slot]
+                            ? Constants.TableDefinition.ColMapAscendingFlag
+                            : Constants.TableDefinition.ColMapDescendingFlag;
                     }
                     else
                     {
                         AccessBase.Wu16(page, so, IndexLayout.ColMapPaddingSlot);
-                        page[so + 2] = 0x00;
+                        page[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
                     }
                 }
 
@@ -665,7 +667,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         for (int p = 1; p < totalPages; p++)
         {
             byte[] cont = new byte[writer._pgSz];
-            cont[0] = 0x02;
+            cont[0] = Constants.PageTypes.TableDefinition;
             cont[1] = 0x01;
 
             int srcOffset = writer._pgSz + ((p - 1) * bodyPerCont);

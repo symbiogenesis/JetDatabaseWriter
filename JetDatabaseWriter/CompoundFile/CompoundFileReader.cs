@@ -9,7 +9,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
-using HdrOff = JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets;
 
 /// <summary>
 /// Minimal reader for the OLE / Microsoft Compound File Binary (CFB / OLE2)
@@ -21,20 +20,13 @@ using HdrOff = JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets;
 internal static class CompoundFileReader
 {
     /// <summary>
-    /// Gets the 8-byte OLE / Microsoft Compound File Binary (CFB / OLE2) signature
-    /// that appears at offset 0 of every compound document.
-    /// </summary>
-    internal static ReadOnlySpan<byte> CfbSignature =>
-        [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
-    /// <summary>
     /// Returns true when the leading bytes match the OLE compound file magic.
     /// </summary>
     /// <param name="header">Buffer holding at least 8 bytes from offset 0.</param>
     public static bool HasCompoundFileMagic(byte[] header)
     {
-        return header != null && header.Length >= 8 &&
-            header.AsSpan(0, 8).SequenceEqual(CfbSignature);
+        return header?.Length >= 8 &&
+            header.AsSpan(0, 8).SequenceEqual(global::JetDatabaseWriter.Constants.CompoundFile.Signature);
     }
 
     /// <summary>
@@ -79,9 +71,9 @@ internal static class CompoundFileReader
 
     private static CfbHeader ParseHeader(byte[] header)
     {
-        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.MajorVersion));
-        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.SectorShift));
-        ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.MiniSectorShift));
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.MajorVersion, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.SectorShift, 2));
+        ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.MiniSectorShift, 2));
 
         if (sectorShift != 9 && sectorShift != 12)
         {
@@ -102,13 +94,13 @@ internal static class CompoundFileReader
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
-            NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumFatSectors)),
-            FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstDirSector)),
-            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.MiniStreamCutoff)),
-            FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstMiniFatSector)),
-            NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumMiniFatSectors)),
-            FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstDifatSector)),
-            NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumDifatSectors)));
+            NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.NumFatSectors, 4)),
+            FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.FirstDirSector, 4)),
+            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.MiniStreamCutoff, 4)),
+            FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.FirstMiniFatSector, 4)),
+            NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.NumMiniFatSectors, 4)),
+            FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.FirstDifatSector, 4)),
+            NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.NumDifatSectors, 4)));
     }
 
     private static async ValueTask<uint[]> BuildFatAsync(
@@ -134,11 +126,11 @@ internal static class CompoundFileReader
         // ── Collect FAT sector ids: first from the header DIFAT, then
         // from any DIFAT extension sectors. ─────────────────────────
         var fatSectorIds = new List<uint>((int)safeFatSectors);
-        int headerDifatCount = Math.Min(109, (int)safeFatSectors);
+        int headerDifatCount = Math.Min(global::JetDatabaseWriter.Constants.CompoundFile.MaxHeaderDifatEntries, (int)safeFatSectors);
         for (int i = 0; i < headerDifatCount; i++)
         {
-            uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x4C + (i * 4)));
-            if (entry < Constants.CompoundFile.FatSectMin)
+            uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(global::JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets.HeaderDifat + (i * 4), 4));
+            if (entry < global::JetDatabaseWriter.Constants.CompoundFile.FatSectMin)
             {
                 fatSectorIds.Add(entry);
             }
@@ -148,7 +140,9 @@ internal static class CompoundFileReader
         int difatSectorsRead = 0;
         int entriesPerDifatSector = (hdr.SectorSize / 4) - 1;
         var visitedDifat = new HashSet<uint>();
-        while (difatSector != Constants.CompoundFile.EndOfChain && difatSector != Constants.CompoundFile.FreeSect && difatSectorsRead < safeDifatSectors)
+        while (difatSector != global::JetDatabaseWriter.Constants.CompoundFile.EndOfChain
+            && difatSector != global::JetDatabaseWriter.Constants.CompoundFile.FreeSect
+            && difatSectorsRead < safeDifatSectors)
         {
             if (!visitedDifat.Add(difatSector))
             {
@@ -159,7 +153,7 @@ internal static class CompoundFileReader
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
                 uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
-                if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)safeFatSectors)
+                if (entry < global::JetDatabaseWriter.Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)safeFatSectors)
                 {
                     fatSectorIds.Add(entry);
                 }
@@ -191,7 +185,9 @@ internal static class CompoundFileReader
         uint[] fat,
         CancellationToken cancellationToken)
     {
-        if (hdr.NumMiniFatSectors == 0 || hdr.FirstMiniFatSector == Constants.CompoundFile.EndOfChain || hdr.FirstMiniFatSector == Constants.CompoundFile.FreeSect)
+        if (hdr.NumMiniFatSectors == 0
+            || hdr.FirstMiniFatSector == global::JetDatabaseWriter.Constants.CompoundFile.EndOfChain
+            || hdr.FirstMiniFatSector == global::JetDatabaseWriter.Constants.CompoundFile.FreeSect)
         {
             return [];
         }
@@ -224,7 +220,9 @@ internal static class CompoundFileReader
             ? BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x78))
             : (long)BinaryPrimitives.ReadUInt64LittleEndian(directory.AsSpan(0x78, 8));
 
-        if (rootStart == Constants.CompoundFile.EndOfChain || rootStart == Constants.CompoundFile.FreeSect || rootSize <= 0)
+        if (rootStart == global::JetDatabaseWriter.Constants.CompoundFile.EndOfChain
+            || rootStart == global::JetDatabaseWriter.Constants.CompoundFile.FreeSect
+            || rootSize <= 0)
         {
             return [];
         }
@@ -243,14 +241,14 @@ internal static class CompoundFileReader
         uint[] miniFat,
         CancellationToken cancellationToken)
     {
-        int dirCount = directory.Length / Constants.CompoundFile.DirEntrySize;
+        int dirCount = directory.Length / global::JetDatabaseWriter.Constants.CompoundFile.DirEntrySize;
 
         // Upper-bound the capacity to the directory entry count so the
         // dictionary never has to rehash while we walk the directory.
         var streams = new Dictionary<string, byte[]>(dirCount, StringComparer.Ordinal);
         for (int i = 0; i < dirCount; i++)
         {
-            int off = i * Constants.CompoundFile.DirEntrySize;
+            int off = i * global::JetDatabaseWriter.Constants.CompoundFile.DirEntrySize;
 
             // 0 = unallocated, 1 = storage, 2 = stream, 5 = root
             if (directory[off + 0x42] != 2)
@@ -258,7 +256,7 @@ internal static class CompoundFileReader
                 continue;
             }
 
-            ReadOnlySpan<byte> entry = directory.AsSpan(off, Constants.CompoundFile.DirEntrySize);
+            ReadOnlySpan<byte> entry = directory.AsSpan(off, global::JetDatabaseWriter.Constants.CompoundFile.DirEntrySize);
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(0x40, 2));
             if (nameLen == 0 || nameLen > 64)
             {
@@ -415,7 +413,8 @@ internal static class CompoundFileReader
         int safety = 0;
         int limit = fat.Length + 16;
         uint cur = startSector;
-        while (cur != Constants.CompoundFile.EndOfChain && cur != Constants.CompoundFile.FreeSect)
+        while (cur != global::JetDatabaseWriter.Constants.CompoundFile.EndOfChain
+            && cur != global::JetDatabaseWriter.Constants.CompoundFile.FreeSect)
         {
             if (cur >= fat.Length)
             {

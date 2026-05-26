@@ -4,7 +4,6 @@ using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
-using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Tests.Encryption;
 
 #pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.
@@ -24,9 +23,6 @@ using JetDatabaseWriter.Tests.Encryption;
 /// </summary>
 internal static class AgileEncryptionFixtureBuilder
 {
-    // CFB v4 magic signature (MS-CFB §2.2). Sourced from the production reader to avoid duplication.
-    private static ReadOnlySpan<byte> CfbMagic => CompoundFileReader.CfbSignature;
-
     // ── Agile spec block-key constants (ECMA-376 §2.3.4.13) ─────────────
 
     private static readonly byte[] BlockKeyVerifierHashInput =
@@ -449,7 +445,7 @@ internal static class AgileEncryptionFixtureBuilder
         // (the backing array is already zero-initialized, so we only write the populated fields).
         Span<byte> h = file.AsSpan(0, 512);
 
-        CfbMagic.CopyTo(h);
+        Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18, 2), 0x003E); // minor version
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A, 2), 0x0004); // major version (v4 = 4096-byte sectors)
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C, 2), 0xFFFE); // little-endian byte order marker

@@ -300,7 +300,7 @@ internal static class EncryptionConverter
         // header so the reader / writer detect the legacy AES path. The
         // rest of the ACCDB header (including code page, format byte at
         // 0x14, and the password-area we just wrote) survives intact.
-        CompoundFileReader.CfbSignature.CopyTo(result);
+        Constants.CompoundFile.Signature.CopyTo(result);
 
         byte[] aesKey = DeriveAesPageKey(password);
         using var keys = new PageDecryptionKeys { AesPageKey = aesKey };
@@ -334,7 +334,7 @@ internal static class EncryptionConverter
 
     private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
     {
-        const int miniStreamCutoff = 4096;
+        const int miniStreamCutoff = Constants.CompoundFile.StandardMiniStreamCutoff;
         if (encryptionInfo.Length >= miniStreamCutoff)
         {
             return encryptionInfo;
@@ -532,8 +532,8 @@ internal static class EncryptionConverter
             return false;
         }
 
-        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1A, 2));
-        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1E, 2));
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MajorVersion, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.SectorShift, 2));
 
         return (majorVersion == Constants.CompoundFile.V3.MajorVersion && sectorShift == Constants.CompoundFile.V3.SectorShift) ||
             (majorVersion == Constants.CompoundFile.V4.MajorVersion && sectorShift == Constants.CompoundFile.V4.SectorShift);

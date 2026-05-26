@@ -698,7 +698,7 @@ public abstract class AccessBase : IAccessBase
             cancellationToken.ThrowIfCancellationRequested();
             _ = seen.Add(pg);
             byte[] p = await ReadPageAsync(pg, cancellationToken).ConfigureAwait(false);
-            if (p[0] != 0x02)
+            if (p[0] != Constants.PageTypes.TableDefinition)
             {
                 ReturnPage(p);
                 break;
@@ -758,12 +758,12 @@ public abstract class AccessBase : IAccessBase
         int numRealIdx = Ri32(td, _tdef.NumRealIdx);
 
         // Safety: corrupt or unusual TDEFs can report absurd index counts
-        if (numRealIdx < 0 || numRealIdx > 1000)
+        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
 
-        if (numCols > 4096)
+        if (numCols > Constants.TableDefinition.MaxColumns)
         {
             return null;
         }
@@ -809,8 +809,8 @@ public abstract class AccessBase : IAccessBase
                 // scale Access shows in Design View. Same byte positions as
                 // the Jackcess `FixedPointColumnDescriptor` parser. Other
                 // column types leave these at 0.
-                NumericPrecision = td[o + _colDesc.TypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colDesc.MiscOff] : (byte)0,
-                NumericScale = td[o + _colDesc.TypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colDesc.MiscOff + 1] : (byte)0,
+                NumericPrecision = td[o + _colDesc.TypeOff] == T_NUMERIC ? td[o + _colDesc.MiscOff] : (byte)0,
+                NumericScale = td[o + _colDesc.TypeOff] == T_NUMERIC ? td[o + _colDesc.MiscOff + 1] : (byte)0,
             });
         }
 
@@ -837,7 +837,9 @@ public abstract class AccessBase : IAccessBase
         var tableDef = new TableDef
         {
             Columns = cols,
-            RowCount = td.Length > 20 ? Ru32(td, 16) : 0,
+            RowCount = td.Length >= Constants.TableDefinition.RowCountOffset + sizeof(uint)
+                ? Ru32(td, Constants.TableDefinition.RowCountOffset)
+                : 0,
             HasDeletedColumns = hasDeletedColumns,
         };
         tableDef.InitializeColumnMetadata();
@@ -1024,7 +1026,7 @@ public abstract class AccessBase : IAccessBase
         int posCount = 0;
         for (int r = 0; r < numRows; r++)
         {
-            int pos = rawOffsets[r] & 0x1FFF;
+            int pos = rawOffsets[r] & Constants.DataPage.RowOffsetMask;
             if (pos > 0 && pos < _pgSz)
             {
                 positions[posCount++] = pos;
@@ -1036,12 +1038,12 @@ public abstract class AccessBase : IAccessBase
         for (int r = 0; r < numRows; r++)
         {
             int raw = rawOffsets[r];
-            if ((raw & 0xC000) != 0)
+            if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
             {
                 continue;
             }
 
-            int rowStart = raw & 0x1FFF;
+            int rowStart = raw & Constants.DataPage.RowOffsetMask;
             int rowEnd = _pgSz - 1;
             int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
             int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
@@ -1093,13 +1095,13 @@ public abstract class AccessBase : IAccessBase
             int raw = Ru16(page, _dataPage.RowsStart + (r * 2));
             rawOffsets[r] = raw;
 
-            int pos = raw & 0x1FFF;
+            int pos = raw & Constants.DataPage.RowOffsetMask;
             if (pos > 0 && pos < _pgSz)
             {
                 positions[posCount++] = pos;
             }
 
-            if ((raw & 0xC000) == 0)
+            if ((raw & Constants.DataPage.NonLiveRowFlags) == 0)
             {
                 liveCount++;
             }
@@ -1117,12 +1119,12 @@ public abstract class AccessBase : IAccessBase
         for (int r = 0; r < numRows; r++)
         {
             int raw = rawOffsets[r];
-            if ((raw & 0xC000) != 0)
+            if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
             {
                 continue;
             }
 
-            int rowStart = raw & 0x1FFF;
+            int rowStart = raw & Constants.DataPage.RowOffsetMask;
             int rowEnd = _pgSz - 1;
             int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
             int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;

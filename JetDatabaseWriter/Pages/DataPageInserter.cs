@@ -18,11 +18,11 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 {
     internal static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
     {
-        tdefPage[0x37] = 0x00;
-        WriteUInt24(tdefPage, 0x38, usageMapPageNumber);
+        tdefPage[Constants.TableDefinition.OwnedPagesRowOffset] = 0x00;
+        WriteUInt24(tdefPage, Constants.TableDefinition.OwnedPagesPageOffset, usageMapPageNumber);
 
-        tdefPage[0x3B] = 0x01;
-        WriteUInt24(tdefPage, 0x3C, usageMapPageNumber);
+        tdefPage[Constants.TableDefinition.FreePagesRowOffset] = 0x01;
+        WriteUInt24(tdefPage, Constants.TableDefinition.FreePagesPageOffset, usageMapPageNumber);
     }
 
     internal static void PatchAutoNumFlag(byte[] tdefPage, TableDef tableDef)
@@ -44,7 +44,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         if (writer.TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
             byte[] cached = await writer.ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == 0x01 && Ri32(cached, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            if (cached[0] == Constants.PageTypes.Data && Ri32(cached, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
             {
                 return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
@@ -103,7 +103,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
                 cancellationToken.ThrowIfCancellationRequested();
 
                 byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                if (page[0] == 0x01 && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+                if (page[0] == Constants.PageTypes.Data && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
                 {
                     writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
                     return new PageInsertTarget { PageNumber = pageNumber, Page = page };
@@ -121,7 +121,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] == 0x01 && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+            if (page[0] == Constants.PageTypes.Data && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
             {
                 writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
                 return new PageInsertTarget { PageNumber = pageNumber, Page = page };
@@ -146,8 +146,10 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            usageMapRow = tdef[0x37];
-            usageMapPageNumber = tdef[0x38] | (tdef[0x39] << 8) | (tdef[0x3A] << 16);
+            usageMapRow = tdef[Constants.TableDefinition.OwnedPagesRowOffset];
+            usageMapPageNumber = tdef[Constants.TableDefinition.OwnedPagesPageOffset]
+                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
+                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
             if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
             {
                 return null;
@@ -161,7 +163,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         byte[] usageMapPage = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (usageMapPage[0] != 0x01)
+            if (usageMapPage[0] != Constants.PageTypes.Data)
             {
                 return null;
             }
@@ -236,8 +238,6 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     {
         const int ReferenceMapPointerOffset = 1;
         const int ReferenceMapBitmapOffset = 4;
-        const byte UsageMapPageType = 0x05;
-
         int pointerCount = (rowBound.RowSize - ReferenceMapPointerOffset) / 4;
         int pagesPerMapPage = (writer._pgSz - ReferenceMapBitmapOffset) * 8;
         for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
@@ -259,7 +259,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             byte[] referencePage = await writer.ReadPageAsync(referencePageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (referencePage[0] != UsageMapPageType)
+                if (referencePage[0] != Constants.PageTypes.UsageMap)
                 {
                     return false;
                 }
@@ -308,10 +308,14 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         byte[] tdef = await writer.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int ownedRow = tdef[0x37];
-            int ownedPage = tdef[0x38] | (tdef[0x39] << 8) | (tdef[0x3A] << 16);
-            int freeRow = tdef[0x3B];
-            int freePage = tdef[0x3C] | (tdef[0x3D] << 8) | (tdef[0x3E] << 16);
+            int ownedRow = tdef[Constants.TableDefinition.OwnedPagesRowOffset];
+            int ownedPage = tdef[Constants.TableDefinition.OwnedPagesPageOffset]
+                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
+                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
+            int freeRow = tdef[Constants.TableDefinition.FreePagesRowOffset];
+            int freePage = tdef[Constants.TableDefinition.FreePagesPageOffset]
+                | (tdef[Constants.TableDefinition.FreePagesPageOffset + 1] << 8)
+                | (tdef[Constants.TableDefinition.FreePagesPageOffset + 2] << 16);
             if (ownedPage == 0)
             {
                 return;
@@ -363,7 +367,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
     {
         int rowOffPos = writer._dataPage.RowsStart + (rowIndex * 2);
-        int rowOff = Ru16(umPage, rowOffPos) & 0x1FFF;
+        int rowOff = Ru16(umPage, rowOffPos) & Constants.DataPage.RowOffsetMask;
         if (rowOff == 0)
         {
             return false;
@@ -415,7 +419,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         for (int i = 0; i < numRows; i++)
         {
             int raw = Ru16(page, writer._dataPage.RowsStart + (i * 2));
-            int start = raw & 0x1FFF;
+            int start = raw & Constants.DataPage.RowOffsetMask;
             if (start > 0 && start < first)
             {
                 first = start;
@@ -428,7 +432,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     internal byte[] CreateEmptyDataPage(long tdefPage)
     {
         byte[] page = new byte[writer._pgSz];
-        page[0] = 0x01;
+        page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
         Wu16(page, 2, writer._pgSz - writer._dataPage.RowsStart);
         Wi32(page, writer._dataPage.TDefOff, (int)tdefPage);
@@ -439,7 +443,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     internal async ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
     {
         byte[] page = new byte[writer._pgSz];
-        page[0] = 0x01;
+        page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
         const int rowSize = 69;

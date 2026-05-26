@@ -67,7 +67,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
             byte[] page = await writer.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || AccessBase.Ri32(page, writer._dataPage.TDefOff) != childEntry.TDefPage)
+                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return null;
                 }

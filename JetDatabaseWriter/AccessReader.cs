@@ -454,7 +454,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             for (int r = 0; r < numRows; r++)
             {
                 int raw = Ru16(page, _dataPage.RowsStart + (r * 2));
-                if ((raw & 0xC000) != 0)
+                if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
                 {
                     continue;
                 }
@@ -952,7 +952,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
     {
-        if ((col.Flags & 0x04) != 0)
+        if ((col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
         {
             return false;
         }
@@ -963,7 +963,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return !r;
         }
 
-        return (col.Flags & 0x08) == 0;
+        return (col.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
     }
 
     private static int? GetMetadataMaxLength(ColumnInfo col)
@@ -1142,12 +1142,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int numRealIdx = Ri32(td, _tdef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
-        if (numIdx <= 0 || numIdx > 1000)
+        if (numIdx <= 0 || numIdx > Constants.TableDefinition.MaxIndexes)
         {
             return [];
         }
 
-        if (numRealIdx < 0 || numRealIdx > 1000)
+        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
@@ -1231,7 +1231,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             // Access often leaves the real-index unique flag clear on primary
             // keys; their semantic uniqueness is conveyed by index_type=0x01.
-            bool hasUniqueFlag = (flags & 0x01) != 0;
+            bool hasUniqueFlag = (flags & Constants.TableDefinition.UniqueIndexFlag) != 0;
 
             result.Add(new IndexMetadata
             {
@@ -1240,8 +1240,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 RealIndexNumber = realIdxNum,
                 Kind = indexType,
                 HasUniqueFlag = hasUniqueFlag,
-                IgnoreNulls = (flags & 0x02) != 0,
-                IsRequired = (flags & 0x08) != 0,
+                IgnoreNulls = (flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0,
+                IsRequired = (flags & Constants.TableDefinition.RequiredIndexFlag) != 0,
                 IsForeignKey = relIdxNum != -1,
                 RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
 
@@ -1312,7 +1312,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != entry.TDefPage)
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != entry.TDefPage)
         {
             return null;
         }
@@ -2694,13 +2694,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] tdef = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            const int OwnedPagesPointerOffset = 0x37;
-            if (tdef[0] != 0x02 || !TryReadUsageMapPointer(tdef, OwnedPagesPointerOffset, out int usageMapRow, out int usageMapPage))
+            if (tdef[0] != Constants.PageTypes.TableDefinition || !TryReadUsageMapPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out int usageMapRow, out int usageMapPage))
             {
                 return null;
             }
 
-            uint declaredRows = tdef.Length > 20 ? Ru32(tdef, 16) : 0;
+            uint declaredRows = tdef.Length >= Constants.TableDefinition.RowCountOffset + sizeof(uint)
+                ? Ru32(tdef, Constants.TableDefinition.RowCountOffset)
+                : 0;
             return await TryReadMappedOwnedDataPagesAsync(
                 tdefPage,
                 usageMapPage,
@@ -2731,7 +2732,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] usageMapPage = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (usageMapPage[0] != 0x01 || !TryFindLiveRowBound(usageMapPage, usageMapPageNumber, usageMapRow, out RowBound rowBound))
+            if (usageMapPage[0] != Constants.PageTypes.Data || !TryFindLiveRowBound(usageMapPage, usageMapPageNumber, usageMapRow, out RowBound rowBound))
             {
                 return null;
             }
@@ -2815,8 +2816,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         const int ReferenceMapPointerOffset = 1;
         const int ReferenceMapBitmapOffset = 4;
-        const byte UsageMapPageType = 0x05;
-
         int pointerCount = (rowBound.RowSize - ReferenceMapPointerOffset) / 4;
         int pagesPerMapPage = (_pgSz - ReferenceMapBitmapOffset) * 8;
         for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
@@ -2838,7 +2837,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte[] referencePage = await ReadPageAsync(referencePageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (referencePage[0] != UsageMapPageType)
+                if (referencePage[0] != Constants.PageTypes.UsageMap)
                 {
                     return false;
                 }
@@ -2885,7 +2884,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != tdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != tdefPage)
                 {
                     return false;
                 }
@@ -2916,7 +2915,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01)
+                if (page[0] != Constants.PageTypes.Data)
                 {
                     continue;
                 }
@@ -3786,12 +3785,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_OLE:
                     {
                         bool isOle = col.Type == T_OLE;
-                        if (len >= 12 && (page[start + 3] & 0xC0) == 0x80)
+                        if (len >= Constants.LongValue.HeaderSize
+                            && (page[start + 3] & Constants.LongValue.StorageModeMask) == Constants.LongValue.InlineStorageMode)
                         {
                             // Inline payload: data follows the 12-byte header
                             // directly within this row, no LVAL chain walk.
                             int memoLen = JetTypeInfo.ReadUInt24LittleEndian(page.AsSpan(start, 3));
-                            int memoStart = start + 12;
+                            int memoStart = start + Constants.LongValue.HeaderSize;
                             int inlineLen = Math.Min(memoLen, page.Length - memoStart);
                             if (inlineLen <= 0)
                             {

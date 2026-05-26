@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -559,7 +558,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
-        CompoundFileReader.CfbSignature.CopyTo(data.AsSpan(0, CompoundFileReader.CfbSignature.Length));
+        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(data.AsSpan(0, JetDatabaseWriter.Constants.CompoundFile.Signature.Length));
 
         // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);

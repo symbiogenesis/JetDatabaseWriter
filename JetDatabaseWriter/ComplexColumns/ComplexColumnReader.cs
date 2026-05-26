@@ -83,7 +83,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         int numCols = AccessBase.Ru16(td, _reader._tdef.NumCols);
         int numRealIdx = AccessBase.Ri32(td, _reader._tdef.NumRealIdx);
-        if (numRealIdx < 0 || numRealIdx > 1000)
+        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }

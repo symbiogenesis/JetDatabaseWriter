@@ -306,7 +306,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = (byte[])source.Clone();
 
         // 1. Write CFB magic signature at bytes 0-7 (OLE2 Compound File Binary)
-        CompoundFileReader.CfbSignature.CopyTo(data);
+        Constants.CompoundFile.Signature.CopyTo(data);
 
         // 2. Encode password at offset 0x42 using the Jet4 XOR scheme
         //    so that DecodeJet4Password(hdr) returns the same password.

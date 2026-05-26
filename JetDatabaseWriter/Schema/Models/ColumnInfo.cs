@@ -110,7 +110,7 @@ internal sealed class ColumnInfo
                 return false;
             }
 
-            return (Flags & 0x01) != 0; // FLAG_FIXED
+            return (Flags & Constants.ColumnDescriptorFlags.Fixed) != 0;
         }
     }
 }

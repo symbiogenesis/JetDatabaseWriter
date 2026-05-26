@@ -341,7 +341,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || AccessBase.Ri32(page, writer._dataPage.TDefOff) != acesTdefPage)
+                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != acesTdefPage)
                 {
                     continue;
                 }
@@ -437,7 +437,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
+            if (page[0] != Constants.PageTypes.Data)
             {
                 AccessBase.ReturnPage(page);
                 continue;
@@ -507,7 +507,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || AccessBase.Ri32(page, writer._dataPage.TDefOff) != 2)
+                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != 2)
                 {
                     continue;
                 }

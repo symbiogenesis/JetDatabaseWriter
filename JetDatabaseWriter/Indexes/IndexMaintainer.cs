@@ -94,7 +94,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return (TdefPreambleStatus.Empty, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
         }
 
-        if (numIdx > 1000 || numRealIdx > 1000)
+        if (numIdx > Constants.TableDefinition.MaxIndexes || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             return (TdefPreambleStatus.TooMany, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
         }
@@ -545,7 +545,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         byte[] page = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (page[0] != 0x01)
+            if (page[0] != Constants.PageTypes.Data)
             {
                 return null;
             }
@@ -635,7 +635,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            return page[0] is 0x03 or 0x04 && AccessBase.Ri32(page, 4) == tdefPage;
+            return page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
+                && AccessBase.Ri32(page, 4) == tdefPage;
         }
         finally
         {
@@ -653,7 +654,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            return page[0] == 0x04 && AccessBase.Ri32(page, 4) == tdefPage;
+            return page[0] == Constants.PageTypes.IndexLeaf && AccessBase.Ri32(page, 4) == tdefPage;
         }
         finally
         {
@@ -675,7 +676,9 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     }
 
     private static int ReadTableUsageMapPage(byte[] tdefBuffer) =>
-        tdefBuffer[0x38] | (tdefBuffer[0x39] << 8) | (tdefBuffer[0x3A] << 16);
+        tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset]
+        | (tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
+        | (tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
 
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
     {
