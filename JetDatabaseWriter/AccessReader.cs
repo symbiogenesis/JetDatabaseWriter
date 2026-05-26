@@ -3285,7 +3285,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return declaredRows == 0 ? [] : null;
             }
 
-            return await ValidateOwnedDataPagesAsync(tdefPage, mappedPages, cancellationToken).ConfigureAwait(false)
+            return await ValidateOwnedDataPagesAsync(tdefPage, mappedPages, declaredRows, cancellationToken).ConfigureAwait(false)
                 ? [.. mappedPages]
                 : null;
         }
@@ -3398,8 +3398,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return true;
     }
 
-    private async ValueTask<bool> ValidateOwnedDataPagesAsync(long tdefPage, List<long> pageNumbers, CancellationToken cancellationToken)
+    private async ValueTask<bool> ValidateOwnedDataPagesAsync(
+        long tdefPage,
+        List<long> pageNumbers,
+        uint declaredRows,
+        CancellationToken cancellationToken)
     {
+        long liveRows = 0;
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3411,6 +3416,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 {
                     return false;
                 }
+
+                if (declaredRows > 0)
+                {
+                    liveRows += GetLiveRowBoundsCached(pageNumber, page).Length;
+                }
             }
             finally
             {
@@ -3418,7 +3428,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        return true;
+        return declaredRows == 0 || liveRows >= declaredRows;
     }
 
     private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)

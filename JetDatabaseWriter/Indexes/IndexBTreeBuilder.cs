@@ -256,7 +256,8 @@ internal static class IndexBTreeBuilder
         IReadOnlyList<DecodedIntermediateEntry> entries,
         long prevPage,
         long nextPage,
-        long tailPage)
+        long tailPage,
+        int? maxPrefixLength = null)
     {
         Guard.NotNull(entries, nameof(entries));
 
@@ -274,7 +275,7 @@ internal static class IndexBTreeBuilder
 
         try
         {
-            return BuildIntermediatePage(layout, pageSize, parentTdefPage, packed, prevPage, nextPage, tailPage);
+            return BuildIntermediatePage(layout, pageSize, parentTdefPage, packed, prevPage, nextPage, tailPage, maxPrefixLength);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -338,7 +339,8 @@ internal static class IndexBTreeBuilder
         IReadOnlyList<IntermediateEntry> entries,
         long prevPage,
         long nextPage,
-        long tailPage)
+        long tailPage,
+        int? maxPrefixLength = null)
     {
         byte[] page = new byte[pageSize];
 
@@ -355,6 +357,11 @@ internal static class IndexBTreeBuilder
         // shared encoded-key prefix into the header and strip it from every
         // entry beyond the first.
         int prefLen = ComputeIntermediatePrefixLength(entries);
+        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
+        {
+            prefLen = maxPrefixLength.Value;
+        }
+
         Wu16(page, layout.PrefLenOffset, prefLen);
 
         int payloadCursor = layout.FirstEntryOffset;

@@ -55,6 +55,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private readonly List<AccessRoundTripSession> _sessions = [];
     private Task<ComplexCompactResult>? _complexCompactResultTask;
     private Task<CoreValidationResult>? _coreResultTask;
+    private Task<DaoMemoResult>? _daoMemoResultTask;
     private Task<EncryptedCompactResult>? _encryptedCompactResultTask;
     private Task<StressCompactResult>? _stressCompactResultTask;
 
@@ -67,10 +68,13 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
     }
 
-    internal async Task<DaoMemoResult> GetDaoMemoResultAsync(CancellationToken cancellationToken)
+    internal Task<DaoMemoResult> GetDaoMemoResultAsync(CancellationToken cancellationToken)
     {
-        CoreValidationResult result = await GetCoreResultAsync(cancellationToken).ConfigureAwait(false);
-        return new DaoMemoResult(result.DaoAuthoredMemo);
+        lock (_sync)
+        {
+            _daoMemoResultTask ??= BuildDaoMemoResultAsync(cancellationToken);
+            return _daoMemoResultTask;
+        }
     }
 
     internal Task<EncryptedCompactResult> GetEncryptedCompactResultAsync(CancellationToken cancellationToken)
@@ -128,7 +132,6 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         EnsureDaoSuccess(result, "DAO validation script failed.");
 
         Dictionary<string, string> values = ParseKeyValueOutput(result.StdOut);
-        string daoAuthoredMemo = await ReadDaoAuthoredMemoAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
         return new CoreValidationResult(
             ParseInt(values, "ROWCOUNT"),
             GetRequired(values, "SEEK_LABEL"),
@@ -137,8 +140,25 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             DecodeUnicodeBase64(values, "MEMO_CJK"),
             DecodeUnicodeBase64(values, "MEMO_MIXED"),
             DecodeBinaryBase64(values, "MEMO_BIN"),
-            GetRequired(values, "FK_ERROR"),
-            daoAuthoredMemo);
+            GetRequired(values, "FK_ERROR"));
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
+    private async Task<DaoMemoResult> BuildDaoMemoResultAsync(CancellationToken cancellationToken)
+    {
+        AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
+        Track(session);
+
+        string databasePath = session.CreateDatabasePath("dao_memo");
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoCreateDatabaseScript(
+            databasePath,
+            CreateDatabaseAttributes,
+            BuildDaoMemoCreateScript(),
+            DaoTimeout);
+        EnsureDaoSuccess(result, "DAO memo oracle creation failed.");
+
+        string content = await ReadDaoAuthoredMemoAsync(databasePath, cancellationToken).ConfigureAwait(false);
+        return new DaoMemoResult(content);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
@@ -660,7 +680,10 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             }
         }
         Write-Output "FK_ERROR=$fkErrorCode"
+        """;
 
+    private string BuildDaoMemoCreateScript() =>
+        $$"""
         $rs = $null
         try {
             $db.Execute('CREATE TABLE {{MemoNulsTable}} (Id AUTOINCREMENT PRIMARY KEY, Content MEMO)')
@@ -776,8 +799,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         string MemoCjk,
         string MemoMixed,
         byte[] MemoBinary,
-        string FkErrorCode,
-        string DaoAuthoredMemo);
+        string FkErrorCode);
 
     internal sealed record DaoMemoResult(string Content);
 

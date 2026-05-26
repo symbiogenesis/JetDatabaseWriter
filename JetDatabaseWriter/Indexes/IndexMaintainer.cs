@@ -179,6 +179,71 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         return pageBytesAll;
     }
 
+    private SplitPages? TryBalancedTwoWayLeafSplit(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        List<IndexEntry> entries,
+        int maxPrefixLength)
+    {
+        if (entries.Count < 2)
+        {
+            return null;
+        }
+
+        SplitPages? best = null;
+        int bestFreeSpaceDifference = int.MaxValue;
+        int bestMinimumFreeSpace = -1;
+        for (int splitIndex = 1; splitIndex < entries.Count; splitIndex++)
+        {
+            var left = entries.GetRange(0, splitIndex);
+            var right = entries.GetRange(splitIndex, entries.Count - splitIndex);
+            if (!TryMeasureLeafFreeSpace(layout, left, maxPrefixLength, out int leftFree)
+                || !TryMeasureLeafFreeSpace(layout, right, maxPrefixLength, out int rightFree))
+            {
+                continue;
+            }
+
+            int freeSpaceDifference = Math.Abs(leftFree - rightFree);
+            int minimumFreeSpace = Math.Min(leftFree, rightFree);
+            if (freeSpaceDifference < bestFreeSpaceDifference
+                || (freeSpaceDifference == bestFreeSpaceDifference && minimumFreeSpace > bestMinimumFreeSpace))
+            {
+                best = new SplitPages([left, right]);
+                bestFreeSpaceDifference = freeSpaceDifference;
+                bestMinimumFreeSpace = minimumFreeSpace;
+            }
+        }
+
+        return best;
+    }
+
+    private bool TryMeasureLeafFreeSpace(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        List<IndexEntry> entries,
+        int maxPrefixLength,
+        out int freeSpace)
+    {
+        freeSpace = 0;
+        try
+        {
+            byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                writer._pgSz,
+                parentTdefPage: 0,
+                entries,
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: true,
+                maxPrefixLength: maxPrefixLength);
+            freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Adds a parent-intermediate op for a split leaf/intermediate.
     /// </summary>
@@ -1614,9 +1679,10 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
             byte[] pageBytes = step.PageBytes;
             var (prev, next, tail) = IndexLeafIncremental.ReadSiblingPointers(layout, pageBytes);
+            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(pageBytes.AsSpan(layout.PrefLenOffset, 2));
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, writer._pgSz, tdefPage, newEntries, prev, next, tail);
+                layout, writer._pgSz, tdefPage, newEntries, prev, next, tail, originalPrefLen);
             if (rebuilt is null)
             {
                 return null;
@@ -1690,9 +1756,10 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         byte[] parentBytes = step.PageBytes;
         var (parentPrev, parentNext, parentTail) = IndexLeafIncremental.ReadSiblingPointers(layout, parentBytes);
+        int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(parentBytes.AsSpan(layout.PrefLenOffset, 2));
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
-            layout, writer._pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail);
+            layout, writer._pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
         if (rebuiltParent is null)
         {
             // Parent overflow on insertion of the new summary entries —
@@ -3151,7 +3218,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             catch (ArgumentOutOfRangeException)
             {
                 // Leaf overflow → N-way split.
-                SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, writer._pgSz, spliced);
+                SplitPages? splitPages = TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
+                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, writer._pgSz, spliced);
                 if (splitPages is null)
                 {
                     LastIncrementalBail = $"S12 ri={ri} split failed";
@@ -3159,7 +3227,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 }
 
                 int splitCount = splitPages.Count;
-                long firstFreshPage = writer._stream.Length / writer._pgSz;
+                long firstFreshPage = await writer.ReserveContiguousPagesAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
                 long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
                 byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
@@ -3189,7 +3257,6 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                             layout,
                             tdefPage,
                             firstDp,
-                            tdefBuf,
                             rie.FirstDpOffset,
                             addEntries,
                             cancellationToken).ConfigureAwait(false);
@@ -3208,7 +3275,6 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                         layout,
                         tdefPage,
                         firstDp,
-                        tdefBuf,
                         rie.FirstDpOffset,
                         addEntries,
                         cancellationToken).ConfigureAwait(false);
@@ -3225,12 +3291,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 // rewrite original leaf, then ancestors.
                 for (int p = 1; p < splitCount; p++)
                 {
-                    long appended = await writer.AppendPageAsync(pageBytesAll[p], cancellationToken).ConfigureAwait(false);
-                    if (appended != pageNumbers[p])
-                    {
-                        LastIncrementalBail = $"S12d ri={ri} append mismatch expected={pageNumbers[p]} got={appended}";
-                        return false;
-                    }
+                    await writer.WritePageAsync(pageNumbers[p], pageBytesAll[p], cancellationToken).ConfigureAwait(false);
                 }
 
                 if (leafNext > 0)
@@ -3260,7 +3321,6 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
         long firstDp,
-        byte[] tdefBuffer,
         int firstDpOffset,
         List<IndexEntry> addEntries,
         CancellationToken cancellationToken)
@@ -3298,31 +3358,32 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             return false;
         }
 
-        long firstNewPage = writer._stream.Length / writer._pgSz;
         IndexBTreeBuilder.BuildResult build;
         try
         {
-            build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, firstNewPage);
+            long provisionalFirstPage = writer._stream.Length / writer._pgSz;
+            build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, provisionalFirstPage);
+            long firstNewPage = await writer.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
+            if (firstNewPage != provisionalFirstPage)
+            {
+                build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, firstNewPage);
+            }
         }
         catch (ArgumentOutOfRangeException)
         {
             return false;
         }
 
-        long expectedPage = firstNewPage;
+        long expectedPage = build.FirstPageNumber;
         foreach (byte[] page in build.Pages)
         {
-            long appended = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            if (appended != expectedPage)
-            {
-                return false;
-            }
-
+            await writer.WritePageAsync(expectedPage, page, cancellationToken).ConfigureAwait(false);
             expectedPage++;
         }
 
-        AccessBase.Wi32(tdefBuffer, firstDpOffset, checked((int)build.RootPageNumber));
-        await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+        byte[] currentTdef = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        AccessBase.Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
+        await writer.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
         return true;
     }
 }

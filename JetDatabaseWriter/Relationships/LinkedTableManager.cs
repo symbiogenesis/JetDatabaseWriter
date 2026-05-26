@@ -419,7 +419,7 @@ internal static class LinkedTableManager
             : Directory.GetCurrentDirectory();
         string resolvedPath = ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
         bool isWithinHostDatabaseDirectory = hasHostDatabasePath && IsPathWithinDirectory(resolvedPath, baseDirectory);
-        bool callbackApproved = linkedSourcePathValidator?.Invoke(link, resolvedPath) ?? false;
+        bool callbackApproved = linkedSourcePathValidator?.Invoke(link with { }, resolvedPath) ?? false;
         string? allowlistRoot = linkedSourcePathAllowlist.FirstOrDefault(root => IsPathWithinDirectory(resolvedPath, root));
 
         if (!hasHostDatabasePath && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)

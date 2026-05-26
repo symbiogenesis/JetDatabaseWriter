@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Pages;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -95,6 +96,26 @@ internal sealed class DataPageInserter(AccessWriter writer)
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
+        List<long>? mappedPages = await TryReadMappedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (mappedPages is not null)
+        {
+            foreach (long pageNumber in mappedPages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                if (page[0] == 0x01 && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+                {
+                    writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
+                    return new PageInsertTarget { PageNumber = pageNumber, Page = page };
+                }
+
+                ReturnPage(page);
+            }
+
+            return null;
+        }
+
         long total = writer._stream.Length / writer._pgSz;
         for (long pageNumber = 1; pageNumber < total; pageNumber++)
         {
@@ -111,6 +132,165 @@ internal sealed class DataPageInserter(AccessWriter writer)
         }
 
         return null;
+    }
+
+    private async ValueTask<List<long>?> TryReadMappedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        long totalPages = writer._stream.Length / writer._pgSz;
+        if (tdefPage <= 0 || tdefPage >= totalPages)
+        {
+            return null;
+        }
+
+        int usageMapRow;
+        int usageMapPageNumber;
+        byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            usageMapRow = tdef[0x37];
+            usageMapPageNumber = tdef[0x38] | (tdef[0x39] << 8) | (tdef[0x3A] << 16);
+            if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
+            {
+                return null;
+            }
+        }
+        finally
+        {
+            ReturnPage(tdef);
+        }
+
+        byte[] usageMapPage = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (usageMapPage[0] != 0x01)
+            {
+                return null;
+            }
+
+            foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(usageMapPage))
+            {
+                if (rowBound.RowIndex != usageMapRow || rowBound.RowSize <= 0)
+                {
+                    continue;
+                }
+
+                var mappedPages = new List<long>();
+                return usageMapPage[rowBound.RowStart] switch
+                {
+                    0x00 => TryReadInlineMappedPages(usageMapPage, rowBound, totalPages, mappedPages) ? mappedPages : null,
+                    0x01 => await TryReadReferenceMappedPagesAsync(usageMapPage, rowBound, totalPages, mappedPages, cancellationToken).ConfigureAwait(false) ? mappedPages : null,
+                    _ => null,
+                };
+            }
+
+            return null;
+        }
+        finally
+        {
+            ReturnPage(usageMapPage);
+        }
+    }
+
+    private bool TryReadInlineMappedPages(byte[] usageMapPage, RowBound rowBound, long totalPages, List<long> mappedPages)
+    {
+        const int InlineBitmapOffset = 5;
+
+        if (rowBound.RowSize <= InlineBitmapOffset)
+        {
+            return false;
+        }
+
+        int startPage = Ri32(usageMapPage, rowBound.RowStart + 1);
+        if (startPage < 0)
+        {
+            return false;
+        }
+
+        int bitmapBytes = Math.Min(rowBound.RowSize - InlineBitmapOffset, writer._pgSz - rowBound.RowStart - InlineBitmapOffset);
+        for (int bitIndex = 0; bitIndex < bitmapBytes * 8; bitIndex++)
+        {
+            int byteOffset = rowBound.RowStart + InlineBitmapOffset + (bitIndex / 8);
+            byte bitMask = (byte)(1 << (bitIndex % 8));
+            if ((usageMapPage[byteOffset] & bitMask) == 0)
+            {
+                continue;
+            }
+
+            long pageNumber = (long)startPage + bitIndex;
+            if (pageNumber <= 0 || pageNumber >= totalPages)
+            {
+                return false;
+            }
+
+            mappedPages.Add(pageNumber);
+        }
+
+        return true;
+    }
+
+    private async ValueTask<bool> TryReadReferenceMappedPagesAsync(
+        byte[] usageMapPage,
+        RowBound rowBound,
+        long totalPages,
+        List<long> mappedPages,
+        CancellationToken cancellationToken)
+    {
+        const int ReferenceMapPointerOffset = 1;
+        const int ReferenceMapBitmapOffset = 4;
+        const byte UsageMapPageType = 0x05;
+
+        int pointerCount = (rowBound.RowSize - ReferenceMapPointerOffset) / 4;
+        int pagesPerMapPage = (writer._pgSz - ReferenceMapBitmapOffset) * 8;
+        for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int pointerOffset = rowBound.RowStart + ReferenceMapPointerOffset + (pointerIndex * 4);
+            int referencePageNumber = Ri32(usageMapPage, pointerOffset);
+            if (referencePageNumber == 0)
+            {
+                continue;
+            }
+
+            if (referencePageNumber < 0 || referencePageNumber >= totalPages)
+            {
+                return false;
+            }
+
+            byte[] referencePage = await writer.ReadPageAsync(referencePageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (referencePage[0] != UsageMapPageType)
+                {
+                    return false;
+                }
+
+                int bitCapacity = (writer._pgSz - ReferenceMapBitmapOffset) * 8;
+                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                {
+                    int byteOffset = ReferenceMapBitmapOffset + (bitIndex / 8);
+                    byte bitMask = (byte)(1 << (bitIndex % 8));
+                    if ((referencePage[byteOffset] & bitMask) == 0)
+                    {
+                        continue;
+                    }
+
+                    long pageNumber = ((long)pointerIndex * pagesPerMapPage) + bitIndex;
+                    if (pageNumber <= 0 || pageNumber >= totalPages)
+                    {
+                        return false;
+                    }
+
+                    mappedPages.Add(pageNumber);
+                }
+            }
+            finally
+            {
+                ReturnPage(referencePage);
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
