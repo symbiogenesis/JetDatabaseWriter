@@ -2186,8 +2186,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         try
         {
-            // The coordinator drains every step in order, captures the first
-            // failure, then unconditionally releases the .ldb / .laccdb slot.
+            // The coordinator drains every step in order, aggregates failures,
+            // then unconditionally releases the .ldb / .laccdb slot.
             await _lockFile.DisposeAfterAsync(
                 waitForOperations,
                 DisposeReaderResourcesAsync).ConfigureAwait(false);

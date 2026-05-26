@@ -1945,8 +1945,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        // The coordinator drains every step in order, captures the first
-        // failure, and unconditionally releases the .ldb / .laccdb slot last.
+        // The coordinator drains every step in order, aggregates failures,
+        // and unconditionally releases the .ldb / .laccdb slot last.
         // Lock-file release runs after the agile re-wrap so the lock-file
         // accurately reflects "database still in use" while we re-encrypt.
         await _lockFileCoordinator.DisposeAfterAsync(

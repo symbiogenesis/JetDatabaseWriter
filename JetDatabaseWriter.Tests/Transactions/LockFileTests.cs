@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>
@@ -413,6 +414,57 @@ public sealed class LockFileTests : IDisposable
     {
         var options = new AccessWriterOptions();
         Assert.True(options.UseLockFile);
+    }
+
+    [Fact]
+    public async Task DisposeAfterAsync_WhenOneStepFails_ThrowsOriginalException()
+    {
+        using var coordinator = new LockFileCoordinator(
+            string.Empty,
+            nameof(LockFileTests),
+            new LockFileSettings(Enabled: false));
+        var expected = new InvalidOperationException("first cleanup failed");
+
+        InvalidOperationException actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.DisposeAfterAsync(() => ValueTask.FromException(expected)));
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task DisposeAfterAsync_WhenMultipleStepsFail_ThrowsAggregateException()
+    {
+        using var coordinator = new LockFileCoordinator(
+            string.Empty,
+            nameof(LockFileTests),
+            new LockFileSettings(Enabled: false));
+        var first = new InvalidOperationException("first cleanup failed");
+        var second = new IOException("second cleanup failed");
+        int stepsRun = 0;
+
+        AggregateException actual = await Assert.ThrowsAsync<AggregateException>(async () =>
+            await coordinator.DisposeAfterAsync(
+                () =>
+                {
+                    stepsRun++;
+                    return ValueTask.FromException(first);
+                },
+                () =>
+                {
+                    stepsRun++;
+                    return ValueTask.CompletedTask;
+                },
+                () =>
+                {
+                    stepsRun++;
+                    return ValueTask.FromException(second);
+                }));
+
+        Assert.Equal(3, stepsRun);
+        Assert.Collection(
+            actual.InnerExceptions,
+            ex => Assert.Same(first, ex),
+            ex => Assert.Same(second, ex));
     }
 
     // ── Phase 1: populated lockfile slots ─────────────────────────────

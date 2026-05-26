@@ -52,41 +52,47 @@ public sealed class DatabaseCache : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        List<Exception>? exceptions = null;
+        List<Task> disposeTasks = [];
+        List<Exception> exceptions = [];
 
         foreach (var (key, lazy) in _readers)
         {
             if (!lazy.IsValueCreated)
             {
-                exceptions ??= [];
                 exceptions.Add(new InvalidOperationException("A reader was never created for path: " + key));
                 continue;
             }
 
-            try
-            {
-                var task = await lazy.Value;
+            disposeTasks.Add(DisposeReaderAsync(lazy));
+        }
 
-                if (task is not null)
-                {
-                    await task.DisposeAsync();
-                }
-            }
-#pragma warning disable CA1031 // Collect all failures so every reader is disposed
-            catch (Exception ex)
-#pragma warning restore CA1031
-            {
-                exceptions ??= [];
-                exceptions.Add(ex);
-            }
+        Task allDisposals = Task.WhenAll(disposeTasks);
+        await allDisposals.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        if (allDisposals.Exception is { } aggregate)
+        {
+            exceptions.AddRange(aggregate.InnerExceptions);
+        }
+        else if (allDisposals.IsCanceled)
+        {
+            exceptions.Add(new TaskCanceledException(allDisposals));
         }
 
         _readers.Clear();
         _fileCache.Clear();
 
-        if (exceptions is { Count: > 0 })
+        if (exceptions.Count > 0)
         {
             throw new AggregateException("One or more readers failed to dispose.", exceptions);
+        }
+    }
+
+    private static async Task DisposeReaderAsync(Lazy<Task<AccessReader>> lazy)
+    {
+        AccessReader? reader = await lazy.Value.ConfigureAwait(false);
+        if (reader is not null)
+        {
+            await reader.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

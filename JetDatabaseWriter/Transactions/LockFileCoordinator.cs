@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 
@@ -123,12 +125,14 @@ internal sealed class LockFileCoordinator : IDisposable
     }
 
     /// <summary>
-    /// Runs each of <paramref name="steps"/> in order, capturing the first failure
-    /// without short-circuiting subsequent steps, then unconditionally releases the
-    /// slot. Re-throws the first captured failure (lock-file release errors included)
-    /// after every step has completed. This collapses the "always release the .ldb /
-    /// .laccdb regardless of which earlier dispose step threw" pattern that the
-    /// reader and writer would otherwise duplicate.
+    /// Runs each of <paramref name="steps"/> in order, capturing failures without
+    /// short-circuiting subsequent steps, then unconditionally releases the slot.
+    /// Re-throws the captured failure after every step has completed, preserving
+    /// the original exception when only one cleanup path fails and throwing an
+    /// <see cref="AggregateException"/> when multiple failures occur. This
+    /// collapses the "always release the .ldb / .laccdb regardless of which
+    /// earlier dispose step threw" pattern that the reader and writer would
+    /// otherwise duplicate.
     /// </summary>
     /// <param name="steps">Disposal steps to run before releasing the slot.</param>
     /// <returns>A <see cref="ValueTask"/> that completes once every step and the slot release have run.</returns>
@@ -136,7 +140,7 @@ internal sealed class LockFileCoordinator : IDisposable
     {
         Guard.NotNull(steps, nameof(steps));
 
-        Exception? failure = null;
+        List<Exception>? failures = null;
 
         foreach (Func<ValueTask> step in steps)
         {
@@ -147,7 +151,8 @@ internal sealed class LockFileCoordinator : IDisposable
 #pragma warning disable CA1031 // Disposal aggregates failures and re-throws once, after all cleanup runs.
             catch (Exception ex)
             {
-                failure ??= ex;
+                failures ??= [];
+                failures.Add(ex);
             }
 #pragma warning restore CA1031
         }
@@ -159,14 +164,23 @@ internal sealed class LockFileCoordinator : IDisposable
 #pragma warning disable CA1031 // See above — disposal aggregates failures.
         catch (Exception ex)
         {
-            failure ??= ex;
+            failures ??= [];
+            failures.Add(ex);
         }
 #pragma warning restore CA1031
 
-        if (failure != null)
+        if (failures is null)
         {
-            throw failure;
+            return;
         }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            return;
+        }
+
+        throw new AggregateException("One or more disposal steps failed.", failures);
     }
 
     /// <inheritdoc/>
