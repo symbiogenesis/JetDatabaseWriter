@@ -72,6 +72,7 @@ JetDatabaseWriter/
 ├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowMapper.cs                       (column dispatch — routes to correct decoder)
 │   ├── TypedValueParser.cs                (individual column type parsing)
+│   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
 │   ├── LongValueDecoder.cs               (LVAL chain reading)
 │   └── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)
 │
@@ -151,6 +152,7 @@ JetDatabaseWriter/
 │   └── LinkedTableManager.cs              (Access/text/ODBC linked-table metadata and Access-file read-through)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
+│   ├── ComplexColumnReader.cs             (complex-column metadata and flat-table read APIs)
 │   ├── ComplexColumnManager.cs            (read/write complex column data)
 │   └── Models/
 │       └── AttachmentWrapper.cs

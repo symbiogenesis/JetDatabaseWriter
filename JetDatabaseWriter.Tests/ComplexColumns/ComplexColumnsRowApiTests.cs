@@ -6,9 +6,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
@@ -81,7 +81,7 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void AccessReader_DecompressAttachmentData_ZlibWrappedSample_InflatesFromHeader()
+    public void ComplexColumnReader_DecompressAttachmentData_ZlibWrappedSample_InflatesFromHeader()
     {
         byte[] raw =
         [
@@ -480,9 +480,7 @@ public sealed class ComplexColumnsRowApiTests
 
     private static byte[] InvokeDecompressAttachmentData(byte[] bytes, int offset)
     {
-        MethodInfo? method = typeof(AccessReader).GetMethod("DecompressAttachmentData", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-        return (byte[])method!.Invoke(null, [bytes, offset])!;
+        return ComplexColumnReader.DecompressAttachmentData(bytes, offset);
     }
 
     private static byte[] InflateWithZlib(byte[] bytes)

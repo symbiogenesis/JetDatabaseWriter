@@ -2,6 +2,9 @@ namespace JetDatabaseWriter.Tests.ComplexColumns;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Globalization;
+using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
@@ -17,6 +20,8 @@ using Xunit;
 /// </summary>
 public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
+    private const int AcePageSize = 4096;
+
     [Fact]
     public async Task GetComplexColumns_DocumentsAttachments_ReturnsSingleAttachment()
     {
@@ -70,5 +75,80 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
             Assert.False(string.IsNullOrEmpty(c.ColumnName));
             Assert.NotEqual(ComplexColumnKind.Unknown, c.Kind);
         });
+    }
+
+    [Fact]
+    public async Task ComplexMetadata_WhenMSysComplexColumnsTdefIsCorrupt_FallsBackWithoutThrowing()
+    {
+        byte[] database = await CreateAttachmentDatabaseAsync();
+        int complexColumnsTdefPage = await FindSystemTablePageAsync(database, "MSysComplexColumns");
+        database[complexColumnsTdefPage * AcePageSize] = 0x00;
+
+        await using var stream = new MemoryStream(database, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
+            "Documents",
+            TestContext.Current.CancellationToken);
+        ColumnMetadata files = Assert.Single(metadata, column => string.Equals(column.Name, "Files", StringComparison.Ordinal));
+        Assert.Equal("Complex", files.TypeName);
+
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync(
+            "Documents",
+            TestContext.Current.CancellationToken);
+        Assert.Empty(info);
+    }
+
+    private static async ValueTask<byte[]> CreateAttachmentDatabaseAsync()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Documents",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(object)) { IsAttachment = true },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static async ValueTask<int> FindSystemTablePageAsync(byte[] database, string tableName)
+    {
+        await using var stream = new MemoryStream(database, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable objects = await reader.ReadDataTableAsync(
+            "MSysObjects",
+            cancellationToken: TestContext.Current.CancellationToken);
+        foreach (DataRow row in objects.Rows)
+        {
+            string? name = Convert.ToString(row["Name"], CultureInfo.InvariantCulture);
+            if (!string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            long id = Convert.ToInt64(row["Id"], CultureInfo.InvariantCulture);
+            return checked((int)(id & 0x00FFFFFFL));
+        }
+
+        throw new InvalidDataException($"System table '{tableName}' was not found.");
     }
 }

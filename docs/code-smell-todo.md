@@ -37,11 +37,11 @@ Done criteria:
 
 Hotspot: [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs), including typed variable decoding around [ReadVarTypedSync](../JetDatabaseWriter/AccessReader.cs#L4306-L4345) and best-effort complex-column metadata fallback around [ReadComplexColumnSubtypesAsync](../JetDatabaseWriter/AccessReader.cs#L4574-L4581)
 
-- [ ] Extract complex column read APIs and metadata joins into a dedicated reader-side component.
-- [ ] Extract index seek row materialization from general table scanning.
-- [ ] Centralize typed-row decoding fallback rules so `DBNull.Value`, `[]`, skipped rows, and traced best-effort failures are applied consistently.
-- [ ] Audit strict parsing behavior across row decoding, complex column metadata, OLE extraction, and hyperlink wrapping.
-- [ ] Add tests that pin strict and non-strict behavior for malformed variable-area payloads and complex-column metadata corruption.
+- [x] Extract complex column read APIs and metadata joins into a dedicated reader-side component.
+- [x] Extract index seek row materialization from general table scanning.
+- [x] Centralize typed-row decoding fallback rules so `DBNull.Value`, `[]`, skipped rows, and traced best-effort failures are applied consistently.
+- [x] Audit strict parsing behavior across row decoding, complex column metadata, OLE extraction, and hyperlink wrapping.
+- [x] Add tests that pin strict and non-strict behavior for malformed variable-area payloads and complex-column metadata corruption.
 
 Done criteria:
 
@@ -98,6 +98,6 @@ Current largest production files from the smell pass:
 
 - [x] Fix [TypedValueParser.cs](../JetDatabaseWriter/ValueDecoding/TypedValueParser.cs#L13-L84) first because it has the highest risk of hiding bad data behind valid-looking results.
 - [x] Then reduce [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) internal forwarder debt, because it affects subsystem boundaries across the library.
-- [ ] Then carve reader-side complex column and typed-row fallback policy out of [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs).
+- [x] Then carve reader-side complex column and typed-row fallback policy out of [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs).
 - [ ] Then split [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) along lifecycle, TDEF mutation, and runtime enforcement boundaries.
 - [ ] Refactor [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs) after adding enough golden tests to protect Access-compatible semantics.

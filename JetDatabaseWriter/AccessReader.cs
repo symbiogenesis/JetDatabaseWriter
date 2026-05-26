@@ -15,7 +15,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.ComplexColumns.Models;
+using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -67,12 +67,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 {
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<byte> OlePayloadSignatureFirstBytes = SearchValues.Create([0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF]);
-    private static readonly SearchValues<byte> ZlibHeaderFirstBytes = SearchValues.Create([(byte)0x78]);
-    private static readonly SearchValues<byte> ZlibHeaderSuffixes = SearchValues.Create([0x01, 0x5E, 0x9C, 0xDA]);
 #else
     private static readonly byte[] OlePayloadSignatureFirstBytes = [0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF];
-    private static readonly byte[] ZlibHeaderFirstBytes = [0x78];
-    private static readonly byte[] ZlibHeaderSuffixes = [0x01, 0x5E, 0x9C, 0xDA];
 #endif
 
     private readonly AsyncReentrantOperationGate _operationGate = new();
@@ -82,6 +78,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly Dictionary<long, long[]> _ownedDataPagesByTdef = [];
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
+    private readonly ComplexColumnReader _complexColumns;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
     private readonly LruCache<long, byte[]>? _pageCache;
     private readonly ValueDecoding.LongValueDecoder _longValueDecoder;
@@ -119,6 +116,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _ownedDataPageIndex = new(BuildOwnedDataPageIndexAsync);
         _lockFile = LockFileCoordinator.ForReader(path, options);
         _strictParsing = options.StrictParsing;
+        _complexColumns = new ComplexColumnReader(this);
         LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, path);
         var password = LinkedSourceOpenOptions.Password;
 
@@ -596,7 +594,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -623,7 +621,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                     if (needsComplexPass)
                     {
-                        ResolveComplexColumns(rowBuffer, td.Columns, complexData);
+                        ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
                     }
 
                     if (needsHyperlinkPass)
@@ -691,7 +689,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -714,7 +712,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 if (needsComplexPass)
                 {
-                    ResolveComplexColumns(row, td.Columns, complexData);
+                    ComplexColumnReader.ResolveColumns(row, td.Columns, complexData);
                 }
 
                 if (needsHyperlinkPass)
@@ -895,7 +893,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == T_COMPLEX || c.Type == T_ATTACHMENT);
         if (hasComplex)
         {
-            complexSubtypes = await ReadComplexColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
+            complexSubtypes = await _complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
         ColumnPropertyBlock? properties = await ReadLvPropForTableAsync(
@@ -1063,38 +1061,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool needsComplexPass = td.HasComplexColumns;
         bool needsHyperlinkPass = td.HasHyperlinkColumns;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
 
         foreach ((long dataPage, int rowIndex) in hits)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
-            if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < _rowSz.NumCols)
-            {
-                continue;
-            }
-
-            object?[]? row = await CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, td, cancellationToken).ConfigureAwait(false);
+            object?[]? row = await MaterializeSeekRowAsync(
+                entry,
+                td,
+                dataPage,
+                rowIndex,
+                complexData,
+                needsComplexPass,
+                needsHyperlinkPass,
+                cancellationToken).ConfigureAwait(false);
             if (row == null)
             {
                 continue;
-            }
-
-            if (needsComplexPass)
-            {
-                ResolveComplexColumns(row, td.Columns, complexData);
-            }
-
-            if (needsHyperlinkPass)
-            {
-                WrapHyperlinkColumns(row, td.ClrTypes);
             }
 
             yield return (object[])row;
@@ -1107,69 +1092,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         using var operation = EnterOperation();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
-
-        // Complex columns are an Access 2007+ ACE feature. Older formats never carry them.
-        if (_format == DatabaseFormat.Jet3Mdb)
-        {
-            return [];
-        }
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            return [];
-        }
-
-        // Walk the parent TDEF column descriptors to extract per-column ComplexID
-        // (the 4-byte misc/misc_ext slot, only meaningful when col_type is 0x11/0x12).
-        byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null)
-        {
-            return [];
-        }
-
-        int numCols = Ru16(td, _tdef.NumCols);
-        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
-        if (numRealIdx < 0 || numRealIdx > 1000)
-        {
-            numRealIdx = 0;
-        }
-
-        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
-
-        var byComplexId = new Dictionary<int, (string Name, byte Type)>();
-        for (int i = 0; i < numCols; i++)
-        {
-            int o = colStart + (i * _colDesc.Size);
-            if (o + _colDesc.Size > td.Length)
-            {
-                break;
-            }
-
-            byte type = td[o + _colDesc.TypeOff];
-            if (type != T_COMPLEX && type != T_ATTACHMENT)
-            {
-                continue;
-            }
-
-            int complexId = Ri32(td, o + _colDesc.MiscOff);
-            if (complexId <= 0)
-            {
-                continue;
-            }
-
-            int colNum = Ru16(td, o + _colDesc.NumOff);
-            ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
-            string name = info?.Name ?? string.Empty;
-            byComplexId[complexId] = (name, type);
-        }
-
-        if (byComplexId.Count == 0)
-        {
-            return [];
-        }
-
-        return await JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
+        return await _complexColumns.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -1179,64 +1102,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
-
-        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ComplexColumnInfo? info = null;
-        foreach (ComplexColumnInfo c in complex)
-        {
-            if (string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
-            {
-                info = c;
-                break;
-            }
-        }
-
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxFileURL = flat.Columns.IndexOf("FileURL");
-        int idxFileName = flat.Columns.IndexOf("FileName");
-        int idxFileType = flat.Columns.IndexOf("FileType");
-        int idxFileTime = flat.Columns.IndexOf("FileTimeStamp");
-        int idxFileData = flat.Columns.IndexOf("FileData");
-
-        var result = new List<AttachmentRecord>(flat.Rows.Count);
-        foreach (DataRow r in flat.Rows)
-        {
-            int fk = idxFk >= 0 && r[idxFk] is not DBNull ? Convert.ToInt32(r[idxFk], CultureInfo.InvariantCulture) : 0;
-            byte[] rawData = ExtractOleBytes(idxFileData >= 0 ? r[idxFileData] : null);
-            byte[] decoded = rawData;
-            string ext = idxFileType >= 0 && r[idxFileType] is not DBNull ? Convert.ToString(r[idxFileType], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
-            if (rawData.Length > 0 && AttachmentWrapper.TryDecode(rawData, out string decodedExt, out byte[] payload))
-            {
-                decoded = payload;
-                if (string.IsNullOrEmpty(ext))
-                {
-                    ext = decodedExt;
-                }
-            }
-
-            result.Add(new AttachmentRecord
-            {
-                ConceptualTableId = fk,
-                FileName = idxFileName >= 0 && r[idxFileName] is not DBNull ? Convert.ToString(r[idxFileName], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty,
-                FileType = ext,
-                FileURL = idxFileURL >= 0 && r[idxFileURL] is not DBNull ? Convert.ToString(r[idxFileURL], CultureInfo.InvariantCulture) : null,
-                FileTimeStamp = idxFileTime >= 0 && r[idxFileTime] is DateTime dt ? dt : null,
-                FileData = decoded,
-            });
-        }
-
-        return result;
+        return await _complexColumns.GetAttachmentsAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -1246,135 +1112,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
-
-        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ComplexColumnInfo? info = null;
-        foreach (ComplexColumnInfo c in complex)
-        {
-            if (string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
-            {
-                info = c;
-                break;
-            }
-        }
-
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxValue = flat.Columns.IndexOf("value");
-        if (idxValue < 0)
-        {
-            // Fallback: first non-FK column.
-            for (int i = 0; i < flat.Columns.Count; i++)
-            {
-                if (i != idxFk)
-                {
-                    idxValue = i;
-                    break;
-                }
-            }
-        }
-
-        var result = new List<(int, object?)>(flat.Rows.Count);
-        foreach (DataRow r in flat.Rows)
-        {
-            int fk = idxFk >= 0 && r[idxFk] is not DBNull ? Convert.ToInt32(r[idxFk], CultureInfo.InvariantCulture) : 0;
-            object? value = idxValue >= 0 && r[idxValue] is not DBNull ? r[idxValue] : null;
-            result.Add((fk, value));
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Coerces an OLE column cell to its raw bytes. <see cref="ReadDataTableAsync"/>
-    /// surfaces OLE values either as a byte array (when the typed reader can recover
-    /// them directly) or as <c>"data:...;base64,..."</c> data-URI strings; both
-    /// shapes are handled here.
-    /// </summary>
-    private static byte[] ExtractOleBytes(object? cell)
-    {
-        if (cell is null or DBNull)
-        {
-            return [];
-        }
-
-        if (cell is byte[] b)
-        {
-            return b;
-        }
-
-        if (cell is string s && s.StartsWith("data:", StringComparison.Ordinal))
-        {
-            int comma = s.IndexOf(',', StringComparison.Ordinal);
-            if (comma >= 0 && comma + 1 < s.Length)
-            {
-                return BinaryStringParser.TryDecodeBase64(s.AsSpan(comma + 1), out byte[] bytes) ? bytes : [];
-            }
-        }
-
-        return [];
-    }
-
-    private static int FindFlatLongFkIndex(DataTable flat)
-    {
-        // Prefer the conventional `_<userColumnName>` FK column (the
-        // flat-table emitter and Access-authored fixtures both use this naming).
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            DataColumn c = flat.Columns[i];
-            if (c.DataType == typeof(int) && c.ColumnName.StartsWith('_'))
-            {
-                return i;
-            }
-        }
-
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            if (flat.Columns[i].DataType == typeof(int))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private static ComplexColumnKind ClassifyComplexKind(string complexTypeName)
-    {
-        if (string.IsNullOrEmpty(complexTypeName))
-        {
-            return ComplexColumnKind.Unknown;
-        }
-
-        if (complexTypeName.Equals(Constants.ComplexTypeNames.Attachment, StringComparison.OrdinalIgnoreCase))
-        {
-            return ComplexColumnKind.Attachment;
-        }
-
-        // Version-history template tables use the "MSysComplexTypeVH_" prefix
-        // (no underscore between "Type" and "VH"). Access surfaces these via
-        // "Append Only" memo columns.
-        if (complexTypeName.StartsWith(Constants.ComplexTypeNames.VersionHistoryPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return ComplexColumnKind.VersionHistory;
-        }
-
-        if (complexTypeName.StartsWith(Constants.ComplexTypeNames.Prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return ComplexColumnKind.MultiValue;
-        }
-
-        return ComplexColumnKind.Unknown;
+        return await _complexColumns.GetMultiValueItemsAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
     }
 
     private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)
@@ -1566,6 +1304,46 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return composite;
     }
 
+    private async ValueTask<object?[]?> MaterializeSeekRowAsync(
+        CatalogEntry entry,
+        TableDef td,
+        long dataPage,
+        int rowIndex,
+        Dictionary<int, Dictionary<int, byte[]>>? complexData,
+        bool needsComplexPass,
+        bool needsHyperlinkPass,
+        CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
+        if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != entry.TDefPage)
+        {
+            return null;
+        }
+
+        if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < _rowSz.NumCols)
+        {
+            return null;
+        }
+
+        object?[]? row = await CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, td, cancellationToken).ConfigureAwait(false);
+        if (row == null)
+        {
+            return null;
+        }
+
+        if (needsComplexPass)
+        {
+            ComplexColumnReader.ResolveColumns(row, td.Columns, complexData);
+        }
+
+        if (needsHyperlinkPass)
+        {
+            WrapHyperlinkColumns(row, td.ClrTypes);
+        }
+
+        return row;
+    }
+
     private bool TryFindLiveRowBound(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
     {
         foreach (RowBound candidate in GetLiveRowBoundsCached(pageNumber, page))
@@ -1579,102 +1357,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         rowBound = default;
         return false;
-    }
-
-    private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
-        Dictionary<int, (string Name, byte Type)> byComplexId,
-        CancellationToken cancellationToken)
-    {
-        long msysTdef = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysTdef <= 0)
-        {
-            return [];
-        }
-
-        TableDef? msys = await ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return [];
-        }
-
-        int idxColumnName = msys.FindColumnIndex("ColumnName");
-        int idxComplexId = msys.FindColumnIndex("ComplexID");
-        int idxFlatTable = msys.FindColumnIndex("FlatTableID");
-        int idxConceptualTable = msys.FindColumnIndex("ConceptualTableID");
-        int idxComplexType = msys.FindColumnIndex("ComplexTypeObjectID");
-
-        if (idxComplexId < 0)
-        {
-            return [];
-        }
-
-        // Pre-resolve flat-table and complex-type id → name via the MSysObjects catalog
-        // so each complex column row can be classified without a per-row catalog scan.
-        Dictionary<long, string> objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
-
-        var result = new List<ComplexColumnInfo>(byComplexId.Count);
-        await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
-        {
-            if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
-            {
-                continue;
-            }
-
-            if (!byComplexId.TryGetValue(complexId, out var parent))
-            {
-                continue;
-            }
-
-            int flatId = CatalogValueReader.ParseInt32OrZero(row, idxFlatTable);
-            int conceptualId = CatalogValueReader.ParseInt32OrZero(row, idxConceptualTable);
-            int typeObjectId = CatalogValueReader.ParseInt32OrZero(row, idxComplexType);
-
-            string columnName = CatalogValueReader.GetStringOrDefault(row, idxColumnName, parent.Name);
-            string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
-            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
-
-            result.Add(new ComplexColumnInfo
-            {
-                ColumnName = string.IsNullOrEmpty(columnName) ? parent.Name : columnName,
-                ComplexId = complexId,
-                Kind = ClassifyComplexKind(typeName),
-                FlatTableName = flatName,
-                FlatTableId = flatId,
-                ConceptualTableId = conceptualId,
-                ComplexTypeObjectId = typeObjectId,
-                ComplexTypeName = typeName,
-            });
-        }
-
-        return result;
-    }
-
-    private async ValueTask<Dictionary<long, string>> BuildObjectNameLookupAsync(CancellationToken cancellationToken)
-    {
-        var map = new Dictionary<long, string>();
-
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return map;
-        }
-
-        int idxId = msys.FindColumnIndex("Id");
-        int idxName = msys.FindColumnIndex("Name");
-        if (idxId < 0 || idxName < 0)
-        {
-            return map;
-        }
-
-        await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
-        {
-            if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
-            {
-                map[id] = CatalogValueReader.GetStringOrEmpty(row, idxName);
-            }
-        }
-
-        return map;
     }
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
@@ -1753,7 +1435,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !preserveComplexReferences
-                ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
                 : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -1794,7 +1476,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                         if (td.HasComplexColumns && !preserveComplexReferences)
                         {
-                            ResolveComplexColumns(rowBuffer, td.Columns, complexData);
+                            ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
                         }
 
                         if (td.HasHyperlinkColumns)
@@ -2518,29 +2200,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-#pragma warning disable SA1204 // Static helper section follows the public reader API methods.
-    /// <summary>
-    /// Returns true when an MSysComplexColumns row's ConceptualTableID column refers to
-    /// the user table identified by <paramref name="targetTdefPage"/> (or, as a fallback,
-    /// matches <paramref name="tableName"/> when the cell holds a name rather than an ID).
-    /// When <paramref name="targetTdefPage"/> is 0, no filtering is applied.
-    /// </summary>
-    private static bool ConceptualTableMatches(string tableIdStr, long targetTdefPage, string? tableName)
-    {
-        if (targetTdefPage <= 0)
-        {
-            return true;
-        }
-
-        if (CatalogValueReader.TryParseInt64(tableIdStr, out long tableId))
-        {
-            return (tableId & 0x00FFFFFFL) == targetTdefPage;
-        }
-
-        return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
-    }
-#pragma warning restore SA1204
-
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
         FileOptions accessPattern = options.ParallelPageReadsEnabled ? FileOptions.RandomAccess : FileOptions.SequentialScan;
@@ -2941,186 +2600,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 typedRow[i] = (object?)Hyperlink.Parse(s) ?? DBNull.Value;
             }
         }
-    }
-
-    /// <summary>
-    /// Resolves <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots in a typed row
-    /// (produced by <c>CrackRowTypedAsync</c>) by replacing the
-    /// <see cref="ComplexIdRef"/> sentinel with the joined attachment bytes
-    /// from the preloaded complex-data dictionary. Slots with no resolvable
-    /// child data collapse to <see cref="DBNull.Value"/> rather than leaving
-    /// the sentinel visible to callers.
-    /// </summary>
-    private static void ResolveComplexColumns(object?[] typedRow, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
-    {
-        int parentId = -1;
-        int limit = Math.Min(columns.Count, typedRow.Length);
-        for (int i = 0; i < limit; i++)
-        {
-            ColumnInfo col = columns[i];
-            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
-            {
-                continue;
-            }
-
-            if (complexData != null &&
-                complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
-            {
-                int complexId = typedRow[i] is ComplexIdRef cir ? cir.Id : 0;
-                if (complexId <= 0)
-                {
-                    if (parentId < 0)
-                    {
-                        parentId = ExtractParentIdTyped(typedRow, columns);
-                    }
-
-                    complexId = parentId;
-                }
-
-                if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
-                    attachBytes != null && attachBytes.Length > 0)
-                {
-                    typedRow[i] = attachBytes;
-                    continue;
-                }
-            }
-
-            // Complex slot with no resolvable child data (e.g. multi-value
-            // columns whose flat-table loader is not wired through, or
-            // attachment slots whose per-row complex reference has no live flat
-            // rows). Surface as DBNull rather than leaving the
-            // ComplexIdRef sentinel visible.
-            typedRow[i] = DBNull.Value;
-        }
-    }
-
-    /// <summary>Extracts the parent row's integer ID from the first fixed LONG column of a typed row.</summary>
-    private static int ExtractParentIdTyped(object?[] typedRow, List<ColumnInfo> columns)
-    {
-        int limit = Math.Min(columns.Count, typedRow.Length);
-        for (int i = 0; i < limit; i++)
-        {
-            if (columns[i].Type == T_LONG && typedRow[i] is int id)
-            {
-                return id;
-            }
-        }
-
-        return 0;
-    }
-
-    /// <summary>
-    /// Strips the 1-byte compression flag from raw attachment FileData bytes,
-    /// decompressing if the flag indicates deflate-compressed content.
-    /// </summary>
-    private static byte[] DecodeAttachmentFileData(byte[] raw) => raw.Length <= 1 ? raw : raw[0] switch
-    {
-        0x01 => DecompressAttachmentData(raw, 1),
-        0x00 => raw.AsSpan(1).ToArray(),
-        _ => raw,
-    };
-
-    /// <summary>
-    /// Decompresses Access attachment file data by locating the zlib-wrapped
-    /// deflate payload that follows the compression flag.
-    /// </summary>
-    private static byte[] DecompressAttachmentData(byte[] data, int offset)
-    {
-        try
-        {
-            // Scan for zlib header (0x78) after the compression flag byte.
-            // Access attachment data starts with a 1-byte compression flag,
-            // followed by implementation-dependent header bytes, then zlib-compressed data.
-            int zlibPos = FindZlibHeader(data, offset);
-
-            if (zlibPos < 0 || zlibPos + 2 >= data.Length)
-            {
-                return data.AsSpan(offset).ToArray();
-            }
-
-            return InflateZlibPayload(data, zlibPos);
-        }
-        catch (InvalidDataException)
-        {
-            // Not valid deflate — return raw bytes without compression flag.
-            return data.AsSpan(offset).ToArray();
-        }
-    }
-
-    private static int FindZlibHeader(byte[] data, int offset)
-    {
-        bool unused = false;
-        return FindMatchingBytePattern(
-            data,
-            offset,
-            data.Length,
-            2,
-            ZlibHeaderFirstBytes,
-            static (ReadOnlySpan<byte> window, ref bool state) => IsZlibHeader(window),
-            ref unused);
-    }
-
-    private static bool IsZlibHeader(ReadOnlySpan<byte> window) =>
-        window.Length >= 2 && IsZlibHeaderSuffix(window[1]);
-
-    private static bool IsZlibHeaderSuffix(byte value)
-    {
-#if NET8_0_OR_GREATER
-        return ZlibHeaderSuffixes.Contains(value);
-#else
-        return Array.IndexOf(ZlibHeaderSuffixes, value) >= 0;
-#endif
-    }
-
-    private static byte[] InflateZlibPayload(byte[] data, int zlibPos)
-    {
-        using var output = new MemoryStream();
-
-#if NET8_0_OR_GREATER
-        using var input = new MemoryStream(data, zlibPos, data.Length - zlibPos);
-        using var zlib = new System.IO.Compression.ZLibStream(input, System.IO.Compression.CompressionMode.Decompress);
-        zlib.CopyTo(output);
-#else
-        int deflateStart = zlibPos + 2;
-        using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
-        using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
-        deflate.CopyTo(output);
-#endif
-
-        return output.ToArray();
-    }
-
-    /// <summary>
-    /// Attempts to convert a string column value back to raw bytes.
-    /// Handles: Base64 data URIs (OLE), hex strings (Binary), plain text (Memo).
-    /// </summary>
-    private static byte[] DecodeColumnBytes(string value, byte colType)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return [];
-        }
-
-        // Base64 data URI from OLE column: "data:...;base64,<b64>"
-        if (value.StartsWith("data:", StringComparison.Ordinal))
-        {
-            int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
-            if (commaIdx >= 0)
-            {
-                return BinaryStringParser.TryDecodeBase64(value.AsSpan(commaIdx + 1), out byte[] bytes) ? bytes : [];
-            }
-
-            return [];
-        }
-
-        // Hex string from Binary column: "XX-XX-XX-..."
-        if (colType == T_BINARY && value.AsSpan().IndexOf('-') >= 0)
-        {
-            return BinaryStringParser.TryParseHexString(value.AsSpan(), out byte[] bytes) ? bytes : [];
-        }
-
-        // Plain text (Memo): encode as UTF-8
-        return Encoding.UTF8.GetBytes(value);
     }
 
     internal static byte[] DecodeOleValueBytes(byte[] buffer, int offset, int length, bool allowInputReuse = false)
@@ -3681,7 +3160,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return bounds;
     }
 
-    private async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
+    internal async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
@@ -4286,12 +3765,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         if (len <= 0)
         {
-            return col.Type switch
-            {
-                T_TEXT or T_MEMO => string.Empty,
-                T_BINARY or T_OLE => Array.Empty<byte>(),
-                _ => DBNull.Value,
-            };
+            return TypedRowFallbackPolicy.EmptyVariableValue(col);
         }
 
         if (col.IsCalculated)
@@ -4350,13 +3824,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_ATTACHMENT:
                     {
                         // Fixed-width types stored in the variable area
-                        // (FLAG_FIXED cleared). Same length-guard semantics as
-                        // ReadVarAsync's fallback: too-short slot collapses
-                        // to DBNull.
+                        // (FLAG_FIXED cleared). The fallback policy owns the
+                        // strict/non-strict decision when the slot is too short.
                         int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                         return len >= required
                             ? JetTypeInfo.ReadFixedTyped(page, start, col, required, _strictParsing)
-                            : DBNull.Value;
+                            : TypedRowFallbackPolicy.FixedVariableSlotTooShort(col, len, required, _strictParsing);
                     }
 
                 default:
@@ -4367,13 +3840,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             throw;
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return DBNull.Value;
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
         }
-        catch (IndexOutOfRangeException)
+        catch (IndexOutOfRangeException ex)
         {
-            return DBNull.Value;
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
+        }
+        catch (OverflowException ex)
+        {
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
         }
     }
 
@@ -4402,13 +3879,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             throw;
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return DBNull.Value;
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
         }
-        catch (IndexOutOfRangeException)
+        catch (IndexOutOfRangeException ex)
         {
-            return DBNull.Value;
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
+        }
+        catch (OverflowException ex)
+        {
+            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
         }
     }
 
@@ -4428,7 +3909,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
     /// Centralises the common scan-all-pages-and-decode-rows pattern used by catalog/system-table readers.
     /// </summary>
-    private async IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
+    internal async IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
         long tdefPage,
         TableDef td,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -4538,73 +4019,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private async ValueTask<Dictionary<string, string>> ReadComplexColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        try
-        {
-            long tdefPage = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-            if (tdefPage <= 0)
-            {
-                return result;
-            }
-
-            TableDef? td = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            if (td == null)
-            {
-                return result;
-            }
-
-            int idxCol = td.FindColumnIndex("ColumnName");
-            int idxConceptualTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
-
-            if (idxCol < 0)
-            {
-                return result;
-            }
-
-            var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            long targetTdefPage = resolved is { } resolvedValue ? resolvedValue.Entry.TDefPage : 0;
-
-            await foreach (string[] row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
-            {
-                if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName))
-                {
-                    continue;
-                }
-
-                string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
-                result[colName] = "Attachment";
-            }
-        }
-        catch (InvalidDataException)
-        {
-            if (DiagnosticsEnabled)
-            {
-                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypesAsync: suppressed InvalidDataException while reading MSysComplexColumns.");
-            }
-        }
-        catch (IndexOutOfRangeException)
-        {
-            if (DiagnosticsEnabled)
-            {
-                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypesAsync: suppressed IndexOutOfRangeException while reading MSysComplexColumns.");
-            }
-        }
-
-        return result;
-    }
-
     /// <summary>
     /// Finds the TDEF page number for a system table by name (case-insensitive).
     /// Unlike GetUserTables, this includes system tables (SYSTABLE_MASK set).
     /// </summary>
-    private ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
+    internal ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
         FindSystemTablePageAsync(
             n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase),
             cancellationToken);
@@ -4613,7 +4032,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>.
     /// Shared by exact-name and suffix lookups against MSysObjects.
     /// </summary>
-    private async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
+    internal async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
@@ -4655,194 +4074,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         return 0;
     }
-
-    /// <summary>
-    /// Builds a preloaded map of complex column data for all complex columns in a table.
-    /// Returns a dictionary: column ordinal → (parentId → attachment bytes).
-    /// Returns null if the table has no complex columns.
-    /// </summary>
-    private async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildComplexColumnDataAsync(
-        string tableName,
-        List<ColumnInfo> columns,
-        CancellationToken cancellationToken)
-    {
-        Dictionary<int, Dictionary<int, byte[]>>? result = null;
-
-        for (int i = 0; i < columns.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ColumnInfo col = columns[i];
-            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
-            {
-                continue;
-            }
-
-            Dictionary<int, byte[]>? colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
-            if (colData != null && colData.Count > 0)
-            {
-                result ??= [];
-                result[i] = colData;
-            }
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Reads MSysComplexColumns to find the FlatTableID for a given table + column.
-    /// Returns the TDEF page number (lower 24 bits of FlatTableID), or 0 if not found.
-    /// </summary>
-    private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, CancellationToken cancellationToken)
-    {
-        try
-        {
-            long msysTdef = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-            if (msysTdef <= 0)
-            {
-                return 0;
-            }
-
-            TableDef? td = await ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
-            if (td == null)
-            {
-                return 0;
-            }
-
-            int idxCol = td.FindColumnIndex("ColumnName");
-            int idxConceptualTable = td.FindColumnIndex("ConceptualTableID");
-            int idxFlatTable = td.FindColumnIndex("FlatTableID");
-
-            if (idxCol < 0 || idxFlatTable < 0)
-            {
-                return 0;
-            }
-
-            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-            CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
-            long targetTdefPage = entry?.TDefPage ?? 0;
-
-            await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
-            {
-                string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
-                if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName: null))
-                {
-                    continue;
-                }
-
-                if (CatalogValueReader.TryParseInt64(row, idxFlatTable, out long flatId))
-                {
-                    long flatTdef = flatId & 0x00FFFFFFL;
-                    if (flatTdef > 0)
-                    {
-                        return flatTdef;
-                    }
-                }
-            }
-        }
-        catch (InvalidDataException)
-        {
-            return 0;
-        }
-
-        return 0;
-    }
-
-    /// <summary>
-    /// Loads attachment data from the hidden system table for a complex column.
-    /// Access ACCDB stores attachment data in a hidden table found via MSysComplexColumns FlatTableID.
-    /// The table's FK column is named <c>&lt;tableName&gt;_&lt;columnName&gt;</c> and holds the complex_id.
-    /// Returns a dictionary mapping complex_id → serialized attachment bytes
-    /// (2-byte FileName length LE, FileName UTF-16LE, FileData bytes).
-    /// </summary>
-    /// <param name="tableName">Name of the table containing the complex column.</param>
-    /// <param name="columnName">Name of the complex column.</param>
-    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
-    /// <returns>A dictionary mapping complex_id to serialized attachment bytes.</returns>
-    private async ValueTask<Dictionary<int, byte[]>?> LoadAttachmentDataAsync(string tableName, string columnName, CancellationToken cancellationToken)
-    {
-        try
-        {
-            long tdefPage = await GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-            if (tdefPage <= 0)
-            {
-                tdefPage = await FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
-            }
-
-            TableDef? td = tdefPage > 0 ? await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
-            if (td == null)
-            {
-                return null;
-            }
-
-            string fkColName = $"{tableName}_{columnName}";
-            int idxFk = td.FindColumnIndex(fkColName);
-            if (idxFk < 0)
-            {
-                idxFk = td.Columns.FindIndex(c => c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (idxFk < 0)
-            {
-                return null;
-            }
-
-            int idxFileName = td.FindColumnIndex("FileName");
-            int idxFileData = td.FindColumnIndex("FileData");
-
-            var result = new Dictionary<int, byte[]>(capacity: 32);
-
-            await foreach (var row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
-            {
-                if (!CatalogValueReader.TryParseInt32(row, idxFk, out int parentId))
-                {
-                    continue;
-                }
-
-                byte[] fileNameBytes = CatalogValueReader.GetStringOrEmpty(row, idxFileName) is { Length: > 0 } fileName
-                    ? Encoding.Unicode.GetBytes(fileName)
-                    : [];
-
-                byte[] fileDataBytes = idxFileData >= 0
-                    ? DecodeAttachmentFileData(DecodeColumnBytes(CatalogValueReader.GetStringOrEmpty(row, idxFileData), td.Columns[idxFileData].Type))
-                    : [];
-
-                if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
-                {
-                    continue;
-                }
-
-                var serialized = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
-                BinaryPrimitives.WriteUInt16LittleEndian(serialized, (ushort)fileNameBytes.Length);
-                Buffer.BlockCopy(fileNameBytes, 0, serialized, 2, fileNameBytes.Length);
-                Buffer.BlockCopy(fileDataBytes, 0, serialized, 2 + fileNameBytes.Length, fileDataBytes.Length);
-
-                result[parentId] = serialized;
-            }
-
-            return result.Count > 0 ? result : null;
-        }
-        catch (Exception ex) when (ex is InvalidDataException or IndexOutOfRangeException or IOException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Finds the TDEF page for the first system table whose name ends with
-    /// <paramref name="nameSuffix"/> (case-insensitive). Used to find
-    /// <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c> attachment tables.
-    /// </summary>
-    private ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken) =>
-        FindSystemTablePageAsync(
-            n => n != null && n.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase),
-            cancellationToken);
 
     // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][LVAL token: 4 bytes]
     // 0x80 = inline data immediately after the 12-byte header
