@@ -890,6 +890,14 @@ public abstract class AccessBase : IAccessBase
         => _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetBytes(value) : EncodeJet4Text(value, maxBytes, compress);
 
     /// <summary>
+    /// Throws <see cref="ObjectDisposedException"/> when this instance has been
+    /// disposed. Wraps <see cref="Guard.ThrowIfDisposed(bool, object)"/> with
+    /// the common <c>(_disposed, this)</c> arguments.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void ThrowIfDisposed() => Guard.ThrowIfDisposed(_disposed, this);
+
+    /// <summary>
     /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
     /// advancing <paramref name="pos"/> past the name bytes.
     /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.

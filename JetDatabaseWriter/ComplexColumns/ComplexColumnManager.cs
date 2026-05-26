@@ -723,7 +723,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
-        Guard.ThrowIfDisposed(_writer._disposed, _writer);
+        _writer.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         if (parentRowKey.Count == 0)
