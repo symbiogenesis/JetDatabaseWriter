@@ -80,14 +80,25 @@ Done criteria:
 
 ## Priority 2: Track Size And Suppression Debt
 
-Current largest production files from the smell pass:
+Current largest production files after the extraction pass:
 
-- [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs): about 4,083 lines.
 - [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs): about 4,330 lines.
+- [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs): about 4,082 lines.
 - [IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs): about 3,389 lines.
-- [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs): about 1,603 lines.
-- [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs): about 2,334 lines.
 - [ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs): about 1,824 lines.
+- [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs): about 1,602 lines.
+- [AccessBase.cs](../JetDatabaseWriter/AccessBase.cs): about 1,430 lines.
+- [OfficeCryptoAgile.cs](../JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs): about 1,112 lines.
+- [LinkedTableManager.cs](../JetDatabaseWriter/Relationships/LinkedTableManager.cs): about 1,042 lines.
+- [EncryptionManager.cs](../JetDatabaseWriter/Encryption/EncryptionManager.cs): about 1,001 lines.
+
+Current broad production suppressions to revisit first:
+
+- [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs): `SA1202`, `SA1204`, `SA1648`.
+- [IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs): `SA1202`, `SA1204`.
+- [ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs): `SA1202`, `SA1204`.
+- [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs): `SA1202`, `SA1204`.
+- [JetDatabaseWriter.csproj](../JetDatabaseWriter/JetDatabaseWriter.csproj): project-wide `NoWarn` list.
 
 - [ ] Decide whether this project wants a soft file-size review threshold for production code.
 - [ ] Track broad file-level suppressions such as `CA1822`, `SA1202`, `SA1204`, `SA1648`, and `CA1031` as cleanup markers rather than permanent background noise.
