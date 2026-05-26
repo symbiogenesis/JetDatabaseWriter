@@ -84,7 +84,7 @@ internal static class CalculatedExpressionLogicalFunctions
         return IsNull(pattern) ? DBNull.Value : AccessLike(ToText(value), ToText(pattern));
     }
 
-    #pragma warning disable CA1859 // False positive: EvaluateBetween can return either DBNull.Value or a Boolean result.
+#pragma warning disable CA1859 // False positive: EvaluateBetween can return either DBNull.Value or a Boolean result.
     private static object EvaluateBetween(CalculatedFunctionInvocation function)
     {
         object value = function.Arg(0);
@@ -108,7 +108,7 @@ internal static class CalculatedExpressionLogicalFunctions
         return CompareNonNullValues(value, lowerBound, static comparison => comparison >= 0)
             && CompareNonNullValues(value, upperBound, static comparison => comparison <= 0);
     }
-    #pragma warning restore CA1859
+#pragma warning restore CA1859
 
     private static object EvaluateIn(CalculatedFunctionInvocation function)
     {
