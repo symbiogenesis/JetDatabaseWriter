@@ -21,6 +21,7 @@ internal static class TestDatabases
 
     // ── In-repo (project-owned) databases ────────────────────────────
 
+    /// <summary>Access-authored Northwind fixture used as a trusted DAO/CompactDatabase host.</summary>
     public static readonly string NorthwindTraders =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "NorthwindTraders.accdb");
 
@@ -42,7 +43,7 @@ internal static class TestDatabases
     /// <summary>
     /// ACCDB with a "People" table containing two composite text-only indexes
     /// (IX_FullName: LastName+FirstName, IX_CityName: City+LastName+FirstName)
-    /// and 30 rows. Created by DAO.DBEngine.120 to provide ground-truth for
+    /// and 30 rows. Created by DAO.DBEngine.120 to provide trusted ground-truth for
     /// <see cref="Indexes.Collation.CompositeTextIndexFixtureTests"/>.
     /// </summary>
     public static readonly string CompositeTextIndex =

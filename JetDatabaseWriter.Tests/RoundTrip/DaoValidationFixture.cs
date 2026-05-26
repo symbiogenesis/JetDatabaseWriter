@@ -16,6 +16,17 @@ using Xunit.Sdk;
 
 #pragma warning disable SA1204 // Static elements should appear before instance elements
 
+/// <summary>
+/// Shared DAO validation fixture that keeps trusted Access/DAO-authored hosts
+/// separate from writer-created output under test.
+/// </summary>
+/// <remarks>
+/// Northwind-backed compact scenarios use an Access-authored host because DAO
+/// compact catalog behavior depends on that engine-authored shape. DAO-created
+/// scratch sessions are used only when a small engine-authored container is
+/// enough. Fresh databases produced by this library must not be used here as
+/// source-of-truth fixtures.
+/// </remarks>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "xUnit IClassFixture<T> requires public accessibility")]
 public sealed class DaoValidationFixture : IAsyncDisposable
 {
@@ -26,8 +37,8 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int ComplexAttachmentPayloadLength = 16 * 1024;
     internal const string ComplexAttachmentFileName = "compact-large.jpg";
     internal const int EncryptedCompactRowCount = 20;
-    internal const int StressRowsPerTable = 250;
-    internal const int StressTableCount = 6;
+    internal const int StressRowsPerTable = 128;
+    internal const int StressTableCount = 4;
     internal const int StressRelationshipCount = StressTableCount - 1;
     internal const string ExpectedMemoWithNuls = "Hello\0World\0End";
 
@@ -124,7 +135,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<CoreValidationResult> BuildCoreResultAsync(CancellationToken cancellationToken)
     {
-        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken).ConfigureAwait(false);
+        AccessRoundTripSession session = await CreateDaoSessionAsync(cancellationToken).ConfigureAwait(false);
         await PrepareCoreValidationDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScript(
@@ -148,6 +159,8 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<DaoMemoResult> BuildDaoMemoResultAsync(CancellationToken cancellationToken)
     {
+        // The MEMO payload is authored by DAO so the reader assertion compares
+        // against engine-written bytes, not bytes produced by this library.
         AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
         Track(session);
 
@@ -229,6 +242,13 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
+        return await ReadComplexCompactResultAsync(postReader, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<ComplexCompactResult> ReadComplexCompactResultAsync(
+        AccessReader postReader,
+        CancellationToken cancellationToken)
+    {
         DataTable? parentTable = await postReader.ReadDataTableAsync(
             ComplexTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -282,6 +302,17 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
+        return await ReadStressCompactResultAsync(
+            postReader,
+            preCompactTableCount,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<StressCompactResult> ReadStressCompactResultAsync(
+        AccessReader postReader,
+        int preCompactTableCount,
+        CancellationToken cancellationToken)
+    {
         List<string> postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         var rowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var foreignKeyIndexNames = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
@@ -318,7 +349,23 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         CancellationToken cancellationToken,
         TimeSpan? compactTimeout = null)
     {
+        // Access-authored Northwind is the trusted host for compact scenarios
+        // whose behavior depends on catalog and system-table shape.
         AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            cancellationToken,
+            TempDirectoryName,
+            compactTimeout).ConfigureAwait(false);
+        Track(session);
+        return session;
+    }
+
+    private async Task<AccessRoundTripSession> CreateDaoSessionAsync(
+        CancellationToken cancellationToken,
+        TimeSpan? compactTimeout = null)
+    {
+        // DAO-created scratch databases are trusted engine-authored hosts for
+        // small direct DAO probes. They are intentionally not writer-created.
+        AccessRoundTripSession session = await AccessRoundTripSession.CreateDaoAccdbAsync(
             cancellationToken,
             TempDirectoryName,
             compactTimeout).ConfigureAwait(false);

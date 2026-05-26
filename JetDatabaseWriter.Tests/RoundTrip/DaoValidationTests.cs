@@ -15,7 +15,9 @@ using Xunit;
 /// </summary>
 /// <remarks>
 /// Covers DAO OpenRecordset row-count, DAO index traversal, DAO AutoNumber
-/// continuation, and DAO-authored Memo with embedded NULs.
+/// continuation, and DAO-authored Memo with embedded NULs. DAO/Access-authored
+/// databases and payloads are the source-of-truth side of these checks; writer
+/// mutations are the subject under test.
 /// </remarks>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFixture<DaoValidationFixture>

@@ -15,6 +15,8 @@ using Xunit;
 /// <summary>
 /// Tests for the complex-columns writer surface
 /// (see <see href="docs/design/complex-columns-format-notes.md" />).
+/// Fresh writer-created ACCDBs in this class are bootstrap/generated-output
+/// subjects under test, not source-of-truth fixtures.
 /// <list type="bullet">
 ///   <item><c>MSysComplexColumns</c> system table is scaffolded into every fresh ACCDB.</item>
 ///   <item><see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>

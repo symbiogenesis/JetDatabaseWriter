@@ -30,14 +30,27 @@ using Xunit;
 /// </para>
 /// <para>
 /// The fixture is <c>NorthwindTraders.accdb</c> — an Access-authored database
-/// that already contains the <c>MSysRelationships</c> catalog table required
-/// by <see cref="AccessWriter.CreateRelationshipAsync"/>.
+/// that keeps Compact &amp; Repair relationship metadata behavior representative.
+/// Both relationship scenarios are built into one fixture copy and compacted
+/// once, so the tests keep separate assertions without paying duplicate DAO
+/// compact cost.
+/// Do not replace this host with a fresh writer-created database: the writer
+/// output is the subject under test, not the fixture oracle.
 /// </para>
 /// </remarks>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class AccessRoundTripTests
 {
+    private const string CompositeChild = "RT_OrderItems2";
+    private const string CompositeFkName = "RT_FK_Items_Orders";
+    private const string CompositeParent = "RT_Orders2";
+    private const string SingleChild = "RT_Orders";
+    private const string SingleFkName = "RT_FK_Orders_Customers";
+    private const string SingleParent = "RT_Customers";
+
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
+    private static readonly object _relationshipRoundTripSync = new();
+    private static Task<RelationshipRoundTripResult>? _relationshipRoundTripTask;
 
     [Fact(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -45,92 +58,11 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
-        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
-            TestContext.Current.CancellationToken,
-            compactTimeout: CompactTimeout);
+        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
 
-        const string Parent = "RT_Customers";
-        const string Child = "RT_Orders";
-        const string FkName = "RT_FK_Orders_Customers";
-
-        await using (var writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
-        {
-            await writer.CreateTableAsync(
-                Parent,
-                [
-                    new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
-                    new("Name", typeof(string), maxLength: 100) { IsNullable = false },
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.CreateTableAsync(
-                Child,
-                [
-                    new("OrderID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
-                    new("CustomerID", typeof(int)) { IsNullable = false },
-                    new("OrderDate", typeof(DateTime)),
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.CreateRelationshipAsync(
-                new RelationshipDefinition(
-                    FkName,
-                    primaryTable: Parent,
-                    primaryColumn: "CustomerID",
-                    foreignTable: Child,
-                    foreignColumn: "CustomerID")
-                {
-                    EnforceReferentialIntegrity = true,
-                    CascadeDeletes = true,
-                },
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowsAsync(
-                Parent,
-                new[]
-                {
-                    new object[] { DBNull.Value, "Acme" },
-                    new object[] { DBNull.Value, "Beta" },
-                    new object[] { DBNull.Value, "Gamma" },
-                },
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowsAsync(
-                Child,
-                new[]
-                {
-                    new object[] { DBNull.Value, 1, new DateTime(2025, 1, 15) },
-                    new object[] { DBNull.Value, 2, new DateTime(2025, 2, 20) },
-                    new object[] { DBNull.Value, 3, new DateTime(2025, 3, 03) },
-                },
-                TestContext.Current.CancellationToken);
-        }
-
-        var pre = await CaptureSnapshotAsync(
-            session.SourcePath,
-            [Parent, Child],
-            [FkName],
-            TestContext.Current.CancellationToken);
-
-        // Pre-compact sanity: verify our own reader can parse the writer's output.
-        AssertPreCompactConsistency(pre, [Parent, Child], [FkName], expectedParentRows: 3, expectedChildRows: 3);
-
-        // Verify TDEF structural invariants on the writer-produced file before
-        // handing it to DAO, so a failure here clearly points at the writer
-        // rather than DAO's interpretation of the output.
-        await AssertTdefMagicStampsAsync(session.SourcePath, [Parent, Child], TestContext.Current.CancellationToken);
-
-        session.RunDaoCompact();
-
-        var post = await CaptureSnapshotAsync(
-            session.CompactedPath,
-            [Parent, Child],
-            [FkName],
-            TestContext.Current.CancellationToken);
-
-        AssertSchemaSurvived(pre, post);
-        Assert.Contains(post.Indexes[Child], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID");
-        Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
+        AssertSchemaSurvived(result.SinglePre, result.SinglePost);
+        Assert.Contains(result.SinglePost.Indexes[SingleChild], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID");
+        Assert.Contains(result.SinglePost.Indexes[SingleChild], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
     [Fact(
@@ -139,89 +71,166 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
+        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
+
+        AssertSchemaSurvived(result.CompositePre, result.CompositePost);
+        Assert.Contains(result.CompositePost.Indexes[CompositeParent], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region");
+        Assert.Contains(result.CompositePost.Indexes[CompositeChild], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region+LineNo");
+        Assert.Contains(result.CompositePost.Indexes[CompositeChild], i => i.IsForeignKey && i.Columns == "OrderID+Region" && i.CascadeUpdates && i.CascadeDeletes);
+    }
+
+    private static Task<RelationshipRoundTripResult> GetRelationshipRoundTripResultAsync(CancellationToken cancellationToken)
+    {
+        lock (_relationshipRoundTripSync)
+        {
+            _relationshipRoundTripTask ??= BuildRelationshipRoundTripResultAsync(cancellationToken);
+            return _relationshipRoundTripTask;
+        }
+    }
+
+    private static async Task<RelationshipRoundTripResult> BuildRelationshipRoundTripResultAsync(CancellationToken cancellationToken)
+    {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
-            TestContext.Current.CancellationToken,
+            cancellationToken,
             compactTimeout: CompactTimeout);
 
-        const string Parent = "RT_Orders2";
-        const string Child = "RT_OrderItems2";
-        const string FkName = "RT_FK_Items_Orders";
-
-        await using (var writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
+        await using (var writer = await session.OpenWriterAsync(cancellationToken))
         {
             await writer.CreateTableAsync(
-                Parent,
+                SingleParent,
+                [
+                    new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
+                    new("Name", typeof(string), maxLength: 100) { IsNullable = false },
+                ],
+                cancellationToken);
+
+            await writer.CreateTableAsync(
+                SingleChild,
+                [
+                    new("OrderID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
+                    new("CustomerID", typeof(int)) { IsNullable = false },
+                    new("OrderDate", typeof(DateTime)),
+                ],
+                cancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(
+                    SingleFkName,
+                    primaryTable: SingleParent,
+                    primaryColumn: "CustomerID",
+                    foreignTable: SingleChild,
+                    foreignColumn: "CustomerID")
+                {
+                    EnforceReferentialIntegrity = true,
+                    CascadeDeletes = true,
+                },
+                cancellationToken);
+
+            await writer.InsertRowsAsync(
+                SingleParent,
+                new[]
+                {
+                    new object[] { DBNull.Value, "Acme" },
+                    new object[] { DBNull.Value, "Beta" },
+                    new object[] { DBNull.Value, "Gamma" },
+                },
+                cancellationToken);
+
+            await writer.InsertRowsAsync(
+                SingleChild,
+                new[]
+                {
+                    new object[] { DBNull.Value, 1, new DateTime(2025, 1, 15) },
+                    new object[] { DBNull.Value, 2, new DateTime(2025, 2, 20) },
+                    new object[] { DBNull.Value, 3, new DateTime(2025, 3, 03) },
+                },
+                cancellationToken);
+
+            await writer.CreateTableAsync(
+                CompositeParent,
                 [
                     new("OrderID", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new("Region", typeof(string), maxLength: 32) { IsPrimaryKey = true, IsNullable = false },
                 ],
-                TestContext.Current.CancellationToken);
+                cancellationToken);
 
             await writer.CreateTableAsync(
-                Child,
+                CompositeChild,
                 [
                     new("OrderID", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new("Region", typeof(string), maxLength: 32) { IsPrimaryKey = true, IsNullable = false },
                     new("LineNo", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new("Sku", typeof(string), maxLength: 32) { IsNullable = false },
                 ],
-                TestContext.Current.CancellationToken);
+                cancellationToken);
 
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition(
-                    FkName,
-                    primaryTable: Parent,
+                    CompositeFkName,
+                    primaryTable: CompositeParent,
                     primaryColumns: ["OrderID", "Region"],
-                    foreignTable: Child,
+                    foreignTable: CompositeChild,
                     foreignColumns: ["OrderID", "Region"])
                 {
                     EnforceReferentialIntegrity = true,
                     CascadeUpdates = true,
                     CascadeDeletes = true,
                 },
-                TestContext.Current.CancellationToken);
+                cancellationToken);
 
             await writer.InsertRowsAsync(
-                Parent,
+                CompositeParent,
                 new[]
                 {
                     new object[] { 1, "North" },
                     new object[] { 2, "South" },
                 },
-                TestContext.Current.CancellationToken);
+                cancellationToken);
 
             await writer.InsertRowsAsync(
-                Child,
+                CompositeChild,
                 new[]
                 {
                     new object[] { 1, "North", 1, "SKU-A" },
                     new object[] { 1, "North", 2, "SKU-B" },
                     new object[] { 2, "South", 1, "SKU-C" },
                 },
-                TestContext.Current.CancellationToken);
+                cancellationToken);
         }
 
-        var pre = await CaptureSnapshotAsync(
+        Snapshot singlePre = await CaptureSnapshotAsync(
             session.SourcePath,
-            [Parent, Child],
-            [FkName],
-            TestContext.Current.CancellationToken);
+            [SingleParent, SingleChild],
+            [SingleFkName],
+            cancellationToken);
+        AssertPreCompactConsistency(singlePre, [SingleParent, SingleChild], [SingleFkName], expectedParentRows: 3, expectedChildRows: 3);
 
-        AssertPreCompactConsistency(pre, [Parent, Child], [FkName], expectedParentRows: 2, expectedChildRows: 3);
-        await AssertTdefMagicStampsAsync(session.SourcePath, [Parent, Child], TestContext.Current.CancellationToken);
+        Snapshot compositePre = await CaptureSnapshotAsync(
+            session.SourcePath,
+            [CompositeParent, CompositeChild],
+            [CompositeFkName],
+            cancellationToken);
+        AssertPreCompactConsistency(compositePre, [CompositeParent, CompositeChild], [CompositeFkName], expectedParentRows: 2, expectedChildRows: 3);
+
+        await AssertTdefMagicStampsAsync(
+            session.SourcePath,
+            [SingleParent, SingleChild, CompositeParent, CompositeChild],
+            cancellationToken);
 
         session.RunDaoCompact();
 
-        var post = await CaptureSnapshotAsync(
+        Snapshot singlePost = await CaptureSnapshotAsync(
             session.CompactedPath,
-            [Parent, Child],
-            [FkName],
-            TestContext.Current.CancellationToken);
+            [SingleParent, SingleChild],
+            [SingleFkName],
+            cancellationToken);
+        Snapshot compositePost = await CaptureSnapshotAsync(
+            session.CompactedPath,
+            [CompositeParent, CompositeChild],
+            [CompositeFkName],
+            cancellationToken);
 
-        AssertSchemaSurvived(pre, post);
-        Assert.Contains(post.Indexes[Parent], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region");
-        Assert.Contains(post.Indexes[Child], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region+LineNo");
-        Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "OrderID+Region" && i.CascadeUpdates && i.CascadeDeletes);
+        return new RelationshipRoundTripResult(singlePre, singlePost, compositePre, compositePost);
     }
 
     private static async Task<Snapshot> CaptureSnapshotAsync(
@@ -388,6 +397,12 @@ public sealed class AccessRoundTripTests
             }
         }
     }
+
+    private sealed record RelationshipRoundTripResult(
+        Snapshot SinglePre,
+        Snapshot SinglePost,
+        Snapshot CompositePre,
+        Snapshot CompositePost);
 
     private sealed record IndexSummary(
         string Name,

@@ -15,6 +15,11 @@ using Xunit;
 /// Tests for <see cref="AccessWriter.CreateDatabaseAsync(Stream, DatabaseFormat, AccessWriterOptions, bool, CancellationToken)"/> that verify the creation of new,
 /// empty JET databases from scratch — both file-path and stream-based overloads.
 /// </summary>
+/// <remarks>
+/// These writer-created databases are the subject under test. Do not treat them
+/// as source-of-truth fixtures for DAO/Access format behavior outside bootstrap
+/// coverage.
+/// </remarks>
 public sealed class CreateDatabaseTests
 {
     private static readonly string[] FullCatalogColumnNames =

@@ -501,7 +501,7 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links and supported delimited text/CSV links through the linked-source path policy; ODBC links are metadata-only. Text links currently materialize delimited fields as string columns and support `HDR=YES/NO`, `FMT=Delimited`, `FMT=CSVDelimited`, `FMT=TabDelimited`, and `FMT=Delimited(<char>)`. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links and supported delimited text/CSV links through the linked-source path policy; ODBC links are metadata-only. Text links currently materialize delimited fields as string columns and support `HDR=YES/NO`, `FMT=Delimited`, `FMT=CSVDelimited`, `FMT=TabDelimited`, and `FMT=Delimited(<char>)`. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata. Access/DAO-authored payloads are the source-of-truth fixture bytes; generated writer payloads are subjects under test, not oracles.
 
 ```csharp
 // Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.
@@ -581,7 +581,7 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
     foreignColumns: new[] { "OrderID", "Region" }));
 ```
 
-> Requires a database that already contains the `MSysRelationships` catalog table. Full-catalog ACCDB databases created by `AccessWriter.CreateDatabaseAsync` include it; Access-authored `.mdb` / `.accdb` files do as well. Jet/MDB writer-created outputs and slim-catalog ACCDB outputs may not, and `CreateRelationshipAsync` throws `NotSupportedException` when the table is absent.
+> Requires a database that already contains the `MSysRelationships` catalog table. Full-catalog ACCDB databases created by `AccessWriter.CreateDatabaseAsync` include it; Access-authored `.mdb` / `.accdb` files do as well. Jet/MDB writer-created outputs and slim-catalog ACCDB outputs may not, and `CreateRelationshipAsync` throws `NotSupportedException` when the table is absent. For validation, treat writer-created full-catalog databases as supported writer outputs under test; use Access-authored or DAO-authored databases as the fixture source of truth for DAO/Access compatibility.
 
 ---
 

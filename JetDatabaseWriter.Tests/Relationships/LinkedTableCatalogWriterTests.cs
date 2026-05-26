@@ -23,6 +23,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Regression coverage for writer-created linked-table catalog rows in
 /// <c>MSysObjects</c>.
 /// </summary>
+/// <remarks>
+/// Access/DAO-authored linked-table fixture rows and cached-schema payloads are
+/// the source-of-truth side of comparisons. Writer-created linked rows are the
+/// subject under test.
+/// </remarks>
 public sealed class LinkedTableCatalogWriterTests : IDisposable
 {
     private readonly List<string> tempFiles = [];

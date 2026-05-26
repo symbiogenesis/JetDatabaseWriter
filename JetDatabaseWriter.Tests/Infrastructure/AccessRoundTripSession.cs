@@ -9,9 +9,19 @@ using System.Threading.Tasks;
 /// Owns a temporary workspace for DAO round-trip tests, including optional
 /// Northwind fixture seeding and compacted-output paths.
 /// </summary>
+/// <remarks>
+/// Use <see cref="CreateFromNorthwindAsync"/> or <see cref="CreateDaoAccdbAsync"/>
+/// when a test needs an Access/DAO-authored source of truth. A plain
+/// <see cref="CreateEmpty"/> session has no fixture authority until the caller
+/// seeds it through Access/DAO, or intentionally writes a library-created
+/// database as the subject under test.
+/// </remarks>
 internal sealed class AccessRoundTripSession : IAsyncDisposable
 {
+    private const string DaoCreateDatabaseAttributes = ";LANGID=0x0409;CP=1252;COUNTRY=0";
+
     private static readonly TimeSpan DefaultCompactTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultDaoCreateTimeout = TimeSpan.FromMinutes(1);
     private readonly string _databaseExtension;
     private readonly TimeSpan _compactTimeout;
 
@@ -36,7 +46,9 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <summary>
     /// Creates an empty temporary session. Callers can use
     /// <see cref="CreateDatabasePath"/> for DAO-authored databases or
-    /// <see cref="CopyNorthwindAsync"/> for one or more fixture copies.
+    /// <see cref="CopyNorthwindAsync"/> for one or more fixture copies. If the
+    /// source path is later created by <see cref="AccessWriter"/>, that file is
+    /// writer output under test, not a trusted fixture.
     /// </summary>
     /// <param name="tempDirectoryName">Directory name under the system temp path.</param>
     /// <param name="compactTimeout">Timeout to use for <see cref="RunDaoCompact"/>.</param>
@@ -60,13 +72,13 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Creates a temporary session and copies the Northwind fixture to
-    /// <see cref="SourcePath"/>.
+    /// Creates a temporary session and copies the Access-authored Northwind
+    /// fixture to <see cref="SourcePath"/>.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <param name="tempDirectoryName">Directory name under the system temp path.</param>
     /// <param name="compactTimeout">Timeout to use for <see cref="RunDaoCompact"/>.</param>
-    /// <returns>Temporary round-trip session seeded with Northwind.</returns>
+    /// <returns>Temporary round-trip session seeded with a trusted Access-authored host.</returns>
     public static async Task<AccessRoundTripSession> CreateFromNorthwindAsync(
         CancellationToken cancellationToken,
         string tempDirectoryName = "JetDatabaseWriter.Tests.RoundTrip",
@@ -76,6 +88,53 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         try
         {
             await CopyNorthwindToAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
+            return session;
+        }
+        catch
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Creates a temporary session and initializes <see cref="SourcePath"/>
+    /// as a DAO-authored ACCDB.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="tempDirectoryName">Directory name under the system temp path.</param>
+    /// <param name="compactTimeout">Timeout to use for <see cref="RunDaoCompact"/>.</param>
+    /// <param name="createTimeout">Timeout to use for DAO <c>CreateDatabase</c>.</param>
+    /// <returns>Temporary round-trip session seeded with a trusted DAO-authored host.</returns>
+    public static async Task<AccessRoundTripSession> CreateDaoAccdbAsync(
+        CancellationToken cancellationToken,
+        string tempDirectoryName = "JetDatabaseWriter.Tests.RoundTrip",
+        TimeSpan? compactTimeout = null,
+        TimeSpan? createTimeout = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        AccessRoundTripSession session = CreateEmpty(tempDirectoryName, compactTimeout);
+        try
+        {
+            AccessRoundTripEnvironment.CompactResult result = session.RunDaoCreateDatabaseScript(
+                session.SourcePath,
+                DaoCreateDatabaseAttributes,
+                "Write-Output 'DAO_CREATE=OK'",
+                createTimeout ?? DefaultDaoCreateTimeout);
+
+            if (result.ExitCode != 0 || !File.Exists(session.SourcePath))
+            {
+                throw new Xunit.Sdk.XunitException(
+                    $"""
+                    DAO CreateDatabase failed (exit={result.ExitCode}).
+                    --- stdout ---
+                    {result.StdOut}
+                    --- stderr ---
+                    {result.StdErr}
+                    """);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
             return session;
         }
         catch
