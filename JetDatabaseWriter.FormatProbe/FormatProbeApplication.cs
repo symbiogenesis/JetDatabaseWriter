@@ -13,6 +13,10 @@ using System.Threading;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.FormatProbe.Bisection;
+using JetDatabaseWriter.FormatProbe.Dao;
+using JetDatabaseWriter.FormatProbe.LinkedTables;
+using JetDatabaseWriter.FormatProbe.LongRows;
 
 internal static class FormatProbeApplication
 {
@@ -238,48 +242,48 @@ internal static class FormatProbeApplication
                     FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"));
                 return 0;
             case "fk-dao-baseline":
-                return await JetDatabaseWriter.FormatProbe.FkDaoBaselineProbe.RunAsync(
+                return await FkDaoBaselineProbe.RunAsync(
                     GetRoundTripBaseline(fixtures),
                     FormatProbeArtifacts.CreateWorkDirectory(probeDir, "fk-dao-baseline"));
             case "rt-bisect":
                 return await RunRoundTripBisectAsync(fixtures, probeDir);
             case "long-row-probe":
-                return await JetDatabaseWriter.FormatProbe.LongRowProbe.RunAsync(
+                return await LongRowProbe.RunAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dump.md"));
             case "long-row-bisect":
-                return await JetDatabaseWriter.FormatProbe.LongRowBisect.RunAsync(
+                return await LongRowBisect.RunAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-bisect.md"));
             case "long-row-corpus":
-                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunCorpusScanAsync(
+                return await LongRowSuffixProbe.RunCorpusScanAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-corpus.md"));
             case "long-row-dao-lab":
-                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunDaoLabAsync(
+                return await LongRowSuffixProbe.RunDaoLabAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-lab.md"),
                     FormatProbeArtifacts.CreateWorkDirectory(probeDir, "long-row-dao-lab"));
             case "long-row-dao-tables":
-                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunDaoTableExportAsync(
+                return await LongRowSuffixProbe.RunDaoTableExportAsync(
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-tables.md"),
                     probeDir);
             case "long-row-suffix":
-                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunAnalysisAsync(
+                return await LongRowSuffixProbe.RunAnalysisAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-suffix-analysis.md"));
             case "long-row-crc-sweep":
-                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunCrcSweepAsync(
+                return await LongRowSuffixProbe.RunCrcSweepAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-crc-sweep.md"));
             case "memo-readback":
                 return await RunMemoReadbackAsync();
             case "linked-odbc-lvprop":
-                return await JetDatabaseWriter.FormatProbe.LinkedOdbcLvPropProbe.RunAsync(
+                return await LinkedOdbcLvPropProbe.RunAsync(
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "linked-odbc-lvprop.md"));
             case "rt-dao-baseline":
-                return await JetDatabaseWriter.FormatProbe.DaoBaselineProbe.RunAsync(
+                return await DaoBaselineProbe.RunAsync(
                     GetRoundTripBaseline(fixtures),
                     FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-dao-baseline"));
             default:
@@ -329,7 +333,7 @@ internal static class FormatProbeApplication
     private static async Task<int> RunRoundTripBisectAsync(string fixtures, string probeDir)
     {
         string workRoot = FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-bisect");
-        return await JetDatabaseWriter.FormatProbe.RoundTripBisect.RunAsync(GetRoundTripBaseline(fixtures), workRoot);
+        return await RoundTripBisect.RunAsync(GetRoundTripBaseline(fixtures), workRoot);
     }
 
     private static string GetRoundTripBaseline(string fixtures) =>

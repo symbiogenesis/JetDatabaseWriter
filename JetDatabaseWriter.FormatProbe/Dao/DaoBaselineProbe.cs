@@ -18,7 +18,7 @@
 //
 // Outputs land under docs/format-probe/format-probe-rt-dao-baseline-*.
 
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.Dao;
 
 using System;
 using System.Buffers.Binary;
@@ -30,6 +30,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Infrastructure;
 
 internal static class DaoBaselineProbe

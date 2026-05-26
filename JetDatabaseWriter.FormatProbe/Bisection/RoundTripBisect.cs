@@ -8,12 +8,13 @@
 //   Set DIAG_RT_RUN_ALL=1 to keep probing after the first failure.
 //   Legacy: $env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseWriter.FormatProbe
 
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.Bisection;
 
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
@@ -38,7 +39,7 @@ internal static class RoundTripBisect
 
         var steps = new (string Name, Func<AccessWriter, Task> Action)[]
         {
-            ("N0_OpenClose",        async w => { await Task.CompletedTask; }),
+            ("N0_OpenClose",        async _ => await Task.CompletedTask),
             ("N1_CreateOneTable",   async w =>
             {
                 await w.CreateTableAsync(

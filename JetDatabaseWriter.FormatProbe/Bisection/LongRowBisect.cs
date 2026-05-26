@@ -8,7 +8,7 @@
 // Usage: dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-bisect
 // Legacy: $env:DIAG_LONG_ROW_BISECT="1" ; dotnet run --project JetDatabaseWriter.FormatProbe
 
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.Bisection;
 
 using System;
 using System.Collections.Generic;
@@ -20,6 +20,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 

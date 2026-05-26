@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.LinkedTables;
 
 using System;
 using System.Buffers.Binary;
@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 

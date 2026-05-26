@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.Dao;
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 

@@ -7,7 +7,7 @@
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-dao-lab
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-dao-tables
 
-namespace JetDatabaseWriter.FormatProbe;
+namespace JetDatabaseWriter.FormatProbe.LongRows;
 
 using System;
 using System.Buffers;
@@ -25,6 +25,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Models;
