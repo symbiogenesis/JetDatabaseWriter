@@ -1381,9 +1381,7 @@ public abstract class AccessBase : IAccessBase
                 switch (column.Type)
                 {
                     case T_TEXT:
-                        return _format != DatabaseFormat.Jet3Mdb
-                            ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
-                            : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
+                        return DecodeTextForFormat(page, rowStart + slice.DataStart, slice.DataLen);
                     case T_BINARY:
                         return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
                     case T_BYTE:

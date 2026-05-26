@@ -123,9 +123,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                     continue;
                 }
 
-                data = writer._format != DatabaseFormat.Jet3Mdb
-                    ? AccessBase.EncodeJet4Text(text, col.IsCompressedUnicode)
-                    : writer.AnsiEncoding.GetBytes(text);
+                data = writer.EncodeTextForFormat(text, col.IsCompressedUnicode);
                 if (col.IsCalculated)
                 {
                     data = CalculatedColumnUtil.Wrap(data);
@@ -154,9 +152,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             return null;
         }
 
-        byte[] data = writer._format != DatabaseFormat.Jet3Mdb
-            ? AccessBase.EncodeJet4Text(text, compress)
-            : writer.AnsiEncoding.GetBytes(text);
+        byte[] data = writer.EncodeTextForFormat(text, compress);
         byte[] header = await EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }

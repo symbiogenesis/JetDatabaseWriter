@@ -4050,9 +4050,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
             case T_TEXT:
-                return _format != DatabaseFormat.Jet3Mdb
-                    ? DecodeJet4Text(page, start, size)
-                    : _ansiEncoding.GetString(page, start, size);
+                return DecodeTextForFormat(page, start, size);
 
             case T_BINARY:
                 return page.AsSpan(start, size).ToArray();
