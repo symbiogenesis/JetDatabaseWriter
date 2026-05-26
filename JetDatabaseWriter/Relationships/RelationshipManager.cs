@@ -17,7 +17,6 @@ using JetDatabaseWriter.Pages;
 
 #pragma warning disable SA1202
 #pragma warning disable SA1204
-#pragma warning disable SA1648
 
 /// <summary>
 /// Foreign-key relationship management for <see cref="AccessWriter"/>:
@@ -714,7 +713,13 @@ internal sealed class RelationshipManager
     //     normalizes them from MSysRelationships, while manual mutation of
     //     those rows has proven less compact-safe.
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Asynchronously deletes a foreign-key relationship and its Jet4 / ACE
+    /// per-TDEF logical-index entries inside an auto-commit operation.
+    /// </summary>
+    /// <param name="relationshipName">The case-insensitive relationship name to delete.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default)
         => writer.RunAutoCommitAsync(_ => DropRelationshipCoreAsync(relationshipName, cancellationToken), cancellationToken);
 
@@ -799,7 +804,14 @@ internal sealed class RelationshipManager
         await catalog.RewriteRowsAsync(msysRelTdefPage, msysRelDef, remainingRows, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Asynchronously renames a foreign-key relationship and its Jet4 / ACE
+    /// per-TDEF logical-index name cookies inside an auto-commit operation.
+    /// </summary>
+    /// <param name="oldName">The case-insensitive existing relationship name.</param>
+    /// <param name="newName">The new relationship name.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default)
         => writer.RunAutoCommitAsync(_ => RenameRelationshipCoreAsync(oldName, newName, cancellationToken), cancellationToken);
 
