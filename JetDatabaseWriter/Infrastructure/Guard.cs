@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Infrastructure;
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Runtime.CompilerServices;
 
 /// <summary>
@@ -88,5 +89,60 @@ internal static class Guard
             throw new ObjectDisposedException(instance?.GetType().FullName);
         }
 #endif
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="path"/> is non-empty and refers to an existing file,
+    /// throwing <see cref="FileNotFoundException"/> with a consistent "Database file not found"
+    /// message when it does not exist.
+    /// </summary>
+    public static void RequireExistingDatabaseFile([NotNull] string? path, string paramName)
+    {
+        NotNullOrEmpty(path, paramName);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Database file not found: {path}", path);
+        }
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="stream"/> is non-<see langword="null"/>, readable, and
+    /// seekable, throwing <see cref="ArgumentException"/> for any unmet capability.
+    /// </summary>
+    public static void RequireReadableSeekableStream([NotNull] Stream? stream, string paramName)
+    {
+        NotNull(stream, paramName);
+        if (!stream.CanRead)
+        {
+            throw new ArgumentException("Stream must be readable.", paramName);
+        }
+
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be seekable.", paramName);
+        }
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="stream"/> is non-<see langword="null"/>, readable,
+    /// writable, and seekable, throwing <see cref="ArgumentException"/> for any unmet capability.
+    /// </summary>
+    public static void RequireReadWriteSeekableStream([NotNull] Stream? stream, string paramName)
+    {
+        NotNull(stream, paramName);
+        if (!stream.CanRead)
+        {
+            throw new ArgumentException("Stream must be readable.", paramName);
+        }
+
+        if (!stream.CanWrite)
+        {
+            throw new ArgumentException("Stream must be writable.", paramName);
+        }
+
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be seekable.", paramName);
+        }
     }
 }

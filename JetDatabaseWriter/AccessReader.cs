@@ -205,13 +205,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool suppressPageCache,
         CancellationToken cancellationToken)
     {
-        Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         options ??= new AccessReaderOptions();
 
@@ -256,17 +251,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool suppressPageCache,
         CancellationToken cancellationToken)
     {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead)
-        {
-            throw new ArgumentException("Stream must be readable.", nameof(stream));
-        }
-
-        if (!stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be seekable.", nameof(stream));
-        }
-
+        Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessReaderOptions();
@@ -1841,7 +1826,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        int rawNumCols = ReadRowColumnCount(page, rowStart);
         if (rawNumCols == 0)
         {
             return null;
@@ -1888,7 +1873,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        int rawNumCols = ReadRowColumnCount(page, rowStart);
         if (rawNumCols == 0)
         {
             return null;
@@ -3259,7 +3244,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Pre-parse numCols just for the schema-evolution sanity check; the full
         // layout parse repeats this read but the cost is negligible.
-        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        int rawNumCols = ReadRowColumnCount(page, rowStart);
         if (rawNumCols == 0)
         {
             return null;
@@ -3332,8 +3317,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             switch (col.Type)
             {
                 case T_TEXT:
-                    return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(row, start, len)
-                                 : _ansiEncoding.GetString(row, start, len);
+                    return DecodeTextForFormat(row, start, len);
 
                 case T_BINARY:
                     return JetTypeInfo.ToHexStringNoSeparator(row.AsSpan(start, len));
@@ -3429,9 +3413,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private string DecodeCalculatedTextPayload(byte[] payload)
-        => _format != DatabaseFormat.Jet3Mdb
-            ? DecodeJet4Text(payload, 0, payload.Length)
-            : _ansiEncoding.GetString(payload, 0, payload.Length);
+        => DecodeTextForFormat(payload, 0, payload.Length);
 
     // ── Typed row cracker ────────────────────────────────────
     //
@@ -3547,20 +3529,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     private async ValueTask<object?[]?> ResolveLongValueRefsAsync(object?[] row, byte[] page, CancellationToken cancellationToken)
     {
-        for (int i = 0; i < row.Length; i++)
-        {
-            if (row[i] is LongValueRef lvr)
-            {
-                row[i] = lvr.IsOle
-                    ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                    : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
-            }
-            else if (row[i] is CalculatedLongValueRef clvr)
-            {
-                row[i] = await ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
+        _ = await ResolveLongValueRefsIntoBufferAsync(row, row.Length, page, cancellationToken).ConfigureAwait(false);
         return row;
     }
 
@@ -3626,7 +3595,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        int rawNumCols = ReadRowColumnCount(page, rowStart);
         if (rawNumCols == 0)
         {
             return false;
@@ -3723,16 +3692,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// ANSI) and returns <see cref="string.Empty"/> for empty slices.
     /// </summary>
     internal string DecodeTextSliceForDirectDecode(byte[] page, int start, int len)
-    {
-        if (len <= 0)
-        {
-            return string.Empty;
-        }
-
-        return _format != DatabaseFormat.Jet3Mdb
-            ? DecodeJet4Text(page, start, len)
-            : _ansiEncoding.GetString(page, start, len);
-    }
+        => DecodeTextForFormat(page, start, len);
 
     /// <summary>
     /// Gets the minimum row size below which the row trailer parser will
@@ -3746,7 +3706,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// peek (matches the rawNumCols extraction in <c>TryCrackRowSync</c>).
     /// </summary>
     internal int ReadRawNumCols(byte[] page, int rowStart)
-        => _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        => ReadRowColumnCount(page, rowStart);
 
     /// <summary>
     /// Synchronous decode of a variable-area column slice into its CLR
@@ -3774,9 +3734,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             switch (col.Type)
             {
                 case T_TEXT:
-                    return _format != DatabaseFormat.Jet3Mdb
-                        ? DecodeJet4Text(page, start, len)
-                        : _ansiEncoding.GetString(page, start, len);
+                    return DecodeTextForFormat(page, start, len);
 
                 case T_BINARY:
                     return page.AsSpan(start, len).ToArray();

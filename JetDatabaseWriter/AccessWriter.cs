@@ -227,13 +227,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the specified database.</returns>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
-        Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         options ??= new AccessWriterOptions();
         await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
@@ -254,22 +249,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead)
-        {
-            throw new ArgumentException("Stream must be readable.", nameof(stream));
-        }
-
-        if (!stream.CanWrite)
-        {
-            throw new ArgumentException("Stream must be writable.", nameof(stream));
-        }
-
-        if (!stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be seekable.", nameof(stream));
-        }
-
+        Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessWriterOptions();
@@ -406,23 +386,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(stream, nameof(stream));
-
-        if (!stream.CanRead)
-        {
-            throw new ArgumentException("Stream must be readable.", nameof(stream));
-        }
-
-        if (!stream.CanWrite)
-        {
-            throw new ArgumentException("Stream must be writable.", nameof(stream));
-        }
-
-        if (!stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be seekable.", nameof(stream));
-        }
-
+        Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);

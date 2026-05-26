@@ -168,13 +168,8 @@ internal static class EncryptionManager
         string path,
         CancellationToken cancellationToken = default)
     {
-        Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         await using var fs = FileStreamFactory.Open(
             path,
@@ -196,12 +191,7 @@ internal static class EncryptionManager
         Stream stream,
         CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead || !stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be readable and seekable.", nameof(stream));
-        }
-
+        Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         long origin = stream.Position;
@@ -640,11 +630,7 @@ internal static class EncryptionManager
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         LockFileSlotWriter? lockSlot = AcquireReencryptLockSlot(path, options);
         try
@@ -725,11 +711,7 @@ internal static class EncryptionManager
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
     {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be readable, writable, and seekable.", nameof(stream));
-        }
+        Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
 
         byte[] result = await ReencryptCoreAsync(
             stream,

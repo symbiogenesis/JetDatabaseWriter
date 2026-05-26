@@ -1035,7 +1035,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         byte[] page = await _writer.ReadPageAsync(parentPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = _writer._format != DatabaseFormat.Jet3Mdb ? AccessBase.Ru16(page, parentRowStart) : page[parentRowStart];
+            int numCols = _writer.ReadRowColumnCount(page, parentRowStart);
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = parentRowSize - nullMaskSz;
             int byteOff = nullMaskPos + (complexCol.ColNum / 8);
@@ -1076,7 +1076,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = _writer._format != DatabaseFormat.Jet3Mdb ? AccessBase.Ru16(page, rowStart) : page[rowStart];
+            int numCols = _writer.ReadRowColumnCount(page, rowStart);
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = rowSize - nullMaskSz;
             int slotOff = rowStart + _writer._rowSz.NumCols + complexCol.FixedOff;
@@ -1280,7 +1280,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             byte[] page = await _writer.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                int numCols = _writer._format != DatabaseFormat.Jet3Mdb ? AccessBase.Ru16(page, loc.RowStart) : page[loc.RowStart];
+                int numCols = _writer.ReadRowColumnCount(page, loc.RowStart);
                 int nullMaskSz = (numCols + 7) / 8;
                 int nullMaskPos = loc.RowSize - nullMaskSz;
 

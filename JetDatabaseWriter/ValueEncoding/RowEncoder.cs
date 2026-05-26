@@ -543,7 +543,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        byte[] data = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(text, compress: false) : writer.AnsiEncoding.GetBytes(text);
+        byte[] data = writer.EncodeTextForFormat(text, compress: false);
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
         if (wrapped.Length > AccessWriter.MaxInlineMemoBytes)
         {
@@ -561,7 +561,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
-        byte[] bytes = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, limit, compress) : writer.AnsiEncoding.GetBytes(value);
+        byte[] bytes = writer.EncodeTextForFormat(value, limit, compress);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
             Array.Resize(ref bytes, maxSize);
@@ -599,7 +599,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        byte[] data = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, compress) : writer.AnsiEncoding.GetBytes(value);
+        byte[] data = writer.EncodeTextForFormat(value, compress);
         if (data.Length > AccessWriter.MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {AccessWriter.MaxInlineMemoBytes} bytes.");

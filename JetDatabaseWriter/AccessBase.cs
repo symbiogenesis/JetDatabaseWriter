@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -845,6 +846,48 @@ public abstract class AccessBase : IAccessBase
         tableDef.InitializeColumnMetadata();
         return tableDef;
     }
+
+    /// <summary>
+    /// Reads the per-row column count from the row header at
+    /// <paramref name="rowStart"/>. Jet3 stores it as a single byte; Jet4/ACE
+    /// uses a 16-bit little-endian word. Consolidates the format ternary
+    /// previously repeated at every row-cracker entry point.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal int ReadRowColumnCount(byte[] page, int rowStart)
+        => _format == DatabaseFormat.Jet3Mdb ? page[rowStart] : Ru16(page, rowStart);
+
+    /// <summary>
+    /// Decodes a text/memo slice using the format-appropriate codec
+    /// (Jet4 compressed/UCS-2 or Jet3 ANSI). Empty slices return
+    /// <see cref="string.Empty"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal string DecodeTextForFormat(byte[] bytes, int start, int len)
+    {
+        if (len <= 0)
+        {
+            return string.Empty;
+        }
+
+        return _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetString(bytes, start, len) : DecodeJet4Text(bytes, start, len);
+    }
+
+    /// <summary>
+    /// Encodes a string for storage using the format-appropriate codec
+    /// (Jet4 with optional compression vs Jet3 ANSI code-page bytes).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal byte[] EncodeTextForFormat(string value, bool compress = true)
+        => _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetBytes(value) : EncodeJet4Text(value, compress);
+
+    /// <summary>
+    /// Encodes a string for storage using the format-appropriate codec,
+    /// truncating the Jet4 path to at most <paramref name="maxBytes"/> output bytes.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal byte[] EncodeTextForFormat(string value, int maxBytes, bool compress = true)
+        => _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetBytes(value) : EncodeJet4Text(value, maxBytes, compress);
 
     /// <summary>
     /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
