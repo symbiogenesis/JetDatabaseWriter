@@ -65,13 +65,13 @@ Done criteria:
 
 ## Priority 2: Refactor Calculated Expression Evaluation
 
-Hotspot: [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs#L1-L220), especially the large function dispatch beginning in [FunctionNode.Evaluate](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs#L278-L520)
+Hotspot: [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs), [CalculatedExpressionFunctionRegistry.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionFunctionRegistry.cs), and the domain-specific `CalculatedExpression*Functions.cs` helpers.
 
-- [ ] Split parser normalization, AST nodes, coercion helpers, and function implementations into separate files or nested components with clear ownership.
-- [ ] Replace the giant function switch with a small registry of function descriptors that carry name aliases, argument count, and evaluator delegate.
-- [ ] Group functions by domain: logical, text, date/time, numeric, formatting, financial, and metadata.
-- [ ] Keep Access-specific coercion semantics centralized so function implementations do not each invent null/date/number behavior.
-- [ ] Expand golden tests for Access/VBA-compatible edge cases before changing dispatch mechanics.
+- [x] Split parser normalization, AST nodes, coercion helpers, and function implementations into separate files or nested components with clear ownership.
+- [x] Replace the giant function switch with a small registry of function descriptors that carry name aliases, argument count, and evaluator delegate.
+- [x] Group functions by domain: logical, text, date/time, numeric, formatting, financial, and metadata.
+- [x] Keep Access-specific coercion semantics centralized so function implementations do not each invent null/date/number behavior.
+- [x] Expand golden tests for Access/VBA-compatible edge cases before changing dispatch mechanics.
 
 Done criteria:
 
@@ -100,4 +100,4 @@ Current largest production files from the smell pass:
 - [x] Then reduce [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) internal forwarder debt, because it affects subsystem boundaries across the library.
 - [x] Then carve reader-side complex column and typed-row fallback policy out of [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs).
 - [x] Then split [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) along lifecycle, TDEF mutation, and runtime enforcement boundaries.
-- [ ] Refactor [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs) after adding enough golden tests to protect Access-compatible semantics.
+- [x] Refactor [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs) after adding enough golden tests to protect Access-compatible semantics.

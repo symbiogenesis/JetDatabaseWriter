@@ -423,6 +423,96 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
+    public async Task InsertRow_CalculatedColumns_EvaluatesFunctionRegistryGoldenCases()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcFunctionRegistry",
+                [
+                    new("Seed", typeof(int)),
+                    new("LogicalEdge", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Not (True Xor False Xor True) And (False Imp False)",
+                    },
+                    new("ChoiceEdge", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Choose(2, \"first\", \"second\")",
+                    },
+                    new("NullEdge", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Nz(Null, \"fallback\") & \":\" & CStr(IsNull(Null)) & \":\" & CStr(IsNumeric(\"12.5\")) & \":\" & CStr(IsDate(\"2025-02-03\"))",
+                    },
+                    new("TextEdge", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Mid(\"Access\", 2, 3) & \":\" & CStr(InStr(\"alphabet\", \"ph\")) & \":\" & CStr(InStrRev(\"banana\", \"na\")) & \":\" & String(3, \"xy\") & \":\" & StrReverse(\"stressed\")",
+                    },
+                    new("DateEdge", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "CStr(Year(DateAdd(\"m\", 1, DateSerial(2025, 12, 31)))) & \":\" & CStr(DateDiff(\"d\", DateSerial(2025, 1, 1), DateSerial(2025, 1, 31))) & \":\" & WeekdayName(2, True, 1) & \":\" & MonthName(2)",
+                    },
+                    new("NumericEdge", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "CStr(Int(-1.2)) & \":\" & CStr(Fix(-1.2)) & \":\" & CStr(Round(2.5, 0)) & \":\" & Hex(255) & \":\" & Oct(8) & \":\" & CStr(Val(\" 12 apples\"))",
+                    },
+                    new("FormattingEdge", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "FormatNumber(1234.5, 1) & \"|\" & FormatPercent(0.125, 1) & \"|\" & FormatDateTime(DateSerial(2025, 2, 3), 2)",
+                    },
+                    new("FinancialEdge", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "FormatNumber(Pmt(0, 10, 1000), 2)",
+                    },
+                    new("MetadataEdge", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "TypeName(Null) & \":\" & CStr(VarType(Null)) & \":\" & CStr(CVar(7))",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcFunctionRegistry",
+                [
+                    1,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+
+        Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
+        Assert.Equal("second", row["ChoiceEdge"]);
+        Assert.Equal("fallback:True:True:True", row["NullEdge"]);
+        Assert.Equal("cce:3:5:xxx:desserts", row["TextEdge"]);
+        Assert.Equal("2026:30:Mon:February", row["DateEdge"]);
+        Assert.Equal("-2:-1:2:FF:10:12", row["NumericEdge"]);
+        Assert.Equal("1,234.5|12.5%|02/03/2025", row["FormattingEdge"]);
+        Assert.Equal("-100.00", row["FinancialEdge"]);
+        Assert.Equal("Null:1:7", row["MetadataEdge"]);
+    }
+
+    [Fact]
     public async Task InsertRow_InvalidCalculatedExpressionSyntax_ThrowsArgumentException()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -530,6 +620,34 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("Access table calculated columns reject domain aggregate function", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SUM(1, 2)")]
+    [InlineData("A1 + 1")]
+    public async Task InsertRow_SpreadsheetOnlyCalculatedExpression_ThrowsNotSupportedException(string expression)
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcSpreadsheetOnly",
+            [
+                new("SpreadsheetValue", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = expression,
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcSpreadsheetOnly",
+                [DBNull.Value],
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("Calculated-column", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -130,7 +130,15 @@ JetDatabaseWriter/
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
 │   ├── Expressions/
-│   │   └── CalculatedExpressionEvaluator.cs (evaluates supported calculated-column expressions)
+│   │   ├── CalculatedExpressionEvaluator.cs        (entry point: applies calculated-expression plans to row values)
+│   │   ├── CalculatedExpressionNormalizer.cs       (Access syntax normalization: column brackets, date literals, word operators)
+│   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
+│   │   ├── CalculatedExpression*Node.cs            (AST nodes for values, names, unary/binary ops, functions, unsupported syntax)
+│   │   ├── CalculatedExpressionCoercion.cs         (central Access null/date/number/text coercion semantics)
+│   │   ├── CalculatedExpressionLimits.cs           (expression safety caps and generated-text limits)
+│   │   ├── CalculatedExpressionFunctionRegistry.cs (descriptor-based function lookup and argument validation)
+│   │   ├── CalculatedFunction*.cs                  (function descriptor, domain, evaluator delegate, invocation context)
+│   │   └── CalculatedExpression*Functions.cs       (domain function catalogs: logical, text, date/time, numeric, formatting, financial, metadata)
 │   └── Models/
 │       ├── ColumnConstraint.cs
 │       ├── ColumnInfo.cs
@@ -307,7 +315,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Planner / Locator** | `RelationshipSeekPlanner`, `RelationshipChildRowLocator` | Separates index-backed lookup planning and row-location resolution from FK fallback/enforcement workflow |
 | **Policy** | `TypedRowFallbackPolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
-| **Registry** | `ConstraintRegistry` | Centralized constraint management — auto-increment, defaults, validation rules — decoupled from the writer orchestrator |
+| **Registry** | `ConstraintRegistry`, `CalculatedExpressionFunctionRegistry` | Centralized constraint management and calculated-expression function dispatch — decoupled from the writer orchestrator and evaluator entry point |
 
 ---
 
@@ -406,6 +414,10 @@ Linked-table public APIs live on `IAccessSchema`; linked-table discovery and rea
 ### 9. Relationship catalog and runtime helpers are split from lifecycle orchestration
 
 `RelationshipManager` owns relationship create/drop/rename workflow and per-TDEF FK logical-index mutation. `RelationshipCatalogStore` owns `MSysRelationships` row emission, loading, and rewrites, while `RelationshipEnforcer` owns insert/update/delete referential-integrity checks. The runtime path uses smaller helpers for reusable policy and lookup work: `RelationshipSeekPlanner` resolves parent/child B-tree seek indexes, `RelationshipChildRowLocator` turns child-side seek hits into live `RowLocation` values, `RelationshipKeyBuilder` keeps seek and snapshot fallback key semantics aligned, and `RelationshipCascadePolicy` owns the cascade-depth guard independently of catalog mutation setup.
+
+### 10. Calculated expressions use explicit helper ownership
+
+`CalculatedExpressionEvaluator` remains the row-local entry point for applying calculated-column expressions, but parsing, normalization, AST nodes, coercion, safety limits, and function dispatch are split into focused internal helpers. Supported Access/VBA functions are registered through `CalculatedExpressionFunctionRegistry` using descriptors for aliases, argument counts, domains, and evaluator delegates; the implementation lives in domain catalogs such as `CalculatedExpressionTextFunctions` and `CalculatedExpressionDateTimeFunctions`. Spreadsheet-only constructs, external references, and domain aggregates stay rejected at the parser/evaluator boundary instead of leaking into row evaluation.
 
 ---
 

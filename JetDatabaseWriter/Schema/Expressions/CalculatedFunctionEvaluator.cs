@@ -1,0 +1,3 @@
+namespace JetDatabaseWriter.Schema.Expressions;
+
+internal delegate object CalculatedFunctionEvaluator(CalculatedFunctionInvocation function);
