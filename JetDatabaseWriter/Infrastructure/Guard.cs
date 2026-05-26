@@ -29,6 +29,7 @@ internal static class Guard
 #endif
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNullOrEmpty([NotNull] string? value, string paramName)
     {
 #if NET6_0_OR_GREATER
@@ -59,6 +60,7 @@ internal static class Guard
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Positive(int value, string paramName)
     {
 #if NET8_0_OR_GREATER
