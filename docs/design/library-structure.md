@@ -72,17 +72,22 @@ JetDatabaseWriter/
 │
 ├── ValueEncoding/                         (write-path: typed values → bytes)
 │   ├── RowEncoder.cs                      (SerializeRow, EncodeFixed/Variable/Text/Binary)
-│   ├── LongValueEncoder.cs               (LVAL chain allocation, OLE wrapping)
+│   ├── LongValueEncoder.cs               (pre-encodes oversized MEMO/OLE values)
 │   ├── NumericEncoder.cs                  (BCD decimal encoding)
 │   └── Models/
-│       ├── LvalChainResult.cs
 │       └── PreEncodedLongValue.cs
+│
+├── LongValues/                            (shared LVAL storage codec)
+│   ├── LongValueStore.cs                  (descriptor/page helpers, chain traversal, deallocation)
+│   └── Models/
+│       ├── LongValueDescriptor.cs         (12-byte MEMO/OLE descriptor parser/serializer)
+│       └── LvalChainResult.cs             (bounded chain-read result)
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowMapper.cs                       (column dispatch — routes to correct decoder)
 │   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
-│   ├── LongValueDecoder.cs               (LVAL chain reading)
+│   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues)
 │   └── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)
 │
 ├── Pages/                                 (page-level I/O & layout)
@@ -315,6 +320,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 |---------|--------------|-----------|
 | **Facade** (GoF) | `AccessReader`, `AccessWriter` | Thin orchestrators that delegate to domain modules; keeps public API surface small |
 | **Symmetric Codec** | `ValueEncoding/` ↔ `ValueDecoding/`, `LongValueEncoder` ↔ `LongValueDecoder` | Matched encode/decode pairs (same pattern as protobuf's `CodedOutputStream`/`CodedInputStream`) |
+| **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-delete page reclamation |
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Strategy via layout structs** | `DataPageLayout`, `IndexLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
@@ -393,11 +399,11 @@ Visibility is controlled via the C# `internal` keyword on classes — not by stu
 
 ### 1. Thin orchestrators over god classes
 
-`AccessReader` and `AccessWriter` are **facades** — they compose and delegate to domain modules (`RowEncoder`, `LongValueEncoder`, `DataPageInserter`, `TransactionLifecycle`, `CatalogWriter`, `UniqueIndexChecker`, `ConstraintRegistry`, `LongValueDecoder`). The orchestrators own the workflow; the domain modules own the logic.
+`AccessReader` and `AccessWriter` are **facades** — they compose and delegate to domain modules (`RowEncoder`, `LongValueEncoder`, `LongValueStore`, `DataPageInserter`, `TransactionLifecycle`, `CatalogWriter`, `UniqueIndexChecker`, `ConstraintRegistry`, `LongValueDecoder`). The orchestrators own the workflow; the domain modules own the logic.
 
-### 2. ValueEncoding and ValueDecoding never depend on each other
+### 2. ValueEncoding and ValueDecoding share neutral format domains
 
-These are symmetric but independent. Shared types (like `ColumnInfo`, `JetTypeInfo`) live in `Schema/` which both can depend on. This prevents coupling the read path to the write path.
+These are symmetric but independent. Shared types live in neutral domains such as `Schema/` (`ColumnInfo`, `JetTypeInfo`) and `LongValues/` (`LongValueDescriptor`, `LongValueStore`) so the read path and write path do not depend on each other's implementation folders.
 
 ### 3. Models co-located with their domain
 
@@ -405,7 +411,7 @@ Internal DTOs live in `{Domain}/Models/` subdirectories. This satisfies CRP — 
 
 ### 4. Public and domain DTOs get their own files
 
-Public API types and domain DTOs get their own files. Previously-nested reusable types (`ColumnConstraint`, `PreEncodedLongValue`, `PageDecryptionKeys`) are promoted to top-level internal types in their domain's folder. Small implementation details that are tightly coupled to one algorithm may remain nested inside that algorithm's file.
+Public API types and domain DTOs get their own files. Previously-nested reusable types (`ColumnConstraint`, `PreEncodedLongValue`, `LongValueDescriptor`, `PageDecryptionKeys`) are promoted to top-level internal types in their domain's folder. Small implementation details that are tightly coupled to one algorithm may remain nested inside that algorithm's file.
 
 ### 5. Embedded resources follow their consumer
 

@@ -19,6 +19,8 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
+using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -3229,7 +3231,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, bool includeTDefRoot, CancellationToken cancellationToken)
     {
         var pagesToFree = new SortedSet<long>();
-        var longValueRoots = new List<LongValueRoot>();
+        var longValueRoots = new List<LongValueDescriptor>();
 
         TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         long totalPages = _stream.Length / _pgSz;
@@ -3297,7 +3299,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        foreach (LongValueRoot root in longValueRoots)
+        foreach (LongValueDescriptor root in longValueRoots)
         {
             await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
@@ -4081,7 +4083,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, bool clearRowData, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        List<LongValueRoot>? longValueRoots = null;
+        List<LongValueDescriptor>? longValueRoots = null;
         int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
         if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
@@ -4118,15 +4120,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        foreach (LongValueRoot root in longValueRoots)
+        foreach (LongValueDescriptor root in longValueRoots)
         {
             await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private List<LongValueRoot> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
+    private List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
     {
-        var roots = new List<LongValueRoot>();
+        var roots = new List<LongValueDescriptor>();
         bool hasVarColumns = false;
         foreach (ColumnInfo column in tableDef.Columns)
         {
@@ -4156,70 +4158,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             int valueStart = rowBound.RowStart + slice.DataStart;
-            byte storageMode = (byte)(page[valueStart + 3] & Constants.LongValue.StorageModeMask);
-            if (storageMode == Constants.LongValue.InlineStorageMode)
+            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out LongValueDescriptor descriptor)
+                || !descriptor.IsExternal
+                || descriptor.FirstDp == 0)
             {
                 continue;
             }
 
-            uint firstDp = Ru32(page, valueStart + 4);
-            if (firstDp == 0)
-            {
-                continue;
-            }
-
-            roots.Add(new LongValueRoot(firstDp, IsChained: storageMode != Constants.LongValue.SinglePageStorageMode));
+            roots.Add(descriptor);
         }
 
         return roots;
     }
 
-    private async ValueTask DeallocateLongValueAsync(LongValueRoot root, CancellationToken cancellationToken)
+    private async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
+        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, ReadNextLongValueDpAsync, _pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
     {
-        if (!root.IsChained)
+        long pageNumber = LongValueStore.PageNumber(currentDp);
+        int rowIndex = LongValueStore.RowIndex(currentDp);
+        if (pageNumber <= 0)
         {
-            long singlePageNumber = root.FirstDp >> 8;
-            await _pageAllocator.DeallocatePageAsync(singlePageNumber, cancellationToken).ConfigureAwait(false);
-            return;
+            return 0;
         }
 
-        uint currentDp = root.FirstDp;
-        var seen = new HashSet<uint>();
-        while (currentDp != 0 && seen.Add(currentDp))
+        byte[] lvalPage = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            long pageNumber = currentDp >> 8;
-            int rowIndex = (int)(currentDp & 0xFF);
-            if (pageNumber <= 0)
+            if (lvalPage[0] != Constants.PageTypes.Data)
             {
-                return;
+                return 0;
             }
 
-            uint nextDp = 0;
-            byte[] lvalPage = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(lvalPage))
             {
-                if (lvalPage[0] == Constants.PageTypes.Data)
+                if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
                 {
-                    foreach (RowBound rowBound in EnumerateLiveRowBounds(lvalPage))
-                    {
-                        if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
-                        {
-                            nextDp = Ru32(lvalPage, rowBound.RowStart);
-                            break;
-                        }
-                    }
+                    return Ru32(lvalPage, rowBound.RowStart);
                 }
             }
-            finally
-            {
-                ReturnPage(lvalPage);
-            }
 
-            await _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            currentDp = nextDp;
+            return 0;
+        }
+        finally
+        {
+            ReturnPage(lvalPage);
         }
     }
-
-    private readonly record struct LongValueRoot(uint FirstDp, bool IsChained);
 }
