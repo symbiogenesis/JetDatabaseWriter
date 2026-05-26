@@ -157,7 +157,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         ColumnPropertyTarget tableTarget = Assert.Single(block.Targets);
         Assert.Equal(string.Empty, tableTarget.Name);
         ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
-        Assert.Equal(ColumnPropertyBlock.DataTypeOle, nameMap.DataType);
+        Assert.Equal(Constants.ColumnTypes.T_OLE, nameMap.DataType);
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
         Assert.True(catalogObject.AceCount >= 2, $"Expected ODBC-linked object ACE rows, got {catalogObject.AceCount}.");
         Assert.Equal(0, catalogObject.Low24CollisionCount);
@@ -195,7 +195,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         ColumnPropertyTarget tableTarget = Assert.Single(block.Targets, target => target.Name.Length == 0);
         ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
-        Assert.Equal(ColumnPropertyBlock.DataTypeOle, nameMap.DataType);
+        Assert.Equal(Constants.ColumnTypes.T_OLE, nameMap.DataType);
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("CustomerName")));
 

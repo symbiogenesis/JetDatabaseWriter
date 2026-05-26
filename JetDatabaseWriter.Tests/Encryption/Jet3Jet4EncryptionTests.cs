@@ -416,12 +416,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
     private static void ApplyXorMask(byte[] data, byte[] mask)
     {
-        const int jet3PageSize = Constants.PageSizes.Jet3;
-
         // Apply mask starting from page 1 (offset 2048) through the data
-        for (int offset = jet3PageSize; offset < data.Length; offset++)
+        for (int offset = Constants.PageSizes.Jet3; offset < data.Length; offset++)
         {
-            data[offset] ^= mask[(offset - jet3PageSize) % mask.Length];
+            data[offset] ^= mask[(offset - Constants.PageSizes.Jet3) % mask.Length];
         }
     }
 
@@ -558,7 +556,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
-        JetDatabaseWriter.Constants.CompoundFile.Signature.CopyTo(data.AsSpan(0, JetDatabaseWriter.Constants.CompoundFile.Signature.Length));
+        Constants.CompoundFile.Signature.CopyTo(data.AsSpan(0, Constants.CompoundFile.Signature.Length));
 
         // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);

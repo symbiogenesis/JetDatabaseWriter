@@ -30,8 +30,6 @@ using Xunit;
 /// </summary>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private const int Jet4PageSize = Constants.PageSizes.Jet4;
-
     // ═══════════════════════════════════════════════════════════════════
     // 1. CATALOG ACCESS — reader must decrypt page 2 to list tables
     // ═══════════════════════════════════════════════════════════════════
@@ -327,9 +325,9 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         aes.Padding = PaddingMode.None;
         using var encryptor = aes.CreateEncryptor();
 
-        for (int offset = Jet4PageSize; offset < data.Length; offset += Jet4PageSize)
+        for (int offset = Constants.PageSizes.Jet4; offset < data.Length; offset += Constants.PageSizes.Jet4)
         {
-            int length = Math.Min(Jet4PageSize, data.Length - offset);
+            int length = Math.Min(Constants.PageSizes.Jet4, data.Length - offset);
 
             // AES-ECB operates on full 16-byte blocks; skip partial trailing page.
             if (length % 16 != 0)

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 using System;
 using JetDatabaseWriter.Indexes;
 using Xunit;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// Unit tests for <see cref="IndexKeyEncoder"/>. The assertions verify
@@ -14,19 +15,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexKeyEncoderTests
 {
-    // Column type codes (mirrored from AccessBase).
-    private const byte T_BYTE = 0x02;
-    private const byte T_INT = 0x03;
-    private const byte T_LONG = 0x04;
-    private const byte T_MONEY = 0x05;
-    private const byte T_FLOAT = 0x06;
-    private const byte T_DOUBLE = 0x07;
-    private const byte T_DATETIME = 0x08;
-    private const byte T_TEXT = 0x0A;
-    private const byte T_GUID = 0x0F;
-    private const byte T_NUMERIC = 0x10;
-    private const byte T_DATETIMEEXT = 0x14;
-
     [Fact]
     public void Null_Ascending_EmitsSingleZeroFlagByte()
     {
@@ -589,7 +577,6 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Memo_RoutesThroughTheSameEncoderAsText()
     {
-        const byte T_MEMO = 0x0C;
         byte[] memo = IndexKeyEncoder.EncodeEntry(T_MEMO, "Hello", ascending: true);
         byte[] text = IndexKeyEncoder.EncodeEntry(T_TEXT, "Hello", ascending: true);
         Assert.Equal(text, memo);
@@ -712,8 +699,6 @@ public sealed class IndexKeyEncoderTests
     // intermediates, the actual valid count for the final segment). On
     // descending the data bytes and the FINAL length byte flip; intermediate
     // 0x09 length bytes stay unflipped.
-
-    private const byte T_BINARY = 0x09;
 
     private static readonly byte[] BinaryEmpty = [];
     private static readonly byte[] BinaryThree = [0x01, 0x02, 0x03];

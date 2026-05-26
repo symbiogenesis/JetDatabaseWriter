@@ -21,39 +21,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal readonly struct IndexLayout
 {
-    /// <summary>Number of <c>col_map</c> slots in a real-idx physical descriptor (always 10).</summary>
-    public const int ColMapSlotCount = Constants.TableDefinition.ColMapSlotCount;
-
-    /// <summary>Sentinel <c>col_num</c> value marking an unused col_map slot.</summary>
-    public const ushort ColMapPaddingSlot = Constants.TableDefinition.ColMapPaddingSlot;
-
-    /// <summary>Offset (post <see cref="RealIdxFieldsOffset"/>) of <c>first_dp</c>: root page of the index B-tree.</summary>
-    public const int FirstDpFieldOffset = Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>index_num</c>.</summary>
-    public const int IndexNumFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>index_num2</c> (backing real-idx slot).</summary>
-    public const int IndexNum2FieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>rel_idx_num</c>.</summary>
-    public const int RelIdxNumFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>rel_tbl_page</c>.</summary>
-    public const int RelTblPageFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>cascade_ups</c>.</summary>
-    public const int CascadeUpsFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>cascade_dels</c>.</summary>
-    public const int CascadeDelsFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset;
-
-    /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>index_type</c>.</summary>
-    public const int IndexTypeFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset;
-
-    /// <summary>Size in bytes of one <c>col_map</c> slot: <c>{col_num(2), col_order(1)}</c>.</summary>
-    public const int ColMapSlotSize = Constants.TableDefinition.ColMapSlotSize;
-
     private IndexLayout(
         DatabaseFormat format,
         int realIdxPhysSize,
@@ -84,7 +51,8 @@ internal readonly struct IndexLayout
     /// <summary>
     /// Gets the byte offset within a real-idx physical descriptor at which
     /// the post-<c>col_map</c> field block begins (Jet3: 0, Jet4/ACE: 4).
-    /// Add to a phys slot start, then offset by <see cref="FirstDpFieldOffset"/>.
+    /// Add to a phys slot start, then offset by
+    /// <see cref="Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset"/>.
     /// (For the <c>flags</c> byte, use <see cref="FlagsOffsetWithinPhys"/>
     /// instead — its placement is not a fixed shift on top of this offset.)
     /// </summary>
@@ -144,11 +112,11 @@ internal readonly struct IndexLayout
     public void ReadColMap(ReadOnlySpan<byte> td, int physStart, Action<KeyColumn> onColumn)
     {
         int colMapStart = physStart + ColMapStartWithinPhys;
-        for (int slot = 0; slot < ColMapSlotCount; slot++)
+        for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
         {
-            int so = colMapStart + (slot * ColMapSlotSize);
+            int so = colMapStart + (slot * Constants.TableDefinition.ColMapSlotSize);
             int colNum = Ru16(td, so);
-            if (colNum == ColMapPaddingSlot)
+            if (colNum == Constants.TableDefinition.ColMapPaddingSlot)
             {
                 continue;
             }
@@ -165,7 +133,7 @@ internal readonly struct IndexLayout
 
     /// <summary>Returns the absolute byte offset of a <c>col_map</c> slot's <c>col_num</c> within a TDEF buffer.</summary>
     public int ColMapSlotOffset(int physStart, int slot)
-        => physStart + ColMapStartWithinPhys + (slot * ColMapSlotSize);
+        => physStart + ColMapStartWithinPhys + (slot * Constants.TableDefinition.ColMapSlotSize);
 
     /// <summary>
     /// Walks the 10-slot <c>col_map</c> in a real-idx physical descriptor and
@@ -176,13 +144,13 @@ internal readonly struct IndexLayout
     /// </summary>
     public List<KeyColumn> ReadColMapEntries(ReadOnlySpan<byte> td, int physStart)
     {
-        var result = new List<KeyColumn>(ColMapSlotCount);
+        var result = new List<KeyColumn>(Constants.TableDefinition.ColMapSlotCount);
         int colMapStart = physStart + ColMapStartWithinPhys;
-        for (int slot = 0; slot < ColMapSlotCount; slot++)
+        for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
         {
-            int so = colMapStart + (slot * ColMapSlotSize);
+            int so = colMapStart + (slot * Constants.TableDefinition.ColMapSlotSize);
             int colNum = Ru16(td, so);
-            if (colNum == ColMapPaddingSlot)
+            if (colNum == Constants.TableDefinition.ColMapPaddingSlot)
             {
                 continue;
             }
@@ -199,7 +167,7 @@ internal readonly struct IndexLayout
     /// physical descriptor's <c>first_dp</c> field begins.
     /// </summary>
     public int FirstDpAbsoluteOffset(int physStart)
-        => physStart + RealIdxFieldsOffset + FirstDpFieldOffset;
+        => physStart + RealIdxFieldsOffset + Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
 
     /// <summary>
     /// Returns the absolute byte offset within a TDEF buffer at which a real-idx
@@ -235,8 +203,10 @@ internal readonly struct IndexLayout
     /// <summary>
     /// Returns the absolute byte offset within a TDEF buffer at which the
     /// <paramref name="slot"/>-th logical-idx entry's format-invariant field
-    /// block begins. Add one of the <c>*FieldOffset</c> constants
-    /// (e.g. <see cref="IndexTypeFieldOffset"/>) to reach a specific field.
+    /// block begins. Add one of
+    /// <see cref="Constants.TableDefinition.Jet3.LogicalIdx"/> member offsets
+    /// (e.g. <see cref="Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset"/>)
+    /// to reach a specific field.
     /// </summary>
     public int LogicalIdxFieldsOffset(int logIdxStart, int slot)
         => logIdxStart + (slot * LogicalEntrySize) + LogicalEntryFieldsOffset;
@@ -265,7 +235,8 @@ internal readonly struct IndexLayout
     /// Combines <see cref="LogicalIdxFieldsOffset"/> with a bounds check
     /// against <paramref name="bufferLength"/>. Returns <see langword="true"/>
     /// and emits <paramref name="fieldsOffset"/> (the start of the
-    /// format-invariant field block; add a <c>*FieldOffset</c> constant to
+    /// format-invariant field block; add a
+    /// <see cref="Constants.TableDefinition.Jet3.LogicalIdx"/> offset to
     /// reach a specific field) when the slot fits entirely within the
     /// buffer; otherwise returns <see langword="false"/>.
     /// </summary>
@@ -317,7 +288,7 @@ internal readonly struct IndexLayout
             return false;
         }
 
-        int firstDpOffset = phys + RealIdxFieldsOffset + FirstDpFieldOffset;
+        int firstDpOffset = phys + RealIdxFieldsOffset + Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
         int flagsOffset = phys + FlagsOffsetWithinPhys;
         info = new RealIdxSlot(phys, firstDpOffset, td[flagsOffset]);
         return true;
@@ -368,13 +339,13 @@ internal readonly struct IndexLayout
 
         entry = new LogicalIdxEntry(
             e,
-            Ri32(td, e + IndexNumFieldOffset),
-            Ri32(td, e + IndexNum2FieldOffset),
-            Ri32(td, e + RelIdxNumFieldOffset),
-            Ri32(td, e + RelTblPageFieldOffset),
-            td[e + CascadeUpsFieldOffset],
-            td[e + CascadeDelsFieldOffset],
-            (IndexKind)td[e + IndexTypeFieldOffset]);
+            Ri32(td, e + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset),
+            Ri32(td, e + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset),
+            Ri32(td, e + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset),
+            Ri32(td, e + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset),
+            td[e + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset],
+            td[e + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset],
+            (IndexKind)td[e + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset]);
         return true;
     }
 

@@ -195,9 +195,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private bool TryReadInlineMappedPages(byte[] usageMapPage, RowBound rowBound, long totalPages, List<long> mappedPages)
     {
-        const int InlineBitmapOffset = 5;
-
-        if (rowBound.RowSize <= InlineBitmapOffset)
+        if (rowBound.RowSize <= Constants.UsageMap.InlineBitmapOffset)
         {
             return false;
         }
@@ -208,10 +206,10 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        int bitmapBytes = Math.Min(rowBound.RowSize - InlineBitmapOffset, writer._pgSz - rowBound.RowStart - InlineBitmapOffset);
+        int bitmapBytes = Math.Min(rowBound.RowSize - Constants.UsageMap.InlineBitmapOffset, writer._pgSz - rowBound.RowStart - Constants.UsageMap.InlineBitmapOffset);
         for (int bitIndex = 0; bitIndex < bitmapBytes * 8; bitIndex++)
         {
-            int byteOffset = rowBound.RowStart + InlineBitmapOffset + (bitIndex / 8);
+            int byteOffset = rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
             byte bitMask = (byte)(1 << (bitIndex % 8));
             if ((usageMapPage[byteOffset] & bitMask) == 0)
             {
@@ -237,15 +235,13 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         List<long> mappedPages,
         CancellationToken cancellationToken)
     {
-        const int ReferenceMapPointerOffset = 1;
-        const int ReferenceMapBitmapOffset = 4;
-        int pointerCount = (rowBound.RowSize - ReferenceMapPointerOffset) / 4;
-        int pagesPerMapPage = (writer._pgSz - ReferenceMapBitmapOffset) * 8;
+        int pointerCount = (rowBound.RowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
+        int pagesPerMapPage = (writer._pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
         for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pointerOffset = rowBound.RowStart + ReferenceMapPointerOffset + (pointerIndex * 4);
+            int pointerOffset = rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
             int referencePageNumber = Ri32(usageMapPage, pointerOffset);
             if (referencePageNumber == 0)
             {
@@ -265,10 +261,10 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
                     return false;
                 }
 
-                int bitCapacity = (writer._pgSz - ReferenceMapBitmapOffset) * 8;
+                int bitCapacity = (writer._pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
                 for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
                 {
-                    int byteOffset = ReferenceMapBitmapOffset + (bitIndex / 8);
+                    int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
                     byte bitMask = (byte)(1 << (bitIndex % 8));
                     if ((referencePage[byteOffset] & bitMask) == 0)
                     {
@@ -381,23 +377,20 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        const int InlineBitmapOffset = 5;
-        const int InlineBitmapBits = 64 * 8;
-
         int startPage = Ri32(umPage, rowOff + 1);
-        if (startPage == 0 && pageNumber >= InlineBitmapBits)
+        if (startPage == 0 && pageNumber >= Constants.UsageMap.InlineBitmapBits)
         {
             startPage = checked((int)((pageNumber / 8) * 8));
             Wi32(umPage, rowOff + 1, startPage);
         }
 
         long bitIdx = pageNumber - startPage;
-        if (bitIdx < 0 || bitIdx >= InlineBitmapBits)
+        if (bitIdx < 0 || bitIdx >= Constants.UsageMap.InlineBitmapBits)
         {
             return false;
         }
 
-        umPage[rowOff + InlineBitmapOffset + (int)(bitIdx / 8)] |= (byte)(1 << (int)(bitIdx % 8));
+        umPage[rowOff + Constants.UsageMap.InlineBitmapOffset + (int)(bitIdx / 8)] |= (byte)(1 << (int)(bitIdx % 8));
         return true;
     }
 
@@ -447,9 +440,8 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
-        const int rowSize = 69;
-        int row0Off = writer._pgSz - rowSize;
-        int row1Off = row0Off - rowSize;
+        int row0Off = writer._pgSz - Constants.UsageMap.RowSize;
+        int row1Off = row0Off - Constants.UsageMap.RowSize;
 
         Wi32(page, writer._dataPage.TDefOff, 0);
         Wu16(page, writer._dataPage.NumRows, 2);

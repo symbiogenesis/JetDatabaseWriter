@@ -243,13 +243,15 @@ public sealed class ColumnConstraintTests
         }
 
         byte[] disk = stream.ToArray();
-        const int pageSize = 4096;
-        const byte AllowedFlagsMask = 0x01 | 0x02 | 0x04 | 0x80; // FIXED | UNKNOWN_FF | AUTO_LONG | HYPERLINK
+        const byte AllowedFlagsMask = Constants.ColumnDescriptorFlags.Fixed
+            | Constants.ColumnDescriptorFlags.Unknown
+            | Constants.ColumnDescriptorFlags.AutoNumber
+            | Constants.ColumnDescriptorFlags.Hyperlink;
         bool foundTable = false;
 
-        for (int p = 1; p < disk.Length / pageSize; p++)
+        for (int p = 1; p < disk.Length / Constants.PageSizes.Jet4; p++)
         {
-            int off = p * pageSize;
+            int off = p * Constants.PageSizes.Jet4;
             if (disk[off] != 0x02)
             {
                 continue;

@@ -1353,8 +1353,9 @@ internal static class DaoBaselineProbe
     private static HypothesisRow CheckRealIdxFlags(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
     {
         // PK = first index (RT_Customers has only one).
-        const byte UNIQUE = 0x01, IGNORE_NULLS = 0x02, REQUIRED = 0x08, UNKNOWN = 0x80;
-        const byte ExpectedMask = UNIQUE | REQUIRED | UNKNOWN;
+        const byte ExpectedMask = Constants.TableDefinition.UniqueIndexFlag
+            | Constants.TableDefinition.RequiredIndexFlag
+            | Constants.TableDefinition.UnknownIndexFlag;
         if (wHdr.NumRealIdx == 0 || dHdr.NumRealIdx == 0)
         {
             return new HypothesisRow("H37", "PK real-idx flags @46 has UNIQUE|REQUIRED|UNKNOWN", "⚠️ N/A", "—", "—", "no real-idx slot");
@@ -1371,7 +1372,6 @@ internal static class DaoBaselineProbe
         byte dFlags = dt[dOff];
         bool ok = (wFlags & ExpectedMask) == ExpectedMask;
         string verdict = ok ? "✅ PASS" : "❌ FAIL";
-        _ = IGNORE_NULLS; // suppress unused warning
         return new HypothesisRow(
             "H37",
             "PK real-idx flags @46 has UNIQUE|REQUIRED|UNKNOWN",

@@ -350,12 +350,11 @@ public sealed class CompressedUnicodeFlagTests
         // Each Jet4 column descriptor is 25 bytes starting at
         // BlockEnd (63) + (num_real_idx * 12). ExtraFlags is at
         // descriptor-relative offset 16.
-        const int pageSize = 4096;
         bool foundTextCol = false;
 
-        for (int p = 1; p < disk.Length / pageSize; p++)
+        for (int p = 1; p < disk.Length / Constants.PageSizes.Jet4; p++)
         {
-            int off = p * pageSize;
+            int off = p * Constants.PageSizes.Jet4;
             if (disk[off] != 0x02)
             {
                 continue; // Not a TDEF page

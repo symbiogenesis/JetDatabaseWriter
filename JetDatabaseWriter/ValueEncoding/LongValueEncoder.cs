@@ -22,9 +22,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAllocator)
 {
-    private const int MaxInlineMemoBytes = 1024;
-    private const int MaxInlineOleBytes = 256;
-
     /// <summary>
     /// Wraps short data (≤ inline cap) into the 12-byte inline LVAL header form
     /// (bitmask <c>0x80</c>): header + raw payload contiguous in the row body.
@@ -114,7 +111,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                     data = CalculatedColumnUtil.Wrap(data);
                 }
 
-                inlineCap = MaxInlineOleBytes;
+                inlineCap = Constants.LongValue.MaxInlineOleBytes;
             }
             else
             {
@@ -130,7 +127,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                     data = CalculatedColumnUtil.Wrap(data);
                 }
 
-                inlineCap = MaxInlineMemoBytes;
+                inlineCap = Constants.LongValue.MaxInlineMemoBytes;
             }
 
             if (data.Length <= inlineCap)

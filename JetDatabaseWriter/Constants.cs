@@ -86,7 +86,7 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column expression string (Access 2010+, ACCDB only). Written as a
-        /// <see cref="Schema.Models.ColumnPropertyBlock.DataTypeMemo"/> entry. Contains the Jet/VBA
+        /// <see cref="ColumnTypes.T_MEMO"/> entry. Contains the Jet/VBA
         /// expression Microsoft Access evaluates to compute the cached column value
         /// (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>). See Jackcess <c>PropertyMap.EXPRESSION_PROP</c>.
         /// </summary>
@@ -94,7 +94,7 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column result data type (Access 2010+, ACCDB only). Written as a
-        /// <see cref="Schema.Models.ColumnPropertyBlock.DataTypeByte"/> entry holding
+        /// <see cref="ColumnTypes.T_BYTE"/> entry holding
         /// the JET column-type code (<see cref="ColumnTypes"/>) of the value the
         /// expression produces. Distinguishes the logical CLR type of the column from
         /// the on-disk storage which always carries a 23-byte calculated-value wrapper.
@@ -412,6 +412,69 @@ internal static class Constants
     }
 
     /// <summary>
+    /// Per-column index-entry flag bytes used by text and non-text key
+    /// encoders.
+    /// <see cref="Indexes.IndexKeyEncoder"/> and collation encoders.
+    /// </summary>
+    public static class IndexEntryFlags
+    {
+        /// <summary>Ascending non-null key entry marker.</summary>
+        public const byte AscendingNonNull = 0x7F;
+
+        /// <summary>Descending non-null key entry marker.</summary>
+        public const byte DescendingNonNull = 0x80;
+
+        /// <summary>Ascending null key entry marker.</summary>
+        public const byte AscendingNull = 0x00;
+
+        /// <summary>Descending null key entry marker.</summary>
+        public const byte DescendingNull = 0xFF;
+    }
+
+    /// <summary>
+    /// Shared text-index encoding limits used by the General collation encoders.
+    /// </summary>
+    public static class IndexTextEncoding
+    {
+        /// <summary>Jet text-index byte limit from Jackcess <c>JetFormat.TEXT_FIELD_MAX_LENGTH</c>.</summary>
+        public const int MaxTextIndexByteLength = 255;
+
+        /// <summary>Maximum indexed UCS-2 character count for Jet4 / ACE text index keys.</summary>
+        public const int MaxTextIndexCharLength = MaxTextIndexByteLength / 2;
+    }
+
+    /// <summary>
+    /// Usage-map row type discriminator bytes used by table/global usage-map
+    /// rows.
+    /// </summary>
+    public static class UsageMap
+    {
+        /// <summary>Inline usage-map row layout.</summary>
+        public const byte InlineMapType = 0x00;
+
+        /// <summary>Reference-page usage-map row layout.</summary>
+        public const byte ReferenceMapType = 0x01;
+
+        /// <summary>Size in bytes of one usage-map row payload on usage-map data pages.</summary>
+        public const int RowSize = 69;
+
+        /// <summary>Offset of the base-page pointer within an inline usage-map row.</summary>
+        public const int ReferenceMapPointerOffset = 1;
+
+        /// <summary>Offset at which the bitmap payload starts in an inline usage-map row.</summary>
+        public const int InlineBitmapOffset = 5;
+
+        /// <summary>Header bytes preceding inline usage-map bitmap bits.</summary>
+        public const int InlineMapHeaderSize = InlineBitmapOffset;
+
+        /// <summary>Offset at which the bitmap payload starts in a reference usage-map page.</summary>
+        public const int ReferenceMapBitmapOffset = 4;
+
+        /// <summary>Maximum inline bitmap bit capacity (64 bytes × 8 bits).</summary>
+        public const int InlineBitmapBits = 512;
+    }
+
+    /// <summary>
     /// Bit flags stored in the <c>grbit</c> column of <c>MSysRelationships</c>
     /// rows. Values per Jackcess <c>RelationshipImpl</c>.
     /// </summary>
@@ -701,6 +764,15 @@ internal static class Constants
         /// from the key-data salt and the segment index.
         /// </summary>
         public const int SegmentSize = 4096;
+
+        /// <summary>Offset of the flat ACCDB Agile encoding key in the unmasked page-0 header.</summary>
+        public const int FlatEncodingKeyOffset = 0x3E;
+
+        /// <summary>Offset of the flat ACCDB Agile EncryptionInfo length field in the unmasked page-0 header.</summary>
+        public const int FlatEncryptionInfoLengthOffset = 0x299;
+
+        /// <summary>Offset of the embedded flat ACCDB Agile EncryptionInfo descriptor in the unmasked page-0 header.</summary>
+        public const int FlatEncryptionInfoOffset = 0x29B;
     }
 
     /// <summary>
@@ -959,6 +1031,12 @@ internal static class Constants
     {
         /// <summary>Size in bytes of an inline row LVAL header.</summary>
         public const int HeaderSize = 12;
+
+        /// <summary>Maximum MEMO payload size stored inline in the owning data row.</summary>
+        public const int MaxInlineMemoBytes = 1024;
+
+        /// <summary>Maximum OLE payload size stored inline in the owning data row.</summary>
+        public const int MaxInlineOleBytes = 256;
 
         /// <summary>
         /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk

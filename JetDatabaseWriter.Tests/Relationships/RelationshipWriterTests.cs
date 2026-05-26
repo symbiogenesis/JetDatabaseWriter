@@ -564,30 +564,23 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
     private static RawLogicalIdxEntry ReadSingleFkLogicalEntry(byte[] fileBytes, long tdefPage, long relatedTdefPage)
     {
-        const int PageSize = 4096;
-        const int TDefBlockEnd = 63;
-        const int ColumnDescriptorSize = 25;
-        const int RealIdxSkipEntrySize = 12;
-        const int RealIdxPhysSize = 52;
-        const int LogicalIdxEntrySize = 28;
-
-        int pageStart = checked((int)tdefPage * PageSize);
+        int pageStart = checked((int)tdefPage * Constants.PageSizes.Jet4);
         int numCols = BitConverter.ToUInt16(fileBytes, pageStart + 0x2D);
         int numIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x2F);
         int numRealIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x33);
-        int colStart = pageStart + TDefBlockEnd + (numRealIdx * RealIdxSkipEntrySize);
-        int namePos = colStart + (numCols * ColumnDescriptorSize);
+        int colStart = pageStart + 63 + (numRealIdx * 12);
+        int namePos = colStart + (numCols * 25);
         for (int i = 0; i < numCols; i++)
         {
             int nameLen = BitConverter.ToUInt16(fileBytes, namePos);
             namePos += 2 + nameLen;
         }
 
-        int logIdxStart = namePos + (numRealIdx * RealIdxPhysSize);
+        int logIdxStart = namePos + (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
         var entries = new List<RawLogicalIdxEntry>();
         for (int i = 0; i < numIdx; i++)
         {
-            int entry = logIdxStart + (i * LogicalIdxEntrySize);
+            int entry = logIdxStart + (i * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
             if (fileBytes[entry + 23] != 0x02)
             {
                 continue;
@@ -599,7 +592,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
             }
 
             int realIdxNum = BitConverter.ToInt32(fileBytes, entry + 8);
-            int realIdxStart = logIdxStart - (numRealIdx * RealIdxPhysSize) + (realIdxNum * RealIdxPhysSize);
+            int realIdxStart = logIdxStart - (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize) + (realIdxNum * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
             entries.Add(new RawLogicalIdxEntry(
                 BitConverter.ToInt32(fileBytes, entry + 4),

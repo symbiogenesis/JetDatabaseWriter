@@ -7,6 +7,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 using Xunit;
 
 /// <summary>
@@ -20,18 +21,6 @@ using Xunit;
 /// </summary>
 public sealed class JetTypeInfoReadFixedTypedTests
 {
-    private const byte T_BYTE = 0x02;
-    private const byte T_INT = 0x03;
-    private const byte T_LONG = 0x04;
-    private const byte T_MONEY = 0x05;
-    private const byte T_FLOAT = 0x06;
-    private const byte T_DOUBLE = 0x07;
-    private const byte T_DATETIME = 0x08;
-    private const byte T_GUID = 0x0F;
-    private const byte T_NUMERIC = 0x10;
-    private const byte T_ATTACHMENT = 0x11;
-    private const byte T_COMPLEX = 0x12;
-
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

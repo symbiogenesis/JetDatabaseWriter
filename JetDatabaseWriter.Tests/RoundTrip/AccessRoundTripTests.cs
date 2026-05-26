@@ -328,10 +328,6 @@ public sealed class AccessRoundTripTests
         CancellationToken ct)
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, ct);
-        const int PageSize = 4096;
-        const int FormatMagic = 0x00000659;
-        const int RealIdxMagic = 0x00000783;
-
         await using var reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, ct);
         foreach (string tableName in tableNames)
         {
@@ -339,15 +335,15 @@ public sealed class AccessRoundTripTests
             Assert.True(entry is not null, $"{tableName}: catalog entry not found.");
             int tdefPage = (int)entry.TDefPage;
 
-            int off = tdefPage * PageSize;
+            int off = tdefPage * Constants.PageSizes.Jet4;
             Assert.True(
                 fileBytes[off] == 0x02 && fileBytes[off + 1] == 0x01,
                 $"{tableName}: page {tdefPage} is not a TDEF (type=0x{fileBytes[off]:X2}{fileBytes[off + 1]:X2}).");
 
             int headerMagic = BitConverter.ToInt32(fileBytes, off + 0x0C);
             Assert.True(
-                headerMagic == FormatMagic,
-                $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x{FormatMagic:X8}.");
+                headerMagic == Constants.TableDefinition.Jet4.FormatMagic,
+                $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");
 
             int numCols = BitConverter.ToUInt16(fileBytes, off + 45);
             int numRealIdx = BitConverter.ToInt32(fileBytes, off + 51);
@@ -359,8 +355,8 @@ public sealed class AccessRoundTripTests
                 int o = colStart + (c * 25);
                 int colMagic = BitConverter.ToInt32(fileBytes, o + 1);
                 Assert.True(
-                    colMagic == FormatMagic,
-                    $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x{FormatMagic:X8}.");
+                    colMagic == Constants.TableDefinition.Jet4.FormatMagic,
+                    $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");
             }
 
             // Walk past column names to reach real-idx physical descriptors.
@@ -376,8 +372,8 @@ public sealed class AccessRoundTripTests
                 int phys = namePos + (i * 52);
                 int idxMagic = BitConverter.ToInt32(fileBytes, phys);
                 Assert.True(
-                    idxMagic == RealIdxMagic,
-                    $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x{RealIdxMagic:X8}.");
+                    idxMagic == Constants.TableDefinition.Jet4.RealIdx.LeadingMagic,
+                    $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.RealIdx.LeadingMagic:X8}.");
             }
 
             // Logical-idx entries start after real-idx physical descriptors.
@@ -387,8 +383,8 @@ public sealed class AccessRoundTripTests
                 int logEntry = logStart + (i * 28);
                 int logMagic = BitConverter.ToInt32(fileBytes, logEntry);
                 Assert.True(
-                    logMagic == FormatMagic,
-                    $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x{FormatMagic:X8}.");
+                    logMagic == Constants.TableDefinition.Jet4.FormatMagic,
+                    $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");
             }
         }
     }

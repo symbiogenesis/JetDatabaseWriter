@@ -204,10 +204,9 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             return null;
         }
 
-        const int RealIdxPhysSize = Constants.TableDefinition.Jet4.RealIdx.PhysSize;
         for (int realIndex = 0; realIndex < numRealIndexes; realIndex++)
         {
-            int physicalDescriptorOffset = realIndexDescriptorStart + (realIndex * RealIdxPhysSize);
+            int physicalDescriptorOffset = realIndexDescriptorStart + (realIndex * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
             if (!IndexHelpers.RealIdxColMapMatches(tableDefinition, physicalDescriptorOffset, targetColumnNumbers))
             {
                 continue;

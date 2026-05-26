@@ -334,13 +334,12 @@ internal static class EncryptionConverter
 
     private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
     {
-        const int miniStreamCutoff = Constants.CompoundFile.StandardMiniStreamCutoff;
-        if (encryptionInfo.Length >= miniStreamCutoff)
+        if (encryptionInfo.Length >= Constants.CompoundFile.StandardMiniStreamCutoff)
         {
             return encryptionInfo;
         }
 
-        byte[] padded = new byte[miniStreamCutoff];
+        byte[] padded = new byte[Constants.CompoundFile.StandardMiniStreamCutoff];
         Buffer.BlockCopy(encryptionInfo, 0, padded, 0, encryptionInfo.Length);
         Array.Fill(padded, (byte)' ', encryptionInfo.Length, padded.Length - encryptionInfo.Length);
         return padded;

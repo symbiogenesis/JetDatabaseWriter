@@ -5796,8 +5796,8 @@ internal static class LongRowSuffixProbe
                 GeneralLegacyTextIndexEncoder.CharHandler handler = currentChar <= LastChar
                     ? codes[currentChar]
                     : extCodes[currentChar - FirstExtChar];
-                byte[]? inlineBytes = handler.GetInlineBytes(currentChar);
-                int inlineLength = inlineBytes?.Length ?? 0;
+                ReadOnlySpan<byte> inlineBytes = handler.GetInlineBytes(currentChar);
+                int inlineLength = inlineBytes.Length;
 
                 if (inlinePosition + inlineLength > 508 && firstCharAt508 < 0)
                 {
@@ -5823,7 +5823,7 @@ internal static class LongRowSuffixProbe
                 CultureInfo.InvariantCulture,
                 $"  lastCharBefore508={lastCharBefore508} firstCharAt508={firstCharAt508}");
 
-            var inlineOnly = new List<byte>(512) { GeneralLegacyTextIndexEncoder.FlagAscendingNonNull };
+            var inlineOnly = new List<byte>(512) { Constants.IndexEntryFlags.AscendingNonNull };
             int charsUsed = 0;
             for (int charIndex = 0; charIndex < row.Text.Length; charIndex++)
             {
@@ -5831,10 +5831,10 @@ internal static class LongRowSuffixProbe
                 GeneralLegacyTextIndexEncoder.CharHandler handler = currentChar <= LastChar
                     ? codes[currentChar]
                     : extCodes[currentChar - FirstExtChar];
-                byte[]? inlineBytes = handler.GetInlineBytes(currentChar);
-                if (inlineBytes is not null)
+                ReadOnlySpan<byte> inlineBytes = handler.GetInlineBytes(currentChar);
+                if (!inlineBytes.IsEmpty)
                 {
-                    inlineOnly.AddRange(inlineBytes);
+                    AppendBytes(inlineOnly, inlineBytes);
                 }
 
                 charsUsed++;
@@ -6060,7 +6060,7 @@ internal static class LongRowSuffixProbe
             {
                 byte[] descKey = descKeys[leafIndex].Key;
                 if (descKey.Length != GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010
-                    || descKey[0] != GeneralLegacyTextIndexEncoder.FlagDescendingNonNull)
+                    || descKey[0] != Constants.IndexEntryFlags.DescendingNonNull)
                 {
                     continue;
                 }
@@ -6723,8 +6723,16 @@ internal static class LongRowSuffixProbe
         Console.WriteLine($"Wrote {outFile}");
     }
 
-    private static string InlineHex(byte[]? bytes)
-        => bytes is null ? "(none)" : Convert.ToHexString(bytes);
+    private static string InlineHex(ReadOnlySpan<byte> bytes)
+        => bytes.IsEmpty ? "(none)" : Convert.ToHexString(bytes);
+
+    private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
+    {
+        foreach (byte value in bytes)
+        {
+            sink.Add(value);
+        }
+    }
 
     private readonly record struct RowData(int RowIndex, ushort ExpectedSuffix, byte[] Full, string Text);
 

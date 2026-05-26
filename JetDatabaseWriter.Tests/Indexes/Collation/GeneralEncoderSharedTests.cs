@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;
+using static JetDatabaseWriter.Constants.IndexEntryFlags;
 using Xunit;
 
 /// <summary>
@@ -16,37 +17,32 @@ using Xunit;
 /// </summary>
 public sealed class GeneralEncoderSharedTests
 {
-    private const byte FlagAscNonNull = 0x7F;
-    private const byte FlagDescNonNull = 0x80;
-    private const byte FlagAscNull = 0x00;
-    private const byte FlagDescNull = 0xFF;
-
     [Fact]
     public void General_NullAscending_ReturnsSingleNullFlagByte()
     {
         byte[] bytes = GeneralTextIndexEncoder.Encode(null, ascending: true);
-        Assert.Equal([FlagAscNull], bytes);
+        Assert.Equal([AscendingNull], bytes);
     }
 
     [Fact]
     public void General_NullDescending_ReturnsSingleNullFlagByte()
     {
         byte[] bytes = GeneralTextIndexEncoder.Encode(null, ascending: false);
-        Assert.Equal([FlagDescNull], bytes);
+        Assert.Equal([DescendingNull], bytes);
     }
 
     [Fact]
     public void General97_NullAscending_ReturnsSingleNullFlagByte()
     {
         byte[] bytes = General97TextIndexEncoder.Encode(null, ascending: true);
-        Assert.Equal([FlagAscNull], bytes);
+        Assert.Equal([AscendingNull], bytes);
     }
 
     [Fact]
     public void General97_NullDescending_ReturnsSingleNullFlagByte()
     {
         byte[] bytes = General97TextIndexEncoder.Encode(null, ascending: false);
-        Assert.Equal([FlagDescNull], bytes);
+        Assert.Equal([DescendingNull], bytes);
     }
 
     private static readonly byte[] EmptyEncodedAsc = [0x7F, 0x00];
@@ -75,8 +71,8 @@ public sealed class GeneralEncoderSharedTests
         byte[] desc = General97TextIndexEncoder.Encode(text, ascending: false);
 
         Assert.Equal(asc.Length, desc.Length);
-        Assert.Equal(FlagAscNonNull, asc[0]);
-        Assert.Equal(FlagDescNonNull, desc[0]);
+        Assert.Equal(AscendingNonNull, asc[0]);
+        Assert.Equal(DescendingNonNull, desc[0]);
 
         // The flag byte is never flipped (the ascending vs descending value
         // IS the signal); every byte after the flag must be a 1's-complement
@@ -103,8 +99,8 @@ public sealed class GeneralEncoderSharedTests
         // i.e. before the bulk flip the encoder appends an extra END_EXTRA_TEXT (which the
         // flip then turns into 0xFF), then appends one more unflipped END_EXTRA_TEXT.
         Assert.Equal(asc.Length + 1, desc.Length);
-        Assert.Equal(FlagAscNonNull, asc[0]);
-        Assert.Equal(FlagDescNonNull, desc[0]);
+        Assert.Equal(AscendingNonNull, asc[0]);
+        Assert.Equal(DescendingNonNull, desc[0]);
 
         // Bytes 1..N-1 of desc are the ones-complement of bytes 1..N-1 of asc
         // (this includes the asc trailing END_EXTRA_TEXT 0x00 which maps to 0xFF).

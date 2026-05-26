@@ -1,13 +1,16 @@
 namespace JetDatabaseWriter.Indexes.Collation;
 
 using System;
+#if NET8_0_OR_GREATER
 using System.Buffers;
+#endif
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
 /// "General Legacy" (Access 2000–2007 default; Access 2010+ legacy fallback)
@@ -34,18 +37,8 @@ using System.Text;
 /// </summary>
 internal static class GeneralLegacyTextIndexEncoder
 {
-    // Per JetFormat.TEXT_FIELD_MAX_LENGTH (255 bytes) / TEXT_FIELD_UNIT_SIZE (2 bytes/char in Jet4/ACE).
-    private const int MaxTextIndexByteLength = 255;
-
-    internal const int MaxTextIndexCharLength = MaxTextIndexByteLength / 2;
-
     internal const byte EndText = 0x01;
     internal const byte EndExtraText = 0x00;
-
-    internal const byte FlagAscendingNonNull = 0x7F;
-    internal const byte FlagDescendingNonNull = 0x80;
-    internal const byte FlagAscendingNull = 0x00;
-    internal const byte FlagDescendingNull = 0xFF;
 
     private const byte InternationalExtraPlaceholder = 0x02;
     private const int UnprintableCountStart = 7;
@@ -75,7 +68,7 @@ internal static class GeneralLegacyTextIndexEncoder
     private const string GenLegResource = "JetDatabaseWriter.IndexCodeTables.index_codes_genleg.txt.gz";
     private const string GenLegExtResource = "JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz";
 
-    private static readonly byte[] CrazyCodesSuffix = [0xFF, 0x02, 0x80, 0xFF, 0x80];
+    private static ReadOnlySpan<byte> CrazyCodesSuffix => [0xFF, 0x02, 0x80, 0xFF, 0x80];
 
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<char> LineBreakChars = SearchValues.Create("\r\n");
@@ -83,21 +76,22 @@ internal static class GeneralLegacyTextIndexEncoder
     private static readonly char[] LineBreakChars = ['\r', '\n'];
 #endif
 
-    internal static readonly byte[] SurrogateExtraBytes = [0x3F];
+    internal static ReadOnlySpan<byte> SurrogateExtraBytes => [0x3F];
 
     // 2-chunk "long-row" separators reverse-engineered from Access-authored
     // testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
-    // See docs/format-probe/format-probe-long-row-index-encoding.md.
-    internal static readonly byte[] LongRowSeparatorGeneralLegacy = [0x08, 0x07, 0x08, 0x04];
-    internal static readonly byte[] LongRowSeparatorGeneral = [0x07, 0x09, 0x07, 0x06];
+    // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
+    internal static ReadOnlySpan<byte> LongRowSeparatorGeneralLegacy => [0x08, 0x07, 0x08, 0x04];
+
+    internal static ReadOnlySpan<byte> LongRowSeparatorGeneral => [0x07, 0x09, 0x07, 0x06];
 
     internal delegate ushort? LongRowSuffixProvider(string text, bool ascending, byte[] fullEntry);
 
-    private static readonly Lazy<CharHandler[]> Codes = new(
-        () => LoadCodes(GenLegResource, FirstChar, LastChar));
+    private static readonly Lazy<CharHandler[]> Codes =
+        new(() => LoadCodes(GenLegResource, FirstChar, LastChar));
 
-    private static readonly Lazy<CharHandler[]> ExtCodes = new(
-        () => LoadCodes(GenLegExtResource, FirstExtChar, LastExtChar));
+    private static readonly Lazy<CharHandler[]> ExtCodes =
+        new(() => LoadCodes(GenLegExtResource, FirstExtChar, LastExtChar));
 
     /// <summary>
     /// Encodes a single text value into the complete per-column entry block
@@ -125,7 +119,7 @@ internal static class GeneralLegacyTextIndexEncoder
     /// <param name="longRowSeparator">
     /// 4-byte separator emitted between chunks when the input is split across
     /// two chunks (only used when <paramref name="text"/> exceeds
-    /// <see cref="MaxTextIndexCharLength"/> and contains an embedded line-break).
+    /// <see cref="Constants.IndexTextEncoding.MaxTextIndexCharLength"/> and contains an embedded line-break).
     /// </param>
     /// <param name="maxEntryLength">
     /// Optional hard cap on the encoded entry length (0 = no cap). When set,
@@ -141,20 +135,20 @@ internal static class GeneralLegacyTextIndexEncoder
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        byte[]? longRowSeparator = null,
+        ReadOnlySpan<byte> longRowSeparator = default,
         int maxEntryLength = 0,
         LongRowSuffixProvider? longRowSuffixProvider = null)
     {
         if (text is null)
         {
-            return [ascending ? FlagAscendingNull : FlagDescendingNull];
+            return [ascending ? AscendingNull : DescendingNull];
         }
 
         if (maxEntryLength > 0)
         {
             // V2010 / ACE: continuous encoding of up to 255 characters with
             // no chunk split. ApplyMaxEntryLength handles the byte cap.
-            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexByteLength));
+            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
             return EncodeSingleChunk(
                 text,
                 v2010Chars,
@@ -165,7 +159,7 @@ internal static class GeneralLegacyTextIndexEncoder
                 longRowSuffixProvider);
         }
 
-        if (text.Length > MaxTextIndexCharLength)
+        if (text.Length > Constants.IndexTextEncoding.MaxTextIndexCharLength)
         {
             int splitAt = FindFirstLineBreak(text);
             if (splitAt >= 0)
@@ -185,11 +179,11 @@ internal static class GeneralLegacyTextIndexEncoder
                     ascending,
                     codes,
                     extCodes,
-                    longRowSeparator ?? LongRowSeparatorGeneralLegacy);
+                    longRowSeparator.IsEmpty ? LongRowSeparatorGeneralLegacy : longRowSeparator);
             }
         }
 
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
 
         return EncodeSingleChunk(text, chars, ascending, codes, extCodes, 0, null);
     }
@@ -221,11 +215,11 @@ internal static class GeneralLegacyTextIndexEncoder
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        byte[] separator)
+        ReadOnlySpan<byte> separator)
     {
         var chunk1 = text.AsSpan(0, splitAt);
 
-        int chunk2Cap = Math.Min(text.Length, MaxTextIndexByteLength);
+        int chunk2Cap = Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength);
         int chunk2Take = chunk2Cap - resumeAt;
 
         var chunk2 = chunk2Take > 0
@@ -237,7 +231,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         var state = new ChunkEmitState(chunk1.Length + chunk2.Length);
         EmitChunkInline(chunk1, codes, extCodes, bout, state);
-        bout.AddRange(separator);
+        AppendBytes(bout, separator);
         EmitChunkInline(chunk2, codes, extCodes, bout, state);
 
         FinishEntry(bout, payloadStart, state, ascending);
@@ -247,8 +241,16 @@ internal static class GeneralLegacyTextIndexEncoder
     private static List<byte> CreateEntryBuffer(int payloadCapacity, bool ascending)
         => new(payloadCapacity + 4)
         {
-            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
+            ascending ? AscendingNonNull : DescendingNonNull,
         };
+
+    private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
+    {
+        foreach (byte value in bytes)
+        {
+            sink.Add(value);
+        }
+    }
 
 #if NET8_0_OR_GREATER
     private static int FindFirstLineBreak(string text) => text.AsSpan().IndexOfAny(LineBreakChars);
@@ -274,10 +276,10 @@ internal static class GeneralLegacyTextIndexEncoder
             CharHandler ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
             int curCharOffset = state.CharOffset;
 
-            byte[]? inline = ch.GetInlineBytes(c);
-            if (inline is not null)
+            ReadOnlySpan<byte> inline = ch.GetInlineBytes(c);
+            if (!inline.IsEmpty)
             {
-                bout.AddRange(inline);
+                AppendBytes(bout, inline);
                 state.CharOffset++;
             }
 
@@ -286,15 +288,15 @@ internal static class GeneralLegacyTextIndexEncoder
                 continue;
             }
 
-            byte[]? extra = ch.ExtraBytes;
+            ReadOnlySpan<byte> extra = ch.ExtraBytes;
             byte extraCodeModifier = ch.ExtraByteModifier;
-            if (extra is not null || extraCodeModifier != 0)
+            if (!extra.IsEmpty || extraCodeModifier != 0)
             {
                 WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.GetOrCreateExtraCodes());
             }
 
-            byte[]? unprint = ch.UnprintableBytes;
-            if (unprint is not null)
+            ReadOnlySpan<byte> unprint = ch.UnprintableBytes;
+            if (!unprint.IsEmpty)
             {
                 state.UnprintableCodes ??= [];
                 WriteUnprintableCodes(curCharOffset, unprint, state.UnprintableCodes, state.ExtraCodes);
@@ -410,7 +412,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private static void WriteExtraCodes(
         int charOffset,
-        byte[]? bytes,
+        ReadOnlySpan<byte> bytes,
         byte extraCodeModifier,
         ExtraCodesStream extraCodes)
     {
@@ -425,9 +427,9 @@ internal static class GeneralLegacyTextIndexEncoder
             extraCodes.NumChars = charOffset;
         }
 
-        if (bytes is not null)
+        if (!bytes.IsEmpty)
         {
-            extraCodes.Bytes.AddRange(bytes);
+            AppendBytes(extraCodes.Bytes, bytes);
             extraCodes.NumChars++;
         }
         else if (extraCodes.Bytes.Count > 0)
@@ -476,7 +478,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private static void WriteUnprintableCodes(
         int charOffset,
-        byte[] bytes,
+        ReadOnlySpan<byte> bytes,
         List<byte> unprintableCodes,
         ExtraCodesStream? extraCodes)
     {
@@ -490,7 +492,7 @@ internal static class GeneralLegacyTextIndexEncoder
         unprintableCodes.Add(unchecked((byte)(offset >> 8)));
         unprintableCodes.Add(unchecked((byte)offset));
         unprintableCodes.Add(UnprintableMidfix);
-        unprintableCodes.AddRange(bytes);
+        AppendBytes(unprintableCodes, bytes);
     }
 
     private static void WriteCrazyCodes(List<byte> crazyCodes, List<byte> bout)
@@ -518,7 +520,7 @@ internal static class GeneralLegacyTextIndexEncoder
             }
         }
 
-        bout.AddRange(CrazyCodesSuffix);
+        AppendBytes(bout, CrazyCodesSuffix);
     }
 
     internal static CharHandler[] LoadCodes(string resourceName, char firstChar, char lastChar)
@@ -620,11 +622,11 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public virtual bool HasTrailingBytes => false;
 
-        public virtual byte[]? GetInlineBytes(char c) => null;
+        public virtual ReadOnlySpan<byte> GetInlineBytes(char c) => [];
 
-        public virtual byte[]? ExtraBytes => null;
+        public virtual ReadOnlySpan<byte> ExtraBytes => [];
 
-        public virtual byte[]? UnprintableBytes => null;
+        public virtual ReadOnlySpan<byte> UnprintableBytes => [];
 
         public virtual byte ExtraByteModifier => 0;
 
@@ -635,7 +637,7 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public override CharHandlerType Type => CharHandlerType.Simple;
 
-        public override byte[] GetInlineBytes(char c) => bytes;
+        public override ReadOnlySpan<byte> GetInlineBytes(char c) => bytes;
     }
 
     private sealed class InternationalCharHandler(byte[] bytes, byte[] extraBytes) : CharHandler
@@ -644,9 +646,9 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override bool HasTrailingBytes => true;
 
-        public override byte[] GetInlineBytes(char c) => bytes;
+        public override ReadOnlySpan<byte> GetInlineBytes(char c) => bytes;
 
-        public override byte[] ExtraBytes => extraBytes;
+        public override ReadOnlySpan<byte> ExtraBytes => extraBytes;
     }
 
     private sealed class UnprintableCharHandler(byte[] unprintBytes) : CharHandler
@@ -655,7 +657,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override bool HasTrailingBytes => true;
 
-        public override byte[] UnprintableBytes => unprintBytes;
+        public override ReadOnlySpan<byte> UnprintableBytes => unprintBytes;
     }
 
     private sealed class UnprintableExtCharHandler(byte extraByteMod) : CharHandler
@@ -673,9 +675,9 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override bool HasTrailingBytes => true;
 
-        public override byte[] GetInlineBytes(char c) => bytes;
+        public override ReadOnlySpan<byte> GetInlineBytes(char c) => bytes;
 
-        public override byte[]? ExtraBytes => extraBytes;
+        public override ReadOnlySpan<byte> ExtraBytes => extraBytes is null ? [] : extraBytes;
 
         public override byte CrazyFlag => crazyFlag;
     }
@@ -684,7 +686,7 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public override CharHandlerType Type => CharHandlerType.Significant;
 
-        public override byte[] GetInlineBytes(char c) => bytes;
+        public override ReadOnlySpan<byte> GetInlineBytes(char c) => bytes;
     }
 
     private sealed class IgnoredHandler : CharHandler
@@ -710,13 +712,13 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override bool HasTrailingBytes => true;
 
-        public override byte[] GetInlineBytes(char c)
+        public override ReadOnlySpan<byte> GetInlineBytes(char c)
         {
             int idxC = c - 10238;
-            return [unchecked((byte)(idxC >> 8)), unchecked((byte)idxC)];
+            return new byte[] { unchecked((byte)(idxC >> 8)), unchecked((byte)idxC) };
         }
 
-        public override byte[] ExtraBytes => SurrogateExtraBytes;
+        public override ReadOnlySpan<byte> ExtraBytes => SurrogateExtraBytes;
     }
 
     private sealed class LowSurrogateHandler : CharHandler
@@ -727,7 +729,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override bool HasTrailingBytes => true;
 
-        public override byte[] GetInlineBytes(char c)
+        public override ReadOnlySpan<byte> GetInlineBytes(char c)
         {
             int charOffset = (c - 0xDC00) % 1024;
             int idxOffset = charOffset switch
@@ -740,10 +742,10 @@ internal static class GeneralLegacyTextIndexEncoder
             };
 
             int idxC = c - idxOffset;
-            return [unchecked((byte)(idxC >> 8)), unchecked((byte)idxC)];
+            return new byte[] { unchecked((byte)(idxC >> 8)), unchecked((byte)idxC) };
         }
 
-        public override byte[] ExtraBytes => SurrogateExtraBytes;
+        public override ReadOnlySpan<byte> ExtraBytes => SurrogateExtraBytes;
     }
 
     private sealed class ExtraCodesStream(int initialCapacity)

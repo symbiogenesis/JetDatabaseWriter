@@ -18,45 +18,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </remarks>
 internal sealed class ColumnPropertyBlock
 {
-    /// <summary>
-    /// Jet-column-type code carried in the per-property entry header (offset 3).
-    /// Subset of <see cref="ColumnInfo"/> type codes that appears in property blocks.
-    /// </summary>
-    public const byte DataTypeBoolean = 0x01;
-
-    /// <summary>Byte (uint8).</summary>
-    public const byte DataTypeByte = 0x02;
-
-    /// <summary>Integer (int16).</summary>
-    public const byte DataTypeInteger = 0x03;
-
-    /// <summary>Long Integer (int32).</summary>
-    public const byte DataTypeLong = 0x04;
-
-    /// <summary>Single-precision float.</summary>
-    public const byte DataTypeSingle = 0x06;
-
-    /// <summary>Double-precision float.</summary>
-    public const byte DataTypeDouble = 0x07;
-
-    /// <summary>OLE date (float64).</summary>
-    public const byte DataTypeDateTime = 0x08;
-
-    /// <summary>Binary / opaque bytes.</summary>
-    public const byte DataTypeBinary = 0x09;
-
-    /// <summary>Text — UTF-16LE in Jet4, codepage in Jet3. Default for property strings.</summary>
-    public const byte DataTypeText = 0x0A;
-
-    /// <summary>OLE / opaque bytes.</summary>
-    public const byte DataTypeOle = 0x0B;
-
-    /// <summary>Memo (long text).</summary>
-    public const byte DataTypeMemo = 0x0C;
-
-    /// <summary>GUID (16 bytes).</summary>
-    public const byte DataTypeGuid = 0x0F;
-
     private const uint MagicMr2 = 0x0032524D; // "MR2\0" little-endian
     private const uint MagicKkd = 0x00444B4B; // "KKD\0" little-endian
 

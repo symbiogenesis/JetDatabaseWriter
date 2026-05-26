@@ -366,8 +366,7 @@ internal static class AgileEncryptionFixtureBuilder
         int totalDataSectors = 2 + eiSectors + epSectors;
 
         // One FAT sector holds 1024 entries (4096 / 4); ensure we don't overflow.
-        const int entriesPerFatSector = Constants.CompoundFile.V4.SectorSize / 4;
-        if (totalDataSectors > entriesPerFatSector)
+        if (totalDataSectors > (Constants.CompoundFile.V4.SectorSize / 4))
         {
             throw new InvalidOperationException(
                 $"Inner database too large for single-FAT-sector fixture (needs {totalDataSectors} sectors).");

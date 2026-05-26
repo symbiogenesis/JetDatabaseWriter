@@ -40,9 +40,9 @@ internal sealed class RowEncoder(AccessWriter writer)
             data = Encoding.UTF8.GetBytes(stringValue);
         }
 
-        if (data.Length > AccessWriter.MaxInlineOleBytes)
+        if (data.Length > Constants.LongValue.MaxInlineOleBytes)
         {
-            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {AccessWriter.MaxInlineOleBytes} bytes.");
+            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
         }
 
         return LongValueEncoder.WrapInlineLongValue(data);
@@ -251,9 +251,9 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
-        if (wrapped.Length > AccessWriter.MaxInlineOleBytes)
+        if (wrapped.Length > Constants.LongValue.MaxInlineOleBytes)
         {
-            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {AccessWriter.MaxInlineOleBytes} bytes.");
+            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
         }
 
         return LongValueEncoder.WrapInlineLongValue(wrapped);
@@ -545,9 +545,9 @@ internal sealed class RowEncoder(AccessWriter writer)
 
         byte[] data = writer.EncodeTextForFormat(text, compress: false);
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
-        if (wrapped.Length > AccessWriter.MaxInlineMemoBytes)
+        if (wrapped.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
-            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {AccessWriter.MaxInlineMemoBytes} bytes.");
+            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
         }
 
         return LongValueEncoder.WrapInlineLongValue(wrapped);
@@ -600,9 +600,9 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         byte[] data = writer.EncodeTextForFormat(value, compress);
-        if (data.Length > AccessWriter.MaxInlineMemoBytes)
+        if (data.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
-            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {AccessWriter.MaxInlineMemoBytes} bytes.");
+            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
         }
 
         return LongValueEncoder.WrapInlineLongValue(data);

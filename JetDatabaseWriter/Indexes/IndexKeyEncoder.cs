@@ -8,6 +8,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types.
@@ -56,14 +57,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// </summary>
 internal static class IndexKeyEncoder
 {
-    // Column type codes are imported via `using static JetDatabaseWriter.Constants.ColumnTypes;`
-    // (mdbtools HACKING.md naming preserved on the constant declarations themselves).
-
-    // Entry flag bytes — see §4.3.
-    internal const byte FlagAscendingNonNull = 0x7F;
-    internal const byte FlagDescendingNonNull = 0x80;
-    internal const byte FlagAscendingNull = 0x00;
-    internal const byte FlagDescendingNull = 0xFF;
+    // Column type codes are imported via `using static JetDatabaseWriter.Constants.ColumnTypes;`.
 
     /// <summary>
     /// Returns the entry-flag + key-bytes block for a single column value.
@@ -88,7 +82,7 @@ internal static class IndexKeyEncoder
         bool isNull = value is null || value is DBNull;
         if (isNull)
         {
-            return [ascending ? FlagAscendingNull : FlagDescendingNull];
+            return [ascending ? AscendingNull : DescendingNull];
         }
 
         // GUID uses the Jackcess "general binary entry" wrapping where
@@ -130,7 +124,7 @@ internal static class IndexKeyEncoder
 
         // Always emit the ascending flag here; if descending, the loop below
         // ones-complements the entire block (turning 0x7F → 0x80, etc.) per §5.
-        result[0] = FlagAscendingNonNull;
+        result[0] = AscendingNonNull;
         key.AsSpan().CopyTo(result.AsSpan(1));
 
         if (!ascending)
@@ -336,7 +330,7 @@ internal static class IndexKeyEncoder
         // Always emit at least one segment so empty input round-trips.
         int segments = data.Length == 0 ? 1 : (data.Length + 7) / 8;
         byte[] result = new byte[1 + (segments * 9)];
-        result[0] = ascending ? FlagAscendingNonNull : FlagDescendingNonNull;
+        result[0] = ascending ? AscendingNonNull : DescendingNonNull;
 
         int read = 0;
         for (int s = 0; s < segments; s++)
@@ -418,7 +412,7 @@ internal static class IndexKeyEncoder
         bool isNull = value is null || value is DBNull;
         if (isNull)
         {
-            return [ascending ? FlagAscendingNull : FlagDescendingNull];
+            return [ascending ? AscendingNull : DescendingNull];
         }
 
         decimal d = ToDecimal(value!);
@@ -489,7 +483,7 @@ internal static class IndexKeyEncoder
         }
 
         byte[] result = new byte[18];
-        result[0] = ascending ? FlagAscendingNonNull : FlagDescendingNonNull;
+        result[0] = ascending ? AscendingNonNull : DescendingNonNull;
         Buffer.BlockCopy(valueBytes, 0, result, 1, 17);
         return result;
     }

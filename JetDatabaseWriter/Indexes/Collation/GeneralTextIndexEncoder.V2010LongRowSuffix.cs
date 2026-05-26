@@ -10,34 +10,36 @@ internal static partial class GeneralTextIndexEncoder
     private const int V2010SuffixBoundaryIndex = 254;
     private const int V2010SuffixMinimumTextLength = 255;
 
-    private static readonly byte[] AscendingAuxiliaryRemainder =
+    private static ReadOnlySpan<byte> AscendingAuxiliaryRemainder =>
     [
         0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0x02, 0x02,
         0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0x01, 0x01,
         0x01, 0x81, 0x5F, 0x06, 0x82, 0x81, 0x9B, 0x06, 0x82, 0x00,
     ];
 
-    private static readonly byte[] AscendingRow12Remainder = [0x01, 0x81, 0x5F, 0x06, 0x82, 0x81, 0x9B, 0x06, 0x82, 0x00];
-    private static readonly byte[] AscendingRow10Remainder = [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0x01, 0x01, 0x01, 0x80, 0x07, 0x06, 0x82, 0x00];
+    private static ReadOnlySpan<byte> AscendingRow12Remainder => [0x01, 0x81, 0x5F, 0x06, 0x82, 0x81, 0x9B, 0x06, 0x82, 0x00];
 
-    private static readonly byte[] AscendingRow11Remainder =
+    private static ReadOnlySpan<byte> AscendingRow10Remainder => [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0x01, 0x01, 0x01, 0x80, 0x07, 0x06, 0x82, 0x00];
+
+    private static ReadOnlySpan<byte> AscendingRow11Remainder =>
     [
         0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
         0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0x01,
         0x01, 0x01, 0x80, 0x13, 0x06, 0x82, 0x00,
     ];
 
-    private static readonly byte[] DescendingAuxiliaryRemainder =
+    private static ReadOnlySpan<byte> DescendingAuxiliaryRemainder =>
     [
         0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xF1, 0xFD, 0xFD,
         0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xF1, 0xFE, 0xFE,
         0xFE, 0x7E, 0xA0, 0xF9, 0x7D, 0x7E, 0x64, 0xF9, 0x7D, 0xFF, 0x00,
     ];
 
-    private static readonly byte[] DescendingRow12Remainder = [0xFE, 0x7E, 0xA0, 0xF9, 0x7D, 0x7E, 0x64, 0xF9, 0x7D, 0xFF, 0x00];
-    private static readonly byte[] DescendingRow10Remainder = [0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xF1, 0xFE, 0xFE, 0xFE, 0x7F, 0xF8, 0xF9, 0x7D, 0xFF, 0x00];
+    private static ReadOnlySpan<byte> DescendingRow12Remainder => [0xFE, 0x7E, 0xA0, 0xF9, 0x7D, 0x7E, 0x64, 0xF9, 0x7D, 0xFF, 0x00];
 
-    private static readonly byte[] DescendingRow11Remainder =
+    private static ReadOnlySpan<byte> DescendingRow10Remainder => [0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xF1, 0xFE, 0xFE, 0xFE, 0x7F, 0xF8, 0xF9, 0x7D, 0xFF, 0x00];
+
+    private static ReadOnlySpan<byte> DescendingRow11Remainder =>
     [
         0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD,
         0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xF1, 0xFE,
@@ -216,22 +218,6 @@ internal static partial class GeneralTextIndexEncoder
         tripleSpaceSuffix: 0xC303,
         hasBoundarySpaceForPreviousSpace: true);
 
-    private static readonly (byte[] Remainder, V2010LongRowSuffixTable Table)[] AscendingRemainderTables =
-    [
-        (AscendingAuxiliaryRemainder, AscendingAuxiliarySuffixTable),
-        (AscendingRow10Remainder, AscendingRow10SuffixTable),
-        (AscendingRow11Remainder, AscendingRow11SuffixTable),
-        (AscendingRow12Remainder, AscendingRow12SuffixTable),
-    ];
-
-    private static readonly (byte[] Remainder, V2010LongRowSuffixTable Table)[] DescendingRemainderTables =
-    [
-        (DescendingAuxiliaryRemainder, DescendingAuxiliarySuffixTable),
-        (DescendingRow10Remainder, DescendingRow10SuffixTable),
-        (DescendingRow11Remainder, DescendingRow11SuffixTable),
-        (DescendingRow12Remainder, DescendingRow12SuffixTable),
-    ];
-
     private static ushort? TryComputeV2010LongRowSuffix(string text, bool ascending, byte[] fullEntry)
     {
         if (text.Length < V2010SuffixMinimumTextLength
@@ -274,18 +260,60 @@ internal static partial class GeneralTextIndexEncoder
         char previousBoundaryChar,
         char boundaryChar)
     {
-        foreach ((byte[] remainder, V2010LongRowSuffixTable table) in ascending
-                     ? AscendingRemainderTables
-                     : DescendingRemainderTables)
+        V2010LongRowSuffixTable? remainderTable = ascending
+            ? TryGetAscendingRemainderTable(fullEntry)
+            : TryGetDescendingRemainderTable(fullEntry);
+        if (remainderTable is not null)
         {
-            if (MatchesRemainder(fullEntry, remainder))
-            {
-                return table;
-            }
+            return remainderTable;
         }
 
         return IsPlainV2010DaoContext(text, previousBoundaryChar, boundaryChar)
             ? ascending ? AscendingPlainSuffixTable : DescendingPlainSuffixTable
+            : null;
+    }
+
+    private static V2010LongRowSuffixTable? TryGetAscendingRemainderTable(byte[] fullEntry)
+    {
+        if (MatchesRemainder(fullEntry, AscendingAuxiliaryRemainder))
+        {
+            return AscendingAuxiliarySuffixTable;
+        }
+
+        if (MatchesRemainder(fullEntry, AscendingRow10Remainder))
+        {
+            return AscendingRow10SuffixTable;
+        }
+
+        if (MatchesRemainder(fullEntry, AscendingRow11Remainder))
+        {
+            return AscendingRow11SuffixTable;
+        }
+
+        return MatchesRemainder(fullEntry, AscendingRow12Remainder)
+            ? AscendingRow12SuffixTable
+            : null;
+    }
+
+    private static V2010LongRowSuffixTable? TryGetDescendingRemainderTable(byte[] fullEntry)
+    {
+        if (MatchesRemainder(fullEntry, DescendingAuxiliaryRemainder))
+        {
+            return DescendingAuxiliarySuffixTable;
+        }
+
+        if (MatchesRemainder(fullEntry, DescendingRow10Remainder))
+        {
+            return DescendingRow10SuffixTable;
+        }
+
+        if (MatchesRemainder(fullEntry, DescendingRow11Remainder))
+        {
+            return DescendingRow11SuffixTable;
+        }
+
+        return MatchesRemainder(fullEntry, DescendingRow12Remainder)
+            ? DescendingRow12SuffixTable
             : null;
     }
 

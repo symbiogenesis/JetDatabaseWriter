@@ -209,11 +209,10 @@ internal static class EmittedPageInvariantAssert
 
     private static void AssertUsageMapPage(ReadOnlySpan<byte> page, int pageNumber, List<RowSlotInfo> rowSlots)
     {
-        const int UsageMapRowSize = 69;
         foreach (RowSlotInfo rowSlot in rowSlots)
         {
             Assert.True(rowSlot.IsLive, Message(pageNumber, $"Usage-map row {rowSlot.RowIndex} is marked deleted or overflow."));
-            Assert.Equal(UsageMapRowSize, rowSlot.Size);
+            Assert.Equal(69, rowSlot.Size);
 
             byte mapType = page[rowSlot.Start];
             Assert.True(mapType is 0x00 or 0x01, Message(pageNumber, $"Usage-map row {rowSlot.RowIndex} has unknown type 0x{mapType:X2}."));

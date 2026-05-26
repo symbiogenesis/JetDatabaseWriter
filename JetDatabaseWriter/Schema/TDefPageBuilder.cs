@@ -291,7 +291,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
                 }
 
-                for (int slot = 0; slot < IndexLayout.ColMapSlotCount; slot++)
+                for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
                 {
                     int so = writer._indexLayout.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
@@ -303,7 +303,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     }
                     else
                     {
-                        Wu16(page, so, IndexLayout.ColMapPaddingSlot);
+                        Wu16(page, so, Constants.TableDefinition.ColMapPaddingSlot);
                         page[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
                     }
                 }
@@ -342,18 +342,18 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     Wi32(page, log - writer._indexLayout.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
                 }
 
-                Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);
-                Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);
-                Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);
+                Wi32(page, log + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset, i);
+                Wi32(page, log + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset, i);
+                Wi32(page, log + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset, -1);
 
                 // DAO-authored TDEFs always set the cascade_ups / cascade_dels bytes
                 // to 0x04 even on non-FK indexes (PK and regular). The exact semantic of
                 // 0x04 is undocumented but DAO refuses to OpenRecordset on tables whose
                 // PK index has 0x00 here ("Unrecognized database format").
-                page[log + IndexLayout.CascadeUpsFieldOffset] = 0x04;
-                page[log + IndexLayout.CascadeDelsFieldOffset] = 0x04;
+                page[log + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset] = 0x04;
+                page[log + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset] = 0x04;
 
-                page[log + IndexLayout.IndexTypeFieldOffset] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
+                page[log + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
             int npos = logIdxNameStart;

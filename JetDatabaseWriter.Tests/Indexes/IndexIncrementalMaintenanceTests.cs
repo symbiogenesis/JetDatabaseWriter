@@ -441,10 +441,10 @@ public sealed class IndexIncrementalMaintenanceTests
                 Assert.True(decoded, $"Failed to decode real-idx slot {ri}.");
                 Assert.NotEmpty(keyCols);
 
-                for (int colMapSlot = 0; colMapSlot < IndexLayout.ColMapSlotCount; colMapSlot++)
+                for (int colMapSlot = 0; colMapSlot < Constants.TableDefinition.ColMapSlotCount; colMapSlot++)
                 {
                     int colMapOffset = layout.ColMapSlotOffset(slot.PhysStart, colMapSlot);
-                    Wu16(tdef, colMapOffset, IndexLayout.ColMapPaddingSlot);
+                    Wu16(tdef, colMapOffset, Constants.TableDefinition.ColMapPaddingSlot);
                     tdef[colMapOffset + 2] = 0;
                 }
             }

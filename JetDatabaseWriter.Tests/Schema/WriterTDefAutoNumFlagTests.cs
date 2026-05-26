@@ -32,7 +32,6 @@ public sealed class WriterTDefAutoNumFlagTests
 {
     private const int Jet4ColDescSize = 25;
     private const int Jet4ColFlagsOffsetWithinDesc = 15;
-    private const byte AutoNumFlag = 0x04;
     private const int TDefAutoNumFlagOffset = 0x18;
 
     /// <summary>
@@ -211,7 +210,7 @@ public sealed class WriterTDefAutoNumFlagTests
         {
             int descOff = colStart + (c * Jet4ColDescSize);
             byte flags = fileBytes[descOff + Jet4ColFlagsOffsetWithinDesc];
-            if ((flags & AutoNumFlag) != 0)
+            if ((flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
             {
                 return true;
             }

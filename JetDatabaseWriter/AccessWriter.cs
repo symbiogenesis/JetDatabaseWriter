@@ -51,9 +51,6 @@ internal enum SystemTableIndexMaintenancePath
 /// </summary>
 public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 {
-    internal const int MaxInlineMemoBytes = 1024;
-    internal const int MaxInlineOleBytes = 256;
-
     /// <summary>
     /// Maximum recursion depth for cascade-delete / cascade-update chains.
     /// Guards against pathological self-referential cycles. Real-world Access
@@ -3041,12 +3038,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
-        const int rowSize = 69;
         int rowCount = indexPageGroups.Count + 2;
         int rowStart = _pgSz;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            rowStart -= rowSize;
+            rowStart -= Constants.UsageMap.RowSize;
             Wu16(page, _dataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
@@ -3089,13 +3085,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         byte[] page = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
 
-        const int rowSize = 69;
         int existingRowCount = Ru16(page, _dataPage.NumRows);
         int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
         int rowStart = _pgSz;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            rowStart -= rowSize;
+            rowStart -= Constants.UsageMap.RowSize;
             Wu16(page, _dataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
@@ -3109,7 +3104,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            Array.Clear(page, rowStart, rowSize);
+            Array.Clear(page, rowStart, Constants.UsageMap.RowSize);
             WriteIndexUsageMapRow(page, rowStart, indexPageGroups[groupIndex]);
         }
 
@@ -3138,8 +3133,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ? 0
             : checked((int)((firstPageNumber / 8) * 8));
 
-        page[rowStart] = 0x00;
-        Wi32(page, rowStart + 1, basePageNumber);
+        page[rowStart] = Constants.UsageMap.InlineMapType;
+        Wi32(page, rowStart + Constants.UsageMap.ReferenceMapPointerOffset, basePageNumber);
 
         for (int i = 0; i < indexPageNumbers.Length; i++)
         {
@@ -3151,7 +3146,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     "REFERENCE usage maps for index pages are not yet supported.");
             }
 
-            page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+            page[rowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
         }
     }
 

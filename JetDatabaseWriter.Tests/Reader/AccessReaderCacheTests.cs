@@ -440,29 +440,21 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static byte[] ConvertOwnedUsageMapToReference(byte[] fileBytes, int pageSize, long tdefPage)
     {
         const int DataPageRowsStart = 14;
-        const int OwnedPagesPointerOffset = 0x37;
-        const int InlineBitmapOffset = 5;
-        const int ReferenceMapPointerOffset = 1;
-        const int ReferenceMapBitmapOffset = 4;
-        const int UsageMapRowSize = 69;
-        const byte InlineMapType = 0x00;
-        const byte ReferenceMapType = 0x01;
-        const byte UsageMapPageType = 0x05;
 
         int tdefOffset = checked((int)(tdefPage * pageSize));
-        int usageMapRow = fileBytes[tdefOffset + OwnedPagesPointerOffset];
-        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + OwnedPagesPointerOffset + 1);
+        int usageMapRow = fileBytes[tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset];
+        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset + 1);
         int usageMapOffset = checked(usageMapPage * pageSize);
         int rowOffsetPosition = usageMapOffset + DataPageRowsStart + (usageMapRow * 2);
         int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;
         int rowAbsoluteStart = usageMapOffset + rowStart;
-        Assert.Equal(InlineMapType, fileBytes[rowAbsoluteStart]);
+        Assert.Equal(Constants.UsageMap.InlineMapType, fileBytes[rowAbsoluteStart]);
 
         int basePage = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(rowAbsoluteStart + 1, 4));
         var dataPages = new List<int>();
         for (int bitIndex = 0; bitIndex < 512; bitIndex++)
         {
-            int byteOffset = rowAbsoluteStart + InlineBitmapOffset + (bitIndex / 8);
+            int byteOffset = rowAbsoluteStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
             byte bitMask = (byte)(1 << (bitIndex % 8));
             if ((fileBytes[byteOffset] & bitMask) != 0)
             {
@@ -475,20 +467,20 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         int referencePageNumber = fileBytes.Length / pageSize;
         Array.Resize(ref fileBytes, fileBytes.Length + pageSize);
         int referencePageOffset = referencePageNumber * pageSize;
-        fileBytes[referencePageOffset] = UsageMapPageType;
+        fileBytes[referencePageOffset] = Constants.PageTypes.UsageMap;
 
-        int pagesPerReferenceMapPage = (pageSize - ReferenceMapBitmapOffset) * 8;
+        int pagesPerReferenceMapPage = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
         foreach (int dataPage in dataPages)
         {
             Assert.InRange(dataPage, 1, pagesPerReferenceMapPage - 1);
             int bitIndex = dataPage % pagesPerReferenceMapPage;
-            fileBytes[referencePageOffset + ReferenceMapBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+            fileBytes[referencePageOffset + Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
         }
 
-        Array.Clear(fileBytes, rowAbsoluteStart, UsageMapRowSize);
-        fileBytes[rowAbsoluteStart] = ReferenceMapType;
+        Array.Clear(fileBytes, rowAbsoluteStart, Constants.UsageMap.RowSize);
+        fileBytes[rowAbsoluteStart] = Constants.UsageMap.ReferenceMapType;
         BinaryPrimitives.WriteInt32LittleEndian(
-            fileBytes.AsSpan(rowAbsoluteStart + ReferenceMapPointerOffset, 4),
+            fileBytes.AsSpan(rowAbsoluteStart + Constants.UsageMap.ReferenceMapPointerOffset, 4),
             referencePageNumber);
 
         return fileBytes;

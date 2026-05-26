@@ -188,7 +188,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int dataPageNumber = FindFirstDataPage(corrupted, pageSize);
         if (dataPageNumber < 0)
         {
@@ -259,7 +259,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         // Corrupt numRows on every data page to exceed the physical capacity.
@@ -316,7 +316,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         bool found = false;
         for (int p = 3; p < corrupted.Length / pageSize && !found; p++)
         {
@@ -414,7 +414,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         // Corrupt the var-column offset table within rows: write descending
@@ -531,7 +531,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         // Zero out the tail of every TDEF page so column-name region is invalid.
@@ -596,7 +596,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         // Jet4/ACE: numCols is a 2-byte LE value at the START of each row.
@@ -685,7 +685,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
         bool found = false;
 
@@ -796,7 +796,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         bool found = false;
 
         for (int p = 3; p < corrupted.Length / pageSize && !found; p++)
@@ -903,7 +903,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         for (int p = 1; p < pageCount; p++)
@@ -975,7 +975,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
-        const int pageSize = 4096;
+        int pageSize = Constants.PageSizes.Jet4;
         int pageCount = corrupted.Length / pageSize;
 
         // Find the first TDEF page and make its next-page pointer point to itself.

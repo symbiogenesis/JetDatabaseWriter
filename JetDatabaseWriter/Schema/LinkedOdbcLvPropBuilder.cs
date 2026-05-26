@@ -217,7 +217,7 @@ internal static class LinkedOdbcLvPropBuilder
         AddEntry(
             target,
             propertyName,
-            ColumnPropertyBlock.DataTypeBoolean,
+            Constants.ColumnTypes.T_BOOL,
             ddlFlag,
             [value ? (byte)0xFF : (byte)0x00]);
 
@@ -226,7 +226,7 @@ internal static class LinkedOdbcLvPropBuilder
         string propertyName,
         byte value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeByte, ddlFlag, [value]);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_BYTE, ddlFlag, [value]);
 
     private static void AddInteger16(
         ColumnPropertyBlockBuilder.TargetBuilder target,
@@ -236,7 +236,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(short)];
         BinaryPrimitives.WriteInt16LittleEndian(bytes, value);
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeInteger, ddlFlag, bytes);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_INT, ddlFlag, bytes);
     }
 
     private static void AddInteger32(
@@ -247,7 +247,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeInteger, ddlFlag, bytes);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_INT, ddlFlag, bytes);
     }
 
     private static void AddLong(
@@ -258,7 +258,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeLong, ddlFlag, bytes);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_LONG, ddlFlag, bytes);
     }
 
     private static void AddBinary(
@@ -266,14 +266,14 @@ internal static class LinkedOdbcLvPropBuilder
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeBinary, ddlFlag, value);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_BINARY, ddlFlag, value);
 
     private static void AddOle(
         ColumnPropertyBlockBuilder.TargetBuilder target,
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, ColumnPropertyBlock.DataTypeOle, ddlFlag, value);
+        AddEntry(target, propertyName, Constants.ColumnTypes.T_OLE, ddlFlag, value);
 
     private static void AddEntry(
         ColumnPropertyBlockBuilder.TargetBuilder target,

@@ -132,14 +132,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     private async ValueTask InsertCoreCatalogRowsAsync(CancellationToken cancellationToken)
     {
-        const uint systemFlags = Constants.SystemObjects.SystemObjectFlag;
-
         await _writer.InsertCatalogObjectAsync(
             2,
             Constants.SystemObjects.TablesParentId,
             Constants.SystemTableNames.Objects,
             Constants.SystemObjects.UserTableType,
-            systemFlags,
+            Constants.SystemObjects.SystemObjectFlag,
             owner: null,
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
@@ -149,7 +147,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Constants.SystemObjects.RootParentId,
             "Tables",
             objectType: 3,
-            systemFlags,
+            Constants.SystemObjects.SystemObjectFlag,
             owner: null,
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
@@ -159,7 +157,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Constants.SystemObjects.RootParentId,
             "Databases",
             objectType: 3,
-            systemFlags,
+            Constants.SystemObjects.SystemObjectFlag,
             owner: null,
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
@@ -169,7 +167,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Constants.SystemObjects.RootParentId,
             "Relationships",
             objectType: 3,
-            systemFlags,
+            Constants.SystemObjects.SystemObjectFlag,
             owner: null,
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
@@ -179,7 +177,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Constants.SystemObjects.DatabasesParentId,
             "MSysDb",
             objectType: 2,
-            systemFlags,
+            Constants.SystemObjects.SystemObjectFlag,
             owner: null,
             lvProp: null,
             cancellationToken).ConfigureAwait(false);

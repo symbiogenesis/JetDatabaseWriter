@@ -20,8 +20,6 @@ using Xunit;
 /// </summary>
 public sealed class JetTransactionTests
 {
-    private const int AcePageSize = Constants.PageSizes.Jet4;
-
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
 
     private static AccessWriterOptions NonLockingWriterOptions() =>
@@ -488,13 +486,13 @@ public sealed class JetTransactionTests
     private static int CountChangedPages(byte[] before, byte[] after)
     {
         int maxLength = Math.Max(before.Length, after.Length);
-        int pageCount = (maxLength + AcePageSize - 1) / AcePageSize;
+        int pageCount = (maxLength + Constants.PageSizes.Jet4 - 1) / Constants.PageSizes.Jet4;
         int changedPages = 0;
 
         for (int pageNumber = 0; pageNumber < pageCount; pageNumber++)
         {
-            int pageOffset = pageNumber * AcePageSize;
-            int pageLength = Math.Min(AcePageSize, maxLength - pageOffset);
+            int pageOffset = pageNumber * Constants.PageSizes.Jet4;
+            int pageLength = Math.Min(Constants.PageSizes.Jet4, maxLength - pageOffset);
             if (!PageBytesEqual(before, after, pageOffset, pageLength))
             {
                 changedPages++;
@@ -633,7 +631,7 @@ public sealed class JetTransactionTests
         private void MaybeThrowBeforePageWrite(int count, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!armed || count != AcePageSize)
+            if (!armed || count != Constants.PageSizes.Jet4)
             {
                 return;
             }
@@ -654,7 +652,7 @@ public sealed class JetTransactionTests
 
         private void RecordPageWrite(int count)
         {
-            if (!armed || count != AcePageSize)
+            if (!armed || count != Constants.PageSizes.Jet4)
             {
                 return;
             }

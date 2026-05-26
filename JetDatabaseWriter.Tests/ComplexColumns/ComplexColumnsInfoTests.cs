@@ -20,8 +20,6 @@ using Xunit;
 /// </summary>
 public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private const int AcePageSize = 4096;
-
     [Fact]
     public async Task GetComplexColumns_DocumentsAttachments_ReturnsSingleAttachment()
     {
@@ -82,7 +80,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     {
         byte[] database = await CreateAttachmentDatabaseAsync();
         int complexColumnsTdefPage = await FindSystemTablePageAsync(database, "MSysComplexColumns");
-        database[complexColumnsTdefPage * AcePageSize] = 0x00;
+        database[complexColumnsTdefPage * Constants.PageSizes.Jet4] = 0x00;
 
         await using var stream = new MemoryStream(database, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(

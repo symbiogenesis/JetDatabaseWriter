@@ -7,6 +7,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
 /// "General 97" (Access 1997 / Jet3) text-index sort-key encoder. Port of
@@ -34,8 +35,6 @@ using System.Text;
 /// </summary>
 internal static class General97TextIndexEncoder
 {
-    internal const int MaxTextIndexCharLength = GeneralLegacyTextIndexEncoder.MaxTextIndexCharLength;
-
     private const string CodesResource = "JetDatabaseWriter.IndexCodeTables.index_codes_gen_97.txt.gz";
     private const string ExtMappingsResource = "JetDatabaseWriter.IndexCodeTables.index_mappings_ext_gen_97.txt.gz";
 
@@ -63,21 +62,21 @@ internal static class General97TextIndexEncoder
         if (text is null)
         {
             return [ascending
-                ? GeneralLegacyTextIndexEncoder.FlagAscendingNull
-                : GeneralLegacyTextIndexEncoder.FlagDescendingNull];
+                ? AscendingNull
+                : DescendingNull];
         }
 
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same
         // truncation/trim rule used for all sort orders (TEXT_FIELD_MAX_LENGTH
         // / TEXT_FIELD_UNIT_SIZE = 127 chars).
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
         int extraByteCapacity = GetExtraByteCapacity(chars.Length);
 
         var bytes = new List<byte>(chars.Length + extraByteCapacity + 2)
         {
             ascending
-                ? GeneralLegacyTextIndexEncoder.FlagAscendingNonNull
-                : GeneralLegacyTextIndexEncoder.FlagDescendingNonNull,
+                ? AscendingNonNull
+                : DescendingNonNull,
         };
 
         Span<byte> extraBytes = stackalloc byte[extraByteCapacity];
@@ -90,10 +89,10 @@ internal static class General97TextIndexEncoder
         {
             GeneralLegacyTextIndexEncoder.CharHandler handler = GetCharHandler(currentChar, codes, ref extMappings);
 
-            byte[]? inline = handler.GetInlineBytes(currentChar);
-            if (inline is not null)
+            ReadOnlySpan<byte> inline = handler.GetInlineBytes(currentChar);
+            if (!inline.IsEmpty)
             {
-                bytes.AddRange(inline);
+                AppendBytes(bytes, inline);
             }
 
             if (handler.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Simple)
@@ -107,8 +106,8 @@ internal static class General97TextIndexEncoder
                 continue;
             }
 
-            byte[]? extra = handler.ExtraBytes;
-            if (extra is not null && extra.Length > 0)
+            ReadOnlySpan<byte> extra = handler.ExtraBytes;
+            if (!extra.IsEmpty)
             {
                 if (extraNibbleCount == 0)
                 {

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Constants.IndexLeafPage.Jet4;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -49,14 +50,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class IndexBTreeSeeker
 {
-    private const byte PageTypeIntermediate = Constants.IndexLeafPage.PageTypeIntermediate;
-    private const byte PageTypeLeaf = Constants.IndexLeafPage.PageTypeLeaf;
-    private const int BitmaskOffset = Constants.IndexLeafPage.Jet4.BitmaskOffset;
-    private const int FirstEntryOffset = Constants.IndexLeafPage.Jet4.FirstEntryOffset;
-    private const int NextPageOffset = Constants.IndexLeafPage.Jet4.NextPageOffset;
-    private const int TailPageOffset = Constants.IndexLeafPage.Jet4.TailPageOffset;
-    private const int PrefLenOffset = Constants.IndexLeafPage.Jet4.PrefLenOffset;
-
     /// <summary>
     /// Returns <see langword="true"/> when at least one entry in the B-tree
     /// rooted at <paramref name="rootPageNumber"/> has an encoded key equal to
@@ -99,12 +92,12 @@ internal static class IndexBTreeSeeker
             byte[] page = await readPage(currentPage, cancellationToken).ConfigureAwait(false);
             byte pageType = page[0];
 
-            if (pageType == PageTypeLeaf)
+            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return await SeekLeafChain(readPage, pageSize, currentPage, page, searchKey, cancellationToken).ConfigureAwait(false);
             }
 
-            if (pageType != PageTypeIntermediate)
+            if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
             {
                 // Tiny tables can store rows on the same page the real-idx
                 // points at (per HACKING.md §4 — "for very small tables,
@@ -175,13 +168,13 @@ internal static class IndexBTreeSeeker
             byte[] page = await readPage(currentPage, cancellationToken).ConfigureAwait(false);
             byte pageType = page[0];
 
-            if (pageType == PageTypeLeaf)
+            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
                 await CollectLeafChain(readPage, pageSize, page, searchKey, matches, cancellationToken).ConfigureAwait(false);
                 return matches;
             }
 
-            if (pageType != PageTypeIntermediate)
+            if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
             {
                 return matches;
             }
@@ -321,7 +314,7 @@ internal static class IndexBTreeSeeker
 
             page = await readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
             currentPage = nextPageNumber;
-            if (page[0] != PageTypeLeaf)
+            if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return false;
             }
@@ -616,7 +609,7 @@ internal static class IndexBTreeSeeker
             }
 
             page = await readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != PageTypeLeaf)
+            if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return;
             }

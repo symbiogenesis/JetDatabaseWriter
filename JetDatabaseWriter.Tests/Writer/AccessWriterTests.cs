@@ -1172,7 +1172,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Content", typeof(string)), // no maxLength → MEMO
         };
 
-        // 512 Unicode chars = 1024 bytes = MaxInlineMemoBytes exactly.
+        // 512 Unicode chars = 1024 bytes = Constants.LongValue.MaxInlineMemoBytes exactly.
         // Use a non-Latin-1 character so the writer cannot compress to 1 byte/char.
         string memoValue = new('\u4E2D', 512);
 
@@ -1202,7 +1202,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(8)] // inline path
-    [InlineData(2048)] // forces LVAL chain (chars * 2 bytes/char > MaxInlineMemoBytes)
+    [InlineData(2048)] // forces LVAL chain (chars * 2 bytes/char > Constants.LongValue.MaxInlineMemoBytes)
     public async Task InsertRow_MemoWithEmbeddedNulls_RoundTrips(int charCount)
     {
         string path = TestDatabases.NorthwindTraders;
@@ -1251,7 +1251,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task InsertRow_MemoOverInlineLimit_RoundTripsViaLvalChain()
     {
-        // MEMO payloads larger than MaxInlineMemoBytes are pushed to LVAL
+        // MEMO payloads larger than Constants.LongValue.MaxInlineMemoBytes are pushed to LVAL
         // pages instead of throwing. Round-trip a 513-char Chinese-glyph string
         // (= 1026 UTF-16 bytes; Jet4 cannot compress non-Latin-1 to 1 byte/char,
         // so the encoded payload exceeds the 1024-byte inline cap and forces
@@ -1290,7 +1290,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task InsertRow_OleBytesOverInlineLimit_RoundTripsViaLvalChain()
     {
-        // OLE payloads larger than MaxInlineOleBytes are pushed to LVAL
+        // OLE payloads larger than Constants.LongValue.MaxInlineOleBytes are pushed to LVAL
         // pages instead of throwing. 4096 bytes spans multiple chained LVAL
         // rows for a 4 KB page.
         string path = TestDatabases.NorthwindTraders;
@@ -1400,7 +1400,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Blob", typeof(byte[])), // OLE
         };
 
-        byte[] data = new byte[256]; // exactly MaxInlineOleBytes
+        byte[] data = new byte[256]; // exactly Constants.LongValue.MaxInlineOleBytes
         for (int i = 0; i < data.Length; i++)
         {
             data[i] = (byte)(i % 256);

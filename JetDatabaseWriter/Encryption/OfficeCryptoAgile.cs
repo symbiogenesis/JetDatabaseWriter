@@ -21,28 +21,24 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class OfficeCryptoAgile
 {
-    private const int FlatEncodingKeyOffset = 0x3E;
-    private const int FlatEncryptionInfoLengthOffset = 0x299;
-    private const int FlatEncryptionInfoOffset = 0x29B;
-
     // Agile spec block-key constants (ECMA-376 §2.3.4.13 — "Password Verifier").
-    private static readonly byte[] BlockKeyVerifierHashInput =
+    private static ReadOnlySpan<byte> BlockKeyVerifierHashInput =>
         [0xFE, 0xA7, 0xD2, 0x76, 0x3B, 0x4B, 0x9E, 0x79];
 
-    private static readonly byte[] BlockKeyVerifierHashValue =
+    private static ReadOnlySpan<byte> BlockKeyVerifierHashValue =>
         [0xD7, 0xAA, 0x0F, 0x6D, 0x30, 0x61, 0x34, 0x4E];
 
-    private static readonly byte[] BlockKeyEncryptedKeyValue =
+    private static ReadOnlySpan<byte> BlockKeyEncryptedKeyValue =>
         [0x14, 0x6E, 0x0B, 0xE7, 0xAB, 0xAC, 0xD0, 0xD6];
 
     // Block-key constants for the dataIntegrity HMAC (MS-OFFCRYPTO §2.3.4.14).
     // Emitted on encryption so MS Office files round-trip cleanly; the reader
     // tolerates a placeholder HMAC value because integrity is optional for
     // open-time decryption.
-    private static readonly byte[] BlockKeyHmacKey =
+    private static ReadOnlySpan<byte> BlockKeyHmacKey =>
         [0x5F, 0xB2, 0xAD, 0x01, 0x0C, 0xB9, 0xE1, 0xF6];
 
-    private static readonly byte[] BlockKeyHmacValue =
+    private static ReadOnlySpan<byte> BlockKeyHmacValue =>
         [0xA0, 0x67, 0x7F, 0x02, 0xB2, 0x2C, 0x84, 0x33];
 
     /// <summary>
@@ -242,7 +238,7 @@ internal static class OfficeCryptoAgile
         }
 
         (byte[] encryptionInfo, byte[] intermediateKey, byte[] keyDataSalt) = CreateFlatEncryptionInfo(password);
-        if (FlatEncryptionInfoOffset + encryptionInfo.Length > Constants.PageSizes.Jet4)
+        if (Constants.AgileEncryption.FlatEncryptionInfoOffset + encryptionInfo.Length > Constants.PageSizes.Jet4)
         {
             throw new InvalidDataException("Agile EncryptionInfo is too large to embed in the ACCDB header page.");
         }
@@ -252,9 +248,9 @@ internal static class OfficeCryptoAgile
         byte[] headerPage = new byte[Constants.PageSizes.Jet4];
         Buffer.BlockCopy(result, 0, headerPage, 0, headerPage.Length);
         EncryptionManager.TransformHeaderMask(headerPage);
-        Buffer.BlockCopy(encodingKey, 0, headerPage, FlatEncodingKeyOffset, encodingKey.Length);
-        Wu16(headerPage, FlatEncryptionInfoLengthOffset, checked((ushort)encryptionInfo.Length));
-        Buffer.BlockCopy(encryptionInfo, 0, headerPage, FlatEncryptionInfoOffset, encryptionInfo.Length);
+        Buffer.BlockCopy(encodingKey, 0, headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey.Length);
+        Wu16(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, checked((ushort)encryptionInfo.Length));
+        Buffer.BlockCopy(encryptionInfo, 0, headerPage, Constants.AgileEncryption.FlatEncryptionInfoOffset, encryptionInfo.Length);
         EncryptionManager.TransformHeaderMask(headerPage);
         Buffer.BlockCopy(headerPage, 0, result, 0, headerPage.Length);
 
@@ -295,7 +291,7 @@ internal static class OfficeCryptoAgile
         AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] headerPage = GetUnmaskedHeaderPage(encryptedDatabase);
         byte[] encodingKey = new byte[4];
-        Buffer.BlockCopy(headerPage, FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
+        Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
 
         byte[] passwordUtf16 = PasswordToUtf16(password);
         try
@@ -487,7 +483,12 @@ internal static class OfficeCryptoAgile
         }
     }
 
-    private static byte[] DeriveKey(byte[] passwordUtf16, byte[] salt, byte[] blockKey, int spinCount, int keyByteCount)
+    private static byte[] DeriveKey(
+        byte[] passwordUtf16,
+        byte[] salt,
+        ReadOnlySpan<byte> blockKey,
+        int spinCount,
+        int keyByteCount)
     {
         // Agile PBKDF (ECMA-376 §2.3.4.11):
         //   H0      = SHA512(salt || passwordUtf16Le)
@@ -517,7 +518,7 @@ internal static class OfficeCryptoAgile
 
             byte[] final = new byte[h.Length + blockKey.Length];
             Buffer.BlockCopy(h, 0, final, 0, h.Length);
-            Buffer.BlockCopy(blockKey, 0, final, h.Length, blockKey.Length);
+            blockKey.CopyTo(final.AsSpan(h.Length));
             OfficeCryptoPrimitives.HashSha512(final, scratchHash);
 
             byte[] key = new byte[keyByteCount];
@@ -555,7 +556,6 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }
 
-        const int segmentSize = Constants.AgileEncryption.SegmentSize;
         int blockSize = d.KeyDataBlockSize;
 
         byte[] result = new byte[decryptedSize];
@@ -566,7 +566,7 @@ internal static class OfficeCryptoAgile
         while (writeOffset < decryptedSize)
         {
             int remaining = (int)decryptedSize - writeOffset;
-            int segmentLen = Math.Min(segmentSize, remaining);
+            int segmentLen = Math.Min(Constants.AgileEncryption.SegmentSize, remaining);
             int paddedLen = (segmentLen + blockSize - 1) / blockSize * blockSize;
 
             if (readOffset + paddedLen > encryptedPackage.Length)
@@ -781,11 +781,11 @@ internal static class OfficeCryptoAgile
         }
     }
 
-    private static byte[] FinalizeKey(byte[] iteratedHash, byte[] blockKey)
+    private static byte[] FinalizeKey(byte[] iteratedHash, ReadOnlySpan<byte> blockKey)
     {
         byte[] buf = new byte[iteratedHash.Length + blockKey.Length];
         Buffer.BlockCopy(iteratedHash, 0, buf, 0, iteratedHash.Length);
-        Buffer.BlockCopy(blockKey, 0, buf, iteratedHash.Length, blockKey.Length);
+        blockKey.CopyTo(buf.AsSpan(iteratedHash.Length));
         byte[] hf = new byte[OfficeCryptoPrimitives.Sha512HashBytes];
         OfficeCryptoPrimitives.HashSha512(buf, hf);
 
@@ -940,7 +940,7 @@ internal static class OfficeCryptoAgile
     private static bool TryGetFlatEncryptionInfo(byte[] database, out byte[] encryptionInfo)
     {
         encryptionInfo = [];
-        if (database == null || database.Length < FlatEncryptionInfoOffset + 8)
+        if (database == null || database.Length < Constants.AgileEncryption.FlatEncryptionInfoOffset + 8)
         {
             return false;
         }
@@ -949,7 +949,7 @@ internal static class OfficeCryptoAgile
         bool hasEncodingKey = false;
         for (int i = 0; i < 4; i++)
         {
-            hasEncodingKey |= headerPage[FlatEncodingKeyOffset + i] != 0;
+            hasEncodingKey |= headerPage[Constants.AgileEncryption.FlatEncodingKeyOffset + i] != 0;
         }
 
         if (!hasEncodingKey)
@@ -957,14 +957,14 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
-        int infoLength = Ru16(headerPage, FlatEncryptionInfoLengthOffset);
-        if (infoLength < 8 || FlatEncryptionInfoOffset + infoLength > database.Length)
+        int infoLength = Ru16(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
+        if (infoLength < 8 || Constants.AgileEncryption.FlatEncryptionInfoOffset + infoLength > database.Length)
         {
             return false;
         }
 
         encryptionInfo = new byte[infoLength];
-        Buffer.BlockCopy(headerPage, FlatEncryptionInfoOffset, encryptionInfo, 0, infoLength);
+        Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncryptionInfoOffset, encryptionInfo, 0, infoLength);
         return true;
     }
 
@@ -976,13 +976,13 @@ internal static class OfficeCryptoAgile
         }
 
         byte[] headerPage = GetUnmaskedHeaderPage(database);
-        Array.Clear(headerPage, FlatEncodingKeyOffset, 4);
+        Array.Clear(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, 4);
         Array.Clear(headerPage, 0x42, Math.Min(80, headerPage.Length - 0x42));
 
-        int clearLength = Math.Min(2 + encryptionInfoLength, headerPage.Length - FlatEncryptionInfoLengthOffset);
+        int clearLength = Math.Min(2 + encryptionInfoLength, headerPage.Length - Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
         if (clearLength > 0)
         {
-            Array.Clear(headerPage, FlatEncryptionInfoLengthOffset, clearLength);
+            Array.Clear(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, clearLength);
         }
 
         EncryptionManager.TransformHeaderMask(headerPage);
@@ -997,11 +997,11 @@ internal static class OfficeCryptoAgile
         return headerPage;
     }
 
-    private static byte[] HmacIv(byte[] keyDataSalt, byte[] blockKey)
+    private static byte[] HmacIv(byte[] keyDataSalt, ReadOnlySpan<byte> blockKey)
     {
         byte[] data = new byte[keyDataSalt.Length + blockKey.Length];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
-        Buffer.BlockCopy(blockKey, 0, data, keyDataSalt.Length, blockKey.Length);
+        blockKey.CopyTo(data.AsSpan(keyDataSalt.Length));
         byte[] hash = OfficeCryptoPrimitives.Sha512(data);
 
         return Truncate(hash, Constants.AgileEncryption.BlockSize);

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 using Xunit;
 
 /// <summary>
@@ -45,9 +46,6 @@ using Xunit;
 /// </summary>
 public sealed class WriterColumnDescriptorTextSortOrderTests
 {
-    private const byte T_TEXT = 0x0A;
-    private const byte T_MEMO = 0x0C;
-
     [Fact]
     public async Task DaoAuthoredFixture_TextSortVersion_Survey()
     {

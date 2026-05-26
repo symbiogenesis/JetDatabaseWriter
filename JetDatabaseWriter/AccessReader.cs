@@ -920,9 +920,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return rt is not null && rt.Value.Length >= 1
-            && (rt.DataType == ColumnPropertyBlock.DataTypeByte
-                || rt.DataType == ColumnPropertyBlock.DataTypeInteger
-                || rt.DataType == ColumnPropertyBlock.DataTypeLong)
+            && (rt.DataType == Constants.ColumnTypes.T_BYTE
+                || rt.DataType == Constants.ColumnTypes.T_INT
+                || rt.DataType == Constants.ColumnTypes.T_LONG)
             ? rt.Value[0]
             : (byte)0;
     }
@@ -2756,15 +2756,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private bool TryEnumerateInlineOwnedDataPages(byte[] usageMapPage, RowBound rowBound, long totalPages, List<long> mappedPages)
     {
-        const int InlineBitmapOffset = 5;
-
         int startPage = Ri32(usageMapPage, rowBound.RowStart + 1);
         if (startPage < 0)
         {
             return false;
         }
 
-        int bitmapBytes = Math.Min(rowBound.RowSize - InlineBitmapOffset, _pgSz - rowBound.RowStart - InlineBitmapOffset);
+        int bitmapBytes = Math.Min(rowBound.RowSize - Constants.UsageMap.InlineBitmapOffset, _pgSz - rowBound.RowStart - Constants.UsageMap.InlineBitmapOffset);
         if (bitmapBytes <= 0)
         {
             return false;
@@ -2773,7 +2771,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int bitCapacity = bitmapBytes * 8;
         for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
         {
-            int byteOffset = rowBound.RowStart + InlineBitmapOffset + (bitIndex / 8);
+            int byteOffset = rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
             byte bitMask = (byte)(1 << (bitIndex % 8));
             if ((usageMapPage[byteOffset] & bitMask) == 0)
             {
@@ -2799,15 +2797,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         List<long> mappedPages,
         CancellationToken cancellationToken)
     {
-        const int ReferenceMapPointerOffset = 1;
-        const int ReferenceMapBitmapOffset = 4;
-        int pointerCount = (rowBound.RowSize - ReferenceMapPointerOffset) / 4;
-        int pagesPerMapPage = (_pgSz - ReferenceMapBitmapOffset) * 8;
+        int pointerCount = (rowBound.RowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
+        int pagesPerMapPage = (_pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
         for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pointerOffset = rowBound.RowStart + ReferenceMapPointerOffset + (pointerIndex * 4);
+            int pointerOffset = rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
             int referencePageNumber = Ri32(usageMapPage, pointerOffset);
             if (referencePageNumber == 0)
             {
@@ -2827,10 +2823,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     return false;
                 }
 
-                int bitCapacity = (_pgSz - ReferenceMapBitmapOffset) * 8;
+                int bitCapacity = (_pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
                 for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
                 {
-                    int byteOffset = ReferenceMapBitmapOffset + (bitIndex / 8);
+                    int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
                     byte bitMask = (byte)(1 << (bitIndex % 8));
                     if ((referencePage[byteOffset] & bitMask) == 0)
                     {

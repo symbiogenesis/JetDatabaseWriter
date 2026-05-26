@@ -940,8 +940,6 @@ public sealed class DaoStorageMaintenanceTests
 
     private static async ValueTask<int> CountTDefChainPagesAsync(string tableName, string databasePath, CancellationToken cancellationToken)
     {
-        const int PageSize = 4096;
-
         int tdefPageNumber;
         await using (AccessReader reader = await AccessReader.OpenAsync(
             databasePath,
@@ -959,8 +957,8 @@ public sealed class DaoStorageMaintenanceTests
         int pageNumber = tdefPageNumber;
         while (pageNumber > 0 && seen.Add(pageNumber))
         {
-            int offset = checked(pageNumber * PageSize);
-            if (offset < 0 || offset + PageSize > bytes.Length || bytes[offset] != 0x02)
+            int offset = checked(pageNumber * Constants.PageSizes.Jet4);
+            if (offset < 0 || offset + Constants.PageSizes.Jet4 > bytes.Length || bytes[offset] != 0x02)
             {
                 break;
             }

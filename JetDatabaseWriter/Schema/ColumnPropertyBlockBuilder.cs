@@ -401,7 +401,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = ColumnPropertyBlock.DataTypeText,
+                DataType = Constants.ColumnTypes.T_TEXT,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -416,7 +416,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = ColumnPropertyBlock.DataTypeMemo,
+                DataType = Constants.ColumnTypes.T_MEMO,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -429,7 +429,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = ColumnPropertyBlock.DataTypeByte,
+                DataType = Constants.ColumnTypes.T_BYTE,
                 DdlFlag = 0x01,
                 Value = [value],
             });
@@ -446,7 +446,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = ColumnPropertyBlock.DataTypeBoolean,
+                DataType = Constants.ColumnTypes.T_BOOL,
                 DdlFlag = 0x01,
                 Value = [value ? (byte)0xFF : (byte)0x00],
             });
@@ -459,7 +459,7 @@ internal sealed class ColumnPropertyBlockBuilder
         /// <summary>Gets or sets the property name (e.g. <c>"DefaultValue"</c>).</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Gets or sets the Jet column-type code (see <see cref="ColumnPropertyBlock"/>'s <c>DataType*</c> constants).</summary>
+        /// <summary>Gets or sets the Jet column-type code (see <see cref="Constants.ColumnTypes"/>).</summary>
         public byte DataType { get; set; }
 
         /// <summary>Gets or sets the flag byte at entry offset 2.</summary>
