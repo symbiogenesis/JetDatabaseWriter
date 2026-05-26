@@ -3,9 +3,10 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using JetDatabaseWriter.Schema;
 using Xunit;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
-/// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/>
+/// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, byte, int, bool)"/>
 /// for <c>T_GUID</c> columns. The format is:
 /// <c>{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}</c>
 /// — braces, lowercase hex, with the first three groups stored little-endian
@@ -14,8 +15,6 @@ using Xunit;
 /// </summary>
 public sealed class FixedColumnGuidFormatTests
 {
-    private const byte T_GUID = 0x0F;
-
     [Fact]
     public void ReadFixedString_Guid_FormatsWithBracesAndLowercaseHex()
     {
