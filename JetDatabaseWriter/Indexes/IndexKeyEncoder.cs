@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;

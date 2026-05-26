@@ -12,7 +12,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;

@@ -9,7 +9,6 @@ using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Maps <c>object[]</c> rows (keyed by column headers) to POCO instances of <typeparamref name="T"/>.

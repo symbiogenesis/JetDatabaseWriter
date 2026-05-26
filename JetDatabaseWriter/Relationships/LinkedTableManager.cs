@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Centralises all logic for discovering, resolving, and opening linked tables

@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;

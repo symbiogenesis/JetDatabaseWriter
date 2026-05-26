@@ -27,7 +27,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
-using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API

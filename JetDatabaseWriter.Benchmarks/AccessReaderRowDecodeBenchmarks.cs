@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Benchmarks;
 
-using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Models;

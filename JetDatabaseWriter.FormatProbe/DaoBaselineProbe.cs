@@ -31,7 +31,6 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Models;
 
 internal static class DaoBaselineProbe
 {

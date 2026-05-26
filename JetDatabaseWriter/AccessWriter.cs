@@ -7,13 +7,11 @@ using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
-using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -33,9 +31,6 @@ using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
-using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
-using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
-using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers

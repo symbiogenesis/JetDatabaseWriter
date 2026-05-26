@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.AccessBase;
 
 /// <summary>

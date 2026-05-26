@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Benchmarks;
 
 using System;
 using BenchmarkDotNet.Attributes;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.ValueDecoding;
 
 [MemoryDiagnoser]
