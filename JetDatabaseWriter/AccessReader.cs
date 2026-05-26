@@ -29,8 +29,6 @@ using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
-#pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
-
 /// <summary>
 /// Pure-managed reader for Microsoft Access JET databases (.mdb / .accdb).
 /// No OleDB, ODBC, or ACE/Jet driver installation required.
