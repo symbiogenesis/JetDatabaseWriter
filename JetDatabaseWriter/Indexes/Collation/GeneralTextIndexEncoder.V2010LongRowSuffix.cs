@@ -378,34 +378,24 @@ internal static partial class GeneralTextIndexEncoder
         return values;
     }
 
-    private sealed class V2010LongRowSuffixTable
+    private sealed class V2010LongRowSuffixTable(
+        ushort baseSuffix,
+        ushort[] rowContributions,
+        ushort[] columnContributions,
+        ushort[] boundarySpaceSuffixes,
+        ushort? tripleSpaceSuffix,
+        bool hasBoundarySpaceForPreviousSpace)
     {
-        public V2010LongRowSuffixTable(
-            ushort baseSuffix,
-            ushort[] rowContributions,
-            ushort[] columnContributions,
-            ushort[] boundarySpaceSuffixes,
-            ushort? tripleSpaceSuffix,
-            bool hasBoundarySpaceForPreviousSpace)
-        {
-            BaseSuffix = baseSuffix;
-            RowContributions = rowContributions;
-            ColumnContributions = columnContributions;
-            BoundarySpaceSuffixes = boundarySpaceSuffixes;
-            TripleSpaceSuffix = tripleSpaceSuffix;
-            HasBoundarySpaceForPreviousSpace = hasBoundarySpaceForPreviousSpace;
-        }
+        public ushort BaseSuffix { get; } = baseSuffix;
 
-        public ushort BaseSuffix { get; }
+        public ushort[] RowContributions { get; } = rowContributions;
 
-        public ushort[] RowContributions { get; }
+        public ushort[] ColumnContributions { get; } = columnContributions;
 
-        public ushort[] ColumnContributions { get; }
+        public ushort[] BoundarySpaceSuffixes { get; } = boundarySpaceSuffixes;
 
-        public ushort[] BoundarySpaceSuffixes { get; }
+        public ushort? TripleSpaceSuffix { get; } = tripleSpaceSuffix;
 
-        public ushort? TripleSpaceSuffix { get; }
-
-        public bool HasBoundarySpaceForPreviousSpace { get; }
+        public bool HasBoundarySpaceForPreviousSpace { get; } = hasBoundarySpaceForPreviousSpace;
     }
 }

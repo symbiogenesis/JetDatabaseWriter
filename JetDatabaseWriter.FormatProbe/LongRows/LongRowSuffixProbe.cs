@@ -6794,17 +6794,9 @@ internal static class LongRowSuffixProbe
         int Start,
         int Length);
 
-    private sealed class WindowGroupAccumulator
+    private sealed class WindowGroupAccumulator(ushort firstSuffix)
     {
-        private readonly ushort firstSuffix;
-
-        public WindowGroupAccumulator(ushort firstSuffix)
-        {
-            this.firstSuffix = firstSuffix;
-            Rows = 1;
-        }
-
-        public int Rows { get; private set; }
+        public int Rows { get; private set; } = 1;
 
         public bool HasConflict { get; private set; }
 
@@ -6846,7 +6838,7 @@ internal static class LongRowSuffixProbe
         }
     }
 
-    private sealed class SuffixCandidateContext
+    private sealed class SuffixCandidateContext(LongRowSuffixProbe.SuffixPatternRow row, bool ascending)
     {
         private Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
         private Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
@@ -6855,27 +6847,17 @@ internal static class LongRowSuffixProbe
         private byte[][]? normalizedInputCandidates;
         private byte[][]? byteRuleInputs;
 
-        public SuffixCandidateContext(SuffixPatternRow row, bool ascending)
-        {
-            Row = row;
-            FullKey = row.FullKey;
-            TrimmedFullKey = row.TrimmedFullKey;
-            NormalizedFullKey = ascending ? row.FullKey : BuildFullV2010Entry(row.Text!, ascending: true, GeneralCodes.Value, GeneralExtCodes.Value);
-            ByteInputs = BuildCandidateByteInputs(row.FullKey);
-            TextInputs = BuildCandidateTextInputs(row.Text!);
-        }
+        public SuffixPatternRow Row { get; } = row;
 
-        public SuffixPatternRow Row { get; }
+        public byte[] FullKey { get; } = row.FullKey;
 
-        public byte[] FullKey { get; }
+        public byte[] TrimmedFullKey { get; } = row.TrimmedFullKey;
 
-        public byte[] TrimmedFullKey { get; }
+        public byte[] NormalizedFullKey { get; } = ascending ? row.FullKey : BuildFullV2010Entry(row.Text!, ascending: true, GeneralCodes.Value, GeneralExtCodes.Value);
 
-        public byte[] NormalizedFullKey { get; }
+        public byte[][] ByteInputs { get; } = BuildCandidateByteInputs(row.FullKey);
 
-        public byte[][] ByteInputs { get; }
-
-        public string[] TextInputs { get; }
+        public string[] TextInputs { get; } = BuildCandidateTextInputs(row.Text!);
 
         public byte[][] GetInputCandidates(Encoding cp1252) =>
             inputCandidates ??= BuildInputCandidates(FullKey, Row.Text!, cp1252);

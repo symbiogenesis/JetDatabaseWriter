@@ -291,16 +291,10 @@ internal static class LongRowBisect
         throw new InvalidOperationException($"Column '{name}' not found.");
     }
 
-    private sealed class InlineEncoder
+    private sealed class InlineEncoder(object[] codes, object[] extCodes)
     {
-        private readonly Func<char, byte[]?>[] codes;
-        private readonly Func<char, byte[]?>[] extCodes;
-
-        public InlineEncoder(object[] codes, object[] extCodes)
-        {
-            this.codes = BuildDelegates(codes);
-            this.extCodes = BuildDelegates(extCodes);
-        }
+        private readonly Func<char, byte[]?>[] codes = BuildDelegates(codes);
+        private readonly Func<char, byte[]?>[] extCodes = BuildDelegates(extCodes);
 
         public InlineEncodingCache Encode(string value) => new(value, this);
 

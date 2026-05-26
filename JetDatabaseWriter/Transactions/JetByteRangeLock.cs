@@ -284,19 +284,9 @@ internal sealed class JetByteRangeLock
             $"Timed out after {_lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
     }
 
-    private sealed class ReleaseToken : IDisposable
+    private sealed class ReleaseToken(JetByteRangeLock owner, long offset, long length) : IDisposable
     {
-        private readonly JetByteRangeLock _owner;
-        private readonly long _offset;
-        private readonly long _length;
         private bool _released;
-
-        public ReleaseToken(JetByteRangeLock owner, long offset, long length)
-        {
-            _owner = owner;
-            _offset = offset;
-            _length = length;
-        }
 
         public void Dispose()
         {
@@ -309,7 +299,7 @@ internal sealed class JetByteRangeLock
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                _owner.Release(_offset, _length);
+                owner.Release(offset, length);
             }
         }
     }

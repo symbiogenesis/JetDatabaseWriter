@@ -5,29 +5,19 @@ using System.Collections.Generic;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
-internal sealed class CalculatedFunctionDescriptor
+internal sealed class CalculatedFunctionDescriptor(CalculatedFunctionDomain domain, string name, int minArgs, int maxArgs, CalculatedFunctionEvaluator evaluator, params string[] aliases)
 {
-    public CalculatedFunctionDescriptor(CalculatedFunctionDomain domain, string name, int minArgs, int maxArgs, CalculatedFunctionEvaluator evaluator, params string[] aliases)
-    {
-        Domain = domain;
-        Name = name;
-        MinArgs = minArgs;
-        MaxArgs = maxArgs;
-        Evaluator = evaluator;
-        Aliases = aliases;
-    }
+    public CalculatedFunctionDomain Domain { get; } = domain;
 
-    public CalculatedFunctionDomain Domain { get; }
+    public string Name { get; } = name;
 
-    public string Name { get; }
+    public int MinArgs { get; } = minArgs;
 
-    public int MinArgs { get; }
+    public int MaxArgs { get; } = maxArgs;
 
-    public int MaxArgs { get; }
+    public CalculatedFunctionEvaluator Evaluator { get; } = evaluator;
 
-    public CalculatedFunctionEvaluator Evaluator { get; }
-
-    public string[] Aliases { get; }
+    public string[] Aliases { get; } = aliases;
 
     public IEnumerable<string> Names
     {

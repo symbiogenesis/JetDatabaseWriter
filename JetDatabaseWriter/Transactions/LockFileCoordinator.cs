@@ -18,26 +18,15 @@ using JetDatabaseWriter.Infrastructure;
 /// or five lock-file fields that previously lived directly on the reader
 /// and writer into a single composed object.
 /// </remarks>
-internal sealed class LockFileCoordinator : IDisposable
+/// <remarks>
+/// Initializes a new instance of the <see cref="LockFileCoordinator"/> class.
+/// </remarks>
+/// <param name="databasePath">Path to the database whose sibling lock-file should be maintained. Empty disables the coordinator.</param>
+/// <param name="ownerTypeName">Display name of the owning type (e.g. <c>nameof(AccessReader)</c>); used in diagnostics.</param>
+/// <param name="settings">Lock-file behaviour switches and identity strings. See <see cref="LockFileSettings"/>.</param>
+internal sealed class LockFileCoordinator(string databasePath, string ownerTypeName, LockFileSettings settings) : IDisposable
 {
-    private readonly string _databasePath;
-    private readonly string _ownerTypeName;
-    private readonly LockFileSettings _settings;
     private LockFileSlotWriter? _slot;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="LockFileCoordinator"/> class.
-    /// </summary>
-    /// <param name="databasePath">Path to the database whose sibling lock-file should be maintained. Empty disables the coordinator.</param>
-    /// <param name="ownerTypeName">Display name of the owning type (e.g. <c>nameof(AccessReader)</c>); used in diagnostics.</param>
-    /// <param name="settings">Lock-file behaviour switches and identity strings. See <see cref="LockFileSettings"/>.</param>
-    public LockFileCoordinator(string databasePath, string ownerTypeName, in LockFileSettings settings)
-    {
-        _databasePath = databasePath;
-        _ownerTypeName = ownerTypeName;
-        _settings = settings;
-        IsEnabled = settings.Enabled && !string.IsNullOrEmpty(databasePath);
-    }
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessReaderOptions"/>.</summary>
     public static LockFileCoordinator ForReader(string databasePath, AccessReaderOptions options)
@@ -83,7 +72,7 @@ internal sealed class LockFileCoordinator : IDisposable
                 MachineName: options?.LockFileMachineName));
 
     /// <summary>Gets a value indicating whether the coordinator will maintain a lock-file slot.</summary>
-    public bool IsEnabled { get; }
+    public bool IsEnabled { get; } = settings.Enabled && !string.IsNullOrEmpty(databasePath);
 
     /// <summary>
     /// Claims a slot in the sibling lock-file. No-op when <see cref="IsEnabled"/> is
@@ -98,11 +87,11 @@ internal sealed class LockFileCoordinator : IDisposable
         }
 
         _slot = LockFileSlotWriter.Open(
-            _databasePath,
-            _ownerTypeName,
-            respectExisting: _settings.RespectExisting,
-            machineName: _settings.MachineName,
-            userName: _settings.UserName);
+            databasePath,
+            ownerTypeName,
+            respectExisting: settings.RespectExisting,
+            machineName: settings.MachineName,
+            userName: settings.UserName);
     }
 
     /// <summary>
