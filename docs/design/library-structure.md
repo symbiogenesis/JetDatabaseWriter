@@ -21,8 +21,8 @@ JetDatabaseWriter/
 │   ├── IAccessBase.cs
 │   ├── IAccessOptions.cs
 │   ├── IAccessReader.cs
-│   ├── IAccessSchema.cs                   (DDL: CreateTable, AddColumn, CreateIndex, etc.)
-│   └── IAccessWriter.cs                   (DML: Insert, Update, Delete — extends IAccessSchema)
+│   ├── IAccessSchema.cs                   (DDL: CreateTable, AddColumn, linked tables, relationships)
+│   └── IAccessWriter.cs                   (DML: Insert, Update, Delete, complex-row APIs)
 │
 ├── Models/                                (public DTOs — one per file)
 │   ├── AttachmentInput.cs
@@ -48,6 +48,8 @@ JetDatabaseWriter/
 │   ├── DatabaseFormat.cs
 │   ├── IndexKind.cs
 │   ├── IntermediateOpType.cs
+│   ├── LinkedTableKind.cs
+│   ├── SecureEraseMode.cs
 │   └── TdefPreambleStatus.cs
 │
 ├── Exceptions/
@@ -79,6 +81,7 @@ JetDatabaseWriter/
 ├── Pages/                                 (page-level I/O & layout)
 │   ├── DataPageLayout.cs                  (byte offsets, page structure, format-version layouts)
 │   ├── DataPageInserter.cs               (FindInsertTarget, CanInsertRow, WriteRowToPage)
+│   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
 │   ├── PageJournal.cs                     (before-image journaling for rollback)
 │   └── Models/
 │       ├── PageInsertTarget.cs
@@ -98,6 +101,7 @@ JetDatabaseWriter/
 │   │   └── IndexHelpers.cs
 │   ├── Collation/                         (sort-key generation for text indexes)
 │   │   ├── GeneralTextIndexEncoder.cs
+│   │   ├── GeneralTextIndexEncoder.V2010LongRowSuffix.cs
 │   │   ├── GeneralLegacyTextIndexEncoder.cs
 │   │   └── General97TextIndexEncoder.cs
 │   ├── CodeTables/                        (embedded gzipped collation lookup tables)
@@ -124,6 +128,9 @@ JetDatabaseWriter/
 │   ├── JetTypeInfo.cs                     (column type metadata — sizes, flags, CLR mapping)
 │   ├── JetExpressionConverter.cs          (expression parsing for calculated columns)
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
+│   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
+│   ├── Expressions/
+│   │   └── CalculatedExpressionEvaluator.cs (evaluates supported calculated-column expressions)
 │   └── Models/
 │       ├── ColumnConstraint.cs
 │       ├── ColumnInfo.cs
@@ -143,6 +150,7 @@ JetDatabaseWriter/
 │   ├── EncryptionManager.cs               (key derivation, page encrypt/decrypt dispatch)
 │   ├── EncryptionConverter.cs             (format conversion — add/remove/change encryption)
 │   ├── OfficeCryptoAgile.cs               (ECMA-376 Agile encryption — AES-256-CBC, SHA-512)
+│   ├── OfficeCryptoPrimitives.cs          (shared Office Crypto hashing, HMAC, AES helpers)
 │   ├── OfficeCryptoStandard.cs            (MS-OFFCRYPTO §2.3.6 Standard — AES-128-CBC, SHA-1)
 │   └── Models/
 │       └── PageDecryptionKeys.cs
@@ -153,7 +161,7 @@ JetDatabaseWriter/
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
 │   ├── ComplexColumnReader.cs             (complex-column metadata and flat-table read APIs)
-│   ├── ComplexColumnManager.cs            (read/write complex column data)
+│   ├── ComplexColumnManager.cs            (write/scaffold/cascade complex column data)
 │   └── Models/
 │       └── AttachmentWrapper.cs
 │
@@ -164,6 +172,10 @@ JetDatabaseWriter/
 └── Infrastructure/                        (generic utilities — not JET-specific)
     ├── LruCache.cs                        (256-page least-recently-used eviction cache)
     ├── ByteArrayEqualityComparer.cs       (byte[] equality for dictionary keys)
+    ├── BinaryStringParser.cs              (hex/base64 parsing helpers)
+    ├── DaoPowerShellHostResolver.cs       (test/probe DAO PowerShell host discovery)
+    ├── FileStreamFactory.cs               (central FileStream construction helpers)
+    ├── StreamReadExtensions.cs            (cross-target stream read helpers)
     ├── AsyncLazyInitializer.cs            (thread-safe async lazy initialization)
     ├── AsyncReentrantOperationGate.cs     (reentrant async operation serializer)
     └── Guard.cs                           (argument validation helpers)
@@ -173,42 +185,43 @@ JetDatabaseWriter/
 
 ## Architectural layers
 
-The library follows a **Layered Codec Architecture** — the dominant pattern in binary format libraries (protobuf, MessagePack-CSharp, Apache Parquet, SQLite, System.Text.Json). Three distinct layers with strict dependency direction:
+The library follows a **Layered Codec / Service Architecture** — the dominant pattern in binary format libraries (protobuf, MessagePack-CSharp, Apache Parquet, SQLite, System.Text.Json), adapted for a file-format writer that needs a shared writer context while mutating pages. Four practical layers are visible:
 
 | Layer | Folders | Responsibility |
 |-------|---------|----------------|
-| **Infrastructure** | `Infrastructure/`, `Pages/`, `CompoundFile/` | Raw I/O, page buffering, caching, encryption, OLE container |
-| **Codec** | `ValueEncoding/`, `ValueDecoding/`, `Indexes/`, `Catalog/`, `Schema/` | Encode/decode values, rows, index keys; read/write system tables |
-| **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`) | User-facing operations, delegates to domain modules |
+| **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
+| **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, allocation/free-list reuse, journaling, locking, page encryption |
+| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/` | Encode/decode values, rows, index keys; read/write system tables; manage feature-specific catalog artifacts |
+| **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and orchestration |
 
-Each layer depends only on the one below it. The orchestration layer is intentionally thin — `AccessReader` and `AccessWriter` act as **facades** (GoF) that compose domain modules rather than embedding logic directly.
+The orchestration layer is intentionally thin — `AccessReader` and `AccessWriter` act as **facades** (GoF) that compose domain modules rather than embedding logic directly. Most pure layout/codec helpers keep one-way dependencies. Several writer-owned services (`DataPageInserter`, `PageAllocator`, `TDefPageBuilder`, relationship and complex-column managers) intentionally receive `AccessWriter` as a context object so they can coordinate page I/O, encryption, transactions, catalog caches, and format-specific layouts without duplicating state.
 
 ---
 
 ## Dependency graph
 
-Dependency flow is acyclic. Each domain folder depends only on peers at the same or lower layer:
+Dependency flow is acyclic. The current high-level dependency map is:
 
 ```
 Infrastructure/        → (nothing — leaf)
-Pages/                 → Infrastructure/
-Encryption/            → Pages/
-CompoundFile/          → (nothing — leaf)
-ValueDecoding/         → Pages/, Schema/
-ValueEncoding/         → Schema/                        [never depends on ValueDecoding/]
-Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/
-Catalog/               → Pages/, ValueDecoding/, Schema/
-Transactions/          → Pages/
-Relationships/         → Catalog/, Indexes/
-ComplexColumns/        → Catalog/, Pages/
-Schema/                → (nothing — leaf, defines types used by others)
+CompoundFile/          → Infrastructure/
+Pages/                 → Infrastructure/, Catalog.Models/, AccessWriter context for writer-owned services
+Encryption/            → CompoundFile/, Infrastructure/, Pages/
+Transactions/          → Pages/, Infrastructure/, AccessWriter context for lifecycle orchestration
+ValueDecoding/         → Pages/, Schema/, Catalog.Models/, ComplexColumns.Models/
+ValueEncoding/         → Schema/, ValueEncoding.Models/   [never depends on ValueDecoding/]
+Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/, AccessWriter context for maintenance
+Catalog/               → Pages/, ValueDecoding/, Schema/, Indexes/, AccessWriter context for writes
+Schema/                → Models/, Indexes/, Pages/, AccessWriter context for writer-owned builders
+Relationships/         → Catalog/, Indexes/, Pages/, Schema/, AccessReader/AccessWriter context
+ComplexColumns/        → Catalog/, Indexes/, Pages/, Schema/, ValueDecoding/, AccessReader/AccessWriter context
 AccessBase (root)      → Pages/, Encryption/, Infrastructure/
-AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/
+AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/
 AccessWriter (root)    → ValueEncoding/, Catalog/, Indexes/, Transactions/, Schema/,
-                         Relationships/, ComplexColumns/
+                         Relationships/, ComplexColumns/, Pages/, Encryption/
 ```
 
-No circular dependencies exist. The **Stable Dependencies Principle** is maintained: `Infrastructure/` and `Pages/` (rarely changing) are depended upon by volatile subsystems like `ValueEncoding/` and `Schema/`.
+No circular dependencies exist. `Infrastructure/` and pure layout/value helpers remain stable dependencies. Some storage and schema service classes are not leaf packages; they are writer-owned collaborators scoped by domain.
 
 ---
 
@@ -235,6 +248,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `Indexes/Collation/` | `JetDatabaseWriter.Indexes.Collation` |
 | `Indexes/Models/` | `JetDatabaseWriter.Indexes.Models` |
 | `Schema/` | `JetDatabaseWriter.Schema` |
+| `Schema/Expressions/` | `JetDatabaseWriter.Schema.Expressions` |
 | `Schema/Models/` | `JetDatabaseWriter.Schema.Models` |
 | `Transactions/` | `JetDatabaseWriter.Transactions` |
 | `Encryption/` | `JetDatabaseWriter.Encryption` |
@@ -254,16 +268,16 @@ Public API types live at the root namespace (`JetDatabaseWriter`) — no sub-nam
 The public interface uses **Interface Segregation** (ISP) to separate concerns:
 
 ```
-IAccessBase          (stream lifecycle, format detection, page I/O)
-    ↓
-IAccessSchema        (DDL: CreateTable, DropTable, AddColumn, DropColumn, RenameColumn,
-                      CreateLinkedTable, CreateRelationship, etc.)
-    ↓
-IAccessWriter        (DML: InsertRow, InsertRows, UpdateRows, DeleteRows,
-                      AddAttachment, AddMultiValueItem)
+IAccessBase          (format metadata, page size, code page, async disposal)
+├── IAccessReader    (read/stream rows, schema metadata, exact index seek, complex/linked reads)
+├── IAccessSchema    (DDL: CreateTable, DropTable, AddColumn, DropColumn, RenameColumn,
+│                    CreateLinkedTable, CreateLinkedTextTable, CreateLinkedOdbcTable,
+│                    Create/Drop/RenameRelationship)
+└── IAccessWriter    (DML: InsertRow, InsertRows, UpdateRows, DeleteRows,
+                     AddAttachment, AddMultiValueItem)
 ```
 
-`IAccessReader` is a separate branch extending `IAccessBase`. This split follows ADO.NET precedent — consumers that only need schema management depend on `IAccessSchema` without pulling in DML operations.
+`IAccessSchema` and `IAccessWriter` are independent peers that both extend `IAccessBase`; the concrete `AccessWriter` implements both. `IAccessReader` is a separate branch extending `IAccessBase`. This split follows ADO.NET precedent — consumers depend only on the surface they need.
 
 ---
 
@@ -276,6 +290,9 @@ IAccessWriter        (DML: InsertRow, InsertRows, UpdateRows, DeleteRows,
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Strategy via layout structs** | `DataPageLayout`, `IndexLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
+| **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
+| **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
+| **Policy** | `TypedRowFallbackPolicy` | Encapsulates strict vs lenient handling for malformed typed row payloads |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
 | **Registry** | `ConstraintRegistry` | Centralized constraint management — auto-increment, defaults, validation rules — decoupled from the writer orchestrator |
 
@@ -288,8 +305,8 @@ IAccessWriter        (DML: InsertRow, InsertRows, UpdateRows, DeleteRows,
 | Principle | How applied |
 |-----------|-------------|
 | **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
-| **Open/Closed (OCP)** | Adding a new column type means extending `TypedValueParser` and `RowEncoder` — not modifying the orchestrator |
-| **Interface Segregation (ISP)** | `IAccessSchema` (DDL) separated from `IAccessWriter` (DML); consumers depend only on what they use |
+| **Open/Closed (OCP)** | Adding a new column type means extending `TypedValueParser`, `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
+| **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
 | **Dependency Inversion (DIP)** | Orchestrators depend on domain modules via composition; codec logic is delegated, not embedded |
 
 ### Package design principles (Robert C. Martin)
@@ -298,8 +315,8 @@ IAccessWriter        (DML: InsertRow, InsertRows, UpdateRows, DeleteRows,
 |-----------|-------------|
 | **Common Closure (CCP)** | Classes that change together live together. All index concerns in `Indexes/`; all encryption in `Encryption/` |
 | **Common Reuse (CRP)** | Classes used together live together. `CatalogEntry`, `CatalogRow`, `TableDef` always consumed as a group → `Catalog/Models/` |
-| **Acyclic Dependencies (ADP)** | The layered structure guarantees no cycles. `Infrastructure/` → `Pages/` → codecs → orchestrators |
-| **Stable Dependencies (SDP)** | Volatile packages (`ValueEncoding/`, `Schema/`) depend on stable ones (`Infrastructure/`, `Pages/`) — never the reverse |
+| **Acyclic Dependencies (ADP)** | The dependency graph is kept cycle-free; writer-owned services compose through `AccessWriter` rather than through cross-domain back-references |
+| **Stable Dependencies (SDP)** | Pure helpers (`Infrastructure/`, layout structs, codec primitives) stay stable. Writer-owned services can depend on the facade context when they need coordinated state. |
 
 ---
 
@@ -353,9 +370,9 @@ These are symmetric but independent. Shared types (like `ColumnInfo`, `JetTypeIn
 
 Internal DTOs live in `{Domain}/Models/` subdirectories. This satisfies CRP — you never need to import a grab-bag `Models/` namespace to get one type; you import the specific domain's models.
 
-### 4. One class per file, nested types promoted
+### 4. Public and domain DTOs get their own files
 
-Every type gets its own file. Previously-nested types (`ColumnConstraint`, `PreEncodedLongValue`, `PageDecryptionKeys`) are promoted to top-level internal types in their domain's folder. This improves discoverability and follows SRP.
+Public API types and domain DTOs get their own files. Previously-nested reusable types (`ColumnConstraint`, `PreEncodedLongValue`, `PageDecryptionKeys`) are promoted to top-level internal types in their domain's folder. Small implementation details that are tightly coupled to one algorithm may remain nested inside that algorithm's file.
 
 ### 5. Embedded resources follow their consumer
 
@@ -365,6 +382,14 @@ The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes
 
 `CatalogValueReader` lives in `Catalog/` because it handles tolerant scalar reads from system-table rows (`MSysObjects`, `MSysRelationships`, `MSysComplexColumns`, etc.): safe `string[]` cell access, missing-column defaults, and invariant integer parsing of catalog metadata. It is not a general user-value parser. User table column values continue to flow through `ValueDecoding/TypedValueParser`, and write-path values through `ValueEncoding/`.
 
+### 7. Writer-owned services stay in their domain
+
+Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `RelationshipManager`, and `ComplexColumnManager` live beside the disk-format concern they manipulate, even when they receive `AccessWriter` as a context object. This keeps the folder structure domain-first while avoiding a large writer god class.
+
+### 8. Linked-table metadata spans catalog and schema
+
+Linked-table public APIs live on `IAccessSchema`; linked-table discovery and read-through live in `Relationships/LinkedTableManager`; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder.
+
 ---
 
 ## Public API surface
@@ -373,13 +398,13 @@ The public entry points are:
 
 | Type | Purpose |
 |------|---------|
-| `AccessReader` | Open and read .mdb/.accdb files — stream rows, query by index, read schema |
-| `AccessWriter` | Open and write .mdb/.accdb files — CRUD operations, DDL, transactions |
-| `AccessReaderOptions` | Configuration for the reader (encoding, buffer size, etc.) |
-| `AccessWriterOptions` | Configuration for the writer (encryption, format, etc.) |
+| `AccessReader` | Open and read .mdb/.accdb files — stream rows, materialize DataTables/POCOs, exact index seek, read schema, linked-table metadata/read-through, complex-column metadata/items |
+| `AccessWriter` | Create/open/write .mdb/.accdb files — CRUD, DDL, linked-table catalog rows, relationships, complex-column row APIs, transactions, storage maintenance, encryption conversion helpers |
+| `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file/byte-range locking, linked-source path policy, linked-text limits |
+| `AccessWriterOptions` | Writer configuration: password, full catalog schema, lock-file/byte-range locking, transaction page budget, secure erase, implicit transactional writes |
 | `JetTransaction` | Disposable transaction handle returned by `BeginTransactionAsync` |
 | `Models/*` | Public DTOs for column definitions, index metadata, relationships, etc. |
-| `Enums/*` | Public enumerations (database format, encryption format, column types, etc.) |
+| `Enums/*` | Public enumerations (database format, encryption format, linked-table kind, secure erase mode, etc.) |
 | `Exceptions/*` | Domain-specific exceptions |
 | `Interfaces/*` | Abstractions for DI/testing (`IAccessReader`, `IAccessWriter`, `IAccessSchema`, etc.) |
 
