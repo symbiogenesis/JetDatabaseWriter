@@ -282,11 +282,11 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-            long tdefPage;
-            await using (var reader = await OpenReaderAsync(stream))
-            {
-                tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Single");
-            }
+        long tdefPage;
+        await using (var reader = await OpenReaderAsync(stream))
+        {
+            tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Single");
+        }
 
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);

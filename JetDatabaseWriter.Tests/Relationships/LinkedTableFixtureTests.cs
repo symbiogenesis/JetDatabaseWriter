@@ -24,6 +24,12 @@ using Xunit;
 /// </summary>
 public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
+    public static IEnumerable<object[]> LinkedTableFixtures()
+    {
+        yield return [TestDatabases.LinkerTestV2007];
+        yield return [TestDatabases.OdbcLinkerTestV2007];
+    }
+
     /// <summary>
     /// The linkee fixture can be opened and lists at least one table.
     /// </summary>
@@ -226,11 +232,5 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, lvProp);
             Assert.Contains(lvProp, b => b != 0);
         }
-    }
-
-    public static IEnumerable<object[]> LinkedTableFixtures()
-    {
-        yield return [TestDatabases.LinkerTestV2007];
-        yield return [TestDatabases.OdbcLinkerTestV2007];
     }
 }

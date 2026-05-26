@@ -14,6 +14,8 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit.Sdk;
 
+#pragma warning disable SA1204 // Static elements should appear before instance elements
+
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "xUnit IClassFixture<T> requires public accessibility")]
 public sealed class DaoValidationFixture : IAsyncDisposable
 {
@@ -332,7 +334,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
     }
 
-    private async Task PrepareCoreValidationDatabaseAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task PrepareCoreValidationDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var writer = await AccessWriter.OpenAsync(
             dbPath,
@@ -435,7 +437,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         await writer.InsertRowAsync(ParentTable, [DBNull.Value, "ValidParent"], cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task PrepareEncryptedDatabaseAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task PrepareEncryptedDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using (var writer = await AccessWriter.OpenAsync(
             dbPath,
@@ -467,7 +469,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task PrepareComplexCompactDatabaseAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task PrepareComplexCompactDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var writer = await AccessWriter.OpenAsync(
             dbPath,
@@ -513,7 +515,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task PrepareStressDatabaseAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task PrepareStressDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var writer = await AccessWriter.OpenAsync(
             dbPath,
@@ -584,7 +586,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
     }
 
-    private async Task<int> CountTablesAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task<int> CountTablesAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var reader = await AccessReader.OpenAsync(
             dbPath,
@@ -595,7 +597,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         return tables.Count;
     }
 
-    private async Task<string> ReadDaoAuthoredMemoAsync(string dbPath, CancellationToken cancellationToken)
+    private static async Task<string> ReadDaoAuthoredMemoAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var reader = await AccessReader.OpenAsync(
             dbPath,
@@ -618,7 +620,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         return content;
     }
 
-    private string BuildCoreValidationScript() =>
+    private static string BuildCoreValidationScript() =>
         $$"""
         $enc = [System.Text.Encoding]::Unicode
         function ToBase64($value) {
@@ -681,7 +683,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         Write-Output "FK_ERROR=$fkErrorCode"
         """;
 
-    private string BuildDaoMemoCreateScript() =>
+    private static string BuildDaoMemoCreateScript() =>
         $$"""
         $rs = $null
         try {
@@ -698,7 +700,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
         """;
 
-    private string BuildEncryptedCompactScript(string dbPath, string compactedPath)
+    private static string BuildEncryptedCompactScript(string dbPath, string compactedPath)
     {
         string dbLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(dbPath);
         string compactedLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compactedPath);
@@ -711,7 +713,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         """;
     }
 
-    private void EnsureDaoSuccess(AccessRoundTripEnvironment.CompactResult result, string message)
+    private static void EnsureDaoSuccess(AccessRoundTripEnvironment.CompactResult result, string message)
     {
         if (result.ExitCode != 0)
         {
@@ -726,7 +728,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
     }
 
-    private Dictionary<string, string> ParseKeyValueOutput(string stdout)
+    private static Dictionary<string, string> ParseKeyValueOutput(string stdout)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         string[] lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -744,13 +746,13 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         return values;
     }
 
-    private int ParseInt(Dictionary<string, string> values, string key) =>
+    private static int ParseInt(Dictionary<string, string> values, string key) =>
         int.Parse(GetRequired(values, key), CultureInfo.InvariantCulture);
 
-    private string DecodeUnicodeBase64(Dictionary<string, string> values, string key) =>
+    private static string DecodeUnicodeBase64(Dictionary<string, string> values, string key) =>
         Encoding.Unicode.GetString(Convert.FromBase64String(GetRequired(values, key)));
 
-    private byte[] DecodeBinaryBase64(Dictionary<string, string> values, string key)
+    private static byte[] DecodeBinaryBase64(Dictionary<string, string> values, string key)
     {
         string value = GetRequired(values, key);
         return string.IsNullOrEmpty(value) ? [] : Convert.FromBase64String(value);
@@ -779,7 +781,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal static string GetStressRelationshipName(int tableOrdinal) =>
         $"StressFK_T{tableOrdinal:D2}_Parent";
 
-    private string GetRequired(Dictionary<string, string> values, string key)
+    private static string GetRequired(Dictionary<string, string> values, string key)
     {
         if (!values.TryGetValue(key, out string? value))
         {
@@ -788,7 +790,6 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         return value;
     }
-#pragma warning restore CA1822
 
     internal sealed record CoreValidationResult(
         int RowCount,

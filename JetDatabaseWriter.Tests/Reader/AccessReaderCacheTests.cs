@@ -413,7 +413,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         byte[] patched = ConvertOwnedUsageMapToReference(stream.ToArray(), pageSize, tdefPage);
         stream.SetLength(0);
-        stream.Write(patched, 0, patched.Length);
+        stream.Position = 0;
+        await stream.WriteAsync(patched, cancellationToken);
         stream.Position = 0;
     }
 

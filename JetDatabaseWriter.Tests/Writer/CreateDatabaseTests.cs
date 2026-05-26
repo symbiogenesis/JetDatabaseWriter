@@ -5,8 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -17,7 +17,6 @@ using Xunit;
 /// </summary>
 public sealed class CreateDatabaseTests
 {
-#pragma warning disable SA1202 //  catalog name fixtures kept adjacent to the tests that consume them.
     private static readonly string[] FullCatalogColumnNames =
     [
         "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Owner",
@@ -30,7 +29,6 @@ public sealed class CreateDatabaseTests
         "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Flags",
         "ForeignName", "Database",
     ];
-#pragma warning restore SA1202
 
     // ── CreateDatabaseAsync (Stream, Jet4Mdb) ─────────────────────────────────
 

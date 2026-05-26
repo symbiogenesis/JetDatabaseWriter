@@ -10,9 +10,9 @@ using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
-/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped"/>: the typed
+/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(System.ReadOnlySpan{byte}, int, byte, int, bool)"/>: the typed
 /// fixed-width decode that powers the typed-row read path. Each test verifies
-/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString"/> +
+/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/> +
 /// <see cref="TypedValueParser.ParseValue"/> round-trip the typed reader is
 /// replacing — except where the round-trip is documented as lossy (sub-second
 /// T_DATETIME precision), in which case the typed path is asserted to keep
@@ -57,7 +57,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// <summary>
     /// Negative shorts trip the legacy <c>(short)Ru16(...)</c> cast under
     /// <c>&lt;CheckForOverflowUnderflow&gt;true&lt;/CheckForOverflowUnderflow&gt;</c>:
-    /// <see cref="JetTypeInfo.ReadFixedString"/> catches the
+    /// <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/> catches the
     /// <see cref="OverflowException"/> and returns <see cref="string.Empty"/>,
     /// which <see cref="TypedValueParser.ParseValue"/> maps to
     /// <see cref="DBNull.Value"/>. The typed path uses

@@ -235,6 +235,8 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("Caf\u00E9\u00FF")]
     public void Reader_DecodeJet4Text_DecompressesMarkedData(string expected)
     {
+        ArgumentException.ThrowIfNullOrEmpty(expected);
+
         byte[] compressed = BuildCompressed(expected);
         string actual = AccessBase.DecodeJet4Text(compressed, 0, compressed.Length);
         Assert.Equal(expected, actual);
@@ -250,6 +252,8 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("A")]
     public void Reader_DecodeJet4Text_ReadsPlainUcs2(string expected)
     {
+        ArgumentException.ThrowIfNullOrEmpty(expected);
+
         byte[] ucs2 = Encoding.Unicode.GetBytes(expected);
         string actual = AccessBase.DecodeJet4Text(ucs2, 0, ucs2.Length);
         Assert.Equal(expected, actual);

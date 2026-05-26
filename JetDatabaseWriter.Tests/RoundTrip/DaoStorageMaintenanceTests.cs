@@ -170,8 +170,7 @@ public sealed class DaoStorageMaintenanceTests
             await writer.InsertRowAsync(TableName, [Jet3IndexRows + 1, "J3_INSERTED", 12345], TestContext.Current.CancellationToken);
         }
 
-        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
-            session.SourcePath,
+        string preCompactScript =
             """
             $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_Jet3Index]', 4)
             try {
@@ -179,7 +178,11 @@ public sealed class DaoStorageMaintenanceTests
             } finally {
                 $rs.Close()
             }
-            """,
+            """;
+
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            preCompactScript,
             CompactTimeout);
         AssertDaoSuccess(preCompactDao, "DAO pre-compact OpenRecordset");
         Assert.Contains($"ROWCOUNT={Jet3IndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
@@ -473,8 +476,7 @@ public sealed class DaoStorageMaintenanceTests
             await writer.InsertRowsAsync(TableName, [BuildAdvancedIndexRow(301)], TestContext.Current.CancellationToken);
         }
 
-        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
-            session.SourcePath,
+        string advancedIndexSeekProbe =
             """
             $lookup = $null
             $rs = $null
@@ -511,7 +513,11 @@ public sealed class DaoStorageMaintenanceTests
                 if ($rs -ne $null) { $rs.Close() }
                 if ($lookup -ne $null) { $lookup.Close() }
             }
-            """,
+            """;
+
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            advancedIndexSeekProbe,
             CompactTimeout);
         AssertDaoSuccess(preCompactDao, "DAO pre-compact advanced index seek probe");
         Assert.Contains($"ROWCOUNT={AdvancedIndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
@@ -875,15 +881,18 @@ public sealed class DaoStorageMaintenanceTests
 
     private static void AssertDaoSuccess(AccessRoundTripEnvironment.CompactResult result, string operation)
     {
-        Assert.True(
-            result.ExitCode == 0,
+        string failureMessage =
             $"""
             {operation} failed (exit={result.ExitCode}).
             --- stdout ---
             {result.StdOut}
             --- stderr ---
             {result.StdErr}
-            """);
+            """;
+
+        Assert.True(
+            result.ExitCode == 0,
+            failureMessage);
     }
 
     private static async Task CopyDatabaseAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)

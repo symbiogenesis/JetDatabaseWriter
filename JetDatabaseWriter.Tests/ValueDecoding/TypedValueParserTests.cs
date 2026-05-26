@@ -86,6 +86,8 @@ public sealed class TypedValueParserTests
     [InlineData("not-a-date", typeof(DateTime))]
     public void ParseValue_InvalidPrimitiveThrowsInStrictMode(string value, Type targetType)
     {
+        ArgumentNullException.ThrowIfNull(targetType);
+
         FormatException exception = Assert.Throws<FormatException>(() =>
             TypedValueParser.ParseValue(value, targetType));
 
