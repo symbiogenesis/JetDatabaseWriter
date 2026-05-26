@@ -18,7 +18,8 @@ Primary files:
 - [../../JetDatabaseWriter/Indexes/IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
 - [../../JetDatabaseWriter/Indexes/IndexLeafIncremental.cs](../../JetDatabaseWriter/Indexes/IndexLeafIncremental.cs)
 - [../../JetDatabaseWriter/Indexes/IndexBTreeBuilder.cs](../../JetDatabaseWriter/Indexes/IndexBTreeBuilder.cs)
-- [../../JetDatabaseWriter/Indexes/IndexBTreeSeeker.cs](../../JetDatabaseWriter/Indexes/IndexBTreeSeeker.cs)
+- [../../JetDatabaseWriter/Indexes/IndexCursor.cs](../../JetDatabaseWriter/Indexes/IndexCursor.cs)
+- [../../JetDatabaseWriter/Indexes/IndexPageCodec.cs](../../JetDatabaseWriter/Indexes/IndexPageCodec.cs)
 - [../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
 - [../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs](../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs)
 - [../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs](../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs)
@@ -32,22 +33,29 @@ than merely move it.
 
 Target shape:
 
-- [ ] Extract an `IndexPageCodec` that owns bitmask scanning, prefix handling,
-      entry decoding, sibling pointer reads/writes, and leaf/intermediate page
-      emission.
-- [ ] Extract an `IndexCursor` that performs layout-aware descent, leaf-chain
+- [x] Extract an `IndexPageCodec` that owns read-side bitmask scanning, prefix
+      handling, entry decoding, sibling pointer reads, child selection, and
+      encoded-key comparison.
+- [ ] Move sibling pointer writes and leaf/intermediate page emission behind
+      the codec or a successor descriptor.
+- [x] Extract an `IndexCursor` that performs layout-aware descent, leaf-chain
       walks, tail-page fall-through, and exact-key row-location collection.
 - [ ] Extract a mutation planner, such as `IndexBTreeEditor`, that can model
       insert/delete changes against one or more leaves and decide between
       in-place rewrite, split, ancestor propagation, or full-tree rebuild.
-- [ ] Route `IndexBTreeSeeker.ContainsKeyAsync` and
-      `FindRowLocationsAsync` through the cursor.
-- [ ] Route `RelationshipChildRowLocator` and parent/child FK seek logic
+- [x] Remove `IndexBTreeSeeker` and route exact-key seeks through the cursor.
+- [x] Route `RelationshipChildRowLocator` and parent/child FK seek logic
       through the cursor rather than direct seeker calls.
 - [ ] Route unique-index fast checks through the same encoded-key and cursor
       infrastructure where possible.
-- [ ] Collapse duplicated `NextEntryStart`, canonical-key compare, prefix
+- [x] Collapse duplicated `NextEntryStart`, canonical-key compare, prefix
       reconstruction, and child-selection logic.
+
+Progress 2026-05-26: read-only index seeking now flows through
+`Indexes/IndexCursor.cs`, backed by `Indexes/IndexPageCodec.cs`. The legacy
+`IndexBTreeSeeker` facade was deleted; public reader seeks, relationship FK
+enforcement, and child-row location call the cursor directly. Mutation planning
+and editor work remain open.
 
 Guardrails:
 
@@ -245,8 +253,8 @@ package acceptability. If no dependency qualifies, leave this mostly alone.
 
 ## Suggested Order
 
-1. IndexPageCodec plus read-only IndexCursor, before attempting mutation
-   editing.
+1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26; mutation
+      editing remains next.
 2. RowDecodePlan, gated by BenchmarkDotNet evidence.
 3. IndexBTreeEditor mutation planner, once the cursor/codec is trusted.
 4. Declarative catalog artifact planning, after index/system-table maintenance

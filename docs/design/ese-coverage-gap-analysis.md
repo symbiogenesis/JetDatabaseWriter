@@ -64,12 +64,12 @@ Implemented coverage (2026-05-21):
 
 ### 4. Public Index Seek and Cursor Navigation (DONE)
 
-ESE's public model includes indexed and sequential cursor navigation. JetDatabaseWriter now has substantial index writing, maintenance, internal seek support through [IndexBTreeSeeker.cs](../../JetDatabaseWriter/Indexes/IndexBTreeSeeker.cs), and a narrow public exact-seek reader surface.
+ESE's public model includes indexed and sequential cursor navigation. JetDatabaseWriter now has substantial index writing, maintenance, internal seek support through [IndexCursor.cs](../../JetDatabaseWriter/Indexes/IndexCursor.cs), and a narrow public exact-seek reader surface.
 
 Implemented coverage (2026-05-21):
 
 - Added `IAccessReader.SeekRowsAsync(tableName, indexName, keyValues, CT)` and [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs) plumbing for exact Jet4/ACE index seeks over an index name and key tuple.
-- Reuses `IndexBTreeSeeker.FindRowLocationsAsync` for root descent, prefix-compressed leaf decoding, non-unique sibling-leaf walks, and tail-page fall-through, then materialises rows through the same typed row decoder used by `Rows(...)`.
+- Reuses `IndexCursor.FindRowLocationsAsync` for root descent, prefix-compressed leaf decoding, non-unique sibling-leaf walks, and tail-page fall-through, then materialises rows through the same typed row decoder used by `Rows(...)`.
 - Added [AccessReaderIndexSeekTests.cs](../../JetDatabaseWriter.Tests/Reader/AccessReaderIndexSeekTests.cs) for unique and non-unique indexes, composite keys, missing keys, sibling-leaf walks, tail-page append fall-through, Jet3 rejection, and seek results matching full table scans for supported key types.
 
 Range scans remain separate until there is a clear API design.

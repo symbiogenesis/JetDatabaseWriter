@@ -1,11 +1,8 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Schema;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Single-leaf fast-path helper: in-place incremental insert and delete
@@ -34,14 +31,7 @@ internal static class IndexLeafIncremental
     /// leftmost leaf before walking the leaf-sibling chain.
     /// </summary>
     public static bool IsIntermediate(byte[] page)
-    {
-        if (page == null || page.Length < 32)
-        {
-            return false;
-        }
-
-        return page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
-    }
+        => IndexPageCodec.IsIntermediate(page);
 
     /// <summary>
     /// Returns the page number recorded in the <c>next_page</c> sibling
@@ -56,14 +46,7 @@ internal static class IndexLeafIncremental
     /// Layout-aware overload of <see cref="ReadNextLeafPage(byte[])"/>.
     /// </summary>
     public static long ReadNextLeafPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] leafPage)
-    {
-        if (leafPage == null || leafPage.Length < layout.NextPageOffset + 4)
-        {
-            return 0;
-        }
-
-        return (uint)Ri32(leafPage, layout.NextPageOffset);
-    }
+        => IndexPageCodec.ReadNextPage(layout, leafPage);
 
     /// <summary>
     /// Returns the page number recorded in the <c>tail_page</c> header
@@ -80,14 +63,7 @@ internal static class IndexLeafIncremental
     /// Layout-aware overload of <see cref="ReadTailPage(byte[])"/>.
     /// </summary>
     public static long ReadTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
-    {
-        if (page == null || page.Length < layout.TailPageOffset + 4)
-        {
-            return 0;
-        }
-
-        return (uint)Ri32(page, layout.TailPageOffset);
-    }
+        => IndexPageCodec.ReadTailPage(layout, page);
 
     /// <summary>
     /// Returns the page number recorded in the <c>prev_page</c> sibling
@@ -101,14 +77,7 @@ internal static class IndexLeafIncremental
     /// Layout-aware overload of <see cref="ReadPrevPage(byte[])"/>.
     /// </summary>
     public static long ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
-    {
-        if (page == null || page.Length < layout.PrevPageOffset + 4)
-        {
-            return 0;
-        }
-
-        return (uint)Ri32(page, layout.PrevPageOffset);
-    }
+        => IndexPageCodec.ReadPrevPage(layout, page);
 
     /// <summary>
     /// Reads the three sibling-pointer header fields (<c>prev_page</c>,
@@ -118,17 +87,7 @@ internal static class IndexLeafIncremental
     /// to contain all three fields.
     /// </summary>
     public static (long Prev, long Next, long Tail) ReadSiblingPointers(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
-    {
-        if (page == null || page.Length < layout.TailPageOffset + 4)
-        {
-            return (0, 0, 0);
-        }
-
-        long prev = (uint)Ri32(page, layout.PrevPageOffset);
-        long next = (uint)Ri32(page, layout.NextPageOffset);
-        long tail = (uint)Ri32(page, layout.TailPageOffset);
-        return (prev, next, tail);
-    }
+        => IndexPageCodec.ReadSiblingPointers(layout, page);
 
     /// <summary>
     /// Decodes the child-page pointer of the FIRST entry on an intermediate
@@ -147,32 +106,7 @@ internal static class IndexLeafIncremental
     /// entry at <c>0xF8</c>).
     /// </summary>
     public static long ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout layout, byte[] intermediatePage, int pageSize)
-    {
-        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != Constants.IndexLeafPage.PageTypeIntermediate)
-        {
-            return 0;
-        }
-
-        int freeSpace = Ru16(intermediatePage, 2);
-        int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd <= layout.FirstEntryOffset)
-        {
-            return 0;
-        }
-
-        int next = NextEntryStart(layout, intermediatePage, payloadEnd, layout.FirstEntryOffset);
-        int entryEnd = next < 0 ? payloadEnd : next;
-        int totalLen = entryEnd - layout.FirstEntryOffset;
-
-        // Each intermediate entry trails with [3 B page][1 B row][4 B child page].
-        if (totalLen < 8)
-        {
-            return 0;
-        }
-
-        int childOff = entryEnd - 4;
-        return DecodeIntermediateChildPointer(intermediatePage, childOff);
-    }
+        => IndexPageCodec.ReadFirstChildPointer(layout, intermediatePage, pageSize);
 
     /// <summary>
     /// Reads the 4-byte big-endian child-page pointer at
@@ -185,14 +119,7 @@ internal static class IndexLeafIncremental
     /// <see cref="IndexBTreeBuilder"/>.
     /// </summary>
     internal static long DecodeIntermediateChildPointer(byte[] page, int offset)
-    {
-        if (page == null || offset < 0 || offset + 4 > page.Length)
-        {
-            return 0;
-        }
-
-        return BinaryPrimitives.ReadUInt32BigEndian(page.AsSpan(offset, 4));
-    }
+        => IndexPageCodec.DecodeIntermediateChildPointer(page, offset);
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="page"/> is a leaf
@@ -209,20 +136,7 @@ internal static class IndexLeafIncremental
     /// Layout-aware overload of <see cref="IsSingleRootLeaf(byte[])"/>.
     /// </summary>
     public static bool IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
-    {
-        if (page == null || page.Length < layout.TailPageOffset + 4)
-        {
-            return false;
-        }
-
-        if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
-        {
-            return false;
-        }
-
-        var (prev, next, tail) = ReadSiblingPointers(layout, page);
-        return prev == 0 && next == 0 && tail == 0;
-    }
+        => IndexPageCodec.IsSingleRootLeaf(layout, page);
 
     /// <summary>
     /// Decodes every entry on a single Jet4 / ACE leaf page back into its
@@ -238,70 +152,7 @@ internal static class IndexLeafIncremental
     /// first entry at <c>0xF8</c>).
     /// </summary>
     public static List<IndexEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
-    {
-        var result = new List<IndexEntry>();
-        int pref = Ru16(page, layout.PrefLenOffset);
-        int freeSpace = Ru16(page, 2);
-        int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd <= layout.FirstEntryOffset)
-        {
-            return result;
-        }
-
-        byte[]? sharedPrefix = null;
-        int entryStart = layout.FirstEntryOffset;
-        bool isFirst = true;
-        while (entryStart < payloadEnd)
-        {
-            int next = NextEntryStart(layout, page, payloadEnd, entryStart);
-            int entryEnd = next < 0 ? payloadEnd : next;
-            int totalLen = entryEnd - entryStart;
-
-            // Leaf entry: [stripped key bytes] + 3-byte BE data page + 1-byte data row.
-            int suffixLen = totalLen - 4;
-            if (suffixLen < 0)
-            {
-                break;
-            }
-
-            byte[] canonical;
-            if (isFirst)
-            {
-                canonical = new byte[suffixLen];
-                Buffer.BlockCopy(page, entryStart, canonical, 0, suffixLen);
-                if (pref > 0 && suffixLen >= pref)
-                {
-                    sharedPrefix = new byte[pref];
-                    Buffer.BlockCopy(canonical, 0, sharedPrefix, 0, pref);
-                }
-            }
-            else
-            {
-                canonical = new byte[pref + suffixLen];
-                if (pref > 0 && sharedPrefix != null)
-                {
-                    Buffer.BlockCopy(sharedPrefix, 0, canonical, 0, pref);
-                }
-
-                Buffer.BlockCopy(page, entryStart, canonical, pref, suffixLen);
-            }
-
-            int dpOff = entryStart + suffixLen;
-            long dp = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(dpOff, 3));
-            byte dr = page[dpOff + 3];
-            result.Add(new IndexEntry(canonical, dp, dr));
-
-            isFirst = false;
-            if (next < 0)
-            {
-                break;
-            }
-
-            entryStart = next;
-        }
-
-        return result;
-    }
+        => IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
 
     /// <summary>
     /// Builds the post-mutation entry list by inserting <paramref name="adds"/>
@@ -371,7 +222,7 @@ internal static class IndexLeafIncremental
 
         Array.Sort(indexed, static (a, b) =>
         {
-            int c = CompareBytes(a.Entry.Key, b.Entry.Key);
+            int c = IndexPageCodec.CompareKeyBytes(a.Entry.Key, b.Entry.Key);
             return c != 0 ? c : a.Order - b.Order;
         });
 
@@ -470,116 +321,7 @@ internal static class IndexLeafIncremental
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
         int pageSize)
-    {
-        var result = new List<DecodedIntermediateEntry>();
-        if (page == null || page.Length < pageSize || page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
-        {
-            return result;
-        }
-
-        int pref = Ru16(page, layout.PrefLenOffset);
-        int freeSpace = Ru16(page, 2);
-        int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd <= layout.FirstEntryOffset)
-        {
-            return result;
-        }
-
-        byte[]? sharedPrefix = null;
-        int entryStart = layout.FirstEntryOffset;
-        bool isFirst = true;
-        while (entryStart < payloadEnd)
-        {
-            int next = NextEntryStart(layout, page, payloadEnd, entryStart);
-            int entryEnd = next < 0 ? payloadEnd : next;
-            int totalLen = entryEnd - entryStart;
-
-            // Intermediate entry: [stripped key bytes] + 3-byte BE data page +
-            // 1-byte data row + 4-byte BE child page → suffix length = totalLen - 8.
-            int suffixLen = totalLen - 8;
-            if (suffixLen < 0)
-            {
-                break;
-            }
-
-            byte[] canonical;
-            if (isFirst)
-            {
-                canonical = new byte[suffixLen];
-                Buffer.BlockCopy(page, entryStart, canonical, 0, suffixLen);
-                if (pref > 0 && suffixLen >= pref)
-                {
-                    sharedPrefix = new byte[pref];
-                    Buffer.BlockCopy(canonical, 0, sharedPrefix, 0, pref);
-                }
-            }
-            else
-            {
-                canonical = new byte[pref + suffixLen];
-                if (pref > 0 && sharedPrefix != null)
-                {
-                    Buffer.BlockCopy(sharedPrefix, 0, canonical, 0, pref);
-                }
-
-                Buffer.BlockCopy(page, entryStart, canonical, pref, suffixLen);
-            }
-
-            int trailerOff = entryStart + suffixLen;
-            long dp = ((long)page[trailerOff] << 16) | ((long)page[trailerOff + 1] << 8) | page[trailerOff + 2];
-            byte dr = page[trailerOff + 3];
-            long childPage = DecodeIntermediateChildPointer(page, trailerOff + 4);
-            result.Add(new DecodedIntermediateEntry(new(canonical, dp, dr), childPage));
-
-            isFirst = false;
-            if (next < 0)
-            {
-                break;
-            }
-
-            entryStart = next;
-        }
-
-        return result;
-    }
+        => IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
 
     private static long EncodePtr(long page, byte row) => (page << 8) | row;
-
-    private static int CompareBytes(byte[] a, byte[] b)
-    {
-        int n = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < n; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
-    }
-
-    private static int NextEntryStart(byte[] page, int payloadEnd, int currentStart)
-        => NextEntryStart(IndexLeafPageBuilder.LeafPageLayout.Jet4, page, payloadEnd, currentStart);
-
-    private static int NextEntryStart(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int payloadEnd, int currentStart)
-    {
-        int searchStart = currentStart - layout.FirstEntryOffset + 1;
-        for (int bit = searchStart; bit < payloadEnd - layout.FirstEntryOffset; bit++)
-        {
-            int byteOff = layout.BitmaskOffset + (bit / 8);
-            if (byteOff >= layout.FirstEntryOffset)
-            {
-                return -1;
-            }
-
-            if ((page[byteOff] & (1 << (bit % 8))) != 0)
-            {
-                int candidate = layout.FirstEntryOffset + bit;
-                return candidate < payloadEnd ? candidate : -1;
-            }
-        }
-
-        return -1;
-    }
 }

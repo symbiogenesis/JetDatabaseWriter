@@ -167,9 +167,10 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIndex, values);
                 if (encodedKey != null)
                 {
-                    bool found = await IndexBTreeSeeker.ContainsKeyAsync(
+                    var cursor = new IndexCursor(
                         (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
-                        writer._pgSz,
+                        writer._pgSz);
+                    bool found = await cursor.ContainsKeyAsync(
                         seekIndex.RootPage,
                         encodedKey,
                         cancellationToken).ConfigureAwait(false);

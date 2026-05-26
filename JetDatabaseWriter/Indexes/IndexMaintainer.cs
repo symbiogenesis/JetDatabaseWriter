@@ -1248,7 +1248,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// (its key is the OLD tail max, not the new one); the §4.5 design
     /// expects readers / seekers to compensate by following the
     /// intermediate's <c>tail_page</c> header on overshoot, which
-    /// <see cref="IndexBTreeSeeker"/> does.
+    /// <see cref="IndexCursor"/> does.
     /// </para>
     /// </summary>
     private async ValueTask<bool> TryAppendToTailLeafAsync(
@@ -1558,7 +1558,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// Descends an index B-tree from <paramref name="rootPage"/> using
     /// <paramref name="searchKey"/> to pick the child at every intermediate
     /// level (first summary &gt;= searchKey wins, mirroring
-    /// <see cref="IndexBTreeSeeker.ContainsKeyAsync"/>). On every level
+    /// <see cref="IndexCursor.ContainsKeyAsync"/>). On every level
     /// pushed onto <paramref name="path"/>: the page number, raw bytes,
     /// decoded summary entries, and the index of the followed child. Returns
     /// the leaf page number reached, or 0 on any descent failure (overshoot,

@@ -19,6 +19,10 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, TPayload Payload)>();
+        var cursor = new IndexCursor(
+            (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
+            writer._pgSz);
+
         foreach ((object?[] oldPrimaryKey, TPayload payload) in requests)
         {
             byte[]? encoded = IndexHelpers.TryEncodeChildSeekKey(childSeek, oldPrimaryKey);
@@ -27,9 +31,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
                 return null;
             }
 
-            List<(long DataPage, int RowIndex)> hits = await IndexBTreeSeeker.FindRowLocationsAsync(
-                (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
-                writer._pgSz,
+            List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
                 childSeek.RootPage,
                 encoded,
                 cancellationToken).ConfigureAwait(false);

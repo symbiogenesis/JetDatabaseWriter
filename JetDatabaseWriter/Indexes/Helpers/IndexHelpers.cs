@@ -600,19 +600,7 @@ internal static class IndexHelpers
     /// inverted on descending columns, so unsigned compare is correct).
     /// </summary>
     public static int CompareKeyBytes(byte[] a, byte[] b)
-    {
-        int n = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < n; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
-    }
+        => IndexPageCodec.CompareKeyBytes(a, b);
 
     /// <summary>
     /// Returns the index of the first intermediate entry whose summary key
