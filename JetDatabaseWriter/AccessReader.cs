@@ -21,6 +21,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -2535,23 +2536,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return false;
     }
 
-    private static bool TryReadUsageMapPointer(byte[] tdefPage, int pointerOffset, out int rowIndex, out int usageMapPageNumber)
-    {
-        rowIndex = 0;
-        usageMapPageNumber = 0;
-        if (pointerOffset < 0 || pointerOffset + 3 >= tdefPage.Length)
-        {
-            return false;
-        }
-
-        rowIndex = tdefPage[pointerOffset];
-        usageMapPageNumber = tdefPage[pointerOffset + 1]
-            | (tdefPage[pointerOffset + 2] << 8)
-            | (tdefPage[pointerOffset + 3] << 16);
-
-        return usageMapPageNumber > 0;
-    }
-
     private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
     {
         if (task.IsCompleted)
@@ -2679,7 +2663,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] tdef = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (tdef[0] != Constants.PageTypes.TableDefinition || !TryReadUsageMapPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out int usageMapRow, out int usageMapPage))
+            if (tdef[0] != Constants.PageTypes.TableDefinition
+                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMap.Pointer pointer)
+                || pointer.PageNumber <= 0)
             {
                 return null;
             }
@@ -2689,8 +2675,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 : 0;
             return await TryReadMappedOwnedDataPagesAsync(
                 tdefPage,
-                usageMapPage,
-                usageMapRow,
+                pointer.PageNumber,
+                pointer.RowIndex,
                 declaredRows,
                 totalPages,
                 cancellationToken).ConfigureAwait(false);
@@ -2717,23 +2703,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] usageMapPage = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (usageMapPage[0] != Constants.PageTypes.Data || !TryFindLiveRowBound(usageMapPage, usageMapPageNumber, usageMapRow, out RowBound rowBound))
-            {
-                return null;
-            }
-
-            if (rowBound.RowSize <= 5 || rowBound.RowStart < 0 || rowBound.RowStart + rowBound.RowSize > usageMapPage.Length)
+            if (usageMapPage[0] != Constants.PageTypes.Data
+                || !UsageMap.TryGetRowBound(usageMapPage, _dataPage, _pgSz, usageMapRow, out RowBound rowBound))
             {
                 return null;
             }
 
             var mappedPages = new List<long>();
-            bool recognizedMap = usageMapPage[rowBound.RowStart] switch
-            {
-                0x00 => TryEnumerateInlineOwnedDataPages(usageMapPage, rowBound, totalPages, mappedPages),
-                0x01 => await TryEnumerateReferenceOwnedDataPagesAsync(usageMapPage, rowBound, totalPages, mappedPages, cancellationToken).ConfigureAwait(false),
-                _ => false,
-            };
+            bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
+                usageMapPage,
+                rowBound,
+                _pgSz,
+                totalPages,
+                minimumPageNumber: 1,
+                strict: true,
+                ReadPageAsync,
+                ReturnPage,
+                mappedPages,
+                cancellationToken).ConfigureAwait(false);
             if (!recognizedMap)
             {
                 return null;
@@ -2752,103 +2739,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             ReturnPage(usageMapPage);
         }
-    }
-
-    private bool TryEnumerateInlineOwnedDataPages(byte[] usageMapPage, RowBound rowBound, long totalPages, List<long> mappedPages)
-    {
-        int startPage = Ri32(usageMapPage, rowBound.RowStart + 1);
-        if (startPage < 0)
-        {
-            return false;
-        }
-
-        int bitmapBytes = Math.Min(rowBound.RowSize - Constants.UsageMap.InlineBitmapOffset, _pgSz - rowBound.RowStart - Constants.UsageMap.InlineBitmapOffset);
-        if (bitmapBytes <= 0)
-        {
-            return false;
-        }
-
-        int bitCapacity = bitmapBytes * 8;
-        for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
-        {
-            int byteOffset = rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
-            byte bitMask = (byte)(1 << (bitIndex % 8));
-            if ((usageMapPage[byteOffset] & bitMask) == 0)
-            {
-                continue;
-            }
-
-            long pageNumber = (long)startPage + bitIndex;
-            if (pageNumber <= 0 || pageNumber >= totalPages)
-            {
-                return false;
-            }
-
-            mappedPages.Add(pageNumber);
-        }
-
-        return true;
-    }
-
-    private async ValueTask<bool> TryEnumerateReferenceOwnedDataPagesAsync(
-        byte[] usageMapPage,
-        RowBound rowBound,
-        long totalPages,
-        List<long> mappedPages,
-        CancellationToken cancellationToken)
-    {
-        int pointerCount = (rowBound.RowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
-        int pagesPerMapPage = (_pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
-        for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            int pointerOffset = rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
-            int referencePageNumber = Ri32(usageMapPage, pointerOffset);
-            if (referencePageNumber == 0)
-            {
-                continue;
-            }
-
-            if (referencePageNumber < 0 || referencePageNumber >= totalPages)
-            {
-                return false;
-            }
-
-            byte[] referencePage = await ReadPageAsync(referencePageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (referencePage[0] != Constants.PageTypes.UsageMap)
-                {
-                    return false;
-                }
-
-                int bitCapacity = (_pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
-                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
-                {
-                    int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-                    byte bitMask = (byte)(1 << (bitIndex % 8));
-                    if ((referencePage[byteOffset] & bitMask) == 0)
-                    {
-                        continue;
-                    }
-
-                    long pageNumber = ((long)pointerIndex * pagesPerMapPage) + bitIndex;
-                    if (pageNumber <= 0 || pageNumber >= totalPages)
-                    {
-                        return false;
-                    }
-
-                    mappedPages.Add(pageNumber);
-                }
-            }
-            finally
-            {
-                ReturnPage(referencePage);
-            }
-        }
-
-        return true;
     }
 
     private async ValueTask<bool> ValidateOwnedDataPagesAsync(

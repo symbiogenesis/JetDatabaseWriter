@@ -3050,27 +3050,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            long[] indexPageNumbers = indexPageGroups[rowIndex - 2];
-            long firstPageNumber = indexPageNumbers.Length == 0 ? 0 : indexPageNumbers[0];
-            int basePageNumber = firstPageNumber < 512
-                ? 0
-                : checked((int)((firstPageNumber / 8) * 8));
-
-            page[rowStart] = 0x00;
-            Wi32(page, rowStart + 1, basePageNumber);
-
-            for (int i = 0; i < indexPageNumbers.Length; i++)
-            {
-                int bitIndex = checked((int)(indexPageNumbers[i] - basePageNumber));
-                if ((uint)bitIndex >= 512)
-                {
-                    throw new NotSupportedException(
-                        "Index B-tree allocation spans more than one inline usage-map bitmap; " +
-                        "REFERENCE usage maps for index pages are not yet supported.");
-                }
-
-                page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
-            }
+            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
         }
 
         Wi32(page, _dataPage.TDefOff, 0);
@@ -3104,8 +3084,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            Array.Clear(page, rowStart, Constants.UsageMap.RowSize);
-            WriteIndexUsageMapRow(page, rowStart, indexPageGroups[groupIndex]);
+            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
         }
 
         Wi32(page, _dataPage.TDefOff, 0);
@@ -3124,30 +3103,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         return pageGroups;
-    }
-
-    private static void WriteIndexUsageMapRow(byte[] page, int rowStart, long[] indexPageNumbers)
-    {
-        long firstPageNumber = indexPageNumbers.Length == 0 ? 0 : indexPageNumbers[0];
-        int basePageNumber = firstPageNumber < 512
-            ? 0
-            : checked((int)((firstPageNumber / 8) * 8));
-
-        page[rowStart] = Constants.UsageMap.InlineMapType;
-        Wi32(page, rowStart + Constants.UsageMap.ReferenceMapPointerOffset, basePageNumber);
-
-        for (int i = 0; i < indexPageNumbers.Length; i++)
-        {
-            int bitIndex = checked((int)(indexPageNumbers[i] - basePageNumber));
-            if ((uint)bitIndex >= 512)
-            {
-                throw new NotSupportedException(
-                    "Index B-tree allocation spans more than one inline usage-map bitmap; " +
-                    "REFERENCE usage maps for index pages are not yet supported.");
-            }
-
-            page[rowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
-        }
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
@@ -3334,7 +3289,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (firstTdefPage is not null && _format != DatabaseFormat.Jet3Mdb)
         {
-            int usageMapPage = ReadUInt24(firstTdefPage, Constants.TableDefinition.OwnedPagesPageOffset);
+            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, Constants.TableDefinition.OwnedPagesPageOffset);
             if (usageMapPage > 0)
             {
                 _ = pagesToFree.Add(usageMapPage);
@@ -3374,27 +3329,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
             {
-                if (rowBound.RowIndex < 2 || rowBound.RowSize < 5 || page[rowBound.RowStart] != 0x00)
+                if (rowBound.RowIndex < 2)
                 {
                     continue;
                 }
 
-                int basePage = Ri32(page, rowBound.RowStart + 1);
-                int bitCapacity = (rowBound.RowSize - 5) * 8;
-                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                var indexPages = new List<long>();
+                if (!await UsageMap.TryEnumeratePagesAsync(
+                    page,
+                    rowBound,
+                    _pgSz,
+                    totalPages,
+                    minimumPageNumber: 3,
+                    strict: false,
+                    ReadPageAsync,
+                    ReturnPage,
+                    indexPages,
+                    cancellationToken).ConfigureAwait(false))
                 {
-                    int byteOffset = rowBound.RowStart + 5 + (bitIndex / 8);
-                    byte bitMask = (byte)(1 << (bitIndex % 8));
-                    if ((page[byteOffset] & bitMask) == 0)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    long pageNumber = (long)basePage + bitIndex;
-                    if (pageNumber > 2 && pageNumber < totalPages)
-                    {
-                        _ = pagesToFree.Add(pageNumber);
-                    }
+                foreach (long pageNumber in indexPages)
+                {
+                    _ = pagesToFree.Add(pageNumber);
                 }
             }
         }
@@ -3403,9 +3361,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ReturnPage(page);
         }
     }
-
-    private static int ReadUInt24(byte[] page, int offset)
-        => page[offset] | (page[offset + 1] << 8) | (page[offset + 2] << 16);
 
     private async ValueTask DeleteAceRowsForObjectIdsAsync(List<long> objectIds, CancellationToken cancellationToken)
     {

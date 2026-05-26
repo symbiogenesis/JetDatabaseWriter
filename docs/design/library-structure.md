@@ -89,6 +89,7 @@ JetDatabaseWriter/
 │   ├── DataPageLayout.cs                  (byte offsets, page structure, format-version layouts)
 │   ├── DataPageInserter.cs               (FindInsertTarget, CanInsertRow, WriteRowToPage)
 │   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
+│   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
 │   ├── PageJournal.cs                     (before-image journaling for rollback)
 │   └── Models/
 │       ├── PageInsertTarget.cs
@@ -215,7 +216,7 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 | Layer | Folders | Responsibility |
 |-------|---------|----------------|
 | **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
-| **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, allocation/free-list reuse, journaling, locking, page encryption |
+| **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, usage-map parsing/serialization, allocation/free-list reuse, journaling, locking, page encryption |
 | **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and orchestration |
 
@@ -318,6 +319,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Strategy via layout structs** | `DataPageLayout`, `IndexLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
 | **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
+| **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
 | **Catalog Store** | `RelationshipCatalogStore` | Keeps MSysRelationships row emission/loading/rewrites separate from TDEF logical-index mutation |
 | **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
@@ -335,7 +337,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 
 | Principle | How applied |
 |-----------|-------------|
-| **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
+| **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
 | **Open/Closed (OCP)** | Adding a new column type means extending `TypedValueParser`, `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
 | **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
 | **Dependency Inversion (DIP)** | Orchestrators depend on domain modules via composition; codec logic is delegated, not embedded |
@@ -417,15 +419,19 @@ The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes
 
 Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `RelationshipManager`, and `ComplexColumnManager` live beside the disk-format concern they manipulate, even when they receive `AccessWriter` as a context object. This keeps the folder structure domain-first while avoiding a large writer god class.
 
-### 8. Linked-table metadata spans catalog, schema, and delimited text parsing
+### 8. Usage-map parsing stays with page ownership
+
+`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `AccessReader` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows; `PageAllocator` decides when to promote the global free map and allocate reference pages; `AccessWriter` and `IndexMaintainer` decide which index pages to emit or reclaim.
+
+### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 
 Linked-table public APIs live on `IAccessSchema`; linked-table discovery and read-through live in `Relationships/LinkedTableManager`; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder. Text/CSV linked-table read-through delegates record parsing to `DelimitedText/`, keeping separator, quote, line-ending, header-normalization, and parser-limit behavior reusable outside the linked-table manager.
 
-### 9. Relationship catalog and runtime helpers are split from lifecycle orchestration
+### 10. Relationship catalog and runtime helpers are split from lifecycle orchestration
 
 `RelationshipManager` owns relationship create/drop/rename workflow and per-TDEF FK logical-index mutation. `RelationshipCatalogStore` owns `MSysRelationships` row emission, loading, and rewrites, while `RelationshipEnforcer` owns insert/update/delete referential-integrity checks. The runtime path uses smaller helpers for reusable policy and lookup work: `RelationshipSeekPlanner` resolves parent/child B-tree seek indexes, `RelationshipChildRowLocator` turns child-side seek hits into live `RowLocation` values, `RelationshipKeyBuilder` keeps seek and snapshot fallback key semantics aligned, and `RelationshipCascadePolicy` owns the cascade-depth guard independently of catalog mutation setup.
 
-### 10. Calculated expressions use explicit helper ownership
+### 11. Calculated expressions use explicit helper ownership
 
 `CalculatedExpressionEvaluator` remains the row-local entry point for applying calculated-column expressions, but parsing, normalization, AST nodes, coercion, safety limits, and function dispatch are split into focused internal helpers. Supported Access/VBA functions are registered through `CalculatedExpressionFunctionRegistry` using descriptors for aliases, argument counts, domains, and evaluator delegates; the implementation lives in domain catalogs such as `CalculatedExpressionTextFunctions` and `CalculatedExpressionDateTimeFunctions`. Spreadsheet-only constructs, external references, and domain aggregates stay rejected at the parser/evaluator boundary instead of leaking into row evaluation.
 

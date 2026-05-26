@@ -230,17 +230,27 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!TryGetUsageMapRow(globalPage, out int rowStart, out int rowSize))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
             {
                 return [];
             }
 
-            List<long> mappedFreePages = globalPage[rowStart] switch
+            var mappedFreePages = new List<long>();
+            bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
+                globalPage,
+                rowBound,
+                writer._pgSz,
+                LogicalPageCount,
+                minimumPageNumber: GlobalUsageMapPageNumber + 1,
+                strict: false,
+                writer.ReadPageAsync,
+                ReturnPage,
+                mappedFreePages,
+                cancellationToken).ConfigureAwait(false);
+            if (!recognizedMap)
             {
-                Constants.UsageMap.InlineMapType => EnumerateInlineFreePages(globalPage, rowStart, rowSize),
-                Constants.UsageMap.ReferenceMapType => await EnumerateReferenceFreePagesAsync(globalPage, rowStart, rowSize, cancellationToken).ConfigureAwait(false),
-                _ => [],
-            };
+                return [];
+            }
 
             return await FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
         }
@@ -278,100 +288,20 @@ internal sealed class PageAllocator(AccessWriter writer)
         return reusablePages;
     }
 
-    private List<long> EnumerateInlineFreePages(byte[] globalPage, int rowStart, int rowSize)
-    {
-        var freePages = new List<long>();
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
-        {
-            return freePages;
-        }
-
-        int basePage = Ri32(globalPage, rowStart + 1);
-        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
-        long totalPages = LogicalPageCount;
-        for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
-        {
-            long pageNumber = basePage + bitIndex;
-            if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= totalPages)
-            {
-                continue;
-            }
-
-            int byteOffset = rowStart + Constants.UsageMap.InlineMapHeaderSize + (bitIndex / 8);
-            byte bitMask = (byte)(1 << (bitIndex % 8));
-            if ((globalPage[byteOffset] & bitMask) != 0)
-            {
-                freePages.Add(pageNumber);
-            }
-        }
-
-        return freePages;
-    }
-
-    private async ValueTask<List<long>> EnumerateReferenceFreePagesAsync(byte[] globalPage, int rowStart, int rowSize, CancellationToken cancellationToken)
-    {
-        var freePages = new List<long>();
-        int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
-        int pagesPerMapPage = PagesPerReferenceMapPage;
-        long totalPages = LogicalPageCount;
-        for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
-            int mapPageNumber = Ri32(globalPage, pointerOffset);
-            if (mapPageNumber <= 0 || mapPageNumber >= totalPages)
-            {
-                continue;
-            }
-
-            byte[] mapPage = await writer.ReadPageAsync(mapPageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (mapPage[0] != Constants.PageTypes.UsageMap)
-                {
-                    continue;
-                }
-
-                int bitCapacity = (writer._pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
-                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
-                {
-                    long pageNumber = ((long)pointerIndex * pagesPerMapPage) + bitIndex;
-                    if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= totalPages)
-                    {
-                        continue;
-                    }
-
-                    int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-                    byte bitMask = (byte)(1 << (bitIndex % 8));
-                    if ((mapPage[byteOffset] & bitMask) != 0)
-                    {
-                        freePages.Add(pageNumber);
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(mapPage);
-            }
-        }
-
-        return freePages;
-    }
-
     private async ValueTask<bool> IsPageMarkedFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!TryGetUsageMapRow(globalPage, out int rowStart, out int rowSize))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
             {
                 return false;
             }
 
-            return globalPage[rowStart] switch
+            return globalPage[rowBound.RowStart] switch
             {
-                Constants.UsageMap.InlineMapType => TryGetInlineFreeState(globalPage, rowStart, rowSize, pageNumber, out bool isFree) && isFree,
-                Constants.UsageMap.ReferenceMapType => await TryGetReferenceFreeStateAsync(globalPage, rowStart, rowSize, pageNumber, cancellationToken).ConfigureAwait(false),
+                Constants.UsageMap.InlineMapType => UsageMap.TryGetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, out bool isFree) && isFree,
+                Constants.UsageMap.ReferenceMapType => await TryGetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, cancellationToken).ConfigureAwait(false),
                 _ => false,
             };
         }
@@ -386,17 +316,16 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!TryGetUsageMapRow(globalPage, out int rowStart, out int rowSize))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
             {
                 InitializeGlobalUsageMapPage(globalPage);
-                rowStart = writer._pgSz - Constants.UsageMap.RowSize;
-                rowSize = Constants.UsageMap.RowSize;
+                rowBound = new AccessBase.RowBound(0, writer._pgSz - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
             }
 
-            byte mapType = globalPage[rowStart];
+            byte mapType = globalPage[rowBound.RowStart];
             if (mapType == Constants.UsageMap.InlineMapType)
             {
-                if (TrySetInlineFreeState(globalPage, rowStart, rowSize, pageNumber, free))
+                if (UsageMap.TrySetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, initializeBaseForPage: false))
                 {
                     await writer.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
                     return;
@@ -407,14 +336,14 @@ internal sealed class PageAllocator(AccessWriter writer)
                     return;
                 }
 
-                await PromoteInlineToReferenceAsync(globalPage, rowStart, rowSize, cancellationToken).ConfigureAwait(false);
-                await SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
+                await PromoteInlineToReferenceAsync(globalPage, rowBound.RowStart, rowBound.RowSize, cancellationToken).ConfigureAwait(false);
+                await SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
             if (mapType == Constants.UsageMap.ReferenceMapType)
             {
-                await SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, pageNumber, free, cancellationToken).ConfigureAwait(false);
+                await SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -425,7 +354,16 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask PromoteInlineToReferenceAsync(byte[] globalPage, int rowStart, int rowSize, CancellationToken cancellationToken)
     {
-        List<long> existingFreePages = EnumerateInlineFreePages(globalPage, rowStart, rowSize);
+        var existingFreePages = new List<long>();
+        _ = UsageMap.TryEnumerateInlinePages(
+            globalPage,
+            rowStart,
+            rowSize,
+            writer._pgSz,
+            LogicalPageCount,
+            minimumPageNumber: GlobalUsageMapPageNumber + 1,
+            strict: false,
+            existingFreePages);
         Array.Clear(globalPage, rowStart, rowSize);
         globalPage[rowStart] = Constants.UsageMap.ReferenceMapType;
         await writer.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
@@ -436,60 +374,9 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
     }
 
-    private static bool TryGetInlineFreeState(byte[] globalPage, int rowStart, int rowSize, long pageNumber, out bool isFree)
-    {
-        isFree = false;
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
-        {
-            return false;
-        }
-
-        int basePage = Ri32(globalPage, rowStart + 1);
-        long bitIndex = pageNumber - basePage;
-        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
-        if (bitIndex < 0 || bitIndex >= bitCapacity)
-        {
-            return false;
-        }
-
-        int byteOffset = rowStart + Constants.UsageMap.InlineMapHeaderSize + ((int)bitIndex / 8);
-        byte bitMask = (byte)(1 << ((int)bitIndex % 8));
-        isFree = (globalPage[byteOffset] & bitMask) != 0;
-        return true;
-    }
-
-    private static bool TrySetInlineFreeState(byte[] globalPage, int rowStart, int rowSize, long pageNumber, bool free)
-    {
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
-        {
-            return false;
-        }
-
-        int basePage = Ri32(globalPage, rowStart + 1);
-        long bitIndex = pageNumber - basePage;
-        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
-        if (bitIndex < 0 || bitIndex >= bitCapacity)
-        {
-            return false;
-        }
-
-        int byteOffset = rowStart + Constants.UsageMap.InlineMapHeaderSize + ((int)bitIndex / 8);
-        byte bitMask = (byte)(1 << ((int)bitIndex % 8));
-        if (free)
-        {
-            globalPage[byteOffset] |= bitMask;
-        }
-        else
-        {
-            globalPage[byteOffset] &= unchecked((byte)~bitMask);
-        }
-
-        return true;
-    }
-
     private async ValueTask<bool> TryGetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, CancellationToken cancellationToken)
     {
-        int pointerIndex = (int)(pageNumber / PagesPerReferenceMapPage);
+        int pointerIndex = UsageMap.ReferencePointerIndex(writer._pgSz, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -511,10 +398,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 return false;
             }
 
-            int bitIndex = (int)(pageNumber % PagesPerReferenceMapPage);
-            int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-            byte bitMask = (byte)(1 << (bitIndex % 8));
-            return (mapPage[byteOffset] & bitMask) != 0;
+            return UsageMap.TryGetReferencePageState(mapPage, writer._pgSz, pageNumber, out bool isFree) && isFree;
         }
         finally
         {
@@ -524,7 +408,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask SetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, bool free, CancellationToken cancellationToken)
     {
-        int pointerIndex = (int)(pageNumber / PagesPerReferenceMapPage);
+        int pointerIndex = UsageMap.ReferencePointerIndex(writer._pgSz, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -561,19 +445,10 @@ internal sealed class PageAllocator(AccessWriter writer)
 
         try
         {
-            int bitIndex = (int)(pageNumber % PagesPerReferenceMapPage);
-            int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-            byte bitMask = (byte)(1 << (bitIndex % 8));
-            if (free)
+            if (UsageMap.TrySetReferencePageState(mapPage, writer._pgSz, pageNumber, free))
             {
-                mapPage[byteOffset] |= bitMask;
+                await writer.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
             }
-            else
-            {
-                mapPage[byteOffset] &= unchecked((byte)~bitMask);
-            }
-
-            await writer.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -583,8 +458,6 @@ internal sealed class PageAllocator(AccessWriter writer)
             }
         }
     }
-
-    private int PagesPerReferenceMapPage => (writer._pgSz - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
 
     private async ValueTask<byte[]> ReadGlobalUsageMapPageAsync(CancellationToken cancellationToken)
     {
@@ -605,12 +478,13 @@ internal sealed class PageAllocator(AccessWriter writer)
             return false;
         }
 
-        if (!TryGetUsageMapRow(page, out int rowStart, out int rowSize))
+        if (!UsageMap.TryGetFirstRowBound(page, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
         {
             return false;
         }
 
-        return rowSize >= Constants.UsageMap.InlineMapHeaderSize && page[rowStart] is Constants.UsageMap.InlineMapType or Constants.UsageMap.ReferenceMapType;
+        return rowBound.RowSize >= Constants.UsageMap.InlineMapHeaderSize
+            && page[rowBound.RowStart] is Constants.UsageMap.InlineMapType or Constants.UsageMap.ReferenceMapType;
     }
 
     private void InitializeGlobalUsageMapPage(byte[] page)
@@ -631,43 +505,6 @@ internal sealed class PageAllocator(AccessWriter writer)
         Wi32(page, rowStart + 1, 0);
         page[row1Start] = Constants.UsageMap.InlineMapType;
         Wi32(page, row1Start + 1, 0);
-    }
-
-    private bool TryGetUsageMapRow(byte[] page, out int rowStart, out int rowSize)
-    {
-        rowStart = 0;
-        rowSize = 0;
-        int rowCount = Ru16(page, writer._dataPage.NumRows);
-        if (rowCount <= 0)
-        {
-            return false;
-        }
-
-        int maxRows = Math.Min(rowCount, (writer._pgSz - writer._dataPage.RowsStart) / 2);
-        if (maxRows <= 0)
-        {
-            return false;
-        }
-
-        rowStart = Ru16(page, writer._dataPage.RowsStart) & Constants.DataPage.RowOffsetMask;
-        int slotTableEnd = writer._dataPage.RowsStart + (maxRows * 2);
-        if (rowStart < slotTableEnd || rowStart >= writer._pgSz)
-        {
-            return false;
-        }
-
-        int rowEnd = writer._pgSz;
-        for (int rowIndex = 1; rowIndex < maxRows; rowIndex++)
-        {
-            int candidateStart = Ru16(page, writer._dataPage.RowsStart + (rowIndex * 2)) & Constants.DataPage.RowOffsetMask;
-            if (candidateStart > rowStart && candidateStart < rowEnd)
-            {
-                rowEnd = candidateStart;
-            }
-        }
-
-        rowSize = rowEnd - rowStart;
-        return rowSize > 0;
     }
 
     private async ValueTask WriteFreedPageAsync(long pageNumber, bool secure, CancellationToken cancellationToken)

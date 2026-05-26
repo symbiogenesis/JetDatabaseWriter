@@ -75,6 +75,29 @@ public sealed class PageAllocatorTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateTableAsync_ReusesPageMarkedFreeInReferenceGlobalMap(DatabaseFormat format)
+    {
+        const int ReusablePage = 520;
+        await using MemoryStream stream = await CreateDatabaseWithReferenceMappedFreePageAsync(format, ReusablePage);
+        int pageSize = PageSizeOf(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "ReferenceReuseTarget",
+                [new ColumnDefinition("Id", typeof(int))],
+                TestContext.Current.CancellationToken);
+        }
+
+        byte[] bytes = stream.ToArray();
+        Assert.Equal(0x02, bytes[ReusablePage * pageSize]);
+        Assert.False(IsReferenceGlobalMapBitSet(bytes, format, ReusablePage));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
     public async Task ShrinkDatabaseAsync_TruncatesTrailingFreePages(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateDatabaseWithTrailingFreePagesAsync(format, 3);
@@ -174,6 +197,49 @@ public sealed class PageAllocatorTests
         return result;
     }
 
+    private static async ValueTask<MemoryStream> CreateDatabaseWithReferenceMappedFreePageAsync(DatabaseFormat format, int freePageNumber)
+    {
+        await using var seed = new MemoryStream();
+        await using (await AccessWriter.CreateDatabaseAsync(
+            seed,
+            format,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        int pageSize = PageSizeOf(format);
+        int referencePageNumber = freePageNumber + 1;
+        byte[] bytes = seed.ToArray();
+        Array.Resize(ref bytes, (referencePageNumber + 1) * pageSize);
+
+        int freePageOffset = freePageNumber * pageSize;
+        bytes[freePageOffset] = Constants.PageTypes.Freed;
+        bytes[freePageOffset + 1] = 0x01;
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(freePageOffset + 2, 2), (ushort)(pageSize - 16));
+
+        DataPageLayout layout = DataPageLayout.For(format);
+        Span<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
+        int rowStart = ReadUInt16(globalMap, layout.RowsStart) & Constants.DataPage.RowOffsetMask;
+        globalMap.Slice(rowStart, Constants.UsageMap.RowSize).Clear();
+        globalMap[rowStart] = Constants.UsageMap.ReferenceMapType;
+        BinaryPrimitives.WriteInt32LittleEndian(
+            globalMap.Slice(rowStart + Constants.UsageMap.ReferenceMapPointerOffset, 4),
+            referencePageNumber);
+
+        Span<byte> referenceMap = bytes.AsSpan(referencePageNumber * pageSize, pageSize);
+        referenceMap[0] = Constants.PageTypes.UsageMap;
+        int pagesPerReferenceMap = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
+        int bitIndex = freePageNumber % pagesPerReferenceMap;
+        referenceMap[Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+
+        var stream = new MemoryStream();
+        await stream.WriteAsync(bytes.AsMemory(), TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        return stream;
+    }
+
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
     {
         stream.Position = 0;
@@ -215,6 +281,26 @@ public sealed class PageAllocatorTests
         {
             globalMap[byteOffset] &= unchecked((byte)~bitMask);
         }
+    }
+
+    private static bool IsReferenceGlobalMapBitSet(byte[] bytes, DatabaseFormat format, int pageNumber)
+    {
+        int pageSize = PageSizeOf(format);
+        DataPageLayout layout = DataPageLayout.For(format);
+        ReadOnlySpan<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
+        int rowStart = ReadUInt16(globalMap, layout.RowsStart) & Constants.DataPage.RowOffsetMask;
+        Assert.Equal(Constants.UsageMap.ReferenceMapType, globalMap[rowStart]);
+
+        int pagesPerReferenceMap = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
+        int pointerIndex = pageNumber / pagesPerReferenceMap;
+        int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
+        int referencePageNumber = BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(pointerOffset, 4));
+        Assert.InRange(referencePageNumber, 1, (bytes.Length / pageSize) - 1);
+
+        ReadOnlySpan<byte> referenceMap = bytes.AsSpan(referencePageNumber * pageSize, pageSize);
+        Assert.Equal(Constants.PageTypes.UsageMap, referenceMap[0]);
+        int bitIndex = pageNumber % pagesPerReferenceMap;
+        return (referenceMap[Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8)] & (1 << (bitIndex % 8))) != 0;
     }
 
     private static int ReadUInt16(ReadOnlySpan<byte> bytes, int offset)

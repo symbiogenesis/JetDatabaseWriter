@@ -559,22 +559,25 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
             {
                 int realIdxNum = rowBound.RowIndex - 2;
-                if (realIdxNum < 0 || realIdxNum >= numRealIdx || rowBound.RowSize < 5 || page[rowBound.RowStart] != 0x00)
+                if (realIdxNum < 0 || realIdxNum >= numRealIdx)
                 {
                     continue;
                 }
 
-                int basePage = Ri32(page, rowBound.RowStart + 1);
-                int bitCapacity = (rowBound.RowSize - 5) * 8;
                 var pageNumbers = new List<long>();
-                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                if (!await UsageMap.TryEnumeratePagesAsync(
+                    page,
+                    rowBound,
+                    writer._pgSz,
+                    writer._stream.Length / writer._pgSz,
+                    minimumPageNumber: 0,
+                    strict: false,
+                    writer.ReadPageAsync,
+                    AccessBase.ReturnPage,
+                    pageNumbers,
+                    cancellationToken).ConfigureAwait(false))
                 {
-                    int byteOffset = rowBound.RowStart + 5 + (bitIndex / 8);
-                    byte bitMask = (byte)(1 << (bitIndex % 8));
-                    if ((page[byteOffset] & bitMask) != 0)
-                    {
-                        pageNumbers.Add((long)basePage + bitIndex);
-                    }
+                    continue;
                 }
 
                 result[realIdxNum] = pageNumbers.ToArray();
@@ -675,19 +678,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         return false;
     }
 
-    private static int ReadTableUsageMapPage(byte[] tdefBuffer) =>
-        tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset]
-        | (tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
-        | (tdefBuffer[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
+    private static int ReadTableUsageMapPage(byte[] tdefBuffer)
+        => UsageMap.ReadUInt24(tdefBuffer, Constants.TableDefinition.OwnedPagesPageOffset);
 
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
-    {
-        int pageNumber = checked((int)usageMapPage);
-        tdefBuffer[usedPagesOffset] = checked((byte)rowIndex);
-        tdefBuffer[usedPagesOffset + 1] = (byte)(pageNumber & 0xFF);
-        tdefBuffer[usedPagesOffset + 2] = (byte)((pageNumber >> 8) & 0xFF);
-        tdefBuffer[usedPagesOffset + 3] = (byte)((pageNumber >> 16) & 0xFF);
-    }
+        => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
     private async ValueTask<bool> RefreshIncrementalIndexUsageMapsAsync(
         long tdefPage,
