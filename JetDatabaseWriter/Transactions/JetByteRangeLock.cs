@@ -195,7 +195,8 @@ internal sealed class JetByteRangeLock
         var stopwatch = Stopwatch.StartNew();
         do
         {
-            Thread.Sleep(PollIntervalMilliseconds);
+            Task.Delay(PollIntervalMilliseconds).ConfigureAwait(false).GetAwaiter().GetResult();
+
             if (TryAcquire(offset, length))
             {
                 return;

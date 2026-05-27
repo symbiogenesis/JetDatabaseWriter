@@ -29,6 +29,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AdditionalFiles Include="..\BannedSymbols.txt">
+      <Link>BannedSymbols.txt</Link>
+    </AdditionalFiles>
     <AdditionalFiles Include="..\stylecop.json">
       <Link>stylecop.json</Link>
     </AdditionalFiles>

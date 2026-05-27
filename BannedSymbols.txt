@@ -29,6 +29,15 @@ M:System.Environment.FailFast(System.String,System.Exception);Let top-level exce
 
 // Unsafe serialization APIs.
 T:System.Runtime.Serialization.Formatters.Binary.BinaryFormatter;BinaryFormatter is unsafe and obsolete. Use System.Text.Json or a purpose-built serializer.
+T:System.Runtime.Serialization.Formatters.Soap.SoapFormatter;SoapFormatter is unsafe and obsolete. Use System.Text.Json or a purpose-built serializer.
+T:System.Runtime.Serialization.NetDataContractSerializer;NetDataContractSerializer can deserialize arbitrary CLR types. Use System.Text.Json or a purpose-built serializer.
+T:System.Web.UI.LosFormatter;LosFormatter is unsafe for untrusted data and is outside this library's scope.
+T:System.Web.UI.ObjectStateFormatter;ObjectStateFormatter is unsafe for untrusted data and is outside this library's scope.
+T:System.Web.Script.Serialization.JavaScriptSerializer;JavaScriptSerializer type resolution is unsafe for untrusted data. Use System.Text.Json.
+F:Newtonsoft.Json.TypeNameHandling.All;Do not deserialize JSON with CLR type metadata.
+F:Newtonsoft.Json.TypeNameHandling.Arrays;Do not deserialize JSON with CLR type metadata.
+F:Newtonsoft.Json.TypeNameHandling.Auto;Do not deserialize JSON with CLR type metadata.
+F:Newtonsoft.Json.TypeNameHandling.Objects;Do not deserialize JSON with CLR type metadata.
 
 // Weak or obsolete cryptography APIs.
 T:System.Security.Cryptography.DES;Use AES.
@@ -37,21 +46,54 @@ T:System.Security.Cryptography.RC2;Use AES.
 T:System.Security.Cryptography.Rijndael;Use AES.
 T:System.Security.Cryptography.SHA1;Use SHA-256 or stronger.
 T:System.Security.Cryptography.TripleDES;Use AES.
+F:System.Security.Cryptography.CipherMode.CBC;CBC encryption is unauthenticated. Suppress only for Office/Access compatibility formats that mandate CBC.
+F:System.Security.Cryptography.CipherMode.ECB;ECB encryption reveals block patterns. Suppress only for legacy Access compatibility formats that mandate ECB.
 
 // Legacy HTTP APIs.
 T:System.Net.HttpWebRequest;Use HttpClient.
 T:System.Net.WebClient;Use HttpClient.
 T:System.Net.WebRequest;Use HttpClient.
 
+// TLS validation bypass APIs.
+P:System.Net.ServicePointManager.ServerCertificateValidationCallback;Do not change process-wide TLS certificate validation from this library.
+P:System.Net.Http.HttpClientHandler.ServerCertificateCustomValidationCallback;Do not customize TLS certificate validation from this library.
+P:System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;Never bypass TLS certificate validation.
+
+// XML and XSLT execution escape hatches.
+T:System.Xml.XmlUrlResolver;Do not enable external XML resource resolution.
+F:System.Xml.DtdProcessing.Parse;Do not parse DTDs; use Prohibit or Ignore.
+T:System.Xml.Xsl.XslCompiledTransform;XSLT execution is outside this file-format library; add explicit policy before use.
+P:System.Xml.Xsl.XsltSettings.EnableScript;Do not enable XSLT script execution.
+P:System.Xml.Xsl.XsltSettings.TrustedXslt;Do not enable trusted XSLT/script processing.
+
+// Server database and directory access APIs.
+T:System.Data.SqlClient.SqlConnection;Keep SQL Server access in host applications, not this file-format library.
+T:System.Data.SqlClient.SqlCommand;Keep SQL Server access in host applications, not this file-format library.
+T:Microsoft.Data.SqlClient.SqlConnection;Keep SQL Server access in host applications, not this file-format library.
+T:Microsoft.Data.SqlClient.SqlCommand;Keep SQL Server access in host applications, not this file-format library.
+T:System.Data.Odbc.OdbcConnection;Do not add driver-based ODBC access to this pure-managed library.
+T:System.Data.OleDb.OleDbConnection;Do not add driver-based OleDb/ACE access to this pure-managed library.
+T:System.DirectoryServices.DirectoryEntry;LDAP/directory access belongs in host applications, not this file-format library.
+T:System.DirectoryServices.DirectorySearcher;LDAP/directory access belongs in host applications, not this file-format library.
+
+// Web application surface APIs.
+T:Microsoft.AspNetCore.Mvc.ControllerBase;Keep ASP.NET application concerns outside this library.
+T:Microsoft.AspNetCore.Mvc.Controller;Keep ASP.NET application concerns outside this library.
+T:System.Web.HttpCookie;Keep cookie handling outside this library.
+
 // Ambiguous process-start overloads.
 M:System.Diagnostics.Process.Start(System.String);Use ProcessStartInfo with explicit UseShellExecute and arguments.
 M:System.Diagnostics.Process.Start(System.String,System.String);Use ProcessStartInfo with explicit UseShellExecute and argument handling.
+M:System.Diagnostics.ProcessStartInfo.#ctor(System.String,System.String);Use ProcessStartInfo.ArgumentList instead of a single shell-style argument string.
+P:System.Diagnostics.ProcessStartInfo.Arguments;Use ProcessStartInfo.ArgumentList instead of a single shell-style argument string.
 
 // Reflection activation APIs.
 T:System.Activator;Use dependency injection, typed factories, or explicit constructors instead of reflection activation.
 
 // Ambiguous local clock APIs.
-P:System.DateTime.Now;Prefer TimeProvider, DateTimeOffset.UtcNow, DateTime.UtcNow, or DateTimeOffset.Now for intentional local display timestamps.
+P:System.DateTime.Now;Prefer TimeProvider, DateTimeOffset.Now/UtcNow, DateTime.UtcNow, or an explicit DateTimeOffset value. Suppress only for external local-clock compatibility.
+P:System.DateTime.Today;Prefer TimeProvider, DateTimeOffset.UtcNow.Date, DateTime.UtcNow.Date, or an explicit date. Suppress only for external local-clock compatibility.
+P:System.DateTimeOffset.LocalDateTime;Do not collapse DateTimeOffset to a local DateTime unless bridging an external local-time format.
 
 // Process termination APIs.
 M:System.Environment.Exit(System.Int32);Return an error result or throw an exception instead of terminating the process.

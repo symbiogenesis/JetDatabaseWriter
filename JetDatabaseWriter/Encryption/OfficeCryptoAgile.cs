@@ -656,7 +656,9 @@ internal static class OfficeCryptoAgile
                 ? aes.EncryptCbc(data, iv, PaddingMode.None)
                 : aes.DecryptCbc(data, iv, PaddingMode.None);
 #else
+#pragma warning disable RS0030 // ECMA-376 Agile encryption requires AES-CBC.
             aes.Mode = CipherMode.CBC;
+#pragma warning restore RS0030
             aes.Padding = PaddingMode.None;
             aes.Key = key;
             aes.IV = iv;
@@ -843,9 +845,9 @@ internal static class OfficeCryptoAgile
         using (aes)
         {
 #if !NET6_0_OR_GREATER
-#pragma warning disable SCS0013 // Agile encryption requires AES-CBC, which is considered weak but is mandated by ECMA-376.
+#pragma warning disable RS0030 // ECMA-376 Agile encryption requires AES-CBC.
             aes.Mode = CipherMode.CBC;
-#pragma warning restore SCS0013 // Agile encryption requires AES-CBC, which is considered weak but is mandated by ECMA-376.
+#pragma warning restore RS0030
             aes.Padding = PaddingMode.None;
 #endif
             aes.Key = intermediateKey;

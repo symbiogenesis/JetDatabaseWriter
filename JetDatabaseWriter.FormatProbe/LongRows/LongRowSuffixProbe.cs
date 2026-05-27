@@ -4009,10 +4009,10 @@ internal static class LongRowSuffixProbe
             AddHash32WordRules(rules, label, "Murmur3-32 seedFFFF", context => Murmur3X86_32(getBytes(context), 0xFFFF));
             AddHash32WordRules(rules, label, "CRC32", context => Crc32(getBytes(context)));
             AddRotateMix16Rules(rules, label, getBytes);
-#pragma warning disable CA5350, CA5351 // Research-only scoring of legacy hash candidates; not used for security.
+#pragma warning disable CA5350, CA5351, RS0030 // Research-only scoring of legacy hash candidates; not used for security.
             AddDigestWordRules(rules, label, "MD5", context => context.GetDigestBytes("MD5", inputIndex, bytes => MD5.HashData(bytes)));
             AddDigestWordRules(rules, label, "SHA1", context => context.GetDigestBytes("SHA1", inputIndex, bytes => SHA1.HashData(bytes)));
-#pragma warning restore CA5350, CA5351
+#pragma warning restore CA5350, CA5351, RS0030
             rules.Add(new CandidateRule($"{label} Adler16", context => Adler16(getBytes(context))));
             rules.Add(new CandidateRule($"{label} Fletcher16", context => Fletcher16(getBytes(context))));
             rules.Add(new CandidateRule($"{label} EseChecksum lo16", context => EseChecksum16(getBytes(context), low: true)));

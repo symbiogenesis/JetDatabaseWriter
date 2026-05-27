@@ -554,14 +554,14 @@ internal static class AgileEncryptionFixtureBuilder
     private static byte[] AesCbc(byte[] data, byte[] key, byte[] iv, bool encrypt)
     {
         using var aes = Aes.Create();
-#pragma warning disable SCS0013, CA5401 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
+#pragma warning disable CA5401, RS0030 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         aes.Mode = CipherMode.CBC;
         aes.Padding = PaddingMode.None;
         aes.Key = key;
         aes.IV = iv;
 
         using ICryptoTransform t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
-#pragma warning restore SCS0013, CA5401 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
+#pragma warning restore CA5401, RS0030 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         return t.TransformFinalBlock(data, 0, data.Length);
     }
 

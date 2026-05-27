@@ -6,3 +6,39 @@ insert_final_newline = true
 
 [*.cs]
 csharp_style_namespace_declarations = file_scoped:warning
+
+# Security rules retained explicitly after removing SecurityCodeScan from local builds.
+dotnet_diagnostic.CA2100.severity = warning
+dotnet_diagnostic.CA2300.severity = warning
+dotnet_diagnostic.CA2301.severity = warning
+dotnet_diagnostic.CA2302.severity = warning
+dotnet_diagnostic.CA2305.severity = warning
+dotnet_diagnostic.CA2310.severity = warning
+dotnet_diagnostic.CA2311.severity = warning
+dotnet_diagnostic.CA2312.severity = warning
+dotnet_diagnostic.CA2321.severity = warning
+dotnet_diagnostic.CA2322.severity = warning
+dotnet_diagnostic.CA2326.severity = warning
+dotnet_diagnostic.CA2327.severity = warning
+dotnet_diagnostic.CA2328.severity = warning
+dotnet_diagnostic.CA2329.severity = warning
+dotnet_diagnostic.CA2330.severity = warning
+dotnet_diagnostic.CA3001.severity = warning
+dotnet_diagnostic.CA3002.severity = warning
+dotnet_diagnostic.CA3003.severity = warning
+dotnet_diagnostic.CA3005.severity = warning
+dotnet_diagnostic.CA3006.severity = warning
+dotnet_diagnostic.CA3007.severity = warning
+dotnet_diagnostic.CA3008.severity = warning
+dotnet_diagnostic.CA3009.severity = warning
+dotnet_diagnostic.CA3075.severity = warning
+dotnet_diagnostic.CA3076.severity = warning
+dotnet_diagnostic.CA5350.severity = warning
+dotnet_diagnostic.CA5351.severity = warning
+dotnet_diagnostic.CA5358.severity = warning
+dotnet_diagnostic.CA5359.severity = warning
+dotnet_diagnostic.CA5390.severity = warning
+dotnet_diagnostic.CA5394.severity = warning
+dotnet_diagnostic.CA5396.severity = warning
+dotnet_diagnostic.CA5401.severity = warning
+dotnet_diagnostic.CA5403.severity = warning

@@ -9,7 +9,7 @@ using SharpFuzz;
 using Xunit;
 
 #pragma warning disable CA1031 // Catching all exceptions is intentional for fuzz testing.
-#pragma warning disable SCS0005, CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
+#pragma warning disable CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
 
 /// <summary>
 /// Fuzz test for AccessReader. This test is designed to find crashes and robustness issues by exploring random input data.

@@ -500,7 +500,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         data[0x62] = 0x02;
     }
 
-#pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
+#pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec
     /// <summary>
     /// Derives the RC4 key for a specific page using the Jet4 algorithm:
     /// key = first 4 bytes of MD5(dbKey LE bytes + pageNumber LE bytes).
@@ -516,7 +516,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // Use first 4 bytes as the RC4 key (per Jet4 spec)
         return hash[..4];
     }
-#pragma warning restore CA5351
+#pragma warning restore CA5351, RS0030
 
     /// <summary>In-place RC4 transform (encrypt/decrypt are the same operation).</summary>
     private static void Rc4Transform(byte[] data, int offset, int length, byte[] key)
@@ -584,9 +584,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
             using var aes = Aes.Create();
             aes.Key = aesKey;
-#pragma warning disable SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
+#pragma warning disable RS0030 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures.
             aes.Mode = CipherMode.ECB;
-#pragma warning restore SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
+#pragma warning restore RS0030
             aes.Padding = PaddingMode.None;
             using var encryptor = aes.CreateEncryptor();
             byte[] block = new byte[length];
