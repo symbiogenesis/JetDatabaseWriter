@@ -126,7 +126,7 @@ public sealed class IndexCursorTests
             tree.PageSize);
 
     private static ValueTask<byte[]> ReadPageAsync(
-        IReadOnlyDictionary<long, byte[]> pages,
+        Dictionary<long, byte[]> pages,
         long pageNumber,
         CancellationToken cancellationToken)
     {
@@ -202,7 +202,7 @@ public sealed class IndexCursorTests
         return 0;
     }
 
-    private static void AssertEntriesEqual(IReadOnlyList<IndexEntry> expected, IReadOnlyList<IndexEntry> actual)
+    private static void AssertEntriesEqual(List<IndexEntry> expected, List<IndexEntry> actual)
     {
         Assert.Equal(expected.Count, actual.Count);
         for (int entryIndex = 0; entryIndex < expected.Count; entryIndex++)

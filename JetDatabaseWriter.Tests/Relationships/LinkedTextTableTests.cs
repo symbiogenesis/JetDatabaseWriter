@@ -48,6 +48,21 @@ public sealed class LinkedTextTableTests : IDisposable
         { "UTF-16 BE with BOM", Encoding.BigEndianUnicode, true },
     };
 
+    private static async ValueTask WriteEncodedTextAsync(
+        string path,
+        string text,
+        Encoding encoding,
+        bool includePreamble,
+        CancellationToken cancellationToken)
+    {
+        byte[] preamble = includePreamble ? encoding.GetPreamble() : [];
+        byte[] payload = encoding.GetBytes(text);
+        byte[] bytes = new byte[preamble.Length + payload.Length];
+        Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
+        Buffer.BlockCopy(payload, 0, bytes, preamble.Length, payload.Length);
+        await File.WriteAllBytesAsync(path, bytes, cancellationToken);
+    }
+
     [Fact]
     public async Task LinkedTextTable_CreateViaSchemaInterface_ReturnsEntryWithConnectString()
     {
@@ -465,6 +480,9 @@ public sealed class LinkedTextTableTests : IDisposable
         Encoding encoding,
         bool includePreamble)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(encodingName);
+        ArgumentNullException.ThrowIfNull(encoding);
+
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkEncodingFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
@@ -1194,21 +1212,6 @@ public sealed class LinkedTextTableTests : IDisposable
 
         _tempFiles.Add(temp);
         return temp;
-    }
-
-    private static async ValueTask WriteEncodedTextAsync(
-        string path,
-        string text,
-        Encoding encoding,
-        bool includePreamble,
-        CancellationToken cancellationToken)
-    {
-        byte[] preamble = includePreamble ? encoding.GetPreamble() : [];
-        byte[] payload = encoding.GetBytes(text);
-        byte[] bytes = new byte[preamble.Length + payload.Length];
-        Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
-        Buffer.BlockCopy(payload, 0, bytes, preamble.Length, payload.Length);
-        await File.WriteAllBytesAsync(path, bytes, cancellationToken);
     }
 
     private sealed class LinkedTextRow

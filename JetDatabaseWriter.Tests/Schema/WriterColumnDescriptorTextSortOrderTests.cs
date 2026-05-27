@@ -8,8 +8,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
-using static JetDatabaseWriter.Constants.ColumnTypes;
 using Xunit;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// Tests round-trip-openrecordset hypothesis H24: that the writer leaves the

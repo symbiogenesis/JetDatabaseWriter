@@ -4,8 +4,8 @@ using System;
 using System.Linq;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;
-using static JetDatabaseWriter.Constants.IndexEntryFlags;
 using Xunit;
+using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
 /// Property-based and structural assertions for

@@ -7,8 +7,8 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
-using static JetDatabaseWriter.Constants.ColumnTypes;
 using Xunit;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(System.ReadOnlySpan{byte}, int, byte, int, bool)"/>: the typed

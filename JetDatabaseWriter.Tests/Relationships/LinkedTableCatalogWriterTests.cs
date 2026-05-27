@@ -426,10 +426,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceSource_{Guid.NewGuid():N}");
         Directory.CreateDirectory(sourceDirectory);
         tempDirs.Add(sourceDirectory);
+        string csvText =
+            "ID,Unquoted,Quoted,AfterQuote,LeadingSpaceBeforeQuote\r\n" +
+            "1,  unquoted  ,\"  quoted  \",\"closed\"  , \"not-starting-quote\" \r\n";
         await File.WriteAllTextAsync(
             Path.Combine(sourceDirectory, "data.csv"),
-            "ID,Unquoted,Quoted,AfterQuote,LeadingSpaceBeforeQuote\r\n" +
-            "1,  unquoted  ,\"  quoted  \",\"closed\"  , \"not-starting-quote\" \r\n",
+            csvText,
             ct);
 
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextWhitespaceDao");
