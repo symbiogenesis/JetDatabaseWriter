@@ -272,7 +272,7 @@ internal sealed class LockFileSlotWriter : IDisposable
                     stream.Flush();
                 }
 
-                fileLooksEmpty = ScanForLiveSlots(stream) == false;
+                fileLooksEmpty = !ScanForLiveSlots(stream);
             }
             catch (IOException ex)
             {
