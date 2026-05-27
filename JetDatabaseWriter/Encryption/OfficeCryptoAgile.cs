@@ -92,6 +92,7 @@ internal static class OfficeCryptoAgile
     /// <param name="encryptionInfo">The encryption info.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="InvalidDataException">Thrown when <paramref name="encryptionInfo"/> is not an Agile 4.4 descriptor.</exception>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
@@ -239,6 +240,7 @@ internal static class OfficeCryptoAgile
     /// </summary>
     /// <param name="plaintext">The plaintext.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="InvalidDataException">Thrown when <paramref name="plaintext"/> is not a whole-page Jet4/ACE image or the descriptor cannot fit in page 0.</exception>
     public static byte[] EncryptFlatDatabase(byte[] plaintext, ReadOnlySpan<char> password)
     {
         Guard.NotNull(plaintext, nameof(plaintext));
@@ -287,6 +289,7 @@ internal static class OfficeCryptoAgile
     /// </summary>
     /// <param name="encryptedDatabase">The encrypted database.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="InvalidDataException">Thrown when the ACCDB header has no flat Agile descriptor or the descriptor is not Agile.</exception>
     public static byte[] DecryptFlatDatabase(byte[] encryptedDatabase, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptedDatabase, nameof(encryptedDatabase));
@@ -473,6 +476,7 @@ internal static class OfficeCryptoAgile
     /// <param name="d">The Agile encryption descriptor.</param>
     /// <param name="intermediateKey">The intermediate key.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
+    /// <exception cref="InvalidDataException">Thrown when the computed package HMAC does not match the stored integrity data.</exception>
     private static void VerifyDataIntegrity(AgileDescriptor d, byte[] intermediateKey, byte[] encryptedPackage)
     {
         if (d.EncryptedHmacKey.Length == 0 || d.EncryptedHmacValue.Length == 0)

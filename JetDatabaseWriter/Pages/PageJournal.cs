@@ -62,6 +62,7 @@ internal sealed class PageJournal
     /// <exception cref="JetLimitationException">
     /// Thrown when adding this page would exceed the configured page budget.
     /// </exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="page"/> does not match the journal page size.</exception>
     public void Write(long pageNumber, ReadOnlySpan<byte> page)
     {
         if (page.Length != _pageSize)

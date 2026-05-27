@@ -189,6 +189,7 @@ internal static class IndexLeafPageBuilder
     /// <param name="tailPage">The tail page.</param>
     /// <param name="enablePrefixCompression">A value indicating whether enable prefix compression.</param>
     /// <param name="maxPrefixLength">The max prefix length.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, data-page pointer, or entry bitmask exceeds the format limits.</exception>
     public static byte[] BuildLeafPage(
         LeafPageLayout layout,
         int pageSize,

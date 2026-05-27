@@ -133,6 +133,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <param name="lvalTokenOverride">The long value token override.</param>
     /// <param name="packRowsAtEnd">The pack rows at end.</param>
+    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
         CancellationToken cancellationToken,

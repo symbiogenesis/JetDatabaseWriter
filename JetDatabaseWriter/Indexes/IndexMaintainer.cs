@@ -153,6 +153,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     public async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
         // Jet3 (.mdb Access 97) live leaf maintenance is now

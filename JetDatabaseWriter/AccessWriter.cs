@@ -320,6 +320,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
+    /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
@@ -589,6 +590,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="reservedTdefPageNumber">The reserved TDEF page number.</param>
     /// <param name="emitLvProp">A value indicating whether LvProp metadata is emitted.</param>
     /// <param name="markSystemTableTdef">The mark system table TDEF.</param>
+    /// <exception cref="InvalidDataException">Thrown when a reserved TDEF page is requested for a multi-page table definition.</exception>
     internal async ValueTask<long> CreateTableInternalAsync(
         string tableName,
         IReadOnlyList<ColumnDefinition> columns,
@@ -1975,6 +1977,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <see cref="DisposeAsync"/> when the writer was opened on an Office Crypto
     /// .accdb file.
     /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when the encrypted writer does not have the required in-memory backing stream.</exception>
     private async ValueTask RewrapAgileOnDisposeAsync()
     {
         var memory = _stream as MemoryStream
@@ -3186,6 +3189,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableName">The table name.</param>
     /// <param name="dropComplexChildren">The drop complex children.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
     private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
@@ -3659,6 +3663,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="values">The values.</param>
     /// <param name="updateTDefRowCount">A value indicating whether to update the table row count in the TDEF.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> does not contain one value per column in <paramref name="tableDef"/>.</exception>
     internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
         if (values.Length != tableDef.Columns.Count)
@@ -3759,6 +3764,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableName">The table name.</param>
     /// <param name="rows">The row collection.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidDataException">Thrown when the system table has rows to rewrite but no data pages are present.</exception>
     internal async ValueTask RewriteSystemTableRowsAsync(
         long tdefPage,
         TableDef tableDef,

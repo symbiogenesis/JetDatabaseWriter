@@ -20,6 +20,8 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// Begins an explicit page-buffered transaction against the owning writer.
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
         if (writer._disposed)
@@ -143,6 +145,8 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
     internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
@@ -211,6 +215,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
     internal async ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));

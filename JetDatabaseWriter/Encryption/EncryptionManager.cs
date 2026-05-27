@@ -268,6 +268,7 @@ internal static class EncryptionManager
     /// <param name="targetFormat">The target format.</param>
     /// <param name="options">The options.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         string path,
         string newPassword,
@@ -349,6 +350,7 @@ internal static class EncryptionManager
     /// <param name="newPassword">The new password.</param>
     /// <param name="targetFormat">The target format.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         Stream stream,
         string newPassword,
@@ -405,6 +407,7 @@ internal static class EncryptionManager
     /// <param name="format">The format.</param>
     /// <param name="isCompoundFileEncrypted">A value indicating whether is compound file encrypted.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
     public static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
         byte[] hdr,
         DatabaseFormat format,
@@ -516,6 +519,7 @@ internal static class EncryptionManager
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="UnauthorizedAccessException">Thrown when a flat Agile encrypted database is detected and no password was supplied.</exception>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
         byte[] header,
@@ -567,6 +571,7 @@ internal static class EncryptionManager
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted Standard or Agile package is detected and no password was supplied.</exception>
     internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
         Stream stream,
         byte[] header,
@@ -937,6 +942,7 @@ internal static class EncryptionManager
     /// <param name="dbKey">The db key.</param>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="destination">The destination.</param>
+    /// <exception cref="CryptographicException">Thrown when the MD5 page-key hash cannot be computed.</exception>
     private static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
     {
         Span<byte> input = stackalloc byte[8];
@@ -997,6 +1003,7 @@ internal static class EncryptionManager
     /// <param name="data">The data bytes or values.</param>
     /// <param name="offset">The offset.</param>
     /// <param name="length">The length.</param>
+    /// <exception cref="CryptographicException">Thrown when the AES transform writes an unexpected byte count.</exception>
     private static void AesEcbInPlace(ICryptoTransform xform, byte[] data, int offset, int length)
     {
         int written = xform.TransformBlock(data, offset, length, data, offset);

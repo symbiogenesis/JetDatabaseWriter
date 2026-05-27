@@ -96,6 +96,7 @@ internal static class IndexHelpers
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="indexes">The indexes.</param>
+    /// <exception cref="ArgumentException">Thrown when primary keys are declared through both the column shortcut and an explicit index.</exception>
     public static (IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<IndexDefinition> Indexes) ApplyPrimaryKeyShortcut(
         IReadOnlyList<ColumnDefinition> columns,
         IReadOnlyList<IndexDefinition> indexes)
@@ -189,6 +190,8 @@ internal static class IndexHelpers
     /// </summary>
     /// <param name="indexes">The indexes.</param>
     /// <param name="tableDef">The table def.</param>
+    /// <exception cref="ArgumentException">Thrown when an index definition is malformed or references an unknown column.</exception>
+    /// <exception cref="NotSupportedException">Thrown when an index has too many columns or targets a column type Microsoft Access does not support for indexes.</exception>
     public static List<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
     {
         if (indexes.Count == 0)

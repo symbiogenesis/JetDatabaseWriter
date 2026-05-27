@@ -402,6 +402,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type.</exception>
+    /// <exception cref="NotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
         IReadOnlyList<ColumnDefinition> columns,
         CancellationToken cancellationToken)
@@ -614,6 +616,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// type such as MEMO).
     /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when a multi-value flat-table schema is requested without an element type.</exception>
     private static (ColumnDefinition[] Columns, IndexDefinition[] Indexes) BuildFlatTableSchema(
         string parentTableName,
         ColumnDefinition parentColumn)
@@ -710,6 +713,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="flatTableId">The flat table id.</param>
     /// <param name="complexTypeObjectId">The complex type object id.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the <c>MSysComplexColumns</c> table is missing.</exception>
     private async ValueTask InsertMSysComplexColumnsRowAsync(
         string parentColumnName,
         int complexId,
@@ -887,6 +891,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// </summary>
     /// <param name="flatTdefPage">The flat TDEF page.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
         TableDef? msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);

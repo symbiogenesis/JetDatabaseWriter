@@ -214,6 +214,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <param name="locations">The locations.</param>
     /// <param name="pendingRows">The pending rows.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
@@ -384,6 +385,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <param name="snapshot">The snapshot.</param>
     /// <param name="pendingInsertRows">The pending insert rows.</param>
     /// <param name="replaceAtSnapshotIndex">The replace at snapshot index.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
     private void CheckUniqueIndexesCore(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,

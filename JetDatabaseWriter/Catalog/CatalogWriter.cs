@@ -408,6 +408,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="newName">The new name.</param>
     /// <param name="lvProp">The LvProp payload.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidOperationException">Thrown when no catalog row exists for <paramref name="oldName"/>.</exception>
     internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);

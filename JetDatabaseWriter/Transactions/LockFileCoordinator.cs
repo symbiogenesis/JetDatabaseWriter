@@ -131,6 +131,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// </summary>
     /// <param name="steps">Disposal steps to run before releasing the slot.</param>
     /// <returns>A <see cref="ValueTask"/> that completes once every step and the slot release have run.</returns>
+    /// <exception cref="AggregateException">Thrown when multiple disposal or release steps fail.</exception>
     public async ValueTask DisposeAfterAsync(params Func<ValueTask>[] steps)
     {
         Guard.NotNull(steps, nameof(steps));

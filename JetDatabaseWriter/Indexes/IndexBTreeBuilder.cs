@@ -90,6 +90,7 @@ internal static class IndexBTreeBuilder
     /// <param name="parentTdefPage">The parent TDEF page.</param>
     /// <param name="entries">The entries.</param>
     /// <param name="firstPageNumber">The first page number.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry size, or allocated page range cannot fit the B-tree format.</exception>
     public static BuildResult Build(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,

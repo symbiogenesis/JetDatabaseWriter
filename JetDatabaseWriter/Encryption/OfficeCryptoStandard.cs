@@ -37,6 +37,7 @@ internal static class OfficeCryptoStandard
     /// <param name="encryptionInfo">The encryption info.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="InvalidDataException">Thrown when <paramref name="encryptionInfo"/> is not a Standard 3.2 or 4.2 descriptor.</exception>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));

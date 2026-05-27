@@ -17,6 +17,7 @@ internal static class Guard
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="paramName">The param name.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="value"/> is <see langword="null"/>.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNull<T>([NotNull] T? value, string paramName)
         where T : class
@@ -54,6 +55,7 @@ internal static class Guard
     /// <param name="min">The minimum allowed value.</param>
     /// <param name="max">The maximum allowed value.</param>
     /// <param name="paramName">The param name.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="value"/> falls outside the inclusive bounds.</exception>
     public static void InRange<T>(T value, T min, T max, string paramName)
         where T : IComparable<T>
     {
@@ -86,6 +88,7 @@ internal static class Guard
     /// </summary>
     /// <param name="disposed">The disposed flag of the calling instance.</param>
     /// <param name="instance">The instance being checked; typically <c>this</c>.</param>
+    /// <exception cref="ObjectDisposedException">Thrown when <paramref name="disposed"/> is <see langword="true"/>.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ThrowIfDisposed(bool disposed, object instance)
     {
@@ -106,6 +109,7 @@ internal static class Guard
     /// </summary>
     /// <param name="path">The file path.</param>
     /// <param name="paramName">The param name.</param>
+    /// <exception cref="FileNotFoundException">Thrown when <paramref name="path"/> does not reference an existing file.</exception>
     public static void RequireExistingDatabaseFile([NotNull] string? path, string paramName)
     {
         NotNullOrEmpty(path, paramName);
@@ -121,6 +125,7 @@ internal static class Guard
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="paramName">The param name.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="stream"/> is not readable or not seekable.</exception>
     public static void RequireReadableSeekableStream([NotNull] Stream? stream, string paramName)
     {
         NotNull(stream, paramName);
@@ -141,6 +146,7 @@ internal static class Guard
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="paramName">The param name.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="stream"/> is not readable, writable, or seekable.</exception>
     public static void RequireReadWriteSeekableStream([NotNull] Stream? stream, string paramName)
     {
         NotNull(stream, paramName);

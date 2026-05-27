@@ -232,6 +232,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The ascending.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a <see cref="Guid"/>.</exception>
     private static byte[] EncodeGuidEntry(object value, bool ascending)
     {
         Guid g = value switch
@@ -278,6 +279,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The ascending.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a byte array.</exception>
     private static byte[] EncodeBinaryEntry(object value, bool ascending)
     {
         byte[] data = value switch
@@ -304,6 +306,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The ascending.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> is not exactly a 42-byte DateTime Extended payload.</exception>
     private static byte[] EncodeDateTimeExtEntry(object value, bool ascending)
     {
         byte[] data = value switch
@@ -419,6 +422,8 @@ internal static class IndexKeyEncoder
     /// <param name="ascending">The ascending.</param>
     /// <param name="targetScale">The target scale.</param>
     /// <param name="legacy">The legacy.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="targetScale"/> is below the value's natural scale.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the rescaled mantissa exceeds the 16-byte NUMERIC field.</exception>
     public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)
     {
         bool isNull = value is null || value is DBNull;

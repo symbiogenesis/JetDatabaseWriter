@@ -171,6 +171,7 @@ internal sealed class TableDef
     /// falling back to the first <c>T_LONG</c> column when no underscore-prefixed
     /// candidate exists. Throws when no <c>T_LONG</c> column is present.
     /// </summary>
+    /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
     public ColumnInfo FindFlatTableForeignKeyColumn()
     {
         return Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))

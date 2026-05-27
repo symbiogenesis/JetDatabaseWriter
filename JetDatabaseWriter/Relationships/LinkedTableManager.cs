@@ -99,6 +99,7 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="reader">The reader.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
     internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(AccessReader reader, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -198,6 +199,7 @@ internal static class LinkedTableManager
     /// <param name="reader">The reader.</param>
     /// <param name="link">The linked-table metadata.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="FileNotFoundException">Thrown when the linked source database cannot be found.</exception>
     internal static async ValueTask<AccessReader> OpenLinkedSourceAsync(
         AccessReader reader,
         LinkedTableInfo link,

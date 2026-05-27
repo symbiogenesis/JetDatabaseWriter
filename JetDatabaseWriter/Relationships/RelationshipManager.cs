@@ -312,6 +312,7 @@ internal sealed class RelationshipManager
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="NotSupportedException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareFkSideAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -346,6 +347,7 @@ internal sealed class RelationshipManager
     /// <param name="pkColumnNumbers">The primary key column numbers.</param>
     /// <param name="fkColumnNumbers">The foreign key column numbers.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="NotSupportedException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask<(FkSidePlan PkPlan, FkSidePlan FkPlan, List<string> ExistingNames)> PrepareSelfReferentialFkSidesAsync(
         long tdefPage,
         int[] pkColumnNumbers,
@@ -413,6 +415,7 @@ internal sealed class RelationshipManager
     /// <param name="cascadeUps">The cascade ups.</param>
     /// <param name="cascadeDels">The cascade dels.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="NotSupportedException">Thrown when the target TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask EmitFkLogicalIdxAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -1255,6 +1258,7 @@ internal sealed class RelationshipManager
     /// </summary>
     /// <param name="startPage">The start page.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <exception cref="NotSupportedException">Thrown when no readable TDEF chain starts at <paramref name="startPage"/>.</exception>
     private async ValueTask<LogicalTDefChain> ReadRequiredLogicalTDefChainAsync(
         long startPage,
         CancellationToken cancellationToken)

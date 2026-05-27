@@ -416,6 +416,7 @@ internal static class CompoundFileReader
     /// <param name="startSector">The start sector.</param>
     /// <param name="fat">The FAT sector table.</param>
     /// <param name="fatKind">The fat kind.</param>
+    /// <exception cref="InvalidDataException">Thrown when the sector chain points outside the FAT or exceeds the expected length.</exception>
     private static int WalkChainLength(uint startSector, uint[] fat, string fatKind)
     {
         int count = 0;
