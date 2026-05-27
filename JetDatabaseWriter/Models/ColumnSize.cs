@@ -46,12 +46,18 @@ public readonly record struct ColumnSize
     {
         switch (Unit)
         {
-            case ColumnSizeUnit.Bits: return Value == 1 ? "1 bit" : $"{Value} bits";
-            case ColumnSizeUnit.Bytes: return Value == 1 ? "1 byte" : $"{Value} bytes";
-            case ColumnSizeUnit.Chars: return $"{Value} chars";
-            case ColumnSizeUnit.Variable: return "variable";
-            case ColumnSizeUnit.Lval: return "LVAL";
-            default: return string.Empty;
+            case ColumnSizeUnit.Bits:
+                return Value == 1 ? "1 bit" : $"{Value} bits";
+            case ColumnSizeUnit.Bytes:
+                return Value == 1 ? "1 byte" : $"{Value} bytes";
+            case ColumnSizeUnit.Chars:
+                return $"{Value} chars";
+            case ColumnSizeUnit.Variable:
+                return "variable";
+            case ColumnSizeUnit.Lval:
+                return "LVAL";
+            default:
+                return string.Empty;
         }
     }
 }

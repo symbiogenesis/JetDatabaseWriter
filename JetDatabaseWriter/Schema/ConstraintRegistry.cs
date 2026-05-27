@@ -296,21 +296,34 @@ internal sealed class ConstraintRegistry(
     {
         switch (type)
         {
-            case T_BOOL: return typeof(bool);
-            case T_BYTE: return typeof(byte);
-            case T_INT: return typeof(short);
-            case T_LONG: return typeof(int);
-            case T_MONEY: return typeof(decimal);
-            case T_FLOAT: return typeof(float);
-            case T_DOUBLE: return typeof(double);
-            case T_DATETIME: return typeof(DateTime);
-            case T_NUMERIC: return typeof(decimal);
-            case T_GUID: return typeof(Guid);
+            case T_BOOL:
+                return typeof(bool);
+            case T_BYTE:
+                return typeof(byte);
+            case T_INT:
+                return typeof(short);
+            case T_LONG:
+                return typeof(int);
+            case T_MONEY:
+                return typeof(decimal);
+            case T_FLOAT:
+                return typeof(float);
+            case T_DOUBLE:
+                return typeof(double);
+            case T_DATETIME:
+                return typeof(DateTime);
+            case T_NUMERIC:
+                return typeof(decimal);
+            case T_GUID:
+                return typeof(Guid);
             case T_TEXT:
-            case T_MEMO: return typeof(string);
+            case T_MEMO:
+                return typeof(string);
             case T_BINARY:
-            case T_OLE: return typeof(byte[]);
-            default: return typeof(object);
+            case T_OLE:
+                return typeof(byte[]);
+            default:
+                return typeof(object);
         }
     }
 

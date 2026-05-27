@@ -2236,14 +2236,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         switch (Type.GetTypeCode(clrType))
         {
-            case TypeCode.Boolean: return T_BOOL;
-            case TypeCode.Byte: return T_BYTE;
-            case TypeCode.Int16: return T_INT;
-            case TypeCode.Int32: return T_LONG;
-            case TypeCode.Single: return T_FLOAT;
-            case TypeCode.Double: return T_DOUBLE;
-            case TypeCode.DateTime: return T_DATETIME;
-            case TypeCode.Decimal: return T_NUMERIC;
+            case TypeCode.Boolean:
+                return T_BOOL;
+            case TypeCode.Byte:
+                return T_BYTE;
+            case TypeCode.Int16:
+                return T_INT;
+            case TypeCode.Int32:
+                return T_LONG;
+            case TypeCode.Single:
+                return T_FLOAT;
+            case TypeCode.Double:
+                return T_DOUBLE;
+            case TypeCode.DateTime:
+                return T_DATETIME;
+            case TypeCode.Decimal:
+                return T_NUMERIC;
             case TypeCode.String:
                 return column.MaxLength > 0 && column.MaxLength <= 255 ? T_TEXT : T_MEMO;
             default:

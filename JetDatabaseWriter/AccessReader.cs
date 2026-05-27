@@ -2000,18 +2000,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case T_BINARY:
                 return CalculatedColumnUtil.Unwrap(row.AsSpan(start, len));
             case T_MEMO:
-                {
-                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-                }
+            {
+                byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+            }
 
             case T_OLE:
-                {
-                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return DecodeOleValueBytes(payload, 0, payload.Length);
-                }
+            {
+                byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                return DecodeOleValueBytes(payload, 0, payload.Length);
+            }
 
             default:
                 return CalculatedColumnUtil.ReadPayloadTyped(
@@ -3306,18 +3306,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_BINARY:
                     return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
                 case T_MEMO:
-                    {
-                        byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                        return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-                    }
+                {
+                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+                }
 
                 case T_OLE:
-                    {
-                        byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                        return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
-                    }
+                {
+                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
+                }
 
                 default:
                     return CalculatedColumnUtil.ReadPayloadString(

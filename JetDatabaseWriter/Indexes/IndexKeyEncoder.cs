@@ -148,54 +148,54 @@ internal static class IndexKeyEncoder
                 return [ToByte(value)];
 
             case T_INT:
-                {
-                    byte[] r = new byte[2];
-                    BinaryPrimitives.WriteInt16BigEndian(r, ToInt16(value));
-                    r[0] ^= 0x80;
-                    return r;
-                }
+            {
+                byte[] r = new byte[2];
+                BinaryPrimitives.WriteInt16BigEndian(r, ToInt16(value));
+                r[0] ^= 0x80;
+                return r;
+            }
 
             case T_LONG:
-                {
-                    byte[] r = new byte[4];
-                    BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
-                    r[0] ^= 0x80;
-                    return r;
-                }
+            {
+                byte[] r = new byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
+                r[0] ^= 0x80;
+                return r;
+            }
 
             case T_MONEY:
-                {
-                    long scaled = decimal.ToOACurrency(ToDecimal(value));
-                    byte[] r = new byte[8];
-                    BinaryPrimitives.WriteInt64BigEndian(r, scaled);
-                    r[0] ^= 0x80;
-                    return r;
-                }
+            {
+                long scaled = decimal.ToOACurrency(ToDecimal(value));
+                byte[] r = new byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(r, scaled);
+                r[0] ^= 0x80;
+                return r;
+            }
 
             case T_FLOAT:
-                {
-                    byte[] r = new byte[4];
-                    BinaryPrimitives.WriteInt32BigEndian(r, BitConverter.SingleToInt32Bits(ToSingle(value)));
-                    TwiddleIeeeBigEndianInPlace(r);
-                    return r;
-                }
+            {
+                byte[] r = new byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(r, BitConverter.SingleToInt32Bits(ToSingle(value)));
+                TwiddleIeeeBigEndianInPlace(r);
+                return r;
+            }
 
             case T_DOUBLE:
-                {
-                    byte[] r = new byte[8];
-                    BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(ToDouble(value)));
-                    TwiddleIeeeBigEndianInPlace(r);
-                    return r;
-                }
+            {
+                byte[] r = new byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(ToDouble(value)));
+                TwiddleIeeeBigEndianInPlace(r);
+                return r;
+            }
 
             case T_DATETIME:
-                {
-                    DateTime dt = ToDateTime(value);
-                    byte[] r = new byte[8];
-                    BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
-                    TwiddleIeeeBigEndianInPlace(r);
-                    return r;
-                }
+            {
+                DateTime dt = ToDateTime(value);
+                byte[] r = new byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
+                TwiddleIeeeBigEndianInPlace(r);
+                return r;
+            }
 
             case T_BOOL:
                 throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
