@@ -15,13 +15,17 @@ using JetDatabaseWriter.Models;
 [MemoryDiagnoser]
 public class AccessWriterBenchmarks
 {
+    private const string BenchmarkTableName = "BenchWriterRows";
+    private const string IdColumnName = "Id";
+    private const string NameColumnName = "Name";
+    private const int IdBase = 900_000;
+
     private static readonly string SourceDbPath =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NorthwindTraders.accdb");
 
+    private string _baselinePath = string.Empty;
     private string _tempPath = string.Empty;
-    private string _tableName = string.Empty;
-    private List<ColumnMetadata> _columns = null!;
-    private object[] _dummyRow = null!;
+    private object?[] _dummyRow = null!;
 
     [GlobalSetup]
     public async Task GlobalSetup()
@@ -33,11 +37,27 @@ public class AccessWriterBenchmarks
                 "Copy NorthwindTraders.accdb to the benchmark output directory.");
         }
 
-        // Determine table name and column metadata once.
-        await using var reader = await AccessReader.OpenAsync(SourceDbPath);
-        _tableName = (await reader.ListTablesAsync()).First();
-        _columns = await reader.GetColumnMetadataAsync(_tableName);
-        _dummyRow = BuildDummyRow(_columns);
+        _baselinePath = Path.Combine(Path.GetTempPath(), $"JetBenchBaseline_{Guid.NewGuid():N}.accdb");
+        File.Copy(SourceDbPath, _baselinePath, overwrite: true);
+
+        await using var writer = await AccessWriter.OpenAsync(_baselinePath);
+        await writer.CreateTableAsync(
+            BenchmarkTableName,
+            [
+                new(IdColumnName, typeof(int)) { IsPrimaryKey = true },
+                new(NameColumnName, typeof(string), 255),
+            ]);
+
+        _dummyRow = BuildDummyRow(0);
+    }
+
+    [GlobalCleanup]
+    public void GlobalCleanup()
+    {
+        if (File.Exists(_baselinePath))
+        {
+            File.Delete(_baselinePath);
+        }
     }
 
     [IterationSetup]
@@ -45,7 +65,7 @@ public class AccessWriterBenchmarks
     {
         // Fresh copy for every iteration so writes don't accumulate.
         _tempPath = Path.Combine(Path.GetTempPath(), $"JetBench_{Guid.NewGuid():N}.accdb");
-        File.Copy(SourceDbPath, _tempPath, overwrite: true);
+        File.Copy(_baselinePath, _tempPath, overwrite: true);
     }
 
     [IterationCleanup]
@@ -63,7 +83,7 @@ public class AccessWriterBenchmarks
     public async Task InsertRow_Single()
     {
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.InsertRowAsync(_tableName, _dummyRow);
+        await writer.InsertRowAsync(BenchmarkTableName, _dummyRow);
     }
 
     [Benchmark]
@@ -71,18 +91,18 @@ public class AccessWriterBenchmarks
     [Arguments(100)]
     public async Task<int> InsertRows_Batch(int count)
     {
-        IEnumerable<object[]> rows = Enumerable.Range(0, count).Select(_ => (object[])_dummyRow.Clone());
+        IEnumerable<object?[]> rows = Enumerable.Range(1, count).Select(BuildDummyRow);
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        return await writer.InsertRowsAsync(_tableName, rows);
+        return await writer.InsertRowsAsync(BenchmarkTableName, rows);
     }
 
     [Benchmark]
     public async Task InsertRow_Typed()
     {
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.InsertRowAsync(_tableName, new SimpleEntity
+        await writer.InsertRowAsync(BenchmarkTableName, new SimpleEntity
         {
-            Id = 999,
+            Id = IdBase,
             Name = "BenchTyped",
         });
     }
@@ -124,57 +144,31 @@ public class AccessWriterBenchmarks
     {
         // Insert a known row, then update it.
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.InsertRowAsync(_tableName, _dummyRow);
+        await writer.InsertRowAsync(BenchmarkTableName, _dummyRow);
 
-        string predicateCol = _columns[0].Name;
-        object predicateVal = _dummyRow[0];
+        string predicateCol = IdColumnName;
+        object? predicateVal = _dummyRow[0];
         var updates = new Dictionary<string, object?>
         {
-            [_columns.Count > 1 ? _columns[1].Name : _columns[0].Name] = "UpdatedBench",
+            [NameColumnName] = "UpdatedBench",
         };
-        return await writer.UpdateRowsAsync(_tableName, predicateCol, predicateVal, updates);
+        return await writer.UpdateRowsAsync(BenchmarkTableName, predicateCol, predicateVal, updates);
     }
 
     [Benchmark]
     public async Task<int> DeleteRows()
     {
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.InsertRowAsync(_tableName, _dummyRow);
+        await writer.InsertRowAsync(BenchmarkTableName, _dummyRow);
 
-        string predicateCol = _columns[0].Name;
-        object predicateVal = _dummyRow[0];
-        return await writer.DeleteRowsAsync(_tableName, predicateCol, predicateVal);
+        string predicateCol = IdColumnName;
+        object? predicateVal = _dummyRow[0];
+        return await writer.DeleteRowsAsync(BenchmarkTableName, predicateCol, predicateVal);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
 
-    private static object[] BuildDummyRow(List<ColumnMetadata> columns)
-    {
-        var values = new object[columns.Count];
-        for (int i = 0; i < columns.Count; i++)
-        {
-            values[i] = GetDummyValue(columns[i].ClrType);
-        }
-
-        return values;
-    }
-
-    private static object GetDummyValue(Type clrType) => clrType switch
-    {
-        _ when clrType == typeof(string) => "BenchWrite",
-        _ when clrType == typeof(int) => 999,
-        _ when clrType == typeof(short) => (short)99,
-        _ when clrType == typeof(long) => 99999L,
-        _ when clrType == typeof(byte) => (byte)1,
-        _ when clrType == typeof(bool) => true,
-        _ when clrType == typeof(DateTime) => new DateTime(2025, 1, 1),
-        _ when clrType == typeof(double) => 1.23,
-        _ when clrType == typeof(float) => 1.23f,
-        _ when clrType == typeof(decimal) => 1.23m,
-        _ when clrType == typeof(Guid) => Guid.NewGuid(),
-        _ when clrType == typeof(byte[]) => new byte[] { 0x01, 0x02 },
-        _ => DBNull.Value,
-    };
+    private static object?[] BuildDummyRow(int seed) => [IdBase + seed, $"BenchWrite_{seed}"];
 
     public class SimpleEntity
     {
