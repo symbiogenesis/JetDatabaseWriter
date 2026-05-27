@@ -44,8 +44,8 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
-        DataRow[] matching = rels.AsEnumerable()
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
         Assert.Empty(matching);
@@ -130,11 +130,11 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.DoesNotContain(rels.AsEnumerable(), r => string.Equals(SafeString(r, "szRelationship"), oldName, StringComparison.Ordinal));
 
-        DataRow[] renamed = rels.AsEnumerable()
+        var renamed = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), newName, StringComparison.Ordinal))
             .ToArray();
         Assert.Equal(2, renamed.Length);
@@ -248,7 +248,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             int childRealIdxBefore;
             await using (var preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
             {
-                IndexMetadata fkBefore = (await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+                var fkBefore = (await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
                     .Single(ix => ix.Kind == IndexKind.ForeignKey);
                 childRealIdxBefore = fkBefore.RealIndexNumber;
             }
@@ -264,7 +264,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
                 TestContext.Current.CancellationToken);
 
             await using var postReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-            IndexMetadata fkAfter = (await postReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+            var fkAfter = (await postReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
                 .Single(ix => ix.Kind == IndexKind.ForeignKey);
             Assert.Equal(childRealIdxBefore, fkAfter.RealIndexNumber);
         }
@@ -296,7 +296,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         Assert.DoesNotContain(await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
         Assert.DoesNotContain(await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
 
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.DoesNotContain(rels.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), relName, StringComparison.Ordinal));
     }
 
@@ -324,8 +324,8 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
         Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
         Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);

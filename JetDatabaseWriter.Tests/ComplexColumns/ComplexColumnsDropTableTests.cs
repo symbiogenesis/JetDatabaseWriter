@@ -66,7 +66,7 @@ public sealed class ComplexColumnsDropTableTests
 
         // The MSysComplexColumns row that joined the parent column to its flat
         // table must be gone.
-        DataTable? cx = await reader.ReadDataTableAsync(
+        var cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -132,7 +132,7 @@ public sealed class ComplexColumnsDropTableTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         // The flat table should no longer appear as a live row in MSysObjects.
-        DataTable? msys = await reader.ReadDataTableAsync(
+        var msys = await reader.ReadDataTableAsync(
             "MSysObjects",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(msys);
@@ -150,7 +150,7 @@ public sealed class ComplexColumnsDropTableTests
         });
         Assert.False(flatStillThere, "Hidden flat-table catalog row for the dropped parent's complex column was not removed.");
 
-        DataTable? cx = await reader.ReadDataTableAsync(
+        var cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);

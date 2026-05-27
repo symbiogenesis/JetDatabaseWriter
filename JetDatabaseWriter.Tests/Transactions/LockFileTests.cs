@@ -332,7 +332,7 @@ public sealed class LockFileTests : IDisposable
                 RespectExistingLockFile = true,
             };
 
-            Exception ex = await Assert.ThrowsAnyAsync<Exception>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
+            var ex = await Assert.ThrowsAnyAsync<Exception>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
             Assert.True(
                 ex is IOException || ex is UnauthorizedAccessException,
                 $"Expected IOException or UnauthorizedAccessException, got {ex.GetType().Name}");
@@ -425,7 +425,7 @@ public sealed class LockFileTests : IDisposable
             new LockFileSettings(Enabled: false));
         var expected = new InvalidOperationException("first cleanup failed");
 
-        InvalidOperationException actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await coordinator.DisposeAfterAsync(() => ValueTask.FromException(expected)));
 
         Assert.Same(expected, actual);
@@ -442,7 +442,7 @@ public sealed class LockFileTests : IDisposable
         var second = new IOException("second cleanup failed");
         int stepsRun = 0;
 
-        AggregateException actual = await Assert.ThrowsAsync<AggregateException>(async () =>
+        var actual = await Assert.ThrowsAsync<AggregateException>(async () =>
             await coordinator.DisposeAfterAsync(
                 () =>
                 {

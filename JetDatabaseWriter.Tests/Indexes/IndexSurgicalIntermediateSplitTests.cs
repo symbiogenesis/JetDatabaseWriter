@@ -71,7 +71,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(320, dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)
@@ -128,7 +128,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(230, dt!.Rows.Count);
 
@@ -183,7 +183,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
 
         // 300 - ceil(300/7) deleted + 10 inserted = 300 - 43 + 10 = 267.

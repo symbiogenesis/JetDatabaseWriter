@@ -28,12 +28,12 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkIndexCount = 0;
         foreach (string table in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
+            var indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
             fkIndexCount += indexes.Count(i => i.IsForeignKey);
         }
@@ -51,14 +51,14 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
+            var indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
 
-            foreach (IndexMetadata idx in indexes.Where(i => i.IsForeignKey))
+            foreach (var idx in indexes.Where(i => i.IsForeignKey))
             {
                 Assert.NotEmpty(idx.Columns);
                 Assert.All(idx.Columns, c =>
@@ -77,15 +77,15 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundAny = false;
         foreach (string table in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
+            var indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
 
-            foreach (IndexMetadata idx in indexes.Where(i => i.IsForeignKey))
+            foreach (var idx in indexes.Where(i => i.IsForeignKey))
             {
                 foundAny = true;
                 Assert.True(
@@ -114,12 +114,12 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
         }
 
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkCount = 0;
         foreach (string table in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
+            var indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
             fkCount += indexes.Count(i => i.IsForeignKey);
         }

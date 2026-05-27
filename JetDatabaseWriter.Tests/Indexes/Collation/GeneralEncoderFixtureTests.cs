@@ -23,7 +23,7 @@ public sealed class GeneralEncoderFixtureTests
     [MemberData(nameof(Fixtures))]
     public Task TextSingleColumnIndexes_OnDiskLeavesMatchEncoderOutput(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         return TextIndexEncoderFixtureHarness.ValidateAsync(
             fixturePath,
             GeneralTextIndexEncoder.Encode,

@@ -9,7 +9,7 @@ public sealed class DaoPowerShellHostResolverTests
     [Fact]
     public void GetCandidateHostPaths_Wow64ProcessPrefersSysnativeForNativeHost()
     {
-        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+        var candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
             @"C:\Windows",
             is64BitOperatingSystem: true,
             is64BitProcess: false,
@@ -26,7 +26,7 @@ public sealed class DaoPowerShellHostResolverTests
     [Fact]
     public void GetCandidateHostPaths_64BitProcessCanPreferWow64First()
     {
-        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+        var candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
             @"C:\Windows",
             is64BitOperatingSystem: true,
             is64BitProcess: true,
@@ -43,7 +43,7 @@ public sealed class DaoPowerShellHostResolverTests
     [Fact]
     public void GetCandidateHostPaths_32BitWindowsOnlyReturnsSystem32()
     {
-        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+        var candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
             @"C:\Windows",
             is64BitOperatingSystem: false,
             is64BitProcess: false,
@@ -58,7 +58,7 @@ public sealed class DaoPowerShellHostResolverTests
     public void GetCandidateHostPaths_64BitProcessPrefersNativeFirst()
     {
         // ARM64 native Office (Program Files) or x64 Office on x64 OS.
-        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+        var candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
             @"C:\Windows",
             is64BitOperatingSystem: true,
             is64BitProcess: true,

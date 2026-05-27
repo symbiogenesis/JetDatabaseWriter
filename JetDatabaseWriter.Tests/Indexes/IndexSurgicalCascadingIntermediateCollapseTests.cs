@@ -65,7 +65,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows, dt!.Rows.Count);
 
@@ -124,7 +124,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(25, dt!.Rows.Count);
 
@@ -185,7 +185,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt!.Rows.Count);
 

@@ -94,23 +94,23 @@ public sealed class GeneralEncoderLongRowPrefixTests
         string tableName,
         string[] expectedSuffixes)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout =
+        var layout =
             IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-        IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
+        var indexes = await reader.ListIndexesAsync(tableName, ct);
+        var dataIndex = Assert.Single(indexes, candidateIndex =>
             candidateIndex.Columns.Count == 1
             && !candidateIndex.IsForeignKey
             && candidateIndex.FirstDp > 0
             && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
 
-        List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
+        var onDiskKeys = await CollectAllLeafKeysAsync(
             reader,
             layout,
             reader.PageSize,
@@ -154,43 +154,43 @@ public sealed class GeneralEncoderLongRowPrefixTests
         string tableName,
         LongRowValidationMode validationMode)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout =
+        var layout =
             IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
-        List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
+        var cols = await reader.GetColumnMetadataAsync(tableName, ct);
         var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        var indexes = await reader.ListIndexesAsync(tableName, ct);
 
         int indexesValidated = 0;
         int keysValidated = 0;
         int longRowKeysSeen = 0;
 
-        foreach (IndexMetadata index in indexes)
+        foreach (var index in indexes)
         {
             if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
             {
                 continue;
             }
 
-            IndexColumnReference keyCol = index.Columns[0];
-            if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
+            var keyCol = index.Columns[0];
+            if (!colByName.TryGetValue(keyCol.Name, out var colMeta)
                 || colMeta.ClrType != typeof(string))
             {
                 continue;
             }
 
-            List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
+            var onDiskKeys = await CollectAllLeafKeysAsync(
                 reader, layout, pageSize, index.FirstDp, ct);
 
-            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+            var dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
             var values = new List<string?>(dt.Rows.Count);
             foreach (DataRow row in dt.Rows)
             {
@@ -324,13 +324,13 @@ public sealed class GeneralEncoderLongRowPrefixTests
 
     private static async Task<string> ReadTemplateTextAsync(string rowName)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        DataRow row = dataTable.Rows
+        var dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        var row = dataTable.Rows
             .Cast<DataRow>()
             .Single(row => string.Equals((string)row["name"], rowName, StringComparison.OrdinalIgnoreCase));
         return (string)row["data"];
@@ -359,7 +359,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            List<DecodedIntermediateEntry> entries =
+            var entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -385,8 +385,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (IndexEntry e in entries)
+            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (var e in entries)
             {
                 result.Add(e.Key);
             }

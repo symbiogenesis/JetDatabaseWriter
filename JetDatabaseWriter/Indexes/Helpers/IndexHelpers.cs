@@ -102,7 +102,7 @@ internal static class IndexHelpers
         IReadOnlyList<IndexDefinition> indexes)
     {
         bool anyColumnPk = false;
-        foreach (ColumnDefinition c in columns)
+        foreach (var c in columns)
         {
             if (c.IsPrimaryKey)
             {
@@ -112,7 +112,7 @@ internal static class IndexHelpers
         }
 
         bool anyIndexPk = false;
-        foreach (IndexDefinition idx in indexes)
+        foreach (var idx in indexes)
         {
             if (idx.IsPrimaryKey)
             {
@@ -134,7 +134,7 @@ internal static class IndexHelpers
         {
             pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var pkColList = new List<string>();
-            foreach (ColumnDefinition c in columns)
+            foreach (var c in columns)
             {
                 if (c.IsPrimaryKey)
                 {
@@ -151,7 +151,7 @@ internal static class IndexHelpers
         else if (anyIndexPk)
         {
             pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (IndexDefinition idx in indexes)
+            foreach (var idx in indexes)
             {
                 if (idx.IsPrimaryKey)
                 {
@@ -168,7 +168,7 @@ internal static class IndexHelpers
             var newCols = new ColumnDefinition[columns.Count];
             for (int i = 0; i < columns.Count; i++)
             {
-                ColumnDefinition c = columns[i];
+                var c = columns[i];
                 if (pkColumnNames.Contains(c.Name) && c.IsNullable)
                 {
                     c = c with { IsNullable = false };
@@ -204,7 +204,7 @@ internal static class IndexHelpers
         bool sawPk = false;
         for (int i = 0; i < indexes.Count; i++)
         {
-            IndexDefinition def = indexes[i];
+            var def = indexes[i];
             if (string.IsNullOrEmpty(def.Name))
             {
                 throw new ArgumentException($"IndexDefinition at position {i} has an empty name.", nameof(indexes));
@@ -248,7 +248,7 @@ internal static class IndexHelpers
                     throw new ArgumentException($"IndexDefinition '{def.Name}' references column '{columnName}' more than once.", nameof(indexes));
                 }
 
-                ColumnInfo column = tableDef.FindColumn(columnName)
+                var column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
                 // match Microsoft Access — neither the UI
@@ -338,12 +338,12 @@ internal static class IndexHelpers
     {
         var result = new List<IndexDefinition>(existing.Count);
         var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (ColumnDefinition c in newDefs)
+        foreach (var c in newDefs)
         {
             newColumnNames.Add(c.Name);
         }
 
-        foreach (IndexMetadata idx in existing)
+        foreach (var idx in existing)
         {
             if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
             {
@@ -356,7 +356,7 @@ internal static class IndexHelpers
             }
 
             bool allSurvive = true;
-            foreach (IndexColumnReference ic in idx.Columns)
+            foreach (var ic in idx.Columns)
             {
                 if (string.IsNullOrEmpty(ic.Name) || !newColumnNames.Contains(ic.Name))
                 {
@@ -492,7 +492,7 @@ internal static class IndexHelpers
         {
             for (int i = 0; i < idx.KeyColumns.Count; i++)
             {
-                ParentSeekKeyColumn col = idx.KeyColumns[i];
+                var col = idx.KeyColumns[i];
                 if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
                 {
                     return null;
@@ -567,7 +567,7 @@ internal static class IndexHelpers
         {
             for (int i = 0; i < idx.KeyColumns.Count; i++)
             {
-                ChildSeekKeyColumn col = idx.KeyColumns[i];
+                var col = idx.KeyColumns[i];
                 object? v = parentPkValues[i];
                 if (v is DBNull)
                 {
@@ -791,7 +791,7 @@ internal static class IndexHelpers
     {
         for (int level = 0; level < path.Count; level++)
         {
-            DescentStep step = path[level];
+            var step = path[level];
             int idx = SelectChildIndexFromDecoded(step.Entries, searchKey);
             if (idx != step.TakenIndex)
             {
@@ -815,7 +815,7 @@ internal static class IndexHelpers
         long pageNumber,
         IntermediateOp op)
     {
-        if (!ops.TryGetValue(pageNumber, out List<IntermediateOp>? list))
+        if (!ops.TryGetValue(pageNumber, out var list))
         {
             list = [];
             ops[pageNumber] = list;
@@ -858,7 +858,7 @@ internal static class IndexHelpers
             bool removed = false;
             while (opCursor < indexed.Length && indexed[opCursor].Op.OriginalIndex == origIdx)
             {
-                IntermediateOp op = indexed[opCursor].Op;
+                var op = indexed[opCursor].Op;
                 opCursor++;
                 switch (op.Type)
                 {

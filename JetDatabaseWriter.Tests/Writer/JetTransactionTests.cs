@@ -45,7 +45,7 @@ public sealed class JetTransactionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(tx);
         Assert.False(tx.IsCommitted);
@@ -62,7 +62,7 @@ public sealed class JetTransactionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using JetTransaction first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(first);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -81,7 +81,7 @@ public sealed class JetTransactionTests
         {
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [2, "Beta"], TestContext.Current.CancellationToken);
 
@@ -109,7 +109,7 @@ public sealed class JetTransactionTests
         {
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [2, "Beta"], TestContext.Current.CancellationToken);
 
@@ -136,7 +136,7 @@ public sealed class JetTransactionTests
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
             // Begin tx, do work, dispose without committing.
-            JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             try
             {
                 await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
@@ -172,7 +172,7 @@ public sealed class JetTransactionTests
 
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         // 100 rows comfortably forces multiple page mutations and at least one
         // new appended page; the writer's own row append path round-trips
@@ -199,7 +199,7 @@ public sealed class JetTransactionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -227,7 +227,7 @@ public sealed class JetTransactionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken));
@@ -253,7 +253,7 @@ public sealed class JetTransactionTests
             await ms.ReadAsync(before.AsMemory(), TestContext.Current.CancellationToken);
             byte beforeByte = before[0x14];
 
-            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await tx.CommitAsync(TestContext.Current.CancellationToken);
 
@@ -279,7 +279,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         Assert.True(tx.JournaledPageCount > 1);
@@ -312,7 +312,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         stream.ThrowBeforePageWriteAtOffset(0);
@@ -344,7 +344,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
@@ -375,7 +375,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         int durableFlushCall = tx.JournaledPageCount + 2;

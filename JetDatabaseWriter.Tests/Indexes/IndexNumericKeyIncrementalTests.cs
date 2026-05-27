@@ -40,7 +40,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         await using var reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync("T", ct);
-        ColumnMetadata amount = cols.Single(c => c.Name == "Amount");
+        var amount = cols.Single(c => c.Name == "Amount");
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)4, amount.NumericScale);
     }
@@ -60,7 +60,7 @@ public sealed class IndexNumericKeyIncrementalTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        ColumnMetadata amount = (await reader.GetColumnMetadataAsync("T", ct)).Single();
+        var amount = (await reader.GetColumnMetadataAsync("T", ct)).Single();
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)0, amount.NumericScale);
     }

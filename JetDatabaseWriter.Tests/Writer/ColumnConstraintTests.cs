@@ -40,7 +40,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
@@ -85,12 +85,12 @@ public sealed class ColumnConstraintTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        var dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, dt.Rows.Count);
 
-        DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
-        DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
-        DataRow third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
+        var first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
+        var second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
+        var third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
 
         Assert.Equal(DBNull.Value, first["Name"]);
         Assert.Equal(42, first["Score"]);
@@ -153,7 +153,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         Assert.True(meta[0].IsNullable);
         Assert.False(meta[1].IsNullable);
     }
@@ -211,7 +211,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(250, dt.Rows[1]["Score"]);
     }

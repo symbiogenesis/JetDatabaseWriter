@@ -28,9 +28,9 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_ListTables_ReturnsNonEmpty(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -44,12 +44,12 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_HaveColumns(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> cols =
+            var cols =
                 await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.NotEmpty(cols);
         }
@@ -64,13 +64,13 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_StreamAllRows_WithoutThrowing(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         long totalRows = 0;
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            var dt = await reader.ReadDataTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
             totalRows += dt.Rows.Count;
         }

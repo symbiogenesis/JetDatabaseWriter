@@ -104,7 +104,7 @@ internal static class OfficeCryptoAgile
                 "EncryptionInfo header is not in Agile (version 4.4) format.");
         }
 
-        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        var descriptor = ParseDescriptor(encryptionInfo);
         byte[] passwordUtf16 = PasswordToUtf16(password);
         try
         {
@@ -303,7 +303,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException("ACCDB header EncryptionInfo is not in Agile format.");
         }
 
-        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        var descriptor = ParseDescriptor(encryptionInfo);
         byte[] headerPage = GetUnmaskedHeaderPage(encryptedDatabase);
         byte[] encodingKey = new byte[4];
         Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
@@ -682,7 +682,7 @@ internal static class OfficeCryptoAgile
             aes.Key = key;
             aes.IV = iv;
 
-            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+            var transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
             if (transform is null)
             {
                 throw new CryptographicException("AES transform creation failed.");
@@ -888,7 +888,7 @@ internal static class OfficeCryptoAgile
                 byte[] cipher = aes.EncryptCbc(block, iv, PaddingMode.None);
 #else
                 aes.IV = iv;
-                using ICryptoTransform t = aes.CreateEncryptor();
+                using var t = aes.CreateEncryptor();
                 byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
 #endif
                 Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);

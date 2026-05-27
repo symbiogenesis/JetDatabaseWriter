@@ -46,13 +46,13 @@ public sealed class IndexChildTailPointerTests
             return;
         }
 
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
         long fileLength = new FileInfo(fixturePath).Length;
         long maxPageNumber = fileLength / pageSize;
@@ -60,7 +60,7 @@ public sealed class IndexChildTailPointerTests
         int intermediatesChecked = 0;
         int nonZeroTails = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;
@@ -73,7 +73,7 @@ public sealed class IndexChildTailPointerTests
                 continue;
             }
 
-            foreach (IndexMetadata index in indexes)
+            foreach (var index in indexes)
             {
                 if (index.IsForeignKey || index.FirstDp <= 0)
                 {
@@ -108,7 +108,7 @@ public sealed class IndexChildTailPointerTests
                     }
 
                     // Descend to first child.
-                    List<DecodedIntermediateEntry> entries =
+                    var entries =
                         IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
                     if (entries.Count == 0)
                     {

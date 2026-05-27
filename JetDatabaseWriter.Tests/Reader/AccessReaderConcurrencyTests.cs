@@ -30,11 +30,11 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
         }
 
         const int ReaderCount = 8;
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
 
         // Establish ground-truth row counts via the shared cached reader.
-        AccessReader baseline = await db.GetReaderAsync(path, ct);
-        List<string> tables = await baseline.ListTablesAsync(ct);
+        var baseline = await db.GetReaderAsync(path, ct);
+        var tables = await baseline.ListTablesAsync(ct);
         Assert.NotEmpty(tables);
 
         var expected = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
@@ -76,11 +76,11 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
                 ct);
         }
 
-        Dictionary<string, long>[] results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks);
 
-        foreach (Dictionary<string, long> result in results)
+        foreach (var result in results)
         {
-            foreach (KeyValuePair<string, long> kvp in expected)
+            foreach (var kvp in expected)
             {
                 Assert.True(
                     result.TryGetValue(kvp.Key, out long observed),
@@ -99,14 +99,14 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         Assert.NotEmpty(tables);
 
         // Compute serial baseline row counts.
@@ -125,7 +125,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
 
         // Now fan all tables out to parallel tasks against the same reader.
         // The reader's page cache + I/O gate must serialise them safely.
-        Task<KeyValuePair<string, long>>[] tasks = tables
+        var tasks = tables
             .Select(t => Task.Run(
                 async () =>
                 {
@@ -141,9 +141,9 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
                 ct))
             .ToArray();
 
-        KeyValuePair<string, long>[] results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks);
 
-        foreach (KeyValuePair<string, long> kvp in results)
+        foreach (var kvp in results)
         {
             Assert.Equal(expected[kvp.Key], kvp.Value);
         }
@@ -158,15 +158,15 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
         // Pick the largest table so the parallel reads have meaningful overlap.
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         string target = tables[0];
         long maxRows = 0;
         foreach (string t in tables)
@@ -180,11 +180,11 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
         }
 
         const int ReadCount = 6;
-        Task<int>[] tasks = Enumerable.Range(0, ReadCount)
+        var tasks = Enumerable.Range(0, ReadCount)
             .Select(_ => Task.Run(
                 async () =>
                 {
-                    DataTable dt = (await reader.ReadDataTableAsync(target, cancellationToken: ct))!;
+                    var dt = (await reader.ReadDataTableAsync(target, cancellationToken: ct))!;
                     return dt.Rows.Count;
                 },
                 ct))

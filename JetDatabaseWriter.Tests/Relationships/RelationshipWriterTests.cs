@@ -43,14 +43,14 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        DataRow[] matching = rels.AsEnumerable()
+        var matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
 
         Assert.Single(matching);
-        DataRow row = matching[0];
+        var row = matching[0];
         Assert.Equal(1, (int)row["ccolumn"]);
         Assert.Equal(0, (int)row["icolumn"]);
         Assert.Equal(0, (int)row["grbit"]);
@@ -86,9 +86,9 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        DataRow[] matching = rels.AsEnumerable()
+        var matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .OrderBy(r => (int)r["icolumn"])
             .ToArray();
@@ -128,9 +128,9 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        DataRow row = rels.AsEnumerable()
+        var row = rels.AsEnumerable()
             .Single(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal));
 
         // 0x02 (NoRefIntegrity) | 0x100 (CascadeUpdates) | 0x1000 (CascadeDeletes) = 0x1102
@@ -215,7 +215,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         ms.Position = 0;
         await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Contains(
             rels.AsEnumerable(),
             row => string.Equals(SafeString(row, "szRelationship"), "FK_C_P", StringComparison.Ordinal));
@@ -260,11 +260,11 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        IndexMetadata parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
-        IndexMetadata childFk = Assert.Single(childIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        var parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        var childFk = Assert.Single(childIndexes, ix => ix.Kind == IndexKind.ForeignKey);
 
         Assert.True(parentFk.IsForeignKey);
         Assert.True(childFk.IsForeignKey);
@@ -306,10 +306,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        IndexMetadata parentFk = Assert.Single(
+        var parentFk = Assert.Single(
             await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
-        IndexMetadata childFk = Assert.Single(
+        var childFk = Assert.Single(
             await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
 
@@ -352,8 +352,8 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         Assert.NotNull(childEntry);
 
         byte[] fileBytes = temp.ToArray();
-        RawLogicalIdxEntry parentFk = ReadSingleFkLogicalEntry(fileBytes, parentEntry.TDefPage, childEntry.TDefPage);
-        RawLogicalIdxEntry childFk = ReadSingleFkLogicalEntry(fileBytes, childEntry.TDefPage, parentEntry.TDefPage);
+        var parentFk = ReadSingleFkLogicalEntry(fileBytes, parentEntry.TDefPage, childEntry.TDefPage);
+        var childFk = ReadSingleFkLogicalEntry(fileBytes, childEntry.TDefPage, parentEntry.TDefPage);
 
         Assert.Equal(0x01, parentFk.RelTblType);
         Assert.Equal(0x02, childFk.RelTblType);
@@ -389,10 +389,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        IndexMetadata parentFk = Assert.Single(
+        var parentFk = Assert.Single(
             await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
-        IndexMetadata childFk = Assert.Single(
+        var childFk = Assert.Single(
             await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
 
@@ -428,10 +428,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.PrimaryKey);
-        IndexMetadata parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        var pk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.PrimaryKey);
+        var parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
 
         // Sharing per §3.3: PK and the FK logical-idx entry share the same real-idx slot.
         Assert.Equal(pk.RealIndexNumber, parentFk.RealIndexNumber);
@@ -458,11 +458,11 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
 
         // Two FK logical-idx entries land on the same TDEF (one per side of the
         // self-referential relationship); their names must be distinct.
-        IndexMetadata[] fks = indexes.Where(ix => ix.Kind == IndexKind.ForeignKey).ToArray();
+        var fks = indexes.Where(ix => ix.Kind == IndexKind.ForeignKey).ToArray();
         Assert.Equal(2, fks.Length);
         Assert.NotEqual(fks[0].Name, fks[1].Name);
     }
@@ -511,11 +511,11 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        IndexMetadata parentFk = Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
-        IndexMetadata childFk = Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey);
+        var parentFk = Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
+        var childFk = Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey);
 
         Assert.Equal("Id", Assert.Single(parentFk.Columns).Name);
         Assert.Equal("ParentId", Assert.Single(childFk.Columns).Name);

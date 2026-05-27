@@ -38,7 +38,7 @@ public sealed class LinkedTableTests : IDisposable
         // returns is reachable via the standard reader API.
         await using var reader = await AccessReader.OpenAsync(TestDatabases.NorthwindTraders, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // All returned tables should be readable (local)
         foreach (string t in tables)
@@ -56,7 +56,7 @@ public sealed class LinkedTableTests : IDisposable
         // external databases (MSysObjects Type = 4 or 6).
         await using var reader = await AccessReader.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         // The test databases don't have linked tables, so the result should be empty.
         Assert.NotNull(linked);
@@ -85,7 +85,7 @@ public sealed class LinkedTableTests : IDisposable
         }
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(linked);
         Assert.Empty(linked);
@@ -120,7 +120,7 @@ public sealed class LinkedTableTests : IDisposable
             TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedRemoteData", StringComparison.OrdinalIgnoreCase));
@@ -152,14 +152,14 @@ public sealed class LinkedTableTests : IDisposable
             TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> first = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
-        LinkedTableInfo firstEntry = Assert.Single(first);
+        var first = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var firstEntry = Assert.Single(first);
         firstEntry.Name = "MutatedName";
         firstEntry.SourceObjectName = "MutatedSource";
         first.Clear();
 
-        List<LinkedTableInfo> second = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
-        LinkedTableInfo secondEntry = Assert.Single(second);
+        var second = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var secondEntry = Assert.Single(second);
 
         Assert.Equal("LinkedRemoteData", secondEntry.Name);
         Assert.Equal("RemoteData", secondEntry.SourceObjectName);
@@ -182,7 +182,7 @@ public sealed class LinkedTableTests : IDisposable
         }
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedSalesOrders", StringComparison.OrdinalIgnoreCase));
@@ -259,7 +259,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await reader.ReadDataTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("ODBC", exception.Message, StringComparison.Ordinal);
     }
@@ -296,7 +296,7 @@ public sealed class LinkedTableTests : IDisposable
 
         // Verify the source data is readable directly
         await using var sourceReader = await AccessReader.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["ProductID"]);
@@ -346,7 +346,7 @@ public sealed class LinkedTableTests : IDisposable
 
         // Reading "LinkedProducts" from the front-end should follow the link
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         // Verify the linked table metadata is present
         var entry = linked.FirstOrDefault(l =>
@@ -356,7 +356,7 @@ public sealed class LinkedTableTests : IDisposable
         Assert.Equal(sourcePath, entry.SourcePath);
 
         // Reading through the link should return source data
-        DataTable dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
         Assert.Equal("Widget", dt.Rows[0]["Name"]);
@@ -410,7 +410,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedData", sourcePath, "Data", TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // Linked tables should not appear in ListTables
         Assert.DoesNotContain("LinkedData", tables);
@@ -432,7 +432,7 @@ public sealed class LinkedTableTests : IDisposable
             TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedMissing", StringComparison.OrdinalIgnoreCase));
@@ -463,7 +463,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_AbsolutePathOutsideHostDirectory_IsBlockedByDefault()
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkAbsSrc");
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
@@ -487,7 +487,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_StreamHostWithoutPathPolicy_IsBlockedByDefault()
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkStreamSrc");
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
@@ -561,7 +561,7 @@ public sealed class LinkedTableTests : IDisposable
         };
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
-        DataTable dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -605,7 +605,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_AllowlistRejectsSiblingDirectoryWithSharedPrefix()
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         string parentDirectory = Path.Combine(Path.GetTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
         string allowlistedDirectory = Path.Combine(parentDirectory, "Allowed");
         string siblingDirectory = Path.Combine(parentDirectory, "AllowedSibling");
@@ -646,7 +646,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedMeta", sourcePath, "SourceTable", TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedMeta", StringComparison.OrdinalIgnoreCase));
@@ -680,7 +680,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedCustomers", sourcePath, "Customers", ct);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
+        var meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
 
         Assert.Equal(3, meta.Count);
         Assert.Equal("CustID", meta[0].Name);

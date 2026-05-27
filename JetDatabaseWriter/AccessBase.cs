@@ -1006,7 +1006,7 @@ public abstract class AccessBase : IAccessBase
             }
 
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            var pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
@@ -1038,7 +1038,7 @@ public abstract class AccessBase : IAccessBase
 
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            var pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
@@ -1390,7 +1390,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="page">The page bytes.</param>
     internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
-        foreach (RowBound rb in EnumerateLiveRowBounds(page))
+        foreach (var rb in EnumerateLiveRowBounds(page))
         {
             yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
         }
@@ -1413,12 +1413,12 @@ public abstract class AccessBase : IAccessBase
             return string.Empty;
         }
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out var layout))
         {
             return string.Empty;
         }
 
-        ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+        var slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
         switch (slice.Kind)
         {
             case ColumnSliceKind.Bool:

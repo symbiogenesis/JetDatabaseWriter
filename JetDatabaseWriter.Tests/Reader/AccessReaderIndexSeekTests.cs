@@ -41,11 +41,11 @@ public sealed class AccessReaderIndexSeekTests
 
         await using var reader = await OpenReaderAsync(stream);
 
-        List<object[]> rows = await SeekAsync(reader, "T", "UQ_Id", [2]);
+        var rows = await SeekAsync(reader, "T", "UQ_Id", [2]);
         object[] row = Assert.Single(rows);
         Assert.Equal([2, "beta"], row);
 
-        List<object[]> missing = await SeekAsync(reader, "T", "UQ_Id", [99]);
+        var missing = await SeekAsync(reader, "T", "UQ_Id", [99]);
         Assert.Empty(missing);
     }
 
@@ -80,8 +80,8 @@ public sealed class AccessReaderIndexSeekTests
 
         await using var reader = await OpenReaderAsync(stream);
 
-        List<object[]> expected = await ScanAsync(reader, "Orders", row => (int)row[0] == 1 && (string)row[1] == "B");
-        List<object[]> actual = await SeekAsync(reader, "Orders", "IX_Tenant_Code", [1, "B"]);
+        var expected = await ScanAsync(reader, "Orders", row => (int)row[0] == 1 && (string)row[1] == "B");
+        var actual = await SeekAsync(reader, "Orders", "IX_Tenant_Code", [1, "B"]);
 
         Assert.Equal(RowIds(expected, 2), RowIds(actual, 2));
     }
@@ -115,8 +115,8 @@ public sealed class AccessReaderIndexSeekTests
 
         await using var reader = await OpenReaderAsync(stream);
 
-        List<object[]> expected = await ScanAsync(reader, "Dupes", row => (int)row[1] == 7);
-        List<object[]> actual = await SeekAsync(reader, "Dupes", "IX_Bucket", [7]);
+        var expected = await ScanAsync(reader, "Dupes", row => (int)row[1] == 7);
+        var actual = await SeekAsync(reader, "Dupes", "IX_Bucket", [7]);
 
         Assert.Equal(RowCount, actual.Count);
         Assert.Equal(RowIds(expected, 0), RowIds(actual, 0));
@@ -154,7 +154,7 @@ public sealed class AccessReaderIndexSeekTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        List<object[]> rowsFound = await SeekAsync(reader, "T", "IX_Id", [InitialRows]);
+        var rowsFound = await SeekAsync(reader, "T", "IX_Id", [InitialRows]);
 
         object[] row = Assert.Single(rowsFound);
         Assert.Equal([InitialRows, "tail"], row);

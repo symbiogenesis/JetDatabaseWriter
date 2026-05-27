@@ -81,13 +81,13 @@ internal static class LinkedOdbcLvPropProbe
             return 1;
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions { UseLockFile = false },
             CancellationToken.None);
 
-        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: CancellationToken.None);
-        List<LinkedCatalogRow> rows = ReadLinkedRows(catalog);
+        var catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: CancellationToken.None);
+        var rows = ReadLinkedRows(catalog);
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Format: `{reader.DatabaseFormat}`");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Linked rows found: {rows.Count}");
         _ = sb.AppendLine();
@@ -100,7 +100,7 @@ internal static class LinkedOdbcLvPropProbe
         }
 
         AppendCatalogSummary(sb, rows);
-        foreach (LinkedCatalogRow row in rows)
+        foreach (var row in rows)
         {
             AppendRowAnalysis(sb, row, reader.DatabaseFormat);
         }
@@ -165,7 +165,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Name | Type | Flags | Database | Connect | ForeignName | Lv/LvProp/LvModule/LvExtra | ");
         _ = sb.AppendLine("|---|---:|---:|---|---|---|---|");
-        foreach (LinkedCatalogRow row in rows)
+        foreach (var row in rows)
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(row.Name)} | {row.Type} | `0x{row.Flags:X8}` | {Cell(row.Database)} | {Cell(row.Connect)} | {Cell(row.ForeignName)} | {BlobState(row.Lv)} / {BlobState(row.LvProp)} / {BlobState(row.LvModule)} / {BlobState(row.LvExtra)} |");
         }
@@ -235,8 +235,8 @@ internal static class LinkedOdbcLvPropProbe
 
         for (int targetIndex = 0; targetIndex < expected.Targets.Count; targetIndex++)
         {
-            ColumnPropertyTarget expectedTarget = expected.Targets[targetIndex];
-            ColumnPropertyTarget actualTarget = actual.Targets[targetIndex];
+            var expectedTarget = expected.Targets[targetIndex];
+            var actualTarget = actual.Targets[targetIndex];
             if (!string.Equals(expectedTarget.Name, actualTarget.Name, StringComparison.Ordinal)
                 || expectedTarget.ChunkType != actualTarget.ChunkType
                 || expectedTarget.Entries.Count != actualTarget.Entries.Count)
@@ -246,8 +246,8 @@ internal static class LinkedOdbcLvPropProbe
 
             for (int entryIndex = 0; entryIndex < expectedTarget.Entries.Count; entryIndex++)
             {
-                ColumnPropertyEntry expectedEntry = expectedTarget.Entries[entryIndex];
-                ColumnPropertyEntry actualEntry = actualTarget.Entries[entryIndex];
+                var expectedEntry = expectedTarget.Entries[entryIndex];
+                var actualEntry = actualTarget.Entries[entryIndex];
                 if (!string.Equals(expectedEntry.Name, actualEntry.Name, StringComparison.Ordinal)
                     || expectedEntry.DataType != actualEntry.DataType
                     || expectedEntry.DdlFlag != actualEntry.DdlFlag
@@ -260,8 +260,8 @@ internal static class LinkedOdbcLvPropProbe
 
         for (int chunkIndex = 0; chunkIndex < expected.UnknownChunks.Count; chunkIndex++)
         {
-            ColumnPropertyUnknownChunk expectedChunk = expected.UnknownChunks[chunkIndex];
-            ColumnPropertyUnknownChunk actualChunk = actual.UnknownChunks[chunkIndex];
+            var expectedChunk = expected.UnknownChunks[chunkIndex];
+            var actualChunk = actual.UnknownChunks[chunkIndex];
             if (expectedChunk.ChunkType != actualChunk.ChunkType
                 || !expectedChunk.Payload.SequenceEqual(actualChunk.Payload))
             {
@@ -291,7 +291,7 @@ internal static class LinkedOdbcLvPropProbe
 
         _ = sb.AppendLine("| Target | Type | DDL flag | Bytes | Prefix | Decoded string runs | ");
         _ = sb.AppendLine("|---|---:|---:|---:|---|---|");
-        foreach ((string target, ColumnPropertyEntry entry) in entries)
+        foreach ((string target, var entry) in entries)
         {
             string stringRuns = BuildStringRunSummary(entry.Value, format);
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target)} | `0x{entry.DataType:X2}` | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | `{ToHex(entry.Value, 64)}` | {Cell(stringRuns)} |");
@@ -332,7 +332,7 @@ internal static class LinkedOdbcLvPropProbe
 
         for (int targetIndex = 0; targetIndex < block.Targets.Count; targetIndex++)
         {
-            ColumnPropertyTarget target = block.Targets[targetIndex];
+            var target = block.Targets[targetIndex];
             string properties = string.Join(", ", target.Entries.Select(static entry => entry.Name).Distinct(StringComparer.OrdinalIgnoreCase).Take(18));
             if (target.Entries.Select(static entry => entry.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 18)
             {
@@ -352,9 +352,9 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine("| Target | Property | Type | DDL flag | Bytes | Value preview | ");
         _ = sb.AppendLine("|---|---|---:|---:|---:|---|");
 
-        foreach (ColumnPropertyTarget target in block.Targets)
+        foreach (var target in block.Targets)
         {
-            foreach (ColumnPropertyEntry entry in target.Entries)
+            foreach (var entry in target.Entries)
             {
                 _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target.Name)} | {Cell(entry.Name)} | `0x{entry.DataType:X2}` | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | {Cell(FormatValuePreview(entry, format))} |");
             }
@@ -398,13 +398,13 @@ internal static class LinkedOdbcLvPropProbe
 
     private static string DecodePropertyText(byte[] value, DatabaseFormat format)
     {
-        Encoding encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        var encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
         return SanitizeText(encoding.GetString(value));
     }
 
     private static string BuildStringRunSummary(byte[] value, DatabaseFormat format)
     {
-        List<string> runs = ExtractUtf16Runs(value);
+        var runs = ExtractUtf16Runs(value);
         runs.AddRange(ExtractAsciiRuns(value));
         _ = format;
 

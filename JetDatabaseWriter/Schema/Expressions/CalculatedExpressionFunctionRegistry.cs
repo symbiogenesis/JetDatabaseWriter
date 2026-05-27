@@ -18,7 +18,7 @@ internal static class CalculatedExpressionFunctionRegistry
     {
         string normalizedName = NormalizeFunctionName(name);
         ValidateFunctionArgumentCount(normalizedName, args.Count);
-        if (!FunctionDescriptors.TryGetValue(normalizedName, out CalculatedFunctionDescriptor? descriptor))
+        if (!FunctionDescriptors.TryGetValue(normalizedName, out var descriptor))
         {
             throw new NotSupportedException($"Calculated-column function '{name}' is not supported.");
         }

@@ -23,7 +23,7 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     public async Task ListIndexes_NorthwindCompanies_ReturnsBothPkAndForeignKeys()
     {
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(indexes);
 
@@ -43,9 +43,9 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     public async Task ListIndexes_AllIndexesHaveNonEmptyKeyColumns()
     {
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
 
-        foreach (IndexMetadata idx in indexes)
+        foreach (var idx in indexes)
         {
             Assert.NotEmpty(idx.Columns);
             Assert.All(idx.Columns, c =>
@@ -60,9 +60,9 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     public async Task ListIndexes_PrimaryKey_HasSingleColumnCompanies()
     {
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("Companies", TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
+        var pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
         Assert.Single(pk.Columns); // Companies.ID is a single-column PK.
 
         Assert.True(pk.EnforcesUniqueness);
@@ -75,7 +75,7 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     public async Task ListIndexes_UnknownTable_ReturnsEmpty()
     {
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("NoSuchTable", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("NoSuchTable", TestContext.Current.CancellationToken);
         Assert.Empty(indexes);
     }
 
@@ -90,9 +90,9 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
         // user-facing cascade bit 0x01. Since the index has no FK linkage
         // (relIdxNum == -1), neither IsForeignKey nor the cascade flags should be set.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Documents", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("Documents", TestContext.Current.CancellationToken);
 
-        IndexMetadata attachmentIdx = Assert.Single(indexes);
+        var attachmentIdx = Assert.Single(indexes);
         Assert.StartsWith("Attachments_", attachmentIdx.Name, StringComparison.OrdinalIgnoreCase);
         Assert.False(attachmentIdx.IsForeignKey);
         Assert.False(attachmentIdx.CascadeUpdates);

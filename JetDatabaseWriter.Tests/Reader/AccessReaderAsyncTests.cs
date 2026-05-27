@@ -36,7 +36,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TotalPages > 0);
         Assert.True(stats.TableCount > 0);
@@ -62,7 +62,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             leaveOpen: false,
             TestContext.Current.CancellationToken);
 
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken))
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken))
             .FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -90,7 +90,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         await readReachedProgress.Task.WaitAsync(timeout, TestContext.Current.CancellationToken);
 
-        Task disposeTask = reader.DisposeAsync().AsTask();
+        var disposeTask = reader.DisposeAsync().AsTask();
 
         Assert.False(disposeTask.IsCompleted);
 
@@ -144,7 +144,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         await outerOperationReachedNestedCall.Task.WaitAsync(timeout, TestContext.Current.CancellationToken);
 
-        Task disposeTask = reader.DisposeAsync().AsTask();
+        var disposeTask = reader.DisposeAsync().AsTask();
 
         Assert.False(disposeTask.IsCompleted);
 

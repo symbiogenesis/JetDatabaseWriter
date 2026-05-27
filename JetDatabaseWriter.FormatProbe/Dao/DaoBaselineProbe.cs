@@ -51,7 +51,7 @@ internal static class DaoBaselineProbe
             return 1;
         }
 
-        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
+        var hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             await Console.Error.WriteLineAsync($"[dao-baseline] {hostProbe.FailureReason}");
@@ -101,7 +101,7 @@ internal static class DaoBaselineProbe
 
         string writerCompactPath = FormatProbeArtifacts.GetFilePath(writerDir, $"{ProbeSlug}-source-compacted.accdb");
         string daoCompactPath = FormatProbeArtifacts.GetFilePath(daoDir, $"{ProbeSlug}-source-compacted.accdb");
-        DaoProbeResults daoResults = RunDaoProbeBatch(
+        var daoResults = RunDaoProbeBatch(
             powerShellPath,
             writerPath,
             writerCompactPath,
@@ -161,7 +161,7 @@ internal static class DaoBaselineProbe
 
         await using (var basReader = await AccessReader.OpenAsync(baselinePath, ProbeReaderOptions))
         {
-            BaselinePageCache baselinePages = await BaselinePageCache.LoadAsync(basReader);
+            var baselinePages = await BaselinePageCache.LoadAsync(basReader);
             int pgSz = baselinePages.PageSize;
             long basPageCount = baselinePages.PageCount;
 
@@ -257,8 +257,8 @@ internal static class DaoBaselineProbe
             powerShellPath,
             script,
             FormatProbeArtifacts.GetFilePath(Path.GetDirectoryName(daoPath)!, $"{ProbeSlug}-dao-probe-batch.ps1"));
-        Dictionary<string, DaoStepResult> results = ParseDaoStepResults(stdout);
-        DaoStepResult missing = code == 0
+        var results = ParseDaoStepResults(stdout);
+        var missing = code == 0
             ? new DaoStepResult(1, "PowerShell batch did not emit a result for this step.")
             : new DaoStepResult(code, stderr);
 
@@ -413,7 +413,7 @@ internal static class DaoBaselineProbe
         Dictionary<string, DaoStepResult> results,
         string name,
         DaoStepResult fallback) =>
-        results.TryGetValue(name, out DaoStepResult result) ? result : fallback;
+        results.TryGetValue(name, out var result) ? result : fallback;
 
     private static (int Code, string StdOut, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
@@ -447,7 +447,7 @@ internal static class DaoBaselineProbe
             return false;
         }
 
-        AccessEncryptionFormat encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
+        var encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
         return encryption is AccessEncryptionFormat.None or AccessEncryptionFormat.AccdbLegacyPassword;
     }
 
@@ -482,7 +482,7 @@ internal static class DaoBaselineProbe
     private static async Task<byte[][]> LoadPagesDirectAsync(string path, int pageSize, int pageCount)
     {
         var pages = new byte[pageCount][];
-        await using FileStream stream = OpenPageReadStream(path, pageSize);
+        await using var stream = OpenPageReadStream(path, pageSize);
         for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
         {
             pages[pageNumber] = await ReadPageDirectAsync(stream, pageSize, pageNumber);
@@ -572,7 +572,7 @@ internal static class DaoBaselineProbe
             var pageBytes = new Dictionary<long, byte[]>();
             if (directFilePages)
             {
-                await using FileStream stream = OpenPageReadStream(r.HostDatabasePath, pgSz);
+                await using var stream = OpenPageReadStream(r.HostDatabasePath, pgSz);
                 for (long p = 0; p < shared; p++)
                 {
                     byte[] page = await ReadPageDirectAsync(stream, pgSz, p);
@@ -1057,7 +1057,7 @@ internal static class DaoBaselineProbe
         {
             await using var wr = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
             await using var dr = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
-            (HypothesisRow h26, HypothesisRow h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
+            (var h26, var h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
             rows.Add(h26);
             rows.Add(h45);
         }
@@ -1079,7 +1079,7 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine();
         int pass = 0;
         int fail = 0;
-        foreach (HypothesisRow row in rows)
+        foreach (var row in rows)
         {
             if (row.Verdict.Contains("PASS", StringComparison.Ordinal))
             {

@@ -68,7 +68,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 }
 
                 // Try reading all tables
-                DataTable tables = await reader.GetTablesAsDataTableAsync(ct);
+                var tables = await reader.GetTablesAsDataTableAsync(ct);
                 foreach (DataRow row in tables.Rows)
                 {
                     string? tableName = row["TableName"] as string;

@@ -23,7 +23,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
             (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
             writer._pgSz);
 
-        foreach ((object?[] oldPrimaryKey, TPayload payload) in requests)
+        foreach ((object?[] oldPrimaryKey, var payload) in requests)
         {
             byte[]? encoded = IndexHelpers.TryEncodeChildSeekKey(childSeek, oldPrimaryKey);
             if (encoded == null)
@@ -31,7 +31,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
                 return null;
             }
 
-            List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
+            var hits = await cursor.FindRowLocationsAsync(
                 childSeek.RootPage,
                 encoded,
                 cancellationToken).ConfigureAwait(false);
@@ -55,7 +55,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
         var byPage = new Dictionary<long, HashSet<int>>();
         foreach ((long dataPage, int rowIndex, _) in pendingByLocation.Values)
         {
-            if (!byPage.TryGetValue(dataPage, out HashSet<int>? rowIndexes))
+            if (!byPage.TryGetValue(dataPage, out var rowIndexes))
             {
                 rowIndexes = [];
                 byPage[dataPage] = rowIndexes;
@@ -64,7 +64,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
             _ = rowIndexes.Add(rowIndex);
         }
 
-        foreach (KeyValuePair<long, HashSet<int>> pageRows in byPage)
+        foreach (var pageRows in byPage)
         {
             cancellationToken.ThrowIfCancellationRequested();
             byte[] page = await writer.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
@@ -75,7 +75,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
                     return null;
                 }
 
-                foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
+                foreach (var rowBound in writer.EnumerateLiveRowBounds(page))
                 {
                     if (!pageRows.Value.Contains(rowBound.RowIndex))
                     {
@@ -83,7 +83,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
                     }
 
                     long key = (pageRows.Key << 16) | (uint)rowBound.RowIndex;
-                    if (pendingByLocation.TryGetValue(key, out (long DataPage, int RowIndex, TPayload Payload) entry))
+                    if (pendingByLocation.TryGetValue(key, out var entry))
                     {
                         result.Add((new RowLocation(pageRows.Key, rowBound.RowIndex, rowBound.RowStart, rowBound.RowSize), entry.Payload));
                     }

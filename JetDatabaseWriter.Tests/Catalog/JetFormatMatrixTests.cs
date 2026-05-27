@@ -36,8 +36,8 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_EveryTable_StreamsToCompletion(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
 
@@ -70,12 +70,12 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_EveryTable_ReadDataTable_ReturnsConsistentSchema(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            DataTable? dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+            var dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
 
             var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
@@ -99,10 +99,10 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     [MemberData(nameof(TestDatabases.JackcessAll), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_Statistics_TableCountMatchesListTables(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(tables.Count, stats.TableCount);
         Assert.True(stats.DatabaseSizeBytes > 0);
@@ -119,10 +119,10 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_ReadAllTables_KeyedByEveryListedTable(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(tables.Count, all.Count);
         foreach (string t in tables)

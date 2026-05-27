@@ -138,7 +138,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
 
         List<Exception>? failures = null;
 
-        foreach (Func<ValueTask> step in steps)
+        foreach (var step in steps)
         {
             try
             {

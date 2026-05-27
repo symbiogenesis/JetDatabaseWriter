@@ -356,7 +356,7 @@ internal static class AccessRoundTripEnvironment
             return new ProbeResult(null, null, "MSACCESS.EXE not found in any standard install location.");
         }
 
-        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
+        var hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
         return new ProbeResult(msaccess, hostProbe.HostPath, hostProbe.FailureReason);
     }
 

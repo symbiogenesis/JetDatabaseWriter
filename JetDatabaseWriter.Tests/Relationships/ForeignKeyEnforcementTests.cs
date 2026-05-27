@@ -62,7 +62,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
@@ -84,7 +84,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
@@ -111,7 +111,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
@@ -143,7 +143,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(3, t.Rows.Count);
     }
 
@@ -225,7 +225,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Empty(t.Rows);
     }
 
@@ -291,7 +291,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, t.Rows.Count);
         Assert.All(t.AsEnumerable(), r => Assert.Equal(99, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
 
@@ -299,8 +299,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // disk, not only repoint the children. Reopen the parent table
         // and assert the row carries the new PK value (and the old one
         // is gone).
-        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataRow parentRow = Assert.Single(p.AsEnumerable());
+        var p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+        var parentRow = Assert.Single(p.AsEnumerable());
         Assert.Equal(99, Convert.ToInt32(parentRow["Id"], System.Globalization.CultureInfo.InvariantCulture));
     }
 
@@ -360,7 +360,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+        var p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Parent side: row that had Id=2 now reports Id=222; the other
         // rows are unchanged; no row carries the old key value any more.
@@ -370,11 +370,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.DoesNotContain(2, parentIds);
 
         // The non-PK columns must travel with the rewritten row.
-        DataRow renamed = Assert.Single(p.AsEnumerable(), r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 222);
+        var renamed = Assert.Single(p.AsEnumerable(), r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 222);
         Assert.Equal("two", (string)renamed["Label"]);
 
         // Sanity: child-side cascade still landed (existing coverage).
-        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, c.Rows.Count);
         Assert.All(c.AsEnumerable(), r => Assert.Equal(222, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
     }
@@ -471,8 +471,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // Reopen and assert the child table contains ONLY the seed row;
         // none of the partial-batch rows survived the rollback.
         await using var reader = await OpenReaderAsync(temp);
-        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataRow only = Assert.Single(c.AsEnumerable());
+        var c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var only = Assert.Single(c.AsEnumerable());
         Assert.Equal(1, Convert.ToInt32(only["Id"], System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal(1, Convert.ToInt32(only["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
 
@@ -522,7 +522,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
         Assert.Equal(parentRowCount - 7, Convert.ToInt32(t.Rows[0]["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
     }
@@ -557,7 +557,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
@@ -599,7 +599,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(200, t.Rows.Count);
     }
 
@@ -650,7 +650,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(196, t.Rows.Count);
         foreach (DataRow r in t.Rows)
         {
@@ -705,7 +705,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         int repointed = 0;
         foreach (DataRow r in t.Rows)
         {
@@ -768,10 +768,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(3, t.Rows.Count);
 
-        DataRow[] moved = t.AsEnumerable()
+        var moved = t.AsEnumerable()
             .Where(static row => Convert.ToDecimal(row["ParentAmount"], System.Globalization.CultureInfo.InvariantCulture) == 3.75m)
             .ToArray();
         Assert.Equal(2, moved.Length);
@@ -792,10 +792,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        RowLocation loc = Assert.Single(locations);
+        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        var loc = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
 
@@ -831,10 +831,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             [42, true, "Alpha", payload, 12.345m, stamp, rowGuid],
             TestContext.Current.CancellationToken);
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        RowLocation location = Assert.Single(locations);
+        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        var location = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(
             location,
@@ -865,10 +865,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        RowLocation location = Assert.Single(locations);
+        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        var location = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(
             location,
@@ -951,7 +951,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable t = (await reader.ReadDataTableAsync(tbl, cancellationToken: TestContext.Current.CancellationToken))!;
+        var t = (await reader.ReadDataTableAsync(tbl, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Count children that were repointed to the new Id and ensure no
         // child still references the old Id.
@@ -1070,14 +1070,14 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await using var reader = await OpenReaderAsync(temp);
 
         // Student table: only student 2 remains.
-        DataTable s = (await reader.ReadDataTableAsync(
+        var s = (await reader.ReadDataTableAsync(
             students,
             cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(1, s.Rows.Count);
         Assert.Equal(2, (int)s.Rows[0]["StudentId"]);
 
         // Junction table: only the student-2 / course-10 row survives.
-        DataTable j = (await reader.ReadDataTableAsync(
+        var j = (await reader.ReadDataTableAsync(
             junction,
             cancellationToken: TestContext.Current.CancellationToken))!;
         var only = Assert.Single(j.AsEnumerable());
@@ -1085,7 +1085,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(10, (int)only["CourseId"]);
 
         // Courses table: both courses still exist (no cascade from junction→course).
-        DataTable c = (await reader.ReadDataTableAsync(
+        var c = (await reader.ReadDataTableAsync(
             courses,
             cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, c.Rows.Count);
@@ -1131,7 +1131,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Empty(childRows.Rows);
     }
 
@@ -1150,7 +1150,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             long relationshipsTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
-            TableDef relationshipsDef = await writer.ReadRequiredTableDefAsync(
+            var relationshipsDef = await writer.ReadRequiredTableDefAsync(
                 relationshipsTdefPage,
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
@@ -1176,8 +1176,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         await using var reader = await OpenReaderAsync(temp);
-        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataRow childRow = Assert.Single(childRows.AsEnumerable());
+        var childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        var childRow = Assert.Single(childRows.AsEnumerable());
         Assert.Equal(999, Convert.ToInt32(childRow["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
     }
 

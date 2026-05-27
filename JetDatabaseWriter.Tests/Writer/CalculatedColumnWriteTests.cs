@@ -62,7 +62,7 @@ public sealed class CalculatedColumnWriteTests
         await using var reader = await OpenReaderAsync(stream);
         var metadata = await reader.GetColumnMetadataAsync("CalcRoundTrip", TestContext.Current.CancellationToken);
 
-        ColumnMetadata calcLabel = Assert.Single(metadata, c => c.Name == "CalcLabel");
+        var calcLabel = Assert.Single(metadata, c => c.Name == "CalcLabel");
         Assert.True(calcLabel.IsCalculated);
         Assert.Equal("[Label] & \" #\" & [Score]", calcLabel.CalculationExpression);
         Assert.Equal(0x0A, calcLabel.CalculatedResultType);
@@ -72,10 +72,10 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(0x04, Assert.Single(metadata, c => c.Name == "NextScore").CalculatedResultType);
         Assert.Equal(0x10, Assert.Single(metadata, c => c.Name == "Weighted").CalculatedResultType);
 
-        DataTable table = await reader.ReadDataTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
+        var table = await reader.ReadDataTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
 
-        DataRow row = table.Rows[0];
+        var row = table.Rows[0];
         Assert.Equal("Alpha #9", row["CalcLabel"]);
         Assert.False(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
         Assert.Equal(10, Convert.ToInt32(row["NextScore"], CultureInfo.InvariantCulture));
@@ -86,7 +86,7 @@ public sealed class CalculatedColumnWriteTests
             "CalcRoundTrip",
             maxRows: 10,
             TestContext.Current.CancellationToken);
-        CalculatedProjection item = Assert.Single(typed);
+        var item = Assert.Single(typed);
         Assert.Equal("Alpha #9", item.CalcLabel);
         Assert.False(item.IsHigh);
         Assert.Equal(10, item.NextScore);
@@ -117,7 +117,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
+        var table = await reader.ReadDataTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
         Assert.Equal(memo, table.Rows[0]["ComputedMemo"]);
     }
@@ -174,8 +174,8 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
-        DataRow row = Assert.Single(table.AsEnumerable());
+        var table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
+        var row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Alpha", row["SafeLabel"]);
         Assert.Equal("Alpha #12", row["CalcLabel"]);
@@ -230,8 +230,8 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
-        DataRow row = Assert.Single(table.AsEnumerable());
+        var table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
+        var row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Beta #3", row["CalcLabel"]);
         Assert.False(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
@@ -264,8 +264,8 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
-        DataRow row = Assert.Single(table.AsEnumerable());
+        var table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
+        var row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Gamma #7", row["CalcLabel"]);
     }
@@ -399,7 +399,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        var row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["IsEven"], CultureInfo.InvariantCulture));
         Assert.True(Convert.ToBoolean(row["MatchesLabel"], CultureInfo.InvariantCulture));
@@ -499,7 +499,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        var row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
         Assert.Equal("second", row["ChoiceEdge"]);
@@ -555,7 +555,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDeepExpression",
                 [DBNull.Value],
@@ -581,7 +581,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.InsertRowAsync(
                 "CalcHugeText",
                 [DBNull.Value],
@@ -613,7 +613,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDomain",
                 [DBNull.Value],
@@ -641,7 +641,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcSpreadsheetOnly",
                 [DBNull.Value],

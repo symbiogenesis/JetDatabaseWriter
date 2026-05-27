@@ -24,11 +24,11 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task OverflowTestV2010_MemoColumns_ReturnNonEmptyStrings()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -45,7 +45,7 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
         int nonEmptyMemos = 0;
         foreach (DataRow row in dt.Rows)
         {
-            foreach (DataColumn col in memoColumns)
+            foreach (var col in memoColumns)
             {
                 object val = row[col];
                 if (val is string s && s.Length > 0)
@@ -65,11 +65,11 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task OverflowTestV2007_MemoColumns_ReturnNonEmptyStrings()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -84,7 +84,7 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
         int nonEmptyMemos = 0;
         foreach (DataRow row in dt.Rows)
         {
-            foreach (DataColumn col in memoColumns)
+            foreach (var col in memoColumns)
             {
                 object val = row[col];
                 if (val is string s && s.Length > 0)
@@ -106,11 +106,11 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task OverflowTestV2010_StringColumns_ReadWithoutTruncation()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -124,7 +124,7 @@ public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<Data
         long totalChars = 0;
         foreach (DataRow row in dt.Rows)
         {
-            foreach (DataColumn col in stringColumns)
+            foreach (var col in stringColumns)
             {
                 object val = row[col];
                 if (val is string s)

@@ -49,8 +49,8 @@ internal static class IndexCatalogReader
                     tdefBuffer,
                     anchors.RealIdxDescStart,
                     ri,
-                    out IndexLayout.RealIdxSlot slot,
-                    out List<IndexLayout.KeyColumn> keyCols))
+                    out var slot,
+                    out var keyCols))
             {
                 break;
             }
@@ -67,7 +67,7 @@ internal static class IndexCatalogReader
         var nameByRealIdx = new Dictionary<int, string>();
         for (int li = 0; li < anchors.NumIdx; li++)
         {
-            if (!layout.TryReadLogicalEntry(tdefBuffer, anchors.LogIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
+            if (!layout.TryReadLogicalEntry(tdefBuffer, anchors.LogIdxStart, li, out var entry))
             {
                 break;
             }
@@ -76,7 +76,7 @@ internal static class IndexCatalogReader
             if (entry.IndexType == IndexKind.PrimaryKey)
             {
                 pkRealIdxNums.Add(realIdxNum);
-                if (realIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie))
+                if (realIdxByNum.TryGetValue(realIdxNum, out var rie))
                 {
                     realIdxByNum[realIdxNum] = rie with { IsUnique = true };
                 }
@@ -135,16 +135,16 @@ internal static class IndexCatalogReader
         IReadOnlyList<ColumnInfo> tableColumns,
         IReadOnlyList<string>? logIdxNames = null)
     {
-        IndexCatalog catalog = Read(tdefBuffer, layout, anchors, logIdxNames);
-        Dictionary<int, int> snapshotIndexByColNum = BuildColumnNumberToSnapshotIndex(tableColumns);
+        var catalog = Read(tdefBuffer, layout, anchors, logIdxNames);
+        var snapshotIndexByColNum = BuildColumnNumberToSnapshotIndex(tableColumns);
         var keyColInfosByRealIdx = new Dictionary<int, List<IndexLayout.KeyColumnInfo>>(catalog.RealIdxByNum.Count);
-        foreach ((int realIdxNum, IndexLayout.RealIdxEntry rie) in catalog.RealIdxByNum)
+        foreach ((int realIdxNum, var rie) in catalog.RealIdxByNum)
         {
             if (IndexLayout.TryResolveKeyColumnInfos(
                     rie.IndexKeyColumns,
                     tableColumns,
                     snapshotIndexByColNum,
-                    out List<IndexLayout.KeyColumnInfo> infos))
+                    out var infos))
             {
                 keyColInfosByRealIdx[realIdxNum] = infos;
             }
@@ -181,7 +181,7 @@ internal static class IndexCatalogReader
         /// </summary>
         /// <param name="realIdxNum">The real index number of.</param>
         public bool IsUniqueOrPk(int realIdxNum)
-            => (RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
+            => (RealIdxByNum.TryGetValue(realIdxNum, out var rie) && rie.IsUnique)
                 || PkRealIdxNums.Contains(realIdxNum);
     }
 
@@ -214,7 +214,7 @@ internal static class IndexCatalogReader
         /// <param name="keyColInfos">The key col infos.</param>
         public bool TryGetKeyColumnInfos(int realIdxNum, out List<IndexLayout.KeyColumnInfo> keyColInfos)
         {
-            if (KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))
+            if (KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out var infos))
             {
                 keyColInfos = infos;
                 return true;

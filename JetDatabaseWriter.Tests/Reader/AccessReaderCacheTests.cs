@@ -82,7 +82,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "LargeRows";
         const int rowCount = 320;
-        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+        await using var stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "L"),
@@ -116,7 +116,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const int alphaRows = 48;
         const int betaRows = 52;
-        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+        await using var stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (AlphaRowsTable, alphaRows, "A"),
@@ -137,13 +137,13 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         var pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
         var rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, "_rowBoundsCache");
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
         Assert.Contains(BetaRowsTable, tables);
         Assert.NotNull(ReadPrivateField(reader, "_catalogCache"));
 
         long catalogMisses = pageCache.Misses;
-        List<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(tables, repeatedTables);
         Assert.Equal(catalogMisses, pageCache.Misses);
 
@@ -165,7 +165,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "MappedRows";
         const int rowCount = 96;
-        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+        await using var stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "M"),
@@ -196,7 +196,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "ReferenceMappedRows";
         const int rowCount = 96;
-        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+        await using var stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "R"),
@@ -226,7 +226,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     [Fact]
     public async Task OpenUncachedAsync_ReturnsEquivalentRowsWithoutAllocatingPageCaches()
     {
-        await using MemoryStream source = await CreateCacheExerciseDatabaseAsync(
+        await using var source = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (AlphaRowsTable, 72, "A"),
@@ -261,8 +261,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         string[] tableNames = [AlphaRowsTable, BetaRowsTable];
         foreach (string tableName in tableNames)
         {
-            List<string> cachedRows = await ReadRowSignaturesAsync(cachedReader, tableName, TestContext.Current.CancellationToken);
-            List<string> uncachedRows = await ReadRowSignaturesAsync(uncachedReader, tableName, TestContext.Current.CancellationToken);
+            var cachedRows = await ReadRowSignaturesAsync(cachedReader, tableName, TestContext.Current.CancellationToken);
+            var uncachedRows = await ReadRowSignaturesAsync(uncachedReader, tableName, TestContext.Current.CancellationToken);
             Assert.Equal(cachedRows, uncachedRows);
         }
     }
@@ -270,7 +270,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     [Fact]
     public async Task ReadPageCachedAsync_WithActiveJournal_BypassesCachedPageBytes()
     {
-        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+        await using var stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 ("JournalRows", 4, "J"),
@@ -420,7 +420,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static async ValueTask<long> ResolveTdefPageAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
+        var metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
         int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
         int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
         Assert.True(idIndex >= 0);
@@ -495,10 +495,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static object? ReadPrivateField(object instance, string fieldName)
     {
-        Type? currentType = instance.GetType();
+        var currentType = instance.GetType();
         while (currentType is not null)
         {
-            FieldInfo? field = currentType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            var field = currentType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             if (field is not null)
             {
                 return field.GetValue(instance);

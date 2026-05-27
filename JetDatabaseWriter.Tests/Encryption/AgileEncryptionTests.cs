@@ -98,7 +98,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             TestContext.Current.CancellationToken);
 
         // Smoke check: ListTables must succeed (i.e. catalog page decrypted).
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
     }
 
@@ -143,10 +143,10 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable? dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             tables[0],
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -166,7 +166,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(
@@ -181,7 +181,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     public async Task Agile_RowCounts_MatchUnencryptedSource()
     {
         var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        var expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await BuildAgileEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
@@ -191,12 +191,12 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        List<TableStat> actual = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        var actual = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expected.Count, actual.Count);
-        foreach (TableStat exp in expected)
+        foreach (var exp in expected)
         {
-            TableStat? act = actual.FirstOrDefault(s => s.Name == exp.Name);
+            var act = actual.FirstOrDefault(s => s.Name == exp.Name);
             Assert.NotNull(act);
             Assert.Equal(exp.RowCount, act!.RowCount);
         }
@@ -277,7 +277,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             // Reopen via AccessReader: must still detect Agile, decrypt,
             // and surface the freshly-inserted row.
             await using var reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);

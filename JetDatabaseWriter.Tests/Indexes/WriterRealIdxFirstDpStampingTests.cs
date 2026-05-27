@@ -113,7 +113,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
 
         foreach (string tableName in tableNames)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+            var indexes = await reader.ListIndexesAsync(tableName, ct);
             Assert.NotEmpty(indexes);
 
             // Every non-FK logical index should have a non-zero first_dp
@@ -122,7 +122,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
             // independently and may legitimately be 0 on freshly-created
             // FK entries — they're outside this hypothesis's scope.)
             int checkedCount = 0;
-            foreach (IndexMetadata idx in indexes.Where(i => !i.IsForeignKey))
+            foreach (var idx in indexes.Where(i => !i.IsForeignKey))
             {
                 string rangeMessage = $"{tableName}.{idx.Name}: FirstDp={idx.FirstDp} out of range (must be > 1 and < {totalPages}). Regression: writer emitted a zero / invalid real-idx first_dp stamp.";
                 Assert.True(idx.FirstDp > 1 && idx.FirstDp < totalPages, rangeMessage);

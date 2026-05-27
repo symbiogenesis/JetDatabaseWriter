@@ -48,7 +48,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
         Assert.All(tables, name => Assert.False(
@@ -74,10 +74,10 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "AES-decrypted table should contain rows.");
@@ -97,12 +97,12 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         // Read as DataTable (typed columns) rather than specific POCO,
         // since we don't know the exact schema of the first table.
-        DataTable? result = await reader.ReadDataTableAsync(tables[0], maxRows: 10, cancellationToken: TestContext.Current.CancellationToken);
+        var result = await reader.ReadDataTableAsync(tables[0], maxRows: 10, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(result);
         Assert.True(result.Rows.Count > 0, "AES-decrypted typed read should return rows.");
@@ -126,7 +126,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken)
@@ -152,10 +152,10 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        var meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
@@ -179,7 +179,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables from the encrypted database.");
         Assert.True(stats.TotalRows > 0, "Should report rows from the encrypted database.");
@@ -202,7 +202,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(all);
         Assert.All(all.Values, dt => Assert.NotNull(dt));
@@ -218,7 +218,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         // The table names from an AES-encrypted copy must match the original
         // unencrypted database. This verifies end-to-end decryption fidelity.
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        List<string> expectedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var expectedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
@@ -229,7 +229,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var encReader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> actualTables = await encReader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var actualTables = await encReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedTables.OrderBy(t => t), actualTables.OrderBy(t => t));
     }
@@ -239,7 +239,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // Row counts from the encrypted copy must match the original.
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        List<TableStat> expectedStats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        var expectedStats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
@@ -250,12 +250,12 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using var encReader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<TableStat> actualStats = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        var actualStats = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedStats.Count, actualStats.Count);
-        foreach (TableStat expected in expectedStats)
+        foreach (var expected in expectedStats)
         {
-            TableStat? actual = actualStats.FirstOrDefault(s => s.Name == expected.Name);
+            var actual = actualStats.FirstOrDefault(s => s.Name == expected.Name);
             Assert.NotNull(actual);
             Assert.Equal(expected.RowCount, actual.RowCount);
         }

@@ -17,7 +17,7 @@ internal static class CalculatedExpressionEvaluator
         var context = new EvaluationContext(tableDef, constraints, values, force);
         for (int i = 0; i < constraints.Count; i++)
         {
-            ColumnConstraint constraint = constraints[i];
+            var constraint = constraints[i];
             if (constraint.IsCalculated && (force || IsNull(values[i])))
             {
                 values[i] = context.EvaluateColumn(i);
@@ -40,11 +40,11 @@ internal static class CalculatedExpressionEvaluator
         public static Plan Parse(string expression)
         {
             ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
-            string normalized = CalculatedExpressionNormalizer.Normalize(expression, out Dictionary<string, string> placeholderToColumn);
+            string normalized = CalculatedExpressionNormalizer.Normalize(expression, out var placeholderToColumn);
             ValidateExpressionShape(normalized, MaxNormalizedExpressionLength, "Normalized calculated-column expression");
             try
             {
-                CalculatedExpressionNode root = FormulaParser<CalculatedExpressionNode, CalculatedExpressionNode, Dictionary<string, string>>.CellFormulaA1(
+                var root = FormulaParser<CalculatedExpressionNode, CalculatedExpressionNode, Dictionary<string, string>>.CellFormulaA1(
                     normalized,
                     placeholderToColumn,
                     CalculatedExpressionAstFactory.Instance);
@@ -84,7 +84,7 @@ internal static class CalculatedExpressionEvaluator
         public object EvaluateColumn(int index)
         {
             object current = values[index];
-            ColumnConstraint constraint = constraints[index];
+            var constraint = constraints[index];
             if (!constraint.IsCalculated)
             {
                 return current ?? DBNull.Value;
@@ -144,7 +144,7 @@ internal static class CalculatedExpressionEvaluator
                 throw new InvalidOperationException($"Calculated-column expression references unknown name '{name}'.");
             }
 
-            ColumnConstraint referenced = constraints[index];
+            var referenced = constraints[index];
             return referenced.IsCalculated ? EvaluateColumn(index) : values[index] ?? DBNull.Value;
         }
 

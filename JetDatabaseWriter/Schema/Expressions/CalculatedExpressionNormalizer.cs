@@ -121,7 +121,7 @@ internal static class CalculatedExpressionNormalizer
 
         public static string Normalize(string expression)
         {
-            List<Token> tokens = Tokenize(expression);
+            var tokens = Tokenize(expression);
             if (!tokens.Exists(static token => token.Kind is TokenKind.Word or TokenKind.Backslash || (token.Kind == TokenKind.Identifier && token.Text.EndsWith('$'))))
             {
                 return expression;
@@ -304,7 +304,7 @@ internal static class CalculatedExpressionNormalizer
             string left = ParsePrefix();
             while (true)
             {
-                Token token = Peek();
+                var token = Peek();
                 if (token.Kind is TokenKind.End or TokenKind.CloseParen or TokenKind.Comma)
                 {
                     break;
@@ -315,7 +315,7 @@ internal static class CalculatedExpressionNormalizer
                     break;
                 }
 
-                BinaryOperatorInfo? info = GetBinaryOperator(token);
+                var info = GetBinaryOperator(token);
                 if (info is null || info.Value.Precedence < minimumPrecedence)
                 {
                     break;
@@ -341,7 +341,7 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParsePrefix()
         {
-            Token token = Peek();
+            var token = Peek();
             if (token.IsWord("NOT"))
             {
                 Read();
@@ -359,7 +359,7 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParsePrimary()
         {
-            Token token = Read();
+            var token = Read();
             switch (token.Kind)
             {
                 case TokenKind.Identifier:
@@ -425,7 +425,7 @@ internal static class CalculatedExpressionNormalizer
                 negate = true;
             }
 
-            Token token = Read();
+            var token = Read();
             if (!token.IsWord("NULL"))
             {
                 throw new ArgumentException("Calculated-column 'Is' expressions are only supported for Null checks.");
@@ -437,7 +437,7 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParsePostfixNot(string left, int precedence)
         {
-            Token token = Read();
+            var token = Read();
             if (token.IsWord("LIKE"))
             {
                 return "NOT(" + ParseFunctionBinary("LIKE", left, new BinaryOperatorInfo("LIKE", precedence, false)) + ")";
@@ -470,7 +470,7 @@ internal static class CalculatedExpressionNormalizer
                 stopAtBetweenAnd = previousStop;
             }
 
-            Token separator = Read();
+            var separator = Read();
             if (!separator.IsWord("AND"))
             {
                 throw new ArgumentException("Calculated-column Between expression is missing the And separator.");
@@ -523,7 +523,7 @@ internal static class CalculatedExpressionNormalizer
 
         private void Expect(TokenKind kind, string text)
         {
-            Token token = Read();
+            var token = Read();
             if (token.Kind != kind || (text.Length > 0 && token.Text != text))
             {
                 throw new ArgumentException($"Expected '{text}' in calculated-column expression, got '{token.Text}'.");

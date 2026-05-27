@@ -107,7 +107,7 @@ internal static class Program
             return generated >= 0 ? 0 : 1;
         });
 
-        ParseResult parseResult = rootCommand.Parse(args);
+        var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync(cancellationToken: CancellationToken.None);
     }
 }

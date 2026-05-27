@@ -45,7 +45,7 @@ public class DataTableMaterializationBenchmarks
     [Benchmark]
     public async Task<int> Numeric_PublicReadDataTable()
     {
-        using DataTable table = await _numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        using var table = await _numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
@@ -95,7 +95,7 @@ public class DataTableMaterializationBenchmarks
     [Benchmark]
     public async Task<int> Text_PublicReadDataTable()
     {
-        using DataTable table = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        using var table = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
@@ -131,7 +131,7 @@ public class DataTableMaterializationBenchmarks
         bool beginLoadData,
         int minimumCapacity)
     {
-        using DataTable table = CreateDataTable(tableName, metadata, minimumCapacity);
+        using var table = CreateDataTable(tableName, metadata, minimumCapacity);
         if (beginLoadData)
         {
             table.BeginLoadData();
@@ -139,7 +139,7 @@ public class DataTableMaterializationBenchmarks
 
         await foreach (object[] sourceRow in reader.Rows(tableName).ConfigureAwait(false))
         {
-            DataRow targetRow = table.NewRow();
+            var targetRow = table.NewRow();
             for (int columnIndex = 0; columnIndex < sourceRow.Length; columnIndex++)
             {
                 targetRow[columnIndex] = sourceRow[columnIndex] ?? DBNull.Value;
@@ -162,7 +162,7 @@ public class DataTableMaterializationBenchmarks
         IReadOnlyList<ColumnMetadata> metadata,
         int minimumCapacity)
     {
-        using DataTable table = CreateDataTable(tableName, metadata, minimumCapacity);
+        using var table = CreateDataTable(tableName, metadata, minimumCapacity);
         table.BeginLoadData();
 
         await foreach (object[] sourceRow in reader.Rows(tableName).ConfigureAwait(false))
@@ -180,7 +180,7 @@ public class DataTableMaterializationBenchmarks
         IReadOnlyList<ColumnMetadata> metadata,
         int minimumCapacity)
     {
-        using DataTable table = CreateDataTable(tableName, metadata, minimumCapacity);
+        using var table = CreateDataTable(tableName, metadata, minimumCapacity);
         table.BeginLoadData();
 
         await foreach (object[] sourceRow in reader.Rows(tableName).ConfigureAwait(false))
@@ -200,7 +200,7 @@ public class DataTableMaterializationBenchmarks
             table.MinimumCapacity = minimumCapacity;
         }
 
-        foreach (ColumnMetadata column in metadata)
+        foreach (var column in metadata)
         {
             _ = table.Columns.Add(column.Name, column.ClrType);
         }

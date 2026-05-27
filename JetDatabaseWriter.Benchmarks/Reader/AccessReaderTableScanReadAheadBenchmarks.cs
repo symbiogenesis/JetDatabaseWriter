@@ -80,7 +80,7 @@ public class AccessReaderTableScanReadAheadBenchmarks
                 _tableName).ConfigureAwait(false);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(_databasePath, CreateOptions()).ConfigureAwait(false);
+        await using var reader = await AccessReader.OpenAsync(_databasePath, CreateOptions()).ConfigureAwait(false);
         return await CountRowsAsync(reader, _tableName).ConfigureAwait(false);
     }
 
@@ -94,7 +94,7 @@ public class AccessReaderTableScanReadAheadBenchmarks
                 _tableName).ConfigureAwait(false);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(_databasePath, CreateOptions()).ConfigureAwait(false);
+        await using var reader = await AccessReader.OpenAsync(_databasePath, CreateOptions()).ConfigureAwait(false);
         return await CountFirstRowAsync(reader, _tableName).ConfigureAwait(false);
     }
 

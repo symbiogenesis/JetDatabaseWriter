@@ -82,12 +82,12 @@ internal sealed class RelationshipManager
         cancellationToken.ThrowIfCancellationRequested();
 
         // Validate referenced user tables exist.
-        CatalogEntry primaryEntry = await writer.GetRequiredCatalogEntryAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        CatalogEntry foreignEntry = await writer.GetRequiredCatalogEntryAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        var primaryEntry = await writer.GetRequiredCatalogEntryAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        var foreignEntry = await writer.GetRequiredCatalogEntryAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
 
         // Validate referenced columns exist on each table.
-        TableDef primaryDef = await writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        TableDef foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        var primaryDef = await writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        var foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
         {
@@ -116,10 +116,10 @@ internal sealed class RelationshipManager
                 "catalog databases may require an Access-authored source before calling CreateRelationshipAsync.");
         }
 
-        TableDef msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        var msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject duplicate relationship names (case-insensitive).
-        HashSet<string> existingNames = await catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
+        var existingNames = await catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
         if (existingNames.Contains(relationship.Name))
         {
             throw new InvalidOperationException($"A relationship named '{relationship.Name}' already exists.");
@@ -156,11 +156,11 @@ internal sealed class RelationshipManager
             // would fail to match a parent row that was inserted before the
             // relationship existed. Re-read TDEFs because the emit mutates
             // both sides' TDEF pages in place.
-            TableDef primaryDefAfter = await writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            var primaryDefAfter = await writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
             await indexes.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry.TDefPage != primaryEntry.TDefPage)
             {
-                TableDef foreignDefAfter = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+                var foreignDefAfter = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
                 await indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -318,19 +318,19 @@ internal sealed class RelationshipManager
         int[] columnNumbers,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] page = chain.Bytes;
-        if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
+        if (!TryParseFkTDefLayout(page, out var layout))
         {
             throw new NotSupportedException(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
         int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-        List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+        var existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
 
         int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
-        FkSidePlan plan = sharedSlot >= 0
+        var plan = sharedSlot >= 0
             ? new FkSidePlan(sharedSlot, logicalIdxNum, false, 0)
             : new FkSidePlan(layout.NumRealIdx, logicalIdxNum, true, 0);
 
@@ -354,9 +354,9 @@ internal sealed class RelationshipManager
         int[] fkColumnNumbers,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] page = chain.Bytes;
-        if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
+        if (!TryParseFkTDefLayout(page, out var layout))
         {
             throw new NotSupportedException(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
@@ -389,7 +389,7 @@ internal sealed class RelationshipManager
 
         int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
         int fkLogicalIdxNum = pkLogicalIdxNum + 1;
-        List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+        var existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
 
         return (
             new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
@@ -431,10 +431,10 @@ internal sealed class RelationshipManager
         byte cascadeDels,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] td = chain.Bytes;
 
-        if (!TryParseFkTDefLayout(td, out FkTDefLayout layout))
+        if (!TryParseFkTDefLayout(td, out var layout))
         {
             throw new NotSupportedException(
                 $"cannot mutate the TDEF at page {tdefPage} (malformed counts or not a TDEF).");
@@ -784,15 +784,15 @@ internal sealed class RelationshipManager
                 "The database does not contain a 'MSysRelationships' table; nothing to drop.");
         }
 
-        TableDef msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
-        List<RelationshipRowSnapshot> allRows = await catalog.CollectRowsAsync(
+        var msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        var allRows = await catalog.CollectRowsAsync(
             msysRelTdefPage,
             msysRelDef,
             _ => true,
             cancellationToken).ConfigureAwait(false);
 
         var matches = new List<RelationshipRowSnapshot>();
-        foreach (RelationshipRowSnapshot row in allRows)
+        foreach (var row in allRows)
         {
             if (string.Equals(row.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase))
             {
@@ -841,7 +841,7 @@ internal sealed class RelationshipManager
         }
 
         var remainingRows = new List<object[]>(allRows.Count - matches.Count);
-        foreach (RelationshipRowSnapshot row in allRows)
+        foreach (var row in allRows)
         {
             if (!string.Equals(row.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase))
             {
@@ -882,23 +882,23 @@ internal sealed class RelationshipManager
                 "The database does not contain a 'MSysRelationships' table; nothing to rename.");
         }
 
-        TableDef msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        var msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject collision with an existing name (case-insensitive).
-        HashSet<string> existing = await catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
+        var existing = await catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
         if (existing.Contains(newName))
         {
             throw new InvalidOperationException($"A relationship named '{newName}' already exists.");
         }
 
-        List<RelationshipRowSnapshot> allRows = await catalog.CollectRowsAsync(
+        var allRows = await catalog.CollectRowsAsync(
             msysRelTdefPage,
             msysRelDef,
             _ => true,
             cancellationToken).ConfigureAwait(false);
 
         var matches = new List<RelationshipRowSnapshot>();
-        foreach (RelationshipRowSnapshot row in allRows)
+        foreach (var row in allRows)
         {
             if (string.Equals(row.SzRelationship, oldName, StringComparison.OrdinalIgnoreCase))
             {
@@ -918,7 +918,7 @@ internal sealed class RelationshipManager
         }
 
         var replacementRows = new List<object[]>(allRows.Count);
-        foreach (RelationshipRowSnapshot row in allRows)
+        foreach (var row in allRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -976,14 +976,14 @@ internal sealed class RelationshipManager
         string baseName,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] pageBytes = chain.Bytes;
-        if (!TryParseFkTDefLayout(pageBytes, out FkTDefLayout layout) || layout.NumIdx <= 0)
+        if (!TryParseFkTDefLayout(pageBytes, out var layout) || layout.NumIdx <= 0)
         {
             return baseName;
         }
 
-        List<string> existing = ReadLogicalIdxNames(pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
+        var existing = ReadLogicalIdxNames(pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
         return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
     }
 
@@ -1007,9 +1007,9 @@ internal sealed class RelationshipManager
         long otherTdefPage,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] td = chain.Bytes;
-        if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
+        if (!TryParseFkTDefLayout(td, out var layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
         {
             return -1;
         }
@@ -1088,9 +1088,9 @@ internal sealed class RelationshipManager
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] td = chain.Bytes;
-        if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumRealIdx <= 0)
+        if (!TryParseFkTDefLayout(td, out var layout) || layout.NumRealIdx <= 0)
         {
             return;
         }
@@ -1178,9 +1178,9 @@ internal sealed class RelationshipManager
         string newName,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] td = chain.Bytes;
-        if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
+        if (!TryParseFkTDefLayout(td, out var layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
         {
             return false;
         }
@@ -1640,10 +1640,10 @@ internal sealed class RelationshipManager
     {
         var byTablePair = new Dictionary<(string Pk, string Fk), List<RelationshipRowSnapshot>>(
             new TablePairComparer());
-        foreach (RelationshipRowSnapshot row in matches)
+        foreach (var row in matches)
         {
             (string Pk, string Fk) key = (row.SzReferencedObject, row.SzObject);
-            if (!byTablePair.TryGetValue(key, out List<RelationshipRowSnapshot>? group))
+            if (!byTablePair.TryGetValue(key, out var group))
             {
                 group = [];
                 byTablePair[key] = group;
@@ -1652,20 +1652,20 @@ internal sealed class RelationshipManager
             group.Add(row);
         }
 
-        foreach (KeyValuePair<(string Pk, string Fk), List<RelationshipRowSnapshot>> pair in byTablePair)
+        foreach (var pair in byTablePair)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            CatalogEntry? pkEntry = await writer.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
-            CatalogEntry? fkEntry = await writer.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+            var pkEntry = await writer.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+            var fkEntry = await writer.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
             if (pkEntry == null || fkEntry == null)
             {
                 // Catalog row references a missing table — skip TDEF work.
                 continue;
             }
 
-            TableDef pkDef = await writer.ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
-            TableDef fkDef = await writer.ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+            var pkDef = await writer.ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+            var fkDef = await writer.ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
 
             // Reconstruct the FK column list in icolumn order, then resolve
             // to col_num for col_map matching.

@@ -81,7 +81,7 @@ internal static class FormatProbeApplication
             return 0;
         });
 
-        ParseResult parseResult = rootCommand.Parse(args);
+        var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync(cancellationToken: CancellationToken.None);
     }
 
@@ -673,7 +673,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
 
         using var catalogScanThrottle = new System.Threading.SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());
-        CatalogScanResult[] scans = await Task.WhenAll(
+        var scans = await Task.WhenAll(
             fixturePaths.Select(path => ScanCatalogFixtureAsync(fixturesDir, path, catalogScanThrottle)));
 
         var verdicts = scans
@@ -686,7 +686,7 @@ internal static class FormatProbeApplication
 
         var msysNameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var anyIndexNameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (CatalogScanResult scan in scans)
+        foreach (var scan in scans)
         {
             foreach (string name in scan.MsysNames)
             {
@@ -857,7 +857,7 @@ internal static class FormatProbeApplication
                 .Where(c => c.Name.Contains("index", StringComparison.OrdinalIgnoreCase))
                 .Select(c => c.Name)
                 .ToList();
-            List<(long Id, string Name, int Type, long Flags, long TdefPage)>? indexCatalog = hasIdx || hasIdxCols
+            var indexCatalog = hasIdx || hasIdxCols
                 ? catalog
                 : null;
 

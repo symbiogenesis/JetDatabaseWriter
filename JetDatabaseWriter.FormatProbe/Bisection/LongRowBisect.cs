@@ -33,8 +33,8 @@ internal static class LongRowBisect
         sb.AppendLine();
 
         // Build inline-only encoders over the existing per-codepoint tables.
-        InlineEncoder genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
-        InlineEncoder genEncoder = LoadEncoder("GeneralTextIndexEncoder");
+        var genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
+        var genEncoder = LoadEncoder("GeneralTextIndexEncoder");
 
         var tasks = new (string Path, byte[] Sep, InlineEncoder Encoder)[]
         {
@@ -78,11 +78,11 @@ internal static class LongRowBisect
             return;
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
         var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
+        var columns = await reader.GetColumnMetadataAsync("Table11");
         int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();
         await foreach (string[] row in reader.RowsAsStrings("Table11", cancellationToken: CancellationToken.None))
@@ -90,7 +90,7 @@ internal static class LongRowBisect
             rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
         }
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table11");
+        var indexes = await reader.ListIndexesAsync("Table11");
         var idx = indexes.First(i => i.Columns.Count == 1 && i.Columns[0].Name == "data" && i.FirstDp > 0);
         bool asc = idx.Columns[0].IsAscending;
 
@@ -138,7 +138,7 @@ internal static class LongRowBisect
         foreach (var (rowIdx, val) in longRows)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{rowIdx}] len={val.Length}");
-            InlineEncodingCache inlineCache = encoder.Encode(val);
+            var inlineCache = encoder.Encode(val);
 
             // Show some specific source chars to diagnose chunk-boundary rule.
             for (int probe = 175; probe <= 185 && probe < val.Length; probe++)
@@ -300,7 +300,7 @@ internal static class LongRowBisect
 
         public void AppendInline(char c, List<byte> output)
         {
-            Func<char, byte[]?> getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
+            var getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
             byte[]? inline = getInlineBytes(c);
             if (inline is not null)
             {
@@ -315,8 +315,8 @@ internal static class LongRowBisect
             for (int i = 0; i < handlers.Length; i++)
             {
                 object handler = handlers[i];
-                Type handlerType = handler.GetType();
-                if (!methodCache.TryGetValue(handlerType, out MethodInfo? method))
+                var handlerType = handler.GetType();
+                if (!methodCache.TryGetValue(handlerType, out var method))
                 {
                     method = handlerType.GetMethod("GetInlineBytes")
                         ?? throw new MissingMethodException(handlerType.FullName, "GetInlineBytes");

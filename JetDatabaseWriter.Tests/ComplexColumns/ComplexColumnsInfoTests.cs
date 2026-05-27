@@ -25,9 +25,9 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     public async Task GetComplexColumns_DocumentsAttachments_ReturnsSingleAttachment()
     {
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
 
-        ComplexColumnInfo entry = Assert.Single(info);
+        var entry = Assert.Single(info);
         Assert.Equal("Attachments", entry.ColumnName, ignoreCase: true);
         Assert.Equal(ComplexColumnKind.Attachment, entry.Kind);
 
@@ -47,7 +47,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     public async Task GetComplexColumns_TableWithoutComplexColumns_ReturnsEmpty()
     {
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
+        var info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
         Assert.Empty(info);
     }
 
@@ -55,7 +55,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     public async Task GetComplexColumns_UnknownTable_ReturnsEmpty()
     {
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("NoSuchTable", TestContext.Current.CancellationToken);
+        var info = await reader.GetComplexColumnsAsync("NoSuchTable", TestContext.Current.CancellationToken);
         Assert.Empty(info);
     }
 
@@ -65,7 +65,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         // NorthwindTraders.accdb has multiple complex/attachment columns
         // (e.g. ProductCategories.ProductCategoryImage, Employees.Attachments).
         var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("ProductCategories", TestContext.Current.CancellationToken);
+        var info = await reader.GetComplexColumnsAsync("ProductCategories", TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(info);
         Assert.All(info, c =>
@@ -84,7 +84,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         database[complexColumnsTdefPage * Constants.PageSizes.Jet4] = 0x00;
 
         await using var stream = new MemoryStream(database, writable: false);
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -93,10 +93,10 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
             "Documents",
             TestContext.Current.CancellationToken);
-        ColumnMetadata files = Assert.Single(metadata, column => string.Equals(column.Name, "Files", StringComparison.Ordinal));
+        var files = Assert.Single(metadata, column => string.Equals(column.Name, "Files", StringComparison.Ordinal));
         Assert.Equal("Complex", files.TypeName);
 
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync(
+        var info = await reader.GetComplexColumnsAsync(
             "Documents",
             TestContext.Current.CancellationToken);
         Assert.Empty(info);
@@ -105,7 +105,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     private static async ValueTask<byte[]> CreateAttachmentDatabaseAsync()
     {
         await using var stream = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -127,13 +127,13 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     private static async ValueTask<int> FindSystemTablePageAsync(byte[] database, string tableName)
     {
         await using var stream = new MemoryStream(database, writable: false);
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable objects = await reader.ReadDataTableAsync(
+        var objects = await reader.ReadDataTableAsync(
             "MSysObjects",
             cancellationToken: TestContext.Current.CancellationToken);
         foreach (DataRow row in objects.Rows)

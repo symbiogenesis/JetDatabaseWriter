@@ -77,7 +77,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -136,7 +136,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -187,7 +187,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(803, dt!.Rows.Count);
 
@@ -261,7 +261,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.True(delta <= 2, $"Expected ≤2 new index pages, got {delta}.");
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -317,7 +317,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(807, dt!.Rows.Count);
 

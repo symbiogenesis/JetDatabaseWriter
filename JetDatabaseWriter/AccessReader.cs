@@ -213,9 +213,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // CA2000: OpenAsync(stream, leaveOpen:false) intentionally takes ownership and disposes on all paths.
 #pragma warning disable CA2000
-        FileStream fs = CreateStream(path, options);
+        var fs = CreateStream(path, options);
 #pragma warning restore CA2000
-        AccessReader reader = await OpenAsync(
+        var reader = await OpenAsync(
             fs,
             options,
             leaveOpen: false,
@@ -302,14 +302,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         using var operation = EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();
 
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         if (tables.Count == 0)
         {
             return new DataTable();
         }
 
-        CatalogEntry entry = tables[0];
-        TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var entry = tables[0];
+        var td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null || td.Columns.Count == 0)
         {
             return new DataTable(entry.Name);
@@ -319,14 +319,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             dt = new DataTable(entry.Name);
-            foreach (ColumnInfo col in td.Columns)
+            foreach (var col in td.Columns)
             {
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -356,7 +356,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        List<LinkedTableInfo> links = await GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
+        var links = await GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
         return links.ConvertAll(static link => link with { }); // Clone to detach from internal cache instances
     }
 
@@ -366,13 +366,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         using var operation = EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();
 
-        List<CatalogEntry> entries = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var entries = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         var result = new List<TableStat>(entries.Count);
 
-        foreach (CatalogEntry entry in entries)
+        foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             result.Add(new TableStat
             {
                 Name = entry.Name,
@@ -396,8 +396,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _ = dt.Columns.Add("RowCount", typeof(long));
             _ = dt.Columns.Add("ColumnCount", typeof(int));
 
-            List<TableStat> stats = await GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
-            foreach (TableStat s in stats)
+            var stats = await GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var s in stats)
             {
                 _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
             }
@@ -428,7 +428,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         long count = 0;
         long tdefPage = resolved.Value.Entry.TDefPage;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         foreach (long pageNumber in pageNumbers)
         {
@@ -494,7 +494,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            await foreach (T row in EnumerateLinkedRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
+            await foreach (var row in EnumerateLinkedRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }
@@ -519,13 +519,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // null when any bound column requires the slow path (T_MEMO/T_OLE
         // LVAL chain, T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, Hyperlink
         // prop).
-        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
+        var directDecoder = td.HasComplexColumns
             ? null
             : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
 
         if (directDecoder != null)
         {
-            await foreach (T item in EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken).ConfigureAwait(false))
+            await foreach (var item in EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken).ConfigureAwait(false))
             {
                 yield return item;
             }
@@ -533,7 +533,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+        var factory = RowMapper<T>.Build(headers, td.ClrTypes);
 
         // Skip per-row decode of columns the mapper never reads. For wide
         // tables and narrow DTOs this can eliminate the bulk of the per-row
@@ -544,7 +544,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ? null
             : RowMapper<T>.GetBoundColumnMask(headers);
 
-        await foreach (T mapped in EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (var mapped in EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return mapped;
         }
@@ -583,21 +583,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+        var complexData = needsComplexPass
             ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing);
 
         int colCount = td.Columns.Count;
         object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
         try
         {
-            await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+                foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                 {
                     if (rb.RowSize < _rowSz.NumCols)
                     {
@@ -690,17 +690,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+        var complexData = needsComplexPass
             ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing);
 
-        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+            foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 if (rb.RowSize < _rowSz.NumCols)
                 {
@@ -755,13 +755,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         long rowCount = 0;
         bool hasVarColumns = td.HasVarColumns;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+            foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 if (rb.RowSize < _rowSz.NumCols)
                 {
@@ -805,7 +805,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                Task<TableScanPage> currentPageTask = nextPageTask
+                var currentPageTask = nextPageTask
                     ?? ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).AsTask();
                 nextPageTask = pageIndex + 1 < pageNumbers.Count
                     ? ReadTableScanPageAsync(pageNumbers[pageIndex + 1], cancellationToken).AsTask()
@@ -863,9 +863,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var (entry, td) = resolved.Value;
         long rowCount = 0;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -889,7 +889,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            List<ColumnMetadata>? linkedMetadata = await TryReadLinkedTableAsync(
+            var linkedMetadata = await TryReadLinkedTableAsync(
                 tableName,
                 link => LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken),
                 (source, link) => source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken),
@@ -904,12 +904,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             complexSubtypes = await _complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
-        ColumnPropertyBlock? properties = await ReadLvPropForTableAsync(
+        var properties = await ReadLvPropForTableAsync(
             resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         return resolved.Value.Td.Columns.Select((col, index) =>
         {
-            ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
+            var target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
                 ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, _format)
@@ -944,7 +944,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static byte ResolveCalculatedResultType(ColumnPropertyTarget? target)
     {
-        ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
+        var rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return rt is not null && rt.Value.Length >= 1
             && (rt.DataType == Constants.ColumnTypes.T_BYTE
                 || rt.DataType == Constants.ColumnTypes.T_INT
@@ -1048,8 +1048,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        List<IndexMetadata> indexes = ParseIndexMetadata(tdefBytes, td.Columns);
-        IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase));
+        var indexes = ParseIndexMetadata(tdefBytes, td.Columns);
+        var index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase));
         if (index == null)
         {
             throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
@@ -1064,14 +1064,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var cursor = new IndexCursor(
             (pageNumber, ct) => ReadPageCachedAsync(pageNumber, ct),
             _pgSz);
-        List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
+        var hits = await cursor.FindRowLocationsAsync(
             index.FirstDp,
             searchKey,
             cancellationToken).ConfigureAwait(false);
 
         bool needsComplexPass = td.HasComplexColumns;
         bool needsHyperlinkPass = td.HasHyperlinkColumns;
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+        var complexData = needsComplexPass
             ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
 
@@ -1189,7 +1189,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Build a col_num → name lookup honouring deleted-column gaps.
         var colNumToName = new Dictionary<int, string>(columns.Count);
-        foreach (ColumnInfo c in columns)
+        foreach (var c in columns)
         {
             colNumToName[c.ColNum] = c.Name;
         }
@@ -1212,7 +1212,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            if (!_indexLayout.TryReadLogicalEntry(td, logicalIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
+            if (!_indexLayout.TryReadLogicalEntry(td, logicalIdxStart, i, out var entry))
             {
                 break;
             }
@@ -1224,7 +1224,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte flags = 0x00;
             int firstDp = 0;
             if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && _indexLayout.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> kcs))
+                && _indexLayout.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out var slot, out var kcs))
             {
                 foreach ((int cn, bool ascending) in kcs)
                 {
@@ -1289,8 +1289,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         for (int i = 0; i < index.Columns.Count; i++)
         {
-            IndexColumnReference keyColumn = index.Columns[i];
-            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber);
+            var keyColumn = index.Columns[i];
+            var column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber);
             if (column == null)
             {
                 throw new InvalidDataException(
@@ -1331,7 +1331,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < _rowSz.NumCols)
+        if (!TryFindLiveRowBound(page, dataPage, rowIndex, out var rowBound) || rowBound.RowSize < _rowSz.NumCols)
         {
             return null;
         }
@@ -1358,7 +1358,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private bool TryFindLiveRowBound(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
     {
-        foreach (RowBound candidate in GetLiveRowBoundsCached(pageNumber, page))
+        foreach (var candidate in GetLiveRowBoundsCached(pageNumber, page))
         {
             if (candidate.RowIndex == rowIndex)
             {
@@ -1377,7 +1377,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         return tables.ConvertAll(e => e.Name);
     }
 
@@ -1408,7 +1408,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (string.IsNullOrEmpty(tableName))
         {
-            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
             if (tables.Count == 0)
             {
                 return new DataTable();
@@ -1420,7 +1420,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            DataTable? linkedTable = await TryReadLinkedTableAsync(
+            var linkedTable = await TryReadLinkedTableAsync(
                 tableName,
                 link => LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken),
                 (source, link) => source.ReadDataTableCoreAsync(link.SourceObjectName, maxRows, progress, preserveComplexReferences, cancellationToken),
@@ -1439,18 +1439,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             dt = new DataTable(tableName);
-            foreach (ColumnInfo col in td.Columns)
+            foreach (var col in td.Columns)
             {
-                Type clrType = preserveComplexReferences && (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
+                var clrType = preserveComplexReferences && (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
                     ? typeof(object)
                     : JetTypeInfo.ResolveClrType(col);
                 _ = dt.Columns.Add(col.Name, clrType);
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !preserveComplexReferences
+            var complexData = td.HasComplexColumns && !preserveComplexReferences
                 ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
                 : null;
-            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
             int minimumCapacity = ResolveDataTableMinimumCapacity(td.RowCount, maxRows);
             if (minimumCapacity > 0)
@@ -1471,11 +1471,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
-                await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+                await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+                    foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                     {
                         if (rb.RowSize < _rowSz.NumCols)
                         {
@@ -1498,7 +1498,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                             WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
                         }
 
-                        DataRow newRow = dt.NewRow();
+                        var newRow = dt.NewRow();
                         for (int i = 0; i < colCount; i++)
                         {
                             newRow[i] = rowBuffer[i] ?? DBNull.Value;
@@ -1542,7 +1542,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private async ValueTask<long?> TryGetLinkedTableRowCountAsync(string tableName, CancellationToken cancellationToken)
     {
-        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        var link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
         if (link == null)
         {
             return null;
@@ -1553,7 +1553,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return await LinkedTableManager.CountLinkedTextRowsAsync(this, link, cancellationToken).ConfigureAwait(false);
         }
 
-        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await using var source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
         return await source.GetRealRowCountAsync(link.SourceObjectName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1594,8 +1594,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
     {
-        List<ColumnMetadata> meta = await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
-        Func<object?[], T> textFactory = RowMapper<T>.Build(meta);
+        var meta = await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
+        var textFactory = RowMapper<T>.Build(meta);
         await foreach (string[] row in LinkedTableManager.RowsLinkedTextAsStringsAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return textFactory(row);
@@ -1608,7 +1608,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Func<AccessReader, LinkedTableInfo, IAsyncEnumerable<TRow>> readAccess,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        var link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
         if (link == null)
         {
             yield break;
@@ -1616,7 +1616,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (link.Kind == LinkedTableKind.Text)
         {
-            await foreach (TRow row in readText(link).ConfigureAwait(false))
+            await foreach (var row in readText(link).ConfigureAwait(false))
             {
                 yield return row;
             }
@@ -1624,8 +1624,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-        await foreach (TRow row in readAccess(source, link).ConfigureAwait(false))
+        await using var source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await foreach (var row in readAccess(source, link).ConfigureAwait(false))
         {
             yield return row;
         }
@@ -1638,7 +1638,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken)
         where TResult : class
     {
-        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        var link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
         if (link == null)
         {
             return null;
@@ -1649,7 +1649,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return await readText(link).ConfigureAwait(false);
         }
 
-        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await using var source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
         return await readAccess(source, link).ConfigureAwait(false);
     }
 
@@ -1704,7 +1704,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
+        var meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         uint? linkedTextMaxMaterializedRows = await LinkedTableManager.GetLinkedTextMaterializedRowLimitAsync(
             this,
             tableName,
@@ -1749,12 +1749,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        var pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+            foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1810,12 +1810,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        var pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        await foreach (var scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
+            foreach (var rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1871,7 +1871,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // because we don't know whether a deleted column was variable-length.
         bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out var layout))
         {
             return null;
         }
@@ -1881,8 +1881,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ColumnInfo col = td.Columns[i];
-            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+            var col = td.Columns[i];
+            var slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
             values[i] = await ReadColumnValueAsync(page, rowStart, slice, col, cancellationToken).ConfigureAwait(false);
         }
 
@@ -1914,7 +1914,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // Stale rows: force var-area parsing when deleted-column gaps exist.
         bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out var layout))
         {
             return null;
         }
@@ -1924,8 +1924,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ColumnInfo col = projectedColumns[i].Column;
-            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+            var col = projectedColumns[i].Column;
+            var slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
             string rawValue = slice.Kind switch
             {
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
@@ -1975,7 +1975,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return await ReadCalculatedVarValueAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
         }
 
-        Type targetType = JetTypeInfo.ResolveClrType(col);
+        var targetType = JetTypeInfo.ResolveClrType(col);
         if (targetType == typeof(byte[]))
         {
             switch (col.Type)
@@ -2038,7 +2038,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            DataTable? linkedTable = await TryReadLinkedTableAsync(
+            var linkedTable = await TryReadLinkedTableAsync(
                 tableName,
                 link => LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken),
                 (source, link) => source.ReadTableAsStringsAsync(link.SourceObjectName, maxRows, progress, cancellationToken),
@@ -2056,12 +2056,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             dt = new DataTable(tableName);
-            foreach (ColumnInfo col in td.Columns)
+            foreach (var col in td.Columns)
             {
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
             foreach (long pageNumber in pageNumbers)
             {
@@ -2103,14 +2103,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         using var operation = EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();
 
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         var tableRowCounts = new Dictionary<string, long>();
         long totalRows = 0;
 
-        foreach (CatalogEntry table in tables)
+        foreach (var table in tables)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TableDef? td = await ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
+            var td = await ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
             if (td != null)
             {
                 tableRowCounts[table.Name] = td.RowCount;
@@ -2150,12 +2150,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < tables.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            CatalogEntry table = tables[i];
+            var table = tables[i];
             progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
             result[table.Name] = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
@@ -2176,12 +2176,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < tables.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            CatalogEntry table = tables[i];
+            var table = tables[i];
             progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
             result[table.Name] = await ReadTableAsStringsAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
@@ -2193,7 +2193,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is invoked from DisposeReaderResourcesAsync, passed as a step to LockFileCoordinator.DisposeAfterAsync.")]
     public override async ValueTask DisposeAsync()
     {
-        if (!_operationGate.TryBeginDispose(out Task waitForOperations))
+        if (!_operationGate.TryBeginDispose(out var waitForOperations))
         {
             await _operationGate.DisposeCompleted.ConfigureAwait(false);
             return;
@@ -2217,7 +2217,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
-        FileOptions accessPattern = options.ParallelPageReadsEnabled ? FileOptions.RandomAccess : FileOptions.SequentialScan;
+        var accessPattern = options.ParallelPageReadsEnabled ? FileOptions.RandomAccess : FileOptions.SequentialScan;
         return OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | accessPattern);
     }
 
@@ -2463,7 +2463,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        ReadOnlySpan<byte> dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
+        var dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
         if (dataBlock.Length < 2 || Ru16(dataBlock, 0) != OlePackageStreamSignature)
         {
             return false;
@@ -2564,7 +2564,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static bool HasCacheReentrantScanColumns(TableDef tableDef)
     {
-        foreach (ColumnInfo column in tableDef.Columns)
+        foreach (var column in tableDef.Columns)
         {
             if (column.Type is T_MEMO or T_OLE or T_COMPLEX or T_ATTACHMENT)
             {
@@ -2669,7 +2669,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return mappedPages;
         }
 
-        Dictionary<long, long[]> pageIndex = await _ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false);
+        var pageIndex = await _ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false);
         return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
             ? pageNumbers
             : [];
@@ -2703,7 +2703,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             if (tdef[0] != Constants.PageTypes.TableDefinition
-                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMap.Pointer pointer)
+                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out var pointer)
                 || pointer.PageNumber <= 0)
             {
                 return null;
@@ -2743,7 +2743,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, _dataPage, _pgSz, usageMapRow, out RowBound rowBound))
+                || !UsageMap.TryGetRowBound(usageMapPage, _dataPage, _pgSz, usageMapRow, out var rowBound))
             {
                 return null;
             }
@@ -2836,7 +2836,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
+                if (!pagesByOwner.TryGetValue(owner, out var ownedPages))
                 {
                     ownedPages = [];
                     pagesByOwner.Add(owner, ownedPages);
@@ -2851,7 +2851,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var result = new Dictionary<long, long[]>(pagesByOwner.Count);
-        foreach ((long owner, List<long> ownedPages) in pagesByOwner)
+        foreach ((long owner, var ownedPages) in pagesByOwner)
         {
             result.Add(owner, [.. ownedPages]);
         }
@@ -2863,7 +2863,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
-        List<CatalogEntry>? cached = GetCatalogCache();
+        var cached = GetCatalogCache();
         if (cached != null)
         {
             return cached;
@@ -2871,7 +2871,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        var msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             LastDiagnostics = "ERROR: Page 2 is not a valid TDEF page (null returned).";
@@ -2894,7 +2894,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var result = new List<CatalogEntry>();
-        IReadOnlyList<long> catalogPageNumbers = await GetOwnedDataPagesAsync(2, cancellationToken).ConfigureAwait(false);
+        var catalogPageNumbers = await GetOwnedDataPagesAsync(2, cancellationToken).ConfigureAwait(false);
         int catPages = catalogPageNumbers.Count;
         int allRows = 0;
 
@@ -2956,7 +2956,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
                 string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
             _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
-            foreach (CatalogEntry e in result)
+            foreach (var e in result)
             {
                 _ = diag.AppendLine($"  [{e.Name}] TDEF page {e.TDefPage}");
             }
@@ -2974,13 +2974,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     internal async ValueTask<List<LinkedTableInfo>> GetLinkedTablesCachedAsync(CancellationToken cancellationToken)
     {
-        List<LinkedTableInfo>? cached = GetLinkedTableCache();
+        var cached = GetLinkedTableCache();
         if (cached != null)
         {
             return cached;
         }
 
-        List<LinkedTableInfo> links = await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
+        var links = await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
         SetLinkedTableCache(links);
         return links;
     }
@@ -3060,23 +3060,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return ComputeLiveRowBoundsArray(page);
         }
 
-        if (_rowBoundsCache is not null && _rowBoundsCache.TryGetValue(pageNumber, out RowBound[] cached))
+        if (_rowBoundsCache is not null && _rowBoundsCache.TryGetValue(pageNumber, out var cached))
         {
             return cached;
         }
 
-        RowBound[] bounds = ComputeLiveRowBoundsArray(page);
+        var bounds = ComputeLiveRowBoundsArray(page);
         _rowBoundsCache?.Add(pageNumber, bounds);
         return bounds;
     }
 
     internal async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-        CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        var tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
         if (entry != null)
         {
-            TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             if (td != null && td.Columns.Count > 0)
             {
                 await HydrateCalculatedResultTypesAsync(entry.TDefPage, td, cancellationToken).ConfigureAwait(false);
@@ -3092,7 +3092,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken).ConfigureAwait(false);
         if (sysPage > 0)
         {
-            TableDef? sysTd = await ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
+            var sysTd = await ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
             if (sysTd != null && sysTd.Columns.Count > 0)
             {
                 await HydrateCalculatedResultTypesAsync(sysPage, sysTd, cancellationToken).ConfigureAwait(false);
@@ -3110,14 +3110,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return;
         }
 
-        ColumnPropertyBlock? properties = await ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var properties = await ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (properties is null)
         {
             return;
         }
 
         bool changed = false;
-        foreach (ColumnInfo col in tableDef.Columns)
+        foreach (var col in tableDef.Columns)
         {
             if (!col.IsCalculated)
             {
@@ -3145,7 +3145,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
     private async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+        foreach (var rb in GetLiveRowBoundsCached(pageNumber, page))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -3186,7 +3186,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // parsing because we don't know if a deleted column was var-length.
         bool hasVarCols = td.HasVarColumns || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out var layout))
         {
             return null;
         }
@@ -3197,8 +3197,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ColumnInfo col = td.Columns[i];
-            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+            var col = td.Columns[i];
+            var slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
 
             switch (slice.Kind)
             {
@@ -3646,7 +3646,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         TableDef td,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3712,7 +3712,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        TableDef? msys = await GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
+        var msys = await GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
         if (msys is null)
         {
             return null;
@@ -3779,7 +3779,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
     {
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        var msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return 0;

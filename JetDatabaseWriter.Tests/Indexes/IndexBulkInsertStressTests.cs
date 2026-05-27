@@ -74,7 +74,7 @@ public sealed class IndexBulkInsertStressTests
         // confirms the data pages remain readable; the index B-tree was
         // exercised purely on the write side.)
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(RowCount, dt.Rows.Count);
         var seen = new HashSet<int>();
         foreach (DataRow r in dt.Rows)
@@ -182,7 +182,7 @@ public sealed class IndexBulkInsertStressTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken))!;
 
         var rows = dt.AsEnumerable()
             .Select(r => (Id: (int)r["Id"], Data: (string)r["Data"]))
@@ -242,7 +242,7 @@ public sealed class IndexBulkInsertStressTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(RowCount - 2, dt.Rows.Count);
 
         var ids = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();

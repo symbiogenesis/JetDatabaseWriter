@@ -162,9 +162,9 @@ public sealed class ComplexColumnsWriterTests
 
         var entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        TableDef? tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
+        var tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
         Assert.NotNull(tableDef);
-        ColumnInfo? files = tableDef!.FindColumn("Files");
+        var files = tableDef!.FindColumn("Files");
         Assert.NotNull(files);
         Assert.Equal(Constants.ColumnTypes.T_COMPLEX, files!.Type);
     }
@@ -406,9 +406,9 @@ public sealed class ComplexColumnsWriterTests
 
         // The MSysComplexColumns row for "Files" must reference a real template id
         // (>0) instead of a placeholder 0.
-        DataTable? cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        DataRow row = Assert.Single(
+        var row = Assert.Single(
             cx!.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),
@@ -446,9 +446,9 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable? cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        DataRow row = Assert.Single(
+        var row = Assert.Single(
             cx!.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),

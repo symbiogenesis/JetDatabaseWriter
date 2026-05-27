@@ -25,8 +25,8 @@ public sealed class IndexCursorTests
     public void PageCodec_DecodeLeafEntries_RoundTripsBuilderOutput(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        List<IndexEntry> entries = BuildIntEntries(8);
+        var layout = IndexLeafPageBuilder.GetLayout(format);
+        var entries = BuildIntEntries(8);
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout,
@@ -38,7 +38,7 @@ public sealed class IndexCursorTests
             tailPage: 0,
             enablePrefixCompression: true);
 
-        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
+        var decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
 
         AssertEntriesEqual(entries, decoded);
     }
@@ -48,8 +48,8 @@ public sealed class IndexCursorTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task ContainsKeyAsync_MultiLevelTree_FindsExistingKey(DatabaseFormat format)
     {
-        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
-        IndexCursor cursor = CreateCursor(tree);
+        var tree = BuildTree(format, BuildIntEntries(900));
+        var cursor = CreateCursor(tree);
 
         byte[] existingKey = IndexKeyEncoder.EncodeEntry(0x04, 750, ascending: true);
         byte[] missingKey = IndexKeyEncoder.EncodeEntry(0x04, 5000, ascending: true);
@@ -64,11 +64,11 @@ public sealed class IndexCursorTests
     public async Task FindRowLocationsAsync_DuplicateKeySpanningLeaves_ReturnsEveryMatch(DatabaseFormat format)
     {
         byte[] duplicateKey = IndexKeyEncoder.EncodeEntry(0x04, 42, ascending: true);
-        List<IndexEntry> entries = BuildDuplicateEntries(duplicateKey, 500);
-        TreeFixture tree = BuildTree(format, entries);
-        IndexCursor cursor = CreateCursor(tree);
+        var entries = BuildDuplicateEntries(duplicateKey, 500);
+        var tree = BuildTree(format, entries);
+        var cursor = CreateCursor(tree);
 
-        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
+        var matches = await cursor.FindRowLocationsAsync(
             tree.RootPageNumber,
             duplicateKey,
             cancellationToken);
@@ -89,13 +89,13 @@ public sealed class IndexCursorTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task ContainsKeyAsync_StaleIntermediateSummary_FollowsTailPage(DatabaseFormat format)
     {
-        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
+        var tree = BuildTree(format, BuildIntEntries(900));
         long tailPageNumber = FindTailLeafPage(tree);
         byte[] appendedKey = IndexKeyEncoder.EncodeEntry(0x04, 5000, ascending: true);
         var appendedEntry = new IndexEntry(appendedKey, DataPage: 999, DataRow: 7);
 
         byte[] tailPage = tree.Pages[tailPageNumber];
-        List<IndexEntry> tailEntries = IndexPageCodec.DecodeLeafEntries(tree.Layout, tailPage, tree.PageSize);
+        var tailEntries = IndexPageCodec.DecodeLeafEntries(tree.Layout, tailPage, tree.PageSize);
         tailEntries.Add(appendedEntry);
 
         var (previousPage, nextPage, tailHeaderPage) = IndexPageCodec.ReadSiblingPointers(tree.Layout, tailPage);
@@ -109,10 +109,10 @@ public sealed class IndexCursorTests
             tailHeaderPage,
             enablePrefixCompression: true);
 
-        IndexCursor cursor = CreateCursor(tree);
+        var cursor = CreateCursor(tree);
 
         Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, appendedKey, cancellationToken));
-        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
+        var matches = await cursor.FindRowLocationsAsync(
             tree.RootPageNumber,
             appendedKey,
             cancellationToken);
@@ -137,8 +137,8 @@ public sealed class IndexCursorTests
     private static TreeFixture BuildTree(DatabaseFormat format, IReadOnlyList<IndexEntry> entries)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(
+        var layout = IndexLeafPageBuilder.GetLayout(format);
+        var build = IndexBTreeBuilder.Build(
             layout,
             pageSize,
             ParentTdefPage,
@@ -184,7 +184,7 @@ public sealed class IndexCursorTests
 
     private static long FindTailLeafPage(TreeFixture tree)
     {
-        foreach (KeyValuePair<long, byte[]> page in tree.Pages)
+        foreach (var page in tree.Pages)
         {
             if (!IndexPageCodec.IsLeaf(page.Value))
             {

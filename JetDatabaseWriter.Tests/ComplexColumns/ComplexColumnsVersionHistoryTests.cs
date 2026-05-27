@@ -28,11 +28,11 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task ComplexDataFixture_HasVersionHistoryNamedColumn(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
+        var complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
@@ -48,15 +48,15 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task VersionHistoryColumn_HasVHComplexTypeName(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
+        var complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
-        ComplexColumnInfo vhCol = complex.First(
+        var vhCol = complex.First(
             c => c.ColumnName.StartsWith("VersionHistory", System.StringComparison.Ordinal));
 
         Assert.Contains("VH", vhCol.ComplexTypeName, System.StringComparison.Ordinal);
@@ -74,11 +74,11 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task ComplexDataFixture_HasAllThreeComplexSubtypes(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
+        var complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
@@ -96,15 +96,15 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task VersionHistoryFlatTable_IsReadable(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
+        var complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
-        ComplexColumnInfo vhCol = complex.First(
+        var vhCol = complex.First(
             c => c.ColumnName.StartsWith("VersionHistory", System.StringComparison.Ordinal));
 
         // The flat table should be enumerable even though it's a system table.

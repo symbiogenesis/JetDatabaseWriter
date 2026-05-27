@@ -90,7 +90,7 @@ internal static class CalculatedExpressionCoercion
         {
             comparison = leftDecimal.CompareTo(rightDecimal);
         }
-        else if (TryConvertDateTime(left, out DateTime leftDate) && TryConvertDateTime(right, out DateTime rightDate))
+        else if (TryConvertDateTime(left, out var leftDate) && TryConvertDateTime(right, out var rightDate))
         {
             comparison = leftDate.CompareTo(rightDate);
         }
@@ -271,7 +271,7 @@ internal static class CalculatedExpressionCoercion
             "M/d/yyyy",
             "MM/dd/yyyy",
         ];
-        if (DateTime.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out DateTime exact))
+        if (DateTime.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var exact))
         {
             return exact;
         }

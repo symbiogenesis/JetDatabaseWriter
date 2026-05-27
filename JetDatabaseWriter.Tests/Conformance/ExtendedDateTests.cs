@@ -34,8 +34,8 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -52,8 +52,8 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundExtended = false;
         foreach (string table in tables)
@@ -81,8 +81,8 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {

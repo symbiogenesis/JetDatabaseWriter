@@ -49,7 +49,7 @@ public sealed class CompoundFileReaderTests
     [MemberData(nameof(TestStreamFixtures))]
     public async Task ReadStreams_TestStream_ContainsExpectedPayload(string fileName, int length)
     {
-        await using FileStream fs = File.OpenRead(FixturePath(fileName));
+        await using var fs = File.OpenRead(FixturePath(fileName));
         var streams = await CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken);
 
         Assert.True(streams.ContainsKey("TestStream"), $"Missing 'TestStream' in {fileName}; have: {string.Join(",", streams.Keys)}");
@@ -77,7 +77,7 @@ public sealed class CompoundFileReaderTests
         // so the dictionary is expected to be empty — the contract under
         // test is just that we walk the directory without crashing on
         // sub-storage entries.
-        await using FileStream fs = File.OpenRead(FixturePath(fileName));
+        await using var fs = File.OpenRead(FixturePath(fileName));
         var streams = await CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken);
         Assert.NotNull(streams);
     }
@@ -85,7 +85,7 @@ public sealed class CompoundFileReaderTests
     [Fact]
     public async Task ReadStreams_FatChainLoop_ThrowsInvalidData()
     {
-        await using FileStream fs = File.OpenRead(FixturePath("FatChainLoop_v3.cfs"));
+        await using var fs = File.OpenRead(FixturePath("FatChainLoop_v3.cfs"));
         await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken).AsTask());
     }
@@ -100,7 +100,7 @@ public sealed class CompoundFileReaderTests
     [InlineData("VSPro_v17.suo", "SolutionConfiguration")]
     public async Task ReadStreams_RealWorldSamples_ContainExpectedTopLevelStream(string fileName, string expectedStream)
     {
-        await using FileStream fs = File.OpenRead(FixturePath(fileName));
+        await using var fs = File.OpenRead(FixturePath(fileName));
         var streams = await CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken);
 
         Assert.True(
@@ -204,7 +204,7 @@ public sealed class CompoundFileReaderTests
 
         // The clamping means this may succeed (with a possibly truncated
         // FAT) or throw a parse error — but never OOM.
-        Exception? ex = await Record.ExceptionAsync(
+        var ex = await Record.ExceptionAsync(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
         Assert.IsNotType<OutOfMemoryException>(ex);
     }
@@ -302,7 +302,7 @@ public sealed class CompoundFileReaderTests
 
         // Must complete without OutOfMemoryException. The clamped FAT
         // may be corrupt, so any non-OOM exception is acceptable.
-        Exception? ex = await Record.ExceptionAsync(
+        var ex = await Record.ExceptionAsync(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
         Assert.IsNotType<OutOfMemoryException>(ex);
     }
@@ -351,7 +351,7 @@ public sealed class CompoundFileReaderTests
 
         // Should complete promptly — the clamped walk reads at most
         // 5 DIFAT sectors regardless of the declared 1000.
-        Exception? ex = await Record.ExceptionAsync(
+        var ex = await Record.ExceptionAsync(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
 
         // Not an OOM or timeout; any parse error is fine.
@@ -397,7 +397,7 @@ public sealed class CompoundFileReaderTests
         byte[] file = new byte[Ss + (SectorCount * Ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        var h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);          // v3
@@ -465,7 +465,7 @@ public sealed class CompoundFileReaderTests
 
     private static void WriteDirEntry(byte[] file, int offset, string name, byte objectType, uint startSector, uint sizeLow, uint child)
     {
-        Span<byte> e = file.AsSpan(offset, 128);
+        var e = file.AsSpan(offset, 128);
         e.Clear();
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
         nameBytes.CopyTo(e);
@@ -507,7 +507,7 @@ public sealed class CompoundFileReaderTests
         byte[] file = new byte[Ss + (SectorCount * Ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        var h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
@@ -593,7 +593,7 @@ public sealed class CompoundFileReaderTests
         byte[] file = new byte[Ss + (SectorCount * Ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        var h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
@@ -753,7 +753,7 @@ public sealed class CompoundFileReaderTests
         byte[] file = new byte[Ss + (totalSectors * Ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        var h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
@@ -895,7 +895,7 @@ public sealed class CompoundFileReaderTests
 
     private static void WriteDirEntryFull(byte[] file, int offset, string name, byte objectType, uint startSector, uint sizeLow, uint child, uint left, uint right)
     {
-        Span<byte> e = file.AsSpan(offset, 128);
+        var e = file.AsSpan(offset, 128);
         e.Clear();
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
         nameBytes.CopyTo(e);
@@ -911,7 +911,7 @@ public sealed class CompoundFileReaderTests
 
     private static void WriteDirEntryUnused(byte[] file, int offset)
     {
-        Span<byte> e = file.AsSpan(offset, 128);
+        var e = file.AsSpan(offset, 128);
         e.Clear();
         BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44), 0xFFFFFFFF);
         BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48), 0xFFFFFFFF);

@@ -121,7 +121,7 @@ public sealed class CompressedMemoLvalTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MemoTest",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -234,7 +234,7 @@ public sealed class CompressedMemoLvalTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
+        var dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(memoValue, Assert.IsType<string>(dt.Rows[0]["Content"]));
     }
 

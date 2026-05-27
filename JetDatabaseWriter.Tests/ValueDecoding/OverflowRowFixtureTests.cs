@@ -23,7 +23,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task OverflowTestV2010_OpensAndListsTable()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -39,11 +39,11 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Table1_ReadsAllRows_WithoutThrowing()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -57,7 +57,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Table1_AllRows_HaveValidData()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -90,7 +90,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             .GetField(fieldName)!
             .GetValue(null)!;
 
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 

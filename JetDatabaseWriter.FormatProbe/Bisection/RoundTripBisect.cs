@@ -28,7 +28,7 @@ internal static class RoundTripBisect
             return 1;
         }
 
-        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
+        var hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             await Console.Error.WriteLineAsync($"[bisect] {hostProbe.FailureReason}");

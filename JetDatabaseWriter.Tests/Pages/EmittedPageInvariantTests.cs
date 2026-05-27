@@ -21,7 +21,7 @@ public sealed class EmittedPageInvariantTests
     {
         await using var stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -44,7 +44,7 @@ public sealed class EmittedPageInvariantTests
     {
         await using var stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -87,7 +87,7 @@ public sealed class EmittedPageInvariantTests
     {
         await using var stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "IndexedRows",
@@ -121,7 +121,7 @@ public sealed class EmittedPageInvariantTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var stream = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             format,
             new AccessWriterOptions { UseLockFile = false },

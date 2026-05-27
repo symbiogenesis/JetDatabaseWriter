@@ -76,7 +76,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
 
@@ -132,7 +132,7 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt!.Rows.Count);
 
@@ -197,7 +197,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(LeftAndMidCount, dt!.Rows.Count);
 
@@ -249,7 +249,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
 
@@ -303,7 +303,7 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -381,7 +381,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(LeftLeafCount, dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)

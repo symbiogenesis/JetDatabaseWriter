@@ -199,7 +199,7 @@ internal static class IndexLeafIncremental
         var working = new List<IndexEntry>(existing.Count + adds.Count);
         if (removes.Count == 0)
         {
-            foreach (IndexEntry e in existing)
+            foreach (var e in existing)
             {
                 working.Add(new IndexEntry(e.Key, e.DataPage, e.DataRow));
             }
@@ -215,7 +215,7 @@ internal static class IndexLeafIncremental
             }
 
             int removed = 0;
-            foreach (IndexEntry e in existing)
+            foreach (var e in existing)
             {
                 if (removeSet.Remove(EncodePtr(e.DataPage, e.DataRow)))
                 {
@@ -254,7 +254,7 @@ internal static class IndexLeafIncremental
         });
 
         var result = new List<IndexEntry>(indexed.Length);
-        foreach ((IndexEntry entry, _) in indexed)
+        foreach ((var entry, _) in indexed)
         {
             result.Add(entry);
         }

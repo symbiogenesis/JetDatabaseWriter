@@ -319,7 +319,7 @@ public sealed class CompressedUnicodeFlagTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync("RTText", cancellationToken: TestContext.Current.CancellationToken);
+        var dt = await reader.ReadDataTableAsync("RTText", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(value, Assert.IsType<string>(dt.Rows[0]["Val"]));
     }

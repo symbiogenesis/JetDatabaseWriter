@@ -61,12 +61,12 @@ internal static class LongRowProbe
             return;
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using var reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, ct);
 
         var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
 
         foreach (string tableName in new[] { "Table11", "Table11_desc" })
         {
@@ -78,7 +78,7 @@ internal static class LongRowProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}");
             sb.AppendLine();
 
-            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
+            var columns = await reader.GetColumnMetadataAsync(tableName, ct);
             int dataOrdinal = FindColumnOrdinal(columns, "data");
             var rowValues = new List<string?>();
             await foreach (string[] row in reader.RowsAsStrings(tableName, cancellationToken: ct))
@@ -86,8 +86,8 @@ internal static class LongRowProbe
                 rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
             }
 
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata idx in indexes)
+            var indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (var idx in indexes)
             {
                 if (idx.Columns.Count != 1 || idx.Columns[0].Name != "data" || idx.FirstDp <= 0)
                 {
@@ -96,7 +96,7 @@ internal static class LongRowProbe
 
                 bool asc = idx.Columns[0].IsAscending;
                 sb.AppendLine(CultureInfo.InvariantCulture, $"- index `{idx.Name}` ascending={asc} firstDp={idx.FirstDp}");
-                List<byte[]> keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
+                var keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
                 sb.AppendLine(CultureInfo.InvariantCulture, $"- leaf entries: {keys.Count}");
                 sb.AppendLine();
 

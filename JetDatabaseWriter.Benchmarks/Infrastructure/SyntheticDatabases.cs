@@ -340,7 +340,7 @@ internal static class SyntheticDatabases
     {
         int pageSize;
         long tdefPage;
-        await using (AccessReader reader = await AccessReader.OpenAsync(
+        await using (var reader = await AccessReader.OpenAsync(
             databasePath,
             new AccessReaderOptions { UseLockFile = false }).ConfigureAwait(false))
         {
@@ -361,7 +361,7 @@ internal static class SyntheticDatabases
 
     private static async Task<long> ResolveTdefPageAsync(AccessReader reader, string tableName)
     {
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
+        var metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
         int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
         int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
         if (idIndex < 0 || nameIndex < 0)

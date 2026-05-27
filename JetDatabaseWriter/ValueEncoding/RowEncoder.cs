@@ -129,7 +129,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return 4;
 
             case T_GUID:
-                Guid g = value is Guid guid
+                var g = value is Guid guid
                         ? guid
                         : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
                 if (!g.TryWriteBytes(dest))
@@ -293,7 +293,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         int maxDefinedVarIdx = -1;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            ColumnInfo col = tableDef.Columns[i];
+            var col = tableDef.Columns[i];
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != T_BOOL)
             {
@@ -316,7 +316,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         // Stack-allocate nullMask for typical table widths (up to 256 columns → 32 bytes).
-        Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
+        var nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
         nullMask.Clear();
 
         int fixedAreaSize = 0;
@@ -325,7 +325,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            ColumnInfo column = tableDef.Columns[i];
+            var column = tableDef.Columns[i];
             object value = values[i] ?? DBNull.Value;
 
             if (column.Type == T_BOOL && !column.IsCalculated)
@@ -416,7 +416,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         int currentOffset = writer._rowSz.NumCols + fixedAreaSize;
 
         // Stack-allocate variable offsets for typical tables (up to 128 var columns).
-        Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
+        var variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
         for (int varIndex = 0; varIndex < varLen; varIndex++)
         {
             variableOffsets[varIndex] = currentOffset;

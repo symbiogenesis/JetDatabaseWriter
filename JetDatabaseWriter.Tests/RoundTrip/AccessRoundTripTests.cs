@@ -58,7 +58,7 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
-        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
+        var result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
 
         AssertSchemaSurvived(result.SinglePre, result.SinglePost);
         Assert.Contains(result.SinglePost.Indexes[SingleChild], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID");
@@ -71,7 +71,7 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
-        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
+        var result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
 
         AssertSchemaSurvived(result.CompositePre, result.CompositePost);
         Assert.Contains(result.CompositePost.Indexes[CompositeParent], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region");
@@ -198,14 +198,14 @@ public sealed class AccessRoundTripTests
                 cancellationToken);
         }
 
-        Snapshot singlePre = await CaptureSnapshotAsync(
+        var singlePre = await CaptureSnapshotAsync(
             session.SourcePath,
             [SingleParent, SingleChild],
             [SingleFkName],
             cancellationToken);
         AssertPreCompactConsistency(singlePre, [SingleParent, SingleChild], [SingleFkName], expectedParentRows: 3, expectedChildRows: 3);
 
-        Snapshot compositePre = await CaptureSnapshotAsync(
+        var compositePre = await CaptureSnapshotAsync(
             session.SourcePath,
             [CompositeParent, CompositeChild],
             [CompositeFkName],
@@ -219,12 +219,12 @@ public sealed class AccessRoundTripTests
 
         session.RunDaoCompact();
 
-        Snapshot singlePost = await CaptureSnapshotAsync(
+        var singlePost = await CaptureSnapshotAsync(
             session.CompactedPath,
             [SingleParent, SingleChild],
             [SingleFkName],
             cancellationToken);
-        Snapshot compositePost = await CaptureSnapshotAsync(
+        var compositePost = await CaptureSnapshotAsync(
             session.CompactedPath,
             [CompositeParent, CompositeChild],
             [CompositeFkName],
@@ -256,11 +256,11 @@ public sealed class AccessRoundTripTests
                 .OrderBy(i => i.Name, StringComparer.Ordinal)
                 .ToList();
 
-            DataTable? dt = await reader.ReadDataTableAsync(t, cancellationToken: ct);
+            var dt = await reader.ReadDataTableAsync(t, cancellationToken: ct);
             snap.RowCounts[t] = dt?.Rows.Count ?? -1;
         }
 
-        DataTable? rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
+        var rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
         if (rel is not null && rel.Columns.Contains("szRelationship"))
         {
             int n = 0;

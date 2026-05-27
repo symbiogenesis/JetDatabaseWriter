@@ -34,8 +34,8 @@ public sealed class IndexFlagCombinationsTests
     [MemberData(nameof(Fixtures))]
     public async Task IndexFlags_Combinations_RoundTripFromDisk(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
@@ -44,11 +44,11 @@ public sealed class IndexFlagCombinationsTests
         var sb = new StringBuilder();
         int totalIndexes = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata index in indexes)
+            var indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (var index in indexes)
             {
                 if (index.IsForeignKey)
                 {
@@ -88,17 +88,17 @@ public sealed class IndexFlagCombinationsTests
         // This is a cheap smoke test that complements the structural flag
         // round-trip above.
         string fixturePath = TestDatabases.TestIndexPropertiesV2007;
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
         bool foundIgnoreNullsIndex = false;
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+            var indexes = await reader.ListIndexesAsync(tableName, ct);
             if (indexes.Any(i => i.IgnoreNulls && !i.IsForeignKey))
             {
                 foundIgnoreNullsIndex = true;

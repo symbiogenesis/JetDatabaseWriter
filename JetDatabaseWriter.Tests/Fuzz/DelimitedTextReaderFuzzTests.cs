@@ -101,7 +101,7 @@ public sealed class DelimitedTextReaderFuzzTests
             }
         }
 
-        List<string[]> actualRows = ReadAll(source.ToString(), delimiter);
+        var actualRows = ReadAll(source.ToString(), delimiter);
         if (actualRows.Count != expectedRows.Count)
         {
             throw new InvalidDataException("Delimited text fuzz round-trip returned an unexpected row count.");
@@ -128,7 +128,7 @@ public sealed class DelimitedTextReaderFuzzTests
         var records = new List<string[]>();
         while (true)
         {
-            DelimitedTextRecord? record = reader.ReadRecordAsync(default).AsTask().GetAwaiter().GetResult();
+            var record = reader.ReadRecordAsync(default).AsTask().GetAwaiter().GetResult();
             if (record is not { } current)
             {
                 return records;

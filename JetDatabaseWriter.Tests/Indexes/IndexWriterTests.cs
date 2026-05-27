@@ -57,9 +57,9 @@ public sealed class IndexWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        IndexMetadata idx = Assert.Single(indexes);
+        var idx = Assert.Single(indexes);
         Assert.Equal(IndexName, idx.Name);
         Assert.Equal(IndexKind.Normal, idx.Kind);
         Assert.False(idx.EnforcesUniqueness);
@@ -69,7 +69,7 @@ public sealed class IndexWriterTests
         Assert.False(idx.CascadeDeletes);
         Assert.Equal(0, idx.RealIndexNumber);
 
-        IndexColumnReference col = Assert.Single(idx.Columns);
+        var col = Assert.Single(idx.Columns);
         Assert.Equal("Name", col.Name);
         Assert.True(col.IsAscending);
     }
@@ -100,7 +100,7 @@ public sealed class IndexWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, indexes.Count);
         Assert.Equal(ExpectedIndexNames, indexes.Select(i => i.Name).ToArray());
@@ -139,7 +139,7 @@ public sealed class IndexWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Empty(indexes);
     }
 
@@ -378,9 +378,9 @@ public sealed class IndexWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Pk_Table", TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync("Pk_Table", TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal("Id", Assert.Single(pk.Columns).Name);
@@ -457,13 +457,13 @@ public sealed class IndexWriterTests
         Assert.Equal(IndexCount, idxList.Count);
         for (int i = 0; i < IndexCount; i++)
         {
-            IndexMetadata idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
+            var idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
             Assert.Equal($"C{i:D2}", Assert.Single(idx.Columns).Name);
         }
 
         // Row data round-trips with every column populated.
-        System.Data.DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
-        System.Data.DataRow r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
+        var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
         for (int i = 0; i < ColumnCount; i++)
         {
             Assert.Equal(i + 1, Convert.ToInt32(r[$"C{i:D2}"], System.Globalization.CultureInfo.InvariantCulture));
@@ -556,7 +556,7 @@ public sealed class IndexWriterTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(AccessReader reader, string tableName)
     {
-        JetDatabaseWriter.Catalog.Models.CatalogEntry? entry = await reader.GetCatalogEntryAsync(
+        var entry = await reader.GetCatalogEntryAsync(
             tableName, TestContext.Current.CancellationToken);
         if (entry is null)
         {

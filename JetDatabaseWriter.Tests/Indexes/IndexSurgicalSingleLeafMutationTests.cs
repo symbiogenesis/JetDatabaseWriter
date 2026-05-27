@@ -72,7 +72,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt!.Rows.Count);
     }
@@ -117,7 +117,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -169,7 +169,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(799, dt!.Rows.Count);
     }
@@ -221,7 +221,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
     }
@@ -290,7 +290,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             $"Expected surgical leaf split to append at most 2 index pages, but added {idxAfter - idxBefore}.");
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(1230, dt!.Rows.Count);
     }
@@ -329,7 +329,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
     }
@@ -369,7 +369,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
     }

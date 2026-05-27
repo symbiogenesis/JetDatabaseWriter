@@ -46,7 +46,7 @@ public sealed class JetByteRangeLockTests : IDisposable
         Assert.False(helper.IsEnabled);
 
         // Should return immediately with a no-op disposable on a disabled instance.
-        using IDisposable token = helper.AcquirePageLock(pageNumber: 0, pageSize: 4096);
+        using var token = helper.AcquirePageLock(pageNumber: 0, pageSize: 4096);
         Assert.NotNull(token);
     }
 
@@ -66,8 +66,8 @@ public sealed class JetByteRangeLockTests : IDisposable
         using var fs = OpenReadWriteStream(_tempPath);
         JetByteRangeLock helper = JetByteRangeLock.Create(fs, enabled: true, lockTimeoutMilliseconds: 1_000);
 
-        using IDisposable a = helper.AcquirePageLock(pageNumber: 1, pageSize: 4096);
-        using IDisposable b = helper.AcquirePageLock(pageNumber: 2, pageSize: 4096);
+        using var a = helper.AcquirePageLock(pageNumber: 1, pageSize: 4096);
+        using var b = helper.AcquirePageLock(pageNumber: 2, pageSize: 4096);
     }
 
     [Fact]
@@ -87,9 +87,9 @@ public sealed class JetByteRangeLockTests : IDisposable
         Assert.True(holder.IsEnabled);
         Assert.True(contender.IsEnabled);
 
-        using IDisposable held = holder.AcquirePageLock(pageNumber: 3, pageSize: 4096);
+        using var held = holder.AcquirePageLock(pageNumber: 3, pageSize: 4096);
 
-        IOException ex = Assert.Throws<IOException>(() => contender.AcquirePageLock(pageNumber: 3, pageSize: 4096));
+        var ex = Assert.Throws<IOException>(() => contender.AcquirePageLock(pageNumber: 3, pageSize: 4096));
         Assert.Contains("Timed out", ex.Message, StringComparison.Ordinal);
     }
 
@@ -107,7 +107,7 @@ public sealed class JetByteRangeLockTests : IDisposable
         JetByteRangeLock holder = JetByteRangeLock.Create(first, enabled: true, lockTimeoutMilliseconds: 1_000);
         JetByteRangeLock contender = JetByteRangeLock.Create(second, enabled: true, lockTimeoutMilliseconds: 200);
 
-        using IDisposable held = await holder.AcquirePageLockAsync(pageNumber: 4, pageSize: 4096, TestContext.Current.CancellationToken);
+        using var held = await holder.AcquirePageLockAsync(pageNumber: 4, pageSize: 4096, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<IOException>(async () =>
             await contender.AcquirePageLockAsync(pageNumber: 4, pageSize: 4096, TestContext.Current.CancellationToken));
@@ -127,8 +127,8 @@ public sealed class JetByteRangeLockTests : IDisposable
         JetByteRangeLock a = JetByteRangeLock.Create(first, enabled: true, lockTimeoutMilliseconds: 500);
         JetByteRangeLock b = JetByteRangeLock.Create(second, enabled: true, lockTimeoutMilliseconds: 500);
 
-        using IDisposable t1 = a.AcquirePageLock(pageNumber: 5, pageSize: 4096);
-        using IDisposable t2 = b.AcquirePageLock(pageNumber: 6, pageSize: 4096);
+        using var t1 = a.AcquirePageLock(pageNumber: 5, pageSize: 4096);
+        using var t2 = b.AcquirePageLock(pageNumber: 6, pageSize: 4096);
     }
 
     private static FileStream OpenReadWriteStream(string path, FileOptions options = FileOptions.None) =>

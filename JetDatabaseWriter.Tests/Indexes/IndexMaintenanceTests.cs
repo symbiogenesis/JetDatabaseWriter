@@ -400,7 +400,7 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(3, rowsRead.Rows.Count);
 
         var indexes = await reader.ListIndexesAsync("T", ct);
-        IndexMetadata index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
+        var index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
         Assert.True(index.EnforcesUniqueness);
         Assert.True(index.HasUniqueFlag);
         Assert.Equal("Code", index.Columns[0].Name);

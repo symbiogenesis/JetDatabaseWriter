@@ -78,7 +78,7 @@ internal static class RowMapper<T>
     /// <param name="header">The header.</param>
     internal static Accessor? TryGetAccessor(string header)
     {
-        PropertyMap.TryGetValue(header, out Accessor? acc);
+        PropertyMap.TryGetValue(header, out var acc);
         return acc;
     }
 
@@ -120,15 +120,15 @@ internal static class RowMapper<T>
 
         for (int i = 0; i < columnCount; i++)
         {
-            if (!PropertyMap.TryGetValue(headers[i], out Accessor? acc))
+            if (!PropertyMap.TryGetValue(headers[i], out var acc))
             {
                 continue;
             }
 
-            PropertyInfo prop = acc.Property;
-            Type propType = prop.PropertyType;
-            Type underlying = Nullable.GetUnderlyingType(propType) ?? propType;
-            Type? sourceType = i < sourceCount ? sourceTypes![i] : null;
+            var prop = acc.Property;
+            var propType = prop.PropertyType;
+            var underlying = Nullable.GetUnderlyingType(propType) ?? propType;
+            var sourceType = i < sourceCount ? sourceTypes![i] : null;
             bool fastDirect = sourceType != null && sourceType == underlying;
 
             var indexConst = Expression.Constant(i);
@@ -233,7 +233,7 @@ internal static class RowMapper<T>
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
-        Func<T, object[]> writer = WriteCache.GetValue(td, static key => BuildToRow(key));
+        var writer = WriteCache.GetValue(td, static key => BuildToRow(key));
         return writer(item);
     }
 
@@ -256,9 +256,9 @@ internal static class RowMapper<T>
         for (int i = 0; i < count; i++)
         {
             Expression valueExpr;
-            if (PropertyMap.TryGetValue(td.Columns[i].Name, out Accessor? acc))
+            if (PropertyMap.TryGetValue(td.Columns[i].Name, out var acc))
             {
-                Type pt = acc.Property.PropertyType;
+                var pt = acc.Property.PropertyType;
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
                 if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null)
                 {
@@ -271,7 +271,7 @@ internal static class RowMapper<T>
                 {
                     // Reference or Nullable<T>: box (if needed) then coalesce
                     // a null payload to DBNull.Value.
-                    Expression boxed = pt.IsValueType
+                    var boxed = pt.IsValueType
                         ? Expression.Convert(propAccess, typeof(object))
                         : propAccess;
                     valueExpr = Expression.Coalesce(boxed, dbNull);
@@ -332,7 +332,7 @@ internal static class RowMapper<T>
 
         for (int i = 0; i < len; i++)
         {
-            Accessor? acc = index[i];
+            var acc = index[i];
             if (acc == null)
             {
                 continue;
@@ -356,11 +356,11 @@ internal static class RowMapper<T>
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {
-        PropertyInfo[] props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
         var map = new Dictionary<string, Accessor>(props.Length, StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < props.Length; i++)
         {
-            PropertyInfo prop = props[i];
+            var prop = props[i];
             if (prop.CanWrite)
             {
                 map[prop.Name] = new Accessor(prop);

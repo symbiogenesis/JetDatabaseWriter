@@ -48,8 +48,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
         Assert.Contains("Orders", tables);
@@ -65,7 +65,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Umsätze", TestContext.Current.CancellationToken);
 
         Assert.True(count > 0, "Umsätze should have at least one row.");
@@ -87,7 +87,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         await AssertColumnPropertiesDumpAsync(reader, "Umsätze");
     }
 
@@ -100,7 +100,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         var meta = await reader.GetColumnMetadataAsync("Umsätze", TestContext.Current.CancellationToken);
         int expected = meta.Count;
 
@@ -129,7 +129,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         var rows = await reader.Rows("Orders", cancellationToken: TestContext.Current.CancellationToken)
             .Take(10)
             .ToListAsync(TestContext.Current.CancellationToken);
@@ -151,7 +151,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         var meta = await reader.GetColumnMetadataAsync("Orders", TestContext.Current.CancellationToken);
         int shipCountryOrdinal = meta.Select((c, i) => (c, i)).First(t => t.c.Name == "ShipCountry").i;
 
@@ -176,7 +176,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         var first = await reader.Rows("Umsätze", cancellationToken: TestContext.Current.CancellationToken)
             .Take(1)
             .ToListAsync(TestContext.Current.CancellationToken);
@@ -193,8 +193,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(stats.Version));
         Assert.True(stats.DatabaseSizeBytes > 0);
@@ -229,8 +229,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains("Asset Items", tables);
     }
@@ -244,7 +244,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Asset Items", TestContext.Current.CancellationToken);
 
         Assert.True(count > 0, "Asset Items should have at least one row.");
@@ -262,7 +262,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
         await AssertColumnPropertiesDumpAsync(reader, "Asset Items");
     }
 
@@ -275,7 +275,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
         var meta = await reader.GetColumnMetadataAsync("Asset Items", TestContext.Current.CancellationToken);
         int expected = meta.Count;
 
@@ -318,8 +318,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         bool sawDateColumn = false;
@@ -352,8 +352,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyDateValue = false;
         foreach (string table in tables)
@@ -401,13 +401,13 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool checkedAtLeastOne = false;
         foreach (string table in tables)
         {
-            DataTable? dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+            var dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
 
             foreach (DataColumn col in dt!.Columns)
@@ -426,10 +426,10 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     private static async ValueTask AssertColumnPropertiesDumpAsync(AccessReader reader, string tableName)
     {
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
 
-        foreach (ColumnMetadata col in meta)
+        foreach (var col in meta)
         {
             // Touch every persisted-property field. Reaching them without a throw is
             // the conformance contract — mdb-prop just exits zero on a successful dump.
@@ -444,8 +444,8 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     private async ValueTask AssertEveryTableStreamsAsync(string path)
     {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         foreach (string table in tables)

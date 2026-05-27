@@ -79,7 +79,7 @@ internal sealed class JetByteRangeLock
             return new JetByteRangeLock(handle: null, enabled: false, lockTimeoutMilliseconds);
         }
 
-        SafeFileHandle handle = fs.SafeFileHandle;
+        var handle = fs.SafeFileHandle;
         if (handle is null || handle.IsInvalid || handle.IsClosed)
         {
             return new JetByteRangeLock(handle: null, enabled: false, lockTimeoutMilliseconds);

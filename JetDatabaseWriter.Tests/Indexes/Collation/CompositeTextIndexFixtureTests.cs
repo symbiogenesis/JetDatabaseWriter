@@ -44,49 +44,49 @@ public sealed class CompositeTextIndexFixtureTests
     [MemberData(nameof(Fixtures))]
     public async Task CompositeTextIndexes_LeafMatchesEncoder(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         var failures = new StringBuilder();
         int indexesValidated = 0;
         int keysValidated = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
+            var cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata index in indexes)
+            var indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (var index in indexes)
             {
                 if (index.Columns.Count < 2 || index.IsForeignKey || index.FirstDp <= 0)
                 {
                     continue;
                 }
 
-                if (!index.Columns.All(c => colByName.TryGetValue(c.Name, out ColumnMetadata? cm)
+                if (!index.Columns.All(c => colByName.TryGetValue(c.Name, out var cm)
                                             && cm.ClrType == typeof(string)))
                 {
                     continue;
                 }
 
-                List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(reader, layout, pageSize, index.FirstDp, ct);
+                var onDiskKeys = await CollectAllLeafKeysAsync(reader, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                var dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
                 var encoded = new List<(string Repr, byte[] Key)>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {
                     bool allNull = true;
                     var perCol = new List<byte[]>(index.Columns.Count);
                     var repr = new StringBuilder();
-                    foreach (IndexColumnReference keyCol in index.Columns)
+                    foreach (var keyCol in index.Columns)
                     {
                         object boxed = row[keyCol.Name];
                         string? v = boxed is DBNull ? null : (string?)boxed;
@@ -207,7 +207,7 @@ public sealed class CompositeTextIndexFixtureTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            List<DecodedIntermediateEntry> entries =
+            var entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -233,8 +233,8 @@ public sealed class CompositeTextIndexFixtureTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (IndexEntry e in entries)
+            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (var e in entries)
             {
                 result.Add(e.Key);
             }

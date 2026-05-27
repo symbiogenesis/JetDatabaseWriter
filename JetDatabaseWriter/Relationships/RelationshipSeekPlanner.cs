@@ -24,7 +24,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         FkContext ctx,
         CancellationToken cancellationToken)
     {
-        if (ctx.SeekIndexes.TryGetValue(rel.Name, out ParentSeekIndex? cached))
+        if (ctx.SeekIndexes.TryGetValue(rel.Name, out var cached))
         {
             return cached;
         }
@@ -32,7 +32,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ParentSeekIndex? resolved = null;
         try
         {
-            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
+            var core = await TryResolveSeekIndexCoreAsync(
                 rel.PrimaryTable,
                 rel.PrimaryColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -41,13 +41,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
                 return null;
             }
 
-            CatalogEntry? foreignEntry = await writer.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            var foreignEntry = await writer.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry == null)
             {
                 return null;
             }
 
-            TableDef foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            var foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             var foreignRowIndexes = new int[rel.ForeignColumns.Count];
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
@@ -83,7 +83,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         FkContext ctx,
         CancellationToken cancellationToken)
     {
-        if (ctx.ChildSeekIndexes.TryGetValue(rel.Name, out ChildSeekIndex? cached))
+        if (ctx.ChildSeekIndexes.TryGetValue(rel.Name, out var cached))
         {
             return cached;
         }
@@ -91,7 +91,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ChildSeekIndex? resolved = null;
         try
         {
-            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
+            var core = await TryResolveSeekIndexCoreAsync(
                 rel.ForeignTable,
                 rel.ForeignColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -129,13 +129,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             return null;
         }
 
-        CatalogEntry? entry = await writer.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        var entry = await writer.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
         {
             return null;
         }
 
-        TableDef definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        var definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         var columnNumbers = new int[columnNames.Count];
         var columnTypes = new byte[columnNames.Count];
@@ -153,7 +153,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             numericScales[index] = definition.Columns[columnIndex].NumericScale;
         }
 
-        (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
+        var hit = await TryFindCoveringRealIdxAsync(
             entry.TDefPage,
             columnNumbers,
             cancellationToken).ConfigureAwait(false);

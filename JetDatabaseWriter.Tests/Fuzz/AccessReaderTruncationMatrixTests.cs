@@ -62,7 +62,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
             return;
         }
 
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         byte[] full = await db.GetFileAsync(path, ct);
         if (truncateBytes >= full.Length)
         {
@@ -76,7 +76,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
 
         try
         {
-            await using AccessReader reader = await AccessReader.OpenAsync(
+            await using var reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,

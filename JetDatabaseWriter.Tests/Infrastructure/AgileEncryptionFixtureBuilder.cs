@@ -213,7 +213,7 @@ internal static class AgileEncryptionFixtureBuilder
             {
                 // Final partial segment: zero-pad in the stack scratch buffer
                 // and encrypt in-place to avoid escaping the stack span.
-                Span<byte> scratch = tail[..paddedLen];
+                var scratch = tail[..paddedLen];
                 innerAccdb.AsSpan(offset, length).CopyTo(scratch);
                 scratch[length..].Clear();
                 aes.EncryptCbc(scratch, iv, result.AsSpan(writeOffset, paddedLen), PaddingMode.None);
@@ -314,7 +314,7 @@ internal static class AgileEncryptionFixtureBuilder
         // a stack buffer (capped) is safe; fall back to heap for paranoia.
         int pwdByteCount = Encoding.Unicode.GetByteCount(password);
         int initialLen = salt.Length + pwdByteCount;
-        Span<byte> initialBuf = initialLen <= 512 ? stackalloc byte[initialLen] : new byte[initialLen];
+        var initialBuf = initialLen <= 512 ? stackalloc byte[initialLen] : new byte[initialLen];
         salt.CopyTo(initialBuf);
         Encoding.Unicode.GetBytes(password, initialBuf[salt.Length..]);
 
@@ -333,7 +333,7 @@ internal static class AgileEncryptionFixtureBuilder
 
         // Final: H(H_spin || blockKey).
         int finalLen = Constants.AgileEncryption.HashBytes + blockKey.Length;
-        Span<byte> finalBuf = finalLen <= 256 ? stackalloc byte[finalLen] : new byte[finalLen];
+        var finalBuf = finalLen <= 256 ? stackalloc byte[finalLen] : new byte[finalLen];
         h.CopyTo(finalBuf);
         blockKey.CopyTo(finalBuf[Constants.AgileEncryption.HashBytes..]);
 
@@ -392,7 +392,7 @@ internal static class AgileEncryptionFixtureBuilder
         // ── FAT sector ──────────────────────────────────────────────
         // FREESECT (0xFFFFFFFF) is all-ones, so a single byte-fill seeds
         // every entry; we then overwrite only the slots actually in use.
-        Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4.SectorSize);
+        var fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4.SectorSize);
         fatSpan.Fill(0xFF);
         BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(fatSectorIndex * 4, 4), Constants.CompoundFile.FatSect);
         BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(dirSectorIndex * 4, 4), Constants.CompoundFile.EndOfChain);
@@ -448,7 +448,7 @@ internal static class AgileEncryptionFixtureBuilder
     {
         // CFB header is 512 bytes; in v4 the rest of the 4096-byte sector is zero padding
         // (the backing array is already zero-initialized, so we only write the populated fields).
-        Span<byte> h = file.AsSpan(0, 512);
+        var h = file.AsSpan(0, 512);
 
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18, 2), 0x003E); // minor version
@@ -511,7 +511,7 @@ internal static class AgileEncryptionFixtureBuilder
 
     private static void WriteUnusedEntry(byte[] sector, int offset)
     {
-        Span<byte> e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
+        var e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
         e[0x42] = 0x00; // unallocated
         BitConverter.TryWriteBytes(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
@@ -531,7 +531,7 @@ internal static class AgileEncryptionFixtureBuilder
         uint rightSibling,
         uint child)
     {
-        Span<byte> e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
+        var e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
 
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
@@ -569,7 +569,7 @@ internal static class AgileEncryptionFixtureBuilder
         aes.Key = key;
         aes.IV = iv;
 
-        using ICryptoTransform t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+        using var t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
 #pragma warning restore CA5401, RS0030 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         return t.TransformFinalBlock(data, 0, data.Length);
     }

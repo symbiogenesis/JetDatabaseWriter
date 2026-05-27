@@ -90,7 +90,7 @@ public class AccessWriterBenchmarks
     [Arguments(100)]
     public async Task<int> InsertRows_Batch(int count)
     {
-        IEnumerable<object?[]> rows = Enumerable.Range(1, count).Select(BuildDummyRow);
+        var rows = Enumerable.Range(1, count).Select(BuildDummyRow);
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
         return await writer.InsertRowsAsync(BenchmarkTableName, rows);
     }

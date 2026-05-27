@@ -39,7 +39,7 @@ public sealed class TypedRowFallbackPolicyTests
     [Fact]
     public void FixedVariableSlotTooShort_Strict_ThrowsInvalidDataException()
     {
-        InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
+        var ex = Assert.Throws<InvalidDataException>(() =>
             TypedRowFallbackPolicy.FixedVariableSlotTooShort(
                 new ColumnInfo { Name = "Amount", Type = T_MONEY },
                 actualLength: 3,
@@ -64,7 +64,7 @@ public sealed class TypedRowFallbackPolicyTests
     public void MalformedVariableValue_Strict_WrapsAsInvalidDataException()
     {
         var inner = new ArgumentException("bad date");
-        InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
+        var ex = Assert.Throws<InvalidDataException>(() =>
             TypedRowFallbackPolicy.MalformedVariableValue(
                 new ColumnInfo { Name = "When", Type = T_DATETIME },
                 inner,
@@ -79,7 +79,7 @@ public sealed class TypedRowFallbackPolicyTests
     {
         var limitation = new JetLimitationException("numeric overflow");
 
-        JetLimitationException ex = Assert.Throws<JetLimitationException>(() =>
+        var ex = Assert.Throws<JetLimitationException>(() =>
             TypedRowFallbackPolicy.MalformedVariableValue(
                 new ColumnInfo { Name = "DecimalValue", Type = T_NUMERIC },
                 limitation,

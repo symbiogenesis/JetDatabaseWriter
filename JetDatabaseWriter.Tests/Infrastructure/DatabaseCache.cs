@@ -91,7 +91,7 @@ public sealed class DatabaseCache : IAsyncDisposable
 
     private static async Task DisposeReaderAsync(Lazy<Task<AccessReader>> lazy)
     {
-        AccessReader? reader = await lazy.Value.ConfigureAwait(false);
+        var reader = await lazy.Value.ConfigureAwait(false);
         if (reader is not null)
         {
             await reader.DisposeAsync().ConfigureAwait(false);

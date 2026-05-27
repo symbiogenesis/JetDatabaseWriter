@@ -21,7 +21,7 @@ public sealed class LongValueStoreTests
 
         byte[] header = descriptor.ToHeaderBytes();
 
-        Assert.True(LongValueDescriptor.TryRead(header, out LongValueDescriptor roundTrip));
+        Assert.True(LongValueDescriptor.TryRead(header, out var roundTrip));
         Assert.Equal(descriptor, roundTrip);
     }
 
@@ -33,7 +33,7 @@ public sealed class LongValueStoreTests
         byte[]? wrapped = LongValueStore.WrapInlineLongValue(payload);
 
         Assert.NotNull(wrapped);
-        Assert.True(LongValueDescriptor.TryRead(wrapped, out LongValueDescriptor descriptor));
+        Assert.True(LongValueDescriptor.TryRead(wrapped, out var descriptor));
         Assert.Equal(payload.Length, descriptor.Length);
         Assert.True(descriptor.IsInline);
         Assert.Equal(payload, wrapped.AsSpan(Constants.LongValue.HeaderSize, payload.Length).ToArray());
@@ -51,7 +51,7 @@ public sealed class LongValueStoreTests
             [secondDp] = CreateChainedRow(firstDp, [0x44, 0x45, 0x46], PageSize),
         };
 
-        LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
+        var result = await LongValueStore.ReadChainedPayloadAsync(
             firstDp,
             maxLength: 10,
             PageSize,

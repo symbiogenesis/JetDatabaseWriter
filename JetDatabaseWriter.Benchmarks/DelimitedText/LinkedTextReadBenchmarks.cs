@@ -55,7 +55,7 @@ public class LinkedTextReadBenchmarks
             Encoding.UTF8).ConfigureAwait(false);
 
         var writerOptions = new AccessWriterOptions { UseLockFile = false };
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(databasePath, DatabaseFormat.AceAccdb, writerOptions).ConfigureAwait(false))
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(databasePath, DatabaseFormat.AceAccdb, writerOptions).ConfigureAwait(false))
         {
             await writer.CreateLinkedTextTableAsync(
                 HeaderedTable,
@@ -125,7 +125,7 @@ public class LinkedTextReadBenchmarks
     [Benchmark]
     public async Task<int> ReadDataTable()
     {
-        using DataTable table = await _reader.ReadDataTableAsync(CurrentTableName).ConfigureAwait(false);
+        using var table = await _reader.ReadDataTableAsync(CurrentTableName).ConfigureAwait(false);
         return table.Rows.Count;
     }
 

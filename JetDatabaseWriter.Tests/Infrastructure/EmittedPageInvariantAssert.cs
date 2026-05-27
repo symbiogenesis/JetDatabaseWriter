@@ -44,7 +44,7 @@ internal static class EmittedPageInvariantAssert
             switch (page[0])
             {
                 case 0x01:
-                    DataPageSummary dataSummary = AssertDataPage(fileBytes, pageNumber, pageSize, format);
+                    var dataSummary = AssertDataPage(fileBytes, pageNumber, pageSize, format);
                     dataPagesChecked++;
                     if (dataSummary.ParentTdefPage > 0)
                     {
@@ -83,7 +83,7 @@ internal static class EmittedPageInvariantAssert
         Assert.True(tdefHeadsChecked > 0, "Expected at least one TDEF head page.");
         Assert.True(dataPagesChecked + indexPagesChecked > 0, "Expected at least one data or index page beyond TDEF metadata.");
 
-        foreach (KeyValuePair<int, uint> pair in rowCountsByTdefPage)
+        foreach (var pair in rowCountsByTdefPage)
         {
             Assert.True(
                 pair.Value <= int.MaxValue,
@@ -98,11 +98,11 @@ internal static class EmittedPageInvariantAssert
 
     private static DataPageSummary AssertDataPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
     {
-        ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
+        var page = PageSpan(fileBytes, pageNumber, pageSize);
         var layout = DataPageLayout.For(format);
 
         Assert.Equal(0x01, page[1]);
-        List<RowSlotInfo> rowSlots = AssertRowSlotDirectory(page, pageNumber, pageSize, layout);
+        var rowSlots = AssertRowSlotDirectory(page, pageNumber, pageSize, layout);
 
         bool isLval = IsLvalPage(page);
         if (isLval)
@@ -125,7 +125,7 @@ internal static class EmittedPageInvariantAssert
         }
 
         int liveRows = 0;
-        foreach (RowSlotInfo rowSlot in rowSlots)
+        foreach (var rowSlot in rowSlots)
         {
             if (rowSlot.IsLive)
             {
@@ -198,7 +198,7 @@ internal static class EmittedPageInvariantAssert
     private static void AssertLvalPage(ReadOnlySpan<byte> page, int pageNumber, List<RowSlotInfo> rowSlots)
     {
         Assert.Single(rowSlots);
-        RowSlotInfo rowSlot = rowSlots[0];
+        var rowSlot = rowSlots[0];
         Assert.True(rowSlot.IsLive, Message(pageNumber, "LVAL row slot is marked deleted or overflow."));
         Assert.Equal(Constants.LongValue.LvalRowStart, rowSlot.Start);
         Assert.Equal(4, ReadUInt16(page, 2));
@@ -209,7 +209,7 @@ internal static class EmittedPageInvariantAssert
 
     private static void AssertUsageMapPage(ReadOnlySpan<byte> page, int pageNumber, List<RowSlotInfo> rowSlots)
     {
-        foreach (RowSlotInfo rowSlot in rowSlots)
+        foreach (var rowSlot in rowSlots)
         {
             Assert.True(rowSlot.IsLive, Message(pageNumber, $"Usage-map row {rowSlot.RowIndex} is marked deleted or overflow."));
             Assert.Equal(69, rowSlot.Size);
@@ -232,7 +232,7 @@ internal static class EmittedPageInvariantAssert
         DatabaseFormat format,
         Dictionary<int, uint> rowCountsByTdefPage)
     {
-        ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
+        var page = PageSpan(fileBytes, pageNumber, pageSize);
         var layout = TDefHeaderLayout.For(format);
 
         Assert.Equal(0x01, page[1]);
@@ -326,21 +326,21 @@ internal static class EmittedPageInvariantAssert
         AssertOptionalPageType(fileBytes, pageSize, pageNumber, nextPage, [expectedSiblingType], "next index sibling");
         AssertOptionalPageType(fileBytes, pageSize, pageNumber, tailPage, [Constants.IndexLeafPage.PageTypeLeaf], "index tail leaf");
 
-        List<int> entryStarts = AssertIndexEntryDirectory(page, pageNumber, pageSize, layout, pageType);
+        var entryStarts = AssertIndexEntryDirectory(page, pageNumber, pageSize, layout, pageType);
         if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
         {
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
             Assert.Equal(entryStarts.Count, entries.Count);
-            foreach (IndexEntry entry in entries)
+            foreach (var entry in entries)
             {
                 AssertIndexDataRowPointer(fileBytes, pageSize, format, pageNumber, entry.DataPage, entry.DataRow);
             }
         }
         else
         {
-            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            var entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             Assert.Equal(entryStarts.Count, entries.Count);
-            foreach (DecodedIntermediateEntry entry in entries)
+            foreach (var entry in entries)
             {
                 AssertIndexDataRowPointer(fileBytes, pageSize, format, pageNumber, entry.Entry.DataPage, entry.Entry.DataRow);
                 AssertPageType(
@@ -432,7 +432,7 @@ internal static class EmittedPageInvariantAssert
         AssertPageType(fileBytes, pageSize, indexPageNumber, dataPageNumber, [0x01], "index data-row page");
 
         var layout = DataPageLayout.For(format);
-        ReadOnlySpan<byte> dataPage = PageSpan(fileBytes, checked((int)dataPageNumber), pageSize);
+        var dataPage = PageSpan(fileBytes, checked((int)dataPageNumber), pageSize);
         int numRows = ReadUInt16(dataPage, layout.NumRows);
         Assert.True(
             rowIndex < numRows,

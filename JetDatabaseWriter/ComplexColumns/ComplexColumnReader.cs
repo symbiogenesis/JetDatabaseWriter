@@ -31,14 +31,14 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         int limit = Math.Min(columns.Count, typedRow.Length);
         for (int i = 0; i < limit; i++)
         {
-            ColumnInfo col = columns[i];
+            var col = columns[i];
             if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
             {
                 continue;
             }
 
             if (complexData != null &&
-                complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
+                complexData.TryGetValue(i, out var colData))
             {
                 int complexId = typedRow[i] is ComplexIdRef cir ? cir.Id : 0;
                 if (complexId <= 0)
@@ -113,7 +113,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             }
 
             int colNum = Ru16(td, offset + _reader._colDesc.NumOff);
-            ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
+            var info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
             byComplexId[complexId] = (name, type);
         }
@@ -125,13 +125,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     internal async ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        ComplexColumnInfo? info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+        var info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (info == null || string.IsNullOrEmpty(info.FlatTableName))
         {
             return [];
         }
 
-        DataTable flat = await _reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var flat = await _reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (flat.Rows.Count == 0)
         {
             return [];
@@ -176,13 +176,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     internal async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        ComplexColumnInfo? info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+        var info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (info == null || string.IsNullOrEmpty(info.FlatTableName))
         {
             return [];
         }
 
-        DataTable flat = await _reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var flat = await _reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (flat.Rows.Count == 0)
         {
             return [];
@@ -226,7 +226,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return result;
             }
 
-            TableDef? td = await _reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            var td = await _reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
             if (td == null)
             {
                 return result;
@@ -280,13 +280,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ColumnInfo col = columns[i];
+            var col = columns[i];
             if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
             {
                 continue;
             }
 
-            Dictionary<int, byte[]>? colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
+            var colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
             if (colData != null && colData.Count > 0)
             {
                 result ??= [];
@@ -379,7 +379,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     {
         for (int i = 0; i < flat.Columns.Count; i++)
         {
-            DataColumn c = flat.Columns[i];
+            var c = flat.Columns[i];
             if (c.DataType == typeof(int) && c.ColumnName.StartsWith('_'))
             {
                 return i;
@@ -484,8 +484,8 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     private async ValueTask<ComplexColumnInfo?> FindComplexColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-        foreach (ComplexColumnInfo column in complex)
+        var complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
+        foreach (var column in complex)
         {
             if (string.Equals(column.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
             {
@@ -506,7 +506,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        TableDef? msys = await _reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+        var msys = await _reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return [];
@@ -523,7 +523,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        Dictionary<long, string> objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
+        var objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
         await foreach (string[] row in _reader.EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
@@ -566,7 +566,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     {
         var map = new Dictionary<long, string>();
 
-        TableDef? msys = await _reader.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        var msys = await _reader.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return map;
@@ -600,7 +600,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return 0;
             }
 
-            TableDef? td = await _reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+            var td = await _reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
             if (td == null)
             {
                 return 0;
@@ -660,7 +660,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 tdefPage = await FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
             }
 
-            TableDef? td = tdefPage > 0 ? await _reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
+            var td = tdefPage > 0 ? await _reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
             if (td == null)
             {
                 return null;

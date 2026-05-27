@@ -78,7 +78,7 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
     public async Task Rows_FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return; // all tables empty
@@ -163,7 +163,7 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
     public async Task RowsAsStrings_FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return;
@@ -222,7 +222,7 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        await foreach (QueryRow item in reader.Rows<QueryRow>(table, cancellationToken: TestContext.Current.CancellationToken).Take(20).WithCancellation(TestContext.Current.CancellationToken))
+        await foreach (var item in reader.Rows<QueryRow>(table, cancellationToken: TestContext.Current.CancellationToken).Take(20).WithCancellation(TestContext.Current.CancellationToken))
         {
             Assert.NotNull(item);
         }
@@ -233,13 +233,13 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
     public async Task RowsGeneric_FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return;
         }
 
-        QueryRow? first = await reader.Rows<QueryRow>(stat.Name, cancellationToken: TestContext.Current.CancellationToken).FirstOrDefaultAsync(TestContext.Current.CancellationToken);
+        var first = await reader.Rows<QueryRow>(stat.Name, cancellationToken: TestContext.Current.CancellationToken).FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(first);
     }
@@ -251,7 +251,7 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        QueryRow? result = await reader.Rows<QueryRow>(table, cancellationToken: TestContext.Current.CancellationToken)
+        var result = await reader.Rows<QueryRow>(table, cancellationToken: TestContext.Current.CancellationToken)
             .Where(_ => false)
             .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
@@ -283,7 +283,7 @@ public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<Da
         // We attach a progress reporter that increments per page; if Take didn't
         // short-circuit, we'd see far more rows reported than we asked for.
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 5);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 5);
         if (stat == null)
         {
             return; // need a table large enough for the assertion to be meaningful

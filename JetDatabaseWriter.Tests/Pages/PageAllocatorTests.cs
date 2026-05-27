@@ -54,11 +54,11 @@ public sealed class PageAllocatorTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateTableAsync_ReusesPageMarkedFreeInGlobalMap(DatabaseFormat format)
     {
-        await using MemoryStream stream = await CreateDatabaseWithTrailingFreePagesAsync(format, 1);
+        await using var stream = await CreateDatabaseWithTrailingFreePagesAsync(format, 1);
         int pageSize = PageSizeOf(format);
         int reusablePage = (int)(stream.Length / pageSize) - 1;
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "ReuseTarget",
@@ -78,10 +78,10 @@ public sealed class PageAllocatorTests
     public async Task CreateTableAsync_ReusesPageMarkedFreeInReferenceGlobalMap(DatabaseFormat format)
     {
         const int ReusablePage = 520;
-        await using MemoryStream stream = await CreateDatabaseWithReferenceMappedFreePageAsync(format, ReusablePage);
+        await using var stream = await CreateDatabaseWithReferenceMappedFreePageAsync(format, ReusablePage);
         int pageSize = PageSizeOf(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "ReferenceReuseTarget",
@@ -100,12 +100,12 @@ public sealed class PageAllocatorTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task ShrinkDatabaseAsync_TruncatesTrailingFreePages(DatabaseFormat format)
     {
-        await using MemoryStream stream = await CreateDatabaseWithTrailingFreePagesAsync(format, 3);
+        await using var stream = await CreateDatabaseWithTrailingFreePagesAsync(format, 3);
         int pageSize = PageSizeOf(format);
         long originalLength = stream.Length - (3L * pageSize);
 
         long removed;
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             removed = await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken);
         }
@@ -120,7 +120,7 @@ public sealed class PageAllocatorTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task ShrinkDatabaseAsync_DoesNotRemoveInteriorFreePagesWhenTailIsLive(DatabaseFormat format)
     {
-        await using MemoryStream stream = await CreateDatabaseWithInteriorFreePagesAndLiveTailAsync(format, freePageCount: 2);
+        await using var stream = await CreateDatabaseWithInteriorFreePagesAndLiveTailAsync(format, freePageCount: 2);
         int pageSize = PageSizeOf(format);
         int totalPages = (int)(stream.Length / pageSize);
         int firstInteriorFreePage = totalPages - 3;
@@ -128,7 +128,7 @@ public sealed class PageAllocatorTests
         long originalLength = stream.Length;
 
         long removed;
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (var writer = await OpenWriterAsync(stream))
         {
             removed = await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken);
         }
@@ -181,7 +181,7 @@ public sealed class PageAllocatorTests
 
     private static async ValueTask<MemoryStream> CreateDatabaseWithInteriorFreePagesAndLiveTailAsync(DatabaseFormat format, int freePageCount)
     {
-        await using MemoryStream stream = await CreateDatabaseWithTrailingFreePagesAsync(format, freePageCount);
+        await using var stream = await CreateDatabaseWithTrailingFreePagesAsync(format, freePageCount);
         int pageSize = PageSizeOf(format);
         byte[] bytes = stream.ToArray();
         int liveTailPage = bytes.Length / pageSize;
@@ -220,7 +220,7 @@ public sealed class PageAllocatorTests
         BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(freePageOffset + 2, 2), (ushort)(pageSize - 16));
 
         DataPageLayout layout = DataPageLayout.For(format);
-        Span<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
+        var globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & Constants.DataPage.RowOffsetMask;
         globalMap.Slice(rowStart, Constants.UsageMap.RowSize).Clear();
         globalMap[rowStart] = Constants.UsageMap.ReferenceMapType;
@@ -228,7 +228,7 @@ public sealed class PageAllocatorTests
             globalMap.Slice(rowStart + Constants.UsageMap.ReferenceMapPointerOffset, 4),
             referencePageNumber);
 
-        Span<byte> referenceMap = bytes.AsSpan(referencePageNumber * pageSize, pageSize);
+        var referenceMap = bytes.AsSpan(referencePageNumber * pageSize, pageSize);
         referenceMap[0] = Constants.PageTypes.UsageMap;
         int pagesPerReferenceMap = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
         int bitIndex = freePageNumber % pagesPerReferenceMap;
@@ -266,7 +266,7 @@ public sealed class PageAllocatorTests
     {
         int pageSize = PageSizeOf(format);
         DataPageLayout layout = DataPageLayout.For(format);
-        Span<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
+        var globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & 0x1FFF;
         int basePage = BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(rowStart + 1, 4));
         int bitIndex = pageNumber - basePage;

@@ -34,7 +34,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             throw new ArgumentOutOfRangeException(nameof(pageCount), "Page count must be positive.");
         }
 
-        List<long> freePages = await EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false);
+        var freePages = await EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false);
         long reusableStart = FindContiguousRun(freePages, pageCount);
         if (reusableStart > 0)
         {
@@ -231,7 +231,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
             {
                 return [];
             }
@@ -294,7 +294,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
             {
                 return false;
             }
@@ -317,7 +317,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
             {
                 InitializeGlobalUsageMapPage(globalPage);
                 rowBound = new AccessBase.RowBound(0, writer._pgSz - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
@@ -479,7 +479,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             return false;
         }
 
-        if (!UsageMap.TryGetFirstRowBound(page, writer._dataPage, writer._pgSz, out AccessBase.RowBound rowBound))
+        if (!UsageMap.TryGetFirstRowBound(page, writer._dataPage, writer._pgSz, out var rowBound))
         {
             return false;
         }

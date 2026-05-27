@@ -150,7 +150,7 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             // V2010 / ACE: continuous encoding of up to 255 characters with
             // no chunk split. ApplyMaxEntryLength handles the byte cap.
-            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
+            var v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
             return EncodeSingleChunk(
                 text,
                 v2010Chars,
@@ -185,7 +185,7 @@ internal static class GeneralLegacyTextIndexEncoder
             }
         }
 
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
+        var chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
 
         return EncodeSingleChunk(text, chars, ascending, codes, extCodes, 0, null);
     }
@@ -280,10 +280,10 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         foreach (char c in chars)
         {
-            CharHandler ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
+            var ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
             int curCharOffset = state.CharOffset;
 
-            ReadOnlySpan<byte> inline = ch.GetInlineBytes(c);
+            var inline = ch.GetInlineBytes(c);
             if (!inline.IsEmpty)
             {
                 AppendBytes(bout, inline);
@@ -295,14 +295,14 @@ internal static class GeneralLegacyTextIndexEncoder
                 continue;
             }
 
-            ReadOnlySpan<byte> extra = ch.ExtraBytes;
+            var extra = ch.ExtraBytes;
             byte extraCodeModifier = ch.ExtraByteModifier;
             if (!extra.IsEmpty || extraCodeModifier != 0)
             {
                 WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.GetOrCreateExtraCodes());
             }
 
-            ReadOnlySpan<byte> unprint = ch.UnprintableBytes;
+            var unprint = ch.UnprintableBytes;
             if (!unprint.IsEmpty)
             {
                 state.UnprintableCodes ??= [];
@@ -539,8 +539,8 @@ internal static class GeneralLegacyTextIndexEncoder
         int numCodes = lastChar - firstChar + 1;
         var values = new CharHandler[numCodes];
 
-        Assembly asm = typeof(GeneralLegacyTextIndexEncoder).Assembly;
-        using Stream? raw = asm.GetManifestResourceStream(resourceName)
+        var asm = typeof(GeneralLegacyTextIndexEncoder).Assembly;
+        using var raw = asm.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found.");
         using var gz = new GZipStream(raw, CompressionMode.Decompress);
         using var reader = new StreamReader(gz, Encoding.ASCII);

@@ -102,7 +102,7 @@ public sealed class HyperlinkEncodingTests
         Assert.Equal(typeof(Hyperlink), meta[1].ClrType);
         Assert.Equal("Hyperlink", meta[1].TypeName);
 
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(typeof(Hyperlink), dt.Columns["Link"]!.DataType);
 
         var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
@@ -185,10 +185,10 @@ public sealed class HyperlinkEncodingTests
 
         await using var reader = await OpenReaderAsync(stream);
 
-        List<HyperlinkRow> typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        var typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link, typed[0].Link);
 
-        List<StringRow> asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        var asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link.ToString(), asStrings[0].Link);
     }
 
@@ -253,7 +253,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal(display, actual.DisplayText);
@@ -300,7 +300,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal("https://example.com/path#section/q?x=1#y=2", actual.Address);
@@ -338,7 +338,7 @@ public sealed class HyperlinkEncodingTests
 
         await using var reader = await OpenReaderAsync(stream);
         var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
-        ColumnMetadata urlCol = meta[2];
+        var urlCol = meta[2];
         Assert.Equal("Url", urlCol.Name);
         Assert.True(urlCol.IsHyperlink);
         Assert.Equal(typeof(Hyperlink), urlCol.ClrType);
@@ -396,7 +396,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(1, dt.Rows.Count);
 
         Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);

@@ -67,18 +67,18 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
             new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
+        var complex = await reader.GetComplexColumnsAsync(
             TableName,
             TestContext.Current.CancellationToken);
 
-        ComplexColumnInfo vhCol = Assert.Single(
+        var vhCol = Assert.Single(
             complex,
             c => c.Kind == Enums.ComplexColumnKind.VersionHistory);
 
         Assert.False(string.IsNullOrWhiteSpace(vhCol.FlatTableName));
 
         // Locate the Memo column inside the flat child table.
-        List<ColumnMetadata> flatCols = await reader.GetColumnMetadataAsync(
+        var flatCols = await reader.GetColumnMetadataAsync(
             vhCol.FlatTableName,
             TestContext.Current.CancellationToken);
 

@@ -95,7 +95,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        ColumnMetadata id = Assert.Single(meta);
+        var id = Assert.Single(meta);
         Assert.Equal(clrType, id.ClrType);
         Assert.False(id.IsNullable);
     }

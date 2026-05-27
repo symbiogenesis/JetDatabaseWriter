@@ -47,7 +47,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Note", StringComparison.OrdinalIgnoreCase));
 
-        DataTable raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
+        var raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
         var complexRef = Assert.IsType<ComplexIdRef>(raw.Rows[0]["Files"]);
         Assert.True(complexRef.Id > 0);
     }
@@ -132,7 +132,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         Assert.Empty(infoAfter);
 
         // MSysComplexColumns no longer has the row for this column.
-        DataTable? cx = await reader.ReadDataTableAsync(
+        var cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -265,7 +265,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         var info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
         Assert.Empty(info);
 
-        DataTable? cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         Assert.DoesNotContain(
             cx!.Rows.Cast<DataRow>(),

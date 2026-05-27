@@ -24,16 +24,16 @@ public sealed class ComplexColumnsFlatIndexesTests
     public async Task Attachment_FlatTable_HasAutoincrementScalarPkColumn()
     {
         await using var reader = await CreateAndReadAttachmentFlat();
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        ComplexColumnInfo att = Assert.Single(info);
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var att = Assert.Single(info);
 
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(att.FlatTableName, TestContext.Current.CancellationToken);
-        ColumnMetadata scalar = meta.Single(m => string.Equals(m.Name, "Documents_Files", StringComparison.Ordinal));
+        var scalar = meta.Single(m => string.Equals(m.Name, "Documents_Files", StringComparison.Ordinal));
         Assert.Equal(typeof(int), scalar.ClrType);
 
         // The FK back-reference column to the parent's ConceptualTableID
         // remains in place as a plain LONG.
-        ColumnMetadata fk = meta.Single(m => string.Equals(m.Name, "_Files", StringComparison.Ordinal));
+        var fk = meta.Single(m => string.Equals(m.Name, "_Files", StringComparison.Ordinal));
         Assert.Equal(typeof(int), fk.ClrType);
     }
 
@@ -41,22 +41,22 @@ public sealed class ComplexColumnsFlatIndexesTests
     public async Task Attachment_FlatTable_EmitsThreeIndexes()
     {
         await using var reader = await CreateAndReadAttachmentFlat();
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        ComplexColumnInfo att = Assert.Single(info);
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var att = Assert.Single(info);
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(att.FlatTableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(att.FlatTableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, indexes.Count);
 
-        IndexMetadata pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
+        var pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
         Assert.Equal("MSysComplexPKIndex", pk.Name);
         ColumnReferenceCheck(pk.Columns, "Documents_Files");
 
-        IndexMetadata fk = indexes.Single(i => string.Equals(i.Name, "_Files", StringComparison.Ordinal));
+        var fk = indexes.Single(i => string.Equals(i.Name, "_Files", StringComparison.Ordinal));
         Assert.Equal(IndexKind.Normal, fk.Kind);
         ColumnReferenceCheck(fk.Columns, "_Files");
 
-        IndexMetadata composite = indexes.Single(i => string.Equals(i.Name, "IdxFKPrimaryScalar", StringComparison.Ordinal));
+        var composite = indexes.Single(i => string.Equals(i.Name, "IdxFKPrimaryScalar", StringComparison.Ordinal));
         Assert.Equal(IndexKind.Normal, composite.Kind);
         ColumnReferenceCheck(composite.Columns, "_Files", "FileName");
     }
@@ -77,23 +77,23 @@ public sealed class ComplexColumnsFlatIndexesTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
-        ComplexColumnInfo mv = Assert.Single(info);
+        var info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
+        var mv = Assert.Single(info);
 
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(mv.FlatTableName, TestContext.Current.CancellationToken);
-        ColumnMetadata scalar = meta.Single(m => string.Equals(m.Name, "Tags_Items", StringComparison.Ordinal));
+        var scalar = meta.Single(m => string.Equals(m.Name, "Tags_Items", StringComparison.Ordinal));
         Assert.Equal(typeof(int), scalar.ClrType);
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(mv.FlatTableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(mv.FlatTableName, TestContext.Current.CancellationToken);
         Assert.Equal(2, indexes.Count);
 
-        IndexMetadata pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
+        var pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
         Assert.Equal("MSysComplexPKIndex", pk.Name);
         ColumnReferenceCheck(pk.Columns, "Tags_Items");
 
-        IndexMetadata fk = indexes.Single(i => string.Equals(i.Name, "_Items", StringComparison.Ordinal));
+        var fk = indexes.Single(i => string.Equals(i.Name, "_Items", StringComparison.Ordinal));
         Assert.Equal(IndexKind.Normal, fk.Kind);
     }
 
@@ -138,12 +138,12 @@ public sealed class ComplexColumnsFlatIndexesTests
         ms.Position = 0;
         await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        ComplexColumnInfo att = Assert.Single(info);
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var att = Assert.Single(info);
 
         // Read the raw flat-table rows and assert the autoincrement scalar PK
         // column carries two distinct values.
-        System.Data.DataTable dt = await reader.ReadDataTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
+        var dt = await reader.ReadDataTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("Flat table not found.");
         Assert.Equal(2, dt.Rows.Count);
 
@@ -155,7 +155,7 @@ public sealed class ComplexColumnsFlatIndexesTests
         Assert.True(scalars[1] > scalars[0], "Autoincrement scalar PK must be monotonically increasing.");
 
         // Spec-compliant attachment read still works.
-        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
+        var attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
         Assert.Equal(2, attachments.Count);
     }
 

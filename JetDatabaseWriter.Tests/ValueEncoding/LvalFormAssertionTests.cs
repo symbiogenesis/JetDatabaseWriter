@@ -128,7 +128,7 @@ public sealed class LvalFormAssertionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "LvalTest",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -169,7 +169,7 @@ public sealed class LvalFormAssertionTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "OleTest",
             cancellationToken: TestContext.Current.CancellationToken);
 

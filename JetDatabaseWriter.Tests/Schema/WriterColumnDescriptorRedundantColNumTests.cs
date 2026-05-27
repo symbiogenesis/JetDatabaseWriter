@@ -54,7 +54,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
+            var pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
             foreach (var pair in pairs)
             {
                 Assert.True(
@@ -105,7 +105,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
         var entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
+        var pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
         Assert.NotEmpty(pairs);
 
         var mismatches = pairs

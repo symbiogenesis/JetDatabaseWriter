@@ -21,7 +21,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysAccessStorage_HasExpectedColumns()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
@@ -43,11 +43,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysAccessStorage_ReadsNonEmptyRowSet()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MSysAccessStorage",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -61,7 +61,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysNavPaneGroups_HasExpectedColumns()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
@@ -81,11 +81,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysNavPaneGroups_ReadsNonEmptyRowSet()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MSysNavPaneGroups",
             cancellationToken: TestContext.Current.CancellationToken);
 

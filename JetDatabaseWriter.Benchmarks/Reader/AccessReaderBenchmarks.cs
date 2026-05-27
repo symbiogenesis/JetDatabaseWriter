@@ -107,7 +107,7 @@ public class AccessReaderBenchmarks
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
         var count = 0;
-        await foreach (OrderDetails row in reader.Rows<OrderDetails>(NumericTable))
+        await foreach (var row in reader.Rows<OrderDetails>(NumericTable))
         {
             _ = row;
             count++;

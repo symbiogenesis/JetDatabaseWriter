@@ -31,7 +31,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         for (int i = 0; i < columns.Count; i++)
         {
-            ColumnDefinition definition = columns[i];
+            var definition = columns[i];
             AccessWriter.ValidateCalculatedColumn(definition, format);
             byte type = AccessWriter.TypeCodeFromDefinition(definition);
             bool isCalculated = definition.IsCalculated;
@@ -158,7 +158,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
-            ColumnInfo col = tableDef.Columns[i];
+            var col = tableDef.Columns[i];
             int o = colStart + (i * writer._colDesc.Size);
 
             if (!col.IsFixed)
@@ -284,7 +284,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
             for (int i = 0; i < numIdx; i++)
             {
-                ResolvedIndex ri = indexes[i];
+                var ri = indexes[i];
                 int phys = writer._indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (jet4)
                 {

@@ -49,7 +49,7 @@ internal static class OfficeCryptoStandard
                 "EncryptionInfo header is not in Standard (version 3.2 or 4.2) format.");
         }
 
-        StandardDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        var descriptor = ParseDescriptor(encryptionInfo);
         byte[] key = DeriveKey(password, descriptor);
 
         VerifyPassword(key, descriptor);
@@ -212,7 +212,7 @@ internal static class OfficeCryptoStandard
         // Step 1: H0 = SHA1(salt || password_UTF16LE)
         int passwordByteCount = Encoding.Unicode.GetByteCount(password);
         byte[]? rentedPasswordBytes = null;
-        Span<byte> passwordBytes = passwordByteCount <= 512
+        var passwordBytes = passwordByteCount <= 512
             ? stackalloc byte[passwordByteCount]
             : (rentedPasswordBytes = ArrayPool<byte>.Shared.Rent(passwordByteCount)).AsSpan(0, passwordByteCount);
 
@@ -479,7 +479,7 @@ internal static class OfficeCryptoStandard
             aes.Key = key;
             aes.IV = new byte[16]; // All zeros.
 
-            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+            var transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
             if (transform is null)
             {
                 throw new CryptographicException("AES transform creation failed.");

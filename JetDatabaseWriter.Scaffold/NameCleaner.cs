@@ -48,7 +48,7 @@ internal static class NameCleaner
         }
 
         // Reserve index 0 for a possible '_' prefix when the first char is a digit.
-        Span<char> buffer = raw.Length < 128
+        var buffer = raw.Length < 128
             ? stackalloc char[raw.Length + 1]
             : new char[raw.Length + 1];
 

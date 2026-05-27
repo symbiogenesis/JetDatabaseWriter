@@ -66,7 +66,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_Typed()
     {
         int count = 0;
-        await foreach (NumericRow row in _numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+        await foreach (var row in _numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -114,7 +114,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_Typed()
     {
         int count = 0;
-        await foreach (TextRow row in _textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
+        await foreach (var row in _textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -162,7 +162,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Wide_Typed_NarrowProjection()
     {
         int count = 0;
-        await foreach (WideRowNarrowProjection row in _wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
+        await foreach (var row in _wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -252,7 +252,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_Typed()
     {
         int count = 0;
-        await foreach (Models.MemoRow row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        await foreach (var row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -310,7 +310,7 @@ public class AccessReaderRowDecodeBenchmarks
 
     private static async Task<int> CountColdUntypedRowsAsync(string databasePath, string tableName, AccessReaderOptions? options)
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(databasePath, options).ConfigureAwait(false);
+        await using var reader = await AccessReader.OpenAsync(databasePath, options).ConfigureAwait(false);
         return await CountUntypedRowsAsync(reader, tableName).ConfigureAwait(false);
     }
 }

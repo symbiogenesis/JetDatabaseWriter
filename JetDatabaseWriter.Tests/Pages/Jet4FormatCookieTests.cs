@@ -205,7 +205,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateTable_CatalogRow_OwnerIsNonNull()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
@@ -217,7 +217,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         await using var reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
 
-        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+        var catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
         Assert.True(catalog.Rows.Count > 0, "MSysObjects should contain rows.");
 
         // Find the user table row (Type=1, Name=TestOwner).
@@ -247,7 +247,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateTable_CatalogRow_LvPropPlaceholderForNoProperties_Is12Bytes()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
@@ -259,7 +259,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         await using var reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
 
-        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+        var catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
 
         DataRow? userRow = null;
         foreach (DataRow row in catalog.Rows)
@@ -287,7 +287,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateTable_InsertsAceRows_ForUserTable()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
@@ -299,11 +299,11 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         await using var reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("TestAces", ct);
+        var entry = await reader.GetCatalogEntryAsync("TestAces", ct);
         Assert.NotNull(entry);
         int objectId = (int)entry.TDefPage;
 
-        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
+        var aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
         Assert.True(aces.Rows.Count > 0, "MSysACEs should have rows.");
 
         int matchingRows = 0;
@@ -332,7 +332,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateTable_AceRows_ContainOwnerAndUsersSids()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
@@ -344,11 +344,11 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         await using var reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("TestSids", ct);
+        var entry = await reader.GetCatalogEntryAsync("TestSids", ct);
         Assert.NotNull(entry);
         int objectId = (int)entry.TDefPage;
 
-        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
+        var aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
 
         bool foundOwner = false;
         bool foundUsers = false;
@@ -378,7 +378,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateTable_AceRowCount_IncreasesPerUserTable()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         // Count ACE rows before adding a user table.
         int aceCountBefore;
@@ -386,7 +386,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
             var msSnap = new MemoryStream(ms.ToArray());
             await using var reader = await AccessReader.OpenAsync(
                 msSnap, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-            DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
+            var aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
             aceCountBefore = aces.Rows.Count;
         }
 
@@ -399,7 +399,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         ms.Position = 0;
         await using var reader2 = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        DataTable acesAfter = await reader2.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
+        var acesAfter = await reader2.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
         int aceCountAfter = acesAfter.Rows.Count;
 
         Assert.True(
@@ -526,7 +526,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public async Task CreateMultipleTables_EachGetsAceRows()
     {
-        MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        var ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
@@ -540,12 +540,12 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         await using var reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
 
-        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
+        var aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: ct);
 
         // Each of the 3 user tables should have ACE rows.
         foreach (string tableName in new[] { "T1", "T2", "T3" })
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, ct);
+            var entry = await reader.GetCatalogEntryAsync(tableName, ct);
             Assert.NotNull(entry);
             int objectId = (int)entry.TDefPage;
 

@@ -63,8 +63,8 @@ internal sealed class TableDef
         bool hasHyperlink = false;
         for (int i = 0; i < Columns.Count; i++)
         {
-            ColumnInfo c = Columns[i];
-            Type clr = JetTypeInfo.ResolveClrType(c);
+            var c = Columns[i];
+            var clr = JetTypeInfo.ResolveClrType(c);
             clrTypes[i] = clr;
             if (!c.IsFixed)
             {

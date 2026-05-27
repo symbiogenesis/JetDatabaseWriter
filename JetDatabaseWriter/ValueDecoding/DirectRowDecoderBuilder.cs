@@ -73,7 +73,7 @@ internal static class DirectRowDecoderBuilder
         var bound = new List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)>();
         for (int i = 0; i < columnCount; i++)
         {
-            RowMapper<T>.Accessor? acc = RowMapper<T>.TryGetAccessor(headers[i]);
+            var acc = RowMapper<T>.TryGetAccessor(headers[i]);
             if (acc == null)
             {
                 continue;
@@ -86,7 +86,7 @@ internal static class DirectRowDecoderBuilder
                 return null;
             }
 
-            ColumnInfo col = columns[i];
+            var col = columns[i];
             if (col.IsCalculated)
             {
                 return null;
@@ -162,7 +162,7 @@ internal static class DirectRowDecoderBuilder
 
         foreach (var entry in bound)
         {
-            ColumnInfo col = entry.Col;
+            var col = entry.Col;
             var colExpr = Expression.Constant(col, typeof(ColumnInfo));
 
             // slice = reader.ResolveColumnSliceForDirectDecode(page, rowStart, rowSize, layout, col);
@@ -185,7 +185,7 @@ internal static class DirectRowDecoderBuilder
             // Compute the absolute offset once (rowStart + slice.DataStart).
             var offsetExpr = Expression.Add(rowStartParam, dataStartExpr);
 
-            Expression readExpr = BuildReadExpression(
+            var readExpr = BuildReadExpression(
                 col,
                 pageParam,
                 offsetExpr,

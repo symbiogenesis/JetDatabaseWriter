@@ -121,7 +121,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 42, "Widget", 9.99m };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(42, result.Id);
         Assert.Equal("Widget", result.Name);
@@ -135,7 +135,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, "extra-value", "Gadget" };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(1, result.Id);
         Assert.Equal("Gadget", result.Name);
@@ -151,7 +151,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, null! };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(string.Empty, result.Name);
     }
@@ -163,7 +163,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, DBNull.Value };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(string.Empty, result.Name);
     }
@@ -178,7 +178,7 @@ public class RowMapperTests
         var date = new DateTime(2025, 6, 15);
         var row = new object[] { 7, "Test", date };
 
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        var result = RowMapper<NullableProduct>.Map(row, index);
 
         Assert.Equal(7, result.Id);
         Assert.Equal("Test", result.Name);
@@ -192,7 +192,7 @@ public class RowMapperTests
         var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var row = new object[] { 1, DBNull.Value };
 
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        var result = RowMapper<NullableProduct>.Map(row, index);
 
         Assert.Equal(1, result.Id);
         Assert.Null(result.CreatedDate);
@@ -207,7 +207,7 @@ public class RowMapperTests
         var index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
         var row = new object[] { 42, 19.99m };
 
-        TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Map(row, index);
+        var result = RowMapper<TypeMismatchPoco>.Map(row, index);
 
         Assert.Equal(42L, result.Id);
         Assert.Equal(19.99, result.Price);
@@ -222,7 +222,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 5 }; // only one value
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(5, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -235,7 +235,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 5, "extra1", "extra2" };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(5, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -250,7 +250,7 @@ public class RowMapperTests
         var index = RowMapper<EmptyPoco>.BuildIndex(headers);
         var row = new object[] { 1, "test" };
 
-        EmptyPoco result = RowMapper<EmptyPoco>.Map(row, index);
+        var result = RowMapper<EmptyPoco>.Map(row, index);
 
         Assert.NotNull(result);
     }
@@ -265,8 +265,8 @@ public class RowMapperTests
         var row1 = new object[] { 1, "Alpha", 10m };
         var row2 = new object[] { 2, "Beta", 20m };
 
-        SimpleProduct result1 = RowMapper<SimpleProduct>.Map(row1, index);
-        SimpleProduct result2 = RowMapper<SimpleProduct>.Map(row2, index);
+        var result1 = RowMapper<SimpleProduct>.Map(row1, index);
+        var result2 = RowMapper<SimpleProduct>.Map(row2, index);
 
         Assert.Equal(1, result1.Id);
         Assert.Equal("Alpha", result1.Name);
@@ -284,7 +284,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 99, "Direct", 5.5m };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(99, result.Id);
         Assert.Equal("Direct", result.Name);
@@ -307,7 +307,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_AllPropertiesMatch_ReturnsCorrectValues()
     {
-        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var td = MakeTableDef("Id", "Name", "Price");
         var product = new SimpleProduct { Id = 7, Name = "Bolt", Price = 1.25m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
@@ -321,7 +321,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_UnmatchedColumn_ProducesDBNull()
     {
-        TableDef td = MakeTableDef("Id", "Unknown");
+        var td = MakeTableDef("Id", "Unknown");
         var product = new SimpleProduct { Id = 3 };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
@@ -333,7 +333,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_NullPropertyValue_ProducesDBNull()
     {
-        TableDef td = MakeTableDef("Id", "Name");
+        var td = MakeTableDef("Id", "Name");
         var product = new NullableProduct { Id = 1, Name = null };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, product);
@@ -345,7 +345,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_NullableValueTypeWithNoValue_ProducesDBNull()
     {
-        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var td = MakeTableDef("Id", "Name", "CreatedDate");
         var product = new NullableProduct { Id = null, Name = null, CreatedDate = null };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, product);
@@ -358,7 +358,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_NonNullableValueType_BoxedAsIs()
     {
-        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var td = MakeTableDef("Id", "Name", "Price");
         var product = new SimpleProduct { Id = 0, Name = "Zero", Price = 0m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
@@ -371,7 +371,7 @@ public class RowMapperTests
     [Fact]
     public void ToRow_EmptyPoco_AllDBNull()
     {
-        TableDef td = MakeTableDef("Col1", "Col2");
+        var td = MakeTableDef("Col1", "Col2");
         var item = new EmptyPoco();
 
         object[] row = RowMapper<EmptyPoco>.ToRow(td, item);
@@ -384,13 +384,13 @@ public class RowMapperTests
     [Fact]
     public void ToRow_RoundTrips_WithMap()
     {
-        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var td = MakeTableDef("Id", "Name", "Price");
         var headers = new List<string> { "Id", "Name", "Price" };
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var original = new SimpleProduct { Id = 42, Name = "Gadget", Price = 19.99m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, original);
-        SimpleProduct roundTripped = RowMapper<SimpleProduct>.Map(row, index);
+        var roundTripped = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(original.Id, roundTripped.Id);
         Assert.Equal(original.Name, roundTripped.Name);
@@ -400,7 +400,7 @@ public class RowMapperTests
     [Fact]
     public void NullableProduct_ToRow_ThenMap_RoundTrips()
     {
-        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var td = MakeTableDef("Id", "Name", "CreatedDate");
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
         var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var original = new NullableProduct
@@ -411,7 +411,7 @@ public class RowMapperTests
         };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, original);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        var result = RowMapper<NullableProduct>.Map(row, index);
 
         Assert.Equal(original.Id, result.Id);
         Assert.Equal(original.Name, result.Name);
@@ -421,13 +421,13 @@ public class RowMapperTests
     [Fact]
     public void NullableProduct_WithAllNulls_ToRow_ThenMap_StaysNull()
     {
-        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var td = MakeTableDef("Id", "Name", "CreatedDate");
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
         var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var original = new NullableProduct { Id = null, Name = null, CreatedDate = null };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, original);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        var result = RowMapper<NullableProduct>.Map(row, index);
 
         Assert.Null(result.Id);
         Assert.Null(result.Name);
@@ -438,7 +438,7 @@ public class RowMapperTests
     public void ToRow_CaseInsensitiveColumnMatch()
     {
         // Column names differ in case from property names; matching is case-insensitive.
-        TableDef td = MakeTableDef("ID", "nAmE", "PRICE");
+        var td = MakeTableDef("ID", "nAmE", "PRICE");
         var product = new SimpleProduct { Id = 5, Name = "Case", Price = 2.5m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
@@ -456,7 +456,7 @@ public class RowMapperTests
         // compiling. Verified indirectly by asserting consistent results across
         // many invocations; a regression that recompiled per call would still
         // pass functionally, but exercising the cached path here keeps it covered.
-        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var td = MakeTableDef("Id", "Name", "Price");
         var product = new SimpleProduct { Id = 11, Name = "Cached", Price = 9.99m };
 
         for (int i = 0; i < 5; i++)
@@ -477,7 +477,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { DBNull.Value, DBNull.Value, DBNull.Value };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -491,7 +491,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { null!, null!, null! };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -521,7 +521,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = Array.Empty<object>();
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -552,7 +552,7 @@ public class RowMapperTests
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { "123", "Test", "45.67" };
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        var result = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(123, result.Id);
         Assert.Equal("Test", result.Name);

@@ -51,7 +51,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         object[]? result = null;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            ColumnInfo col = tableDef.Columns[i];
+            var col = tableDef.Columns[i];
             if (col.IsFixed || (col.Type != T_OLE && col.Type != T_MEMO))
             {
                 continue;

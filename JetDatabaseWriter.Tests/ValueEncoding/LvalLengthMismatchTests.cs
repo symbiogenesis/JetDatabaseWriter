@@ -133,7 +133,7 @@ public sealed class LvalLengthMismatchTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "OleTest",
             cancellationToken: TestContext.Current.CancellationToken);
 

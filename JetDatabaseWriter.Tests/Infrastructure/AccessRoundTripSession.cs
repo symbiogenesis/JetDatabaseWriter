@@ -84,7 +84,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         string tempDirectoryName = "JetDatabaseWriter.Tests.RoundTrip",
         TimeSpan? compactTimeout = null)
     {
-        AccessRoundTripSession session = CreateEmpty(tempDirectoryName, compactTimeout);
+        var session = CreateEmpty(tempDirectoryName, compactTimeout);
         try
         {
             await CopyNorthwindToAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
@@ -113,10 +113,10 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         TimeSpan? createTimeout = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AccessRoundTripSession session = CreateEmpty(tempDirectoryName, compactTimeout);
+        var session = CreateEmpty(tempDirectoryName, compactTimeout);
         try
         {
-            AccessRoundTripEnvironment.CompactResult result = session.RunDaoCreateDatabaseScript(
+            var result = session.RunDaoCreateDatabaseScript(
                 session.SourcePath,
                 DaoCreateDatabaseAttributes,
                 "Write-Output 'DAO_CREATE=OK'",
@@ -169,7 +169,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <summary>Runs DAO CompactDatabase from <see cref="SourcePath"/> to <see cref="CompactedPath"/>.</summary>
     public void RunDaoCompact()
     {
-        AccessRoundTripEnvironment.CompactResult result = AccessRoundTripEnvironment.RunDaoCompact(
+        var result = AccessRoundTripEnvironment.RunDaoCompact(
             SourcePath,
             CompactedPath,
             _compactTimeout);
@@ -246,8 +246,8 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
 
     private static async Task CopyNorthwindToAsync(string destinationPath, CancellationToken cancellationToken)
     {
-        await using (FileStream source = File.OpenRead(TestDatabases.NorthwindTraders))
-        await using (FileStream destination = File.Create(destinationPath))
+        await using (var source = File.OpenRead(TestDatabases.NorthwindTraders))
+        await using (var destination = File.Create(destinationPath))
         {
             await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
         }

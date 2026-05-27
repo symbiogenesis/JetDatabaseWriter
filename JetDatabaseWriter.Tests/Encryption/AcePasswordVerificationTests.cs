@@ -96,7 +96,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // After authentication, ListTables should return the original database tables.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -106,10 +106,10 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Reading table data after password verification should return valid rows.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "Table should contain rows after password authentication.");
     }
@@ -119,7 +119,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Streaming rows should work normally after password verification.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -131,7 +131,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Statistics should be accessible after correct password authentication.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables after authentication.");
         Assert.True(stats.TotalRows > 0, "Should report rows after authentication.");
@@ -142,10 +142,10 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Column metadata should be fully readable after password verification.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        var meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {

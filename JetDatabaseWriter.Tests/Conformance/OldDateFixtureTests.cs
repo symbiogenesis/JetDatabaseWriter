@@ -24,11 +24,11 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task OldDatesV2007_ListTables_ReturnsSingleTable()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal("Table1", tables[0]);
@@ -41,7 +41,7 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_HasDateTimeColumn()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
@@ -60,17 +60,17 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_AllDates_AreBeforeYear1600()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(4, dt.Rows.Count);
 
-        DateTime[] dates = dt.AsEnumerable()
+        var dates = dt.AsEnumerable()
             .Select(r => r.Field<DateTime>("DateField"))
             .ToArray();
 
@@ -85,15 +85,15 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_ContainsDateFrom1392()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DateTime[] dates = dt.AsEnumerable()
+        var dates = dt.AsEnumerable()
             .Select(r => r.Field<DateTime>("DateField"))
             .ToArray();
 

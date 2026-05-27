@@ -46,7 +46,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(3, dt.Columns.Count);
         Assert.Equal("Score", dt.Columns[2].ColumnName);
@@ -86,7 +86,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.False(dt.Columns.Contains("Score"));
@@ -121,7 +121,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.True(dt.Columns.Contains("Rating"));
@@ -186,7 +186,7 @@ public sealed class SchemaEvolutionTests
 
         await using var reader = await OpenReaderAsync(stream);
 
-        DataTable? msysIndexes = await reader.ReadDataTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
+        var msysIndexes = await reader.ReadDataTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
         if (msysIndexes is not null)
         {
             int matches = msysIndexes.AsEnumerable()
@@ -194,7 +194,7 @@ public sealed class SchemaEvolutionTests
             Assert.Equal(0, matches);
         }
 
-        DataTable? msysRels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        var msysRels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         if (msysRels is not null)
         {
             int matches = msysRels.AsEnumerable()

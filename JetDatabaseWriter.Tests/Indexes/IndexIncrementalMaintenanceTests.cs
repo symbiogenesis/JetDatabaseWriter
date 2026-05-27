@@ -60,7 +60,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(1, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Single(dt!.Rows);
         Assert.Equal(42, dt.Rows[0]["Id"]);
@@ -101,7 +101,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(5, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(5, dt!.Rows.Count);
     }
@@ -144,7 +144,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt!.Rows.Count);
     }
@@ -189,7 +189,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt!.Rows.Count);
         bool foundUpdated = false;
@@ -240,7 +240,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
     }
@@ -269,7 +269,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt!.Rows.Count);
     }
@@ -316,7 +316,7 @@ public sealed class IndexIncrementalMaintenanceTests
         long tdefPage = await GetTDefPageNumberAsync(stream, "T");
 
         await using var reopened = await OpenWriterAsync(stream);
-        TableDef tableDef = await reopened.ReadRequiredTableDefAsync(tdefPage, "T", ct);
+        var tableDef = await reopened.ReadRequiredTableDefAsync(tdefPage, "T", ct);
         await ClearRealIdxColMapsAsync(reopened, tdefPage, ct);
 
         var insertedRows = new List<(RowLocation Loc, object[] Row)>
@@ -429,15 +429,15 @@ public sealed class IndexIncrementalMaintenanceTests
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = writer._indexLayout;
+            var layout = writer._indexLayout;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
                 bool decoded = layout.TryReadRealIdxSlotWithKeyColumns(
                     tdef,
                     realIdxDescStart,
                     ri,
-                    out IndexLayout.RealIdxSlot slot,
-                    out List<IndexLayout.KeyColumn> keyCols);
+                    out var slot,
+                    out var keyCols);
                 Assert.True(decoded, $"Failed to decode real-idx slot {ri}.");
                 Assert.NotEmpty(keyCols);
 

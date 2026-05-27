@@ -53,7 +53,7 @@ internal sealed class ColumnPropertyBlock
         }
 
         bool isJet3 = magic == MagicKkd;
-        Encoding stringEncoding = isJet3
+        var stringEncoding = isJet3
             ? Encoding.GetEncoding(1252) // Jet3 fallback until per-database codepages flow into LvProp parsing.
             : Encoding.Unicode;
 
@@ -85,7 +85,7 @@ internal sealed class ColumnPropertyBlock
                 case ColumnPropertyChunkType.PropertyBlock:
                 case ColumnPropertyChunkType.PropertyBlockAlt1:
                 case ColumnPropertyChunkType.PropertyBlockAlt2:
-                    ColumnPropertyTarget? target = ReadPropertyBlock(
+                    var target = ReadPropertyBlock(
                         blob, payloadStart, payloadLen, chunkType, nameTable, stringEncoding, isJet3);
                     if (target is not null)
                     {
@@ -120,7 +120,7 @@ internal sealed class ColumnPropertyBlock
     /// <param name="name">The name.</param>
     public ColumnPropertyTarget? FindTarget(string name)
     {
-        foreach (ColumnPropertyTarget t in Targets)
+        foreach (var t in Targets)
         {
             if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {

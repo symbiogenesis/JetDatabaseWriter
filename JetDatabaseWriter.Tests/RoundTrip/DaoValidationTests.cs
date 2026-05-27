@@ -137,7 +137,7 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
             string tableName = $"Stress_T{tableOrdinal:D2}";
             string relationshipName = DaoValidationFixture.GetStressRelationshipName(tableOrdinal);
             Assert.True(
-                result.PostCompactForeignKeyIndexNames.TryGetValue(tableName, out IReadOnlyList<string>? foreignKeyIndexNames)
+                result.PostCompactForeignKeyIndexNames.TryGetValue(tableName, out var foreignKeyIndexNames)
                 && foreignKeyIndexNames.Contains(relationshipName, StringComparer.Ordinal),
                 $"Post-compact: {tableName} is missing FK index {relationshipName}.");
             Assert.Contains(relationshipName, result.PostCompactRelationshipNames);

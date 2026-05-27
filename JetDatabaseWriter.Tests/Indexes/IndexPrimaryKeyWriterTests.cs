@@ -44,12 +44,12 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal("PK_Pk_Single", pk.Name);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
-        IndexColumnReference col = Assert.Single(pk.Columns);
+        var col = Assert.Single(pk.Columns);
         Assert.Equal("Id", col.Name);
         Assert.True(col.IsAscending);
     }
@@ -72,12 +72,12 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
-        IndexColumnReference col = Assert.Single(pk.Columns);
+        var col = Assert.Single(pk.Columns);
         Assert.Equal("Id", col.Name);
     }
 
@@ -103,9 +103,9 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal(2, pk.Columns.Count);
         Assert.Equal("OrderId", pk.Columns[0].Name);
@@ -133,9 +133,9 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal(CompositeOrderLine, pk.Columns.Select(c => c.Name).ToArray());
@@ -161,8 +161,8 @@ public sealed class IndexPrimaryKeyWriterTests
 
         await using var reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
-        ColumnMetadata id = meta.Single(c => c.Name == "Id");
-        ColumnMetadata name = meta.Single(c => c.Name == "Name");
+        var id = meta.Single(c => c.Name == "Id");
+        var name = meta.Single(c => c.Name == "Name");
         Assert.False(id.IsNullable);
         Assert.True(name.IsNullable);
     }
@@ -189,11 +189,11 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, indexes.Count);
-        IndexMetadata pk = Assert.Single(indexes, i => i.Kind == IndexKind.PrimaryKey);
-        IndexMetadata normal = Assert.Single(indexes, i => i.Kind == IndexKind.Normal);
+        var pk = Assert.Single(indexes, i => i.Kind == IndexKind.PrimaryKey);
+        var normal = Assert.Single(indexes, i => i.Kind == IndexKind.Normal);
         Assert.Equal("PK_Id", pk.Name);
         Assert.Equal("IX_Score", normal.Name);
     }
@@ -358,7 +358,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
         await using var reader = await OpenReaderAsync(stream);
         var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal("Id", Assert.Single(pk.Columns).Name);
     }
@@ -407,7 +407,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
         await using var reader = await OpenReaderAsync(stream);
         var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        IndexMetadata pk = Assert.Single(indexes);
+        var pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal("Identifier", Assert.Single(pk.Columns).Name);
     }
@@ -434,7 +434,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
         await using var reader = await OpenReaderAsync(stream);
         var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        IndexMetadata ix = Assert.Single(indexes);
+        var ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
         Assert.Equal(CompositeAB, ix.Columns.Select(c => c.Name).ToArray());
     }

@@ -32,7 +32,7 @@ internal static class FkDaoBaselineProbe
             return 1;
         }
 
-        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
+        var hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             await Console.Error.WriteLineAsync($"[fk-dao-baseline] {hostProbe.FailureReason}");
@@ -69,7 +69,7 @@ internal static class FkDaoBaselineProbe
             Console.WriteLine("[fk-dao-baseline] detailed table dumps skipped by DIAG_FK_SUMMARY_ONLY/DIAG_FK_SKIP_DUMPS");
         }
 
-        PostAuthoringProbeResults postAuthoringResults = RunPostAuthoringProbes(
+        var postAuthoringResults = RunPostAuthoringProbes(
             hostProbe.HostPath,
             workRoot,
             writerPath,
@@ -150,7 +150,7 @@ internal static class FkDaoBaselineProbe
         Console.WriteLine();
         Console.WriteLine($"== {label} ==");
         await using var reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false });
-        Dictionary<string, int> catalogIds = await DumpCatalogRowsAsync(reader);
+        var catalogIds = await DumpCatalogRowsAsync(reader);
         await DumpAcesAsync(reader, catalogIds);
         await DumpRelationshipsAsync(reader);
         await DumpTDefAsync(reader, "MSysObjects");
@@ -163,14 +163,14 @@ internal static class FkDaoBaselineProbe
     private static async Task<Dictionary<string, int>> DumpCatalogRowsAsync(AccessReader reader)
     {
         var ids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysObjects");
+        var columns = await reader.GetColumnMetadataAsync("MSysObjects");
         if (columns.Count == 0)
         {
             Console.WriteLine("MSysObjects: <missing>");
             return ids;
         }
 
-        Dictionary<string, int> ordinals = BuildOrdinals(columns);
+        var ordinals = BuildOrdinals(columns);
         Console.WriteLine("MSysObjects:");
         await foreach (object[] row in reader.Rows("MSysObjects"))
         {
@@ -202,8 +202,8 @@ internal static class FkDaoBaselineProbe
             return;
         }
 
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysACEs");
-        Dictionary<string, int> ordinals = BuildOrdinals(columns);
+        var columns = await reader.GetColumnMetadataAsync("MSysACEs");
+        var ordinals = BuildOrdinals(columns);
         if (!ordinals.ContainsKey("ObjectId"))
         {
             Console.WriteLine("  <missing>");
@@ -238,14 +238,14 @@ internal static class FkDaoBaselineProbe
 
     private static async Task DumpRelationshipsAsync(AccessReader reader)
     {
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysRelationships");
+        var columns = await reader.GetColumnMetadataAsync("MSysRelationships");
         if (columns.Count == 0)
         {
             Console.WriteLine("MSysRelationships: <missing>");
             return;
         }
 
-        Dictionary<string, int> ordinals = BuildOrdinals(columns);
+        var ordinals = BuildOrdinals(columns);
         Console.WriteLine("MSysRelationships:");
         await foreach (object[] row in reader.Rows("MSysRelationships"))
         {
@@ -268,7 +268,7 @@ internal static class FkDaoBaselineProbe
         long rowCount = await reader.GetRealRowCountAsync(tableName);
         Console.WriteLine(FormattableString.Invariant($"{tableName}: rows={rowCount}"));
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName);
+        var entry = await reader.GetCatalogEntryAsync(tableName);
         long tdefPage = entry?.TDefPage ?? tableName switch
         {
             "MSysObjects" => 2,
@@ -302,7 +302,7 @@ internal static class FkDaoBaselineProbe
         int realStart = namePos;
         int logStart = realStart + (numRealIdx * 52);
         int logNamesStart = logStart + (numIdx * 28);
-        List<string> names = ReadNames(page, logNamesStart, numIdx);
+        var names = ReadNames(page, logNamesStart, numIdx);
 
         Console.WriteLine(FormattableString.Invariant($"{tableName}: tdefPage={tdefPage} numIdx={numIdx} numRealIdx={numRealIdx}"));
         Console.WriteLine(FormattableString.Invariant($"  tableUsed row={ownedRow} page={ownedPage} {await UsageMapRowSummaryAsync(reader, ownedPage, ownedRow)}"));
@@ -537,8 +537,8 @@ internal static class FkDaoBaselineProbe
             powerShellPath,
             workRoot,
             BuildPostAuthoringProbeScript(writerPath, writerCompactPath, daoPath, daoCompactPath));
-        Dictionary<string, PowerShellStepResult> results = ParsePowerShellStepResults(stdout);
-        PowerShellStepResult fallback = code == 0
+        var results = ParsePowerShellStepResults(stdout);
+        var fallback = code == 0
             ? new PowerShellStepResult(1, string.Empty, "PowerShell batch did not emit a result for this step.")
             : new PowerShellStepResult(code, stdout, stderr);
 
@@ -651,7 +651,7 @@ internal static class FkDaoBaselineProbe
         Dictionary<string, PowerShellStepResult> results,
         string name,
         PowerShellStepResult fallback) =>
-        results.TryGetValue(name, out PowerShellStepResult result) ? result : fallback;
+        results.TryGetValue(name, out var result) ? result : fallback;
 
     private static string DecodeBase64(string value)
     {
@@ -684,7 +684,7 @@ internal static class FkDaoBaselineProbe
             psi.ArgumentList.Add("-File");
             psi.ArgumentList.Add(scriptPath);
 
-            using Process process = Process.Start(psi)!;
+            using var process = Process.Start(psi)!;
             string stdout = process.StandardOutput.ReadToEnd();
             string stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();

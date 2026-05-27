@@ -25,7 +25,7 @@ internal sealed class AsyncLazyInitializer<T>(Func<CancellationToken, ValueTask<
     /// <param name="cancellationToken">A token used to cancel the asynchronous build.</param>
     public async ValueTask<T> GetAsync(CancellationToken cancellationToken)
     {
-        T? cached = _value;
+        var cached = _value;
         if (cached != null)
         {
             return cached;

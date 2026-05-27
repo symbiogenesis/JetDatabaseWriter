@@ -54,7 +54,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
         if (tdefPage <= 1024)
         {
-            PageInsertTarget? existingTarget = await TryFindExistingSystemTablePageAsync(tdefPage, rowLength, cancellationToken).ConfigureAwait(false);
+            var existingTarget = await TryFindExistingSystemTablePageAsync(tdefPage, rowLength, cancellationToken).ConfigureAwait(false);
             if (existingTarget is not null)
             {
                 return existingTarget;
@@ -95,7 +95,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
-        List<long>? mappedPages = await TryReadMappedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var mappedPages = await TryReadMappedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (mappedPages is not null)
         {
             foreach (long pageNumber in mappedPages)
@@ -161,7 +161,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         try
         {
             if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, writer._dataPage, writer._pgSz, pointer.RowIndex, out RowBound rowBound))
+                || !UsageMap.TryGetRowBound(usageMapPage, writer._dataPage, writer._pgSz, pointer.RowIndex, out var rowBound))
             {
                 return null;
             }
@@ -263,7 +263,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
     {
-        if (!UsageMap.TryGetRowBound(umPage, writer._dataPage, writer._pgSz, rowIndex, out RowBound rowBound))
+        if (!UsageMap.TryGetRowBound(umPage, writer._dataPage, writer._pgSz, rowIndex, out var rowBound))
         {
             return false;
         }

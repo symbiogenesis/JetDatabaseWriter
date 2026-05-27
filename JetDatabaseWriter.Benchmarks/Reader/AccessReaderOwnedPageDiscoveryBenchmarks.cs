@@ -35,14 +35,14 @@ public class AccessReaderOwnedPageDiscoveryBenchmarks
     [Benchmark]
     public async Task<int> ColdOpenFirstRow()
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
+        await using var reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
         return await CountFirstRowAsync(reader).ConfigureAwait(false);
     }
 
     [Benchmark]
     public async Task<int> ColdOpenFullScan()
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
+        await using var reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
         return await CountRowsAsync(reader).ConfigureAwait(false);
     }
 

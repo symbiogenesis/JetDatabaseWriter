@@ -142,7 +142,7 @@ internal static class IndexBTreeBuilder
             int currentSize = 0;
             for (int i = 0; i < entries.Count; i++)
             {
-                IndexEntry e = entries[i];
+                var e = entries[i];
                 int entryLen = e.Key.Length + 4;
                 if (entryLen > entryAreaSize)
                 {
@@ -217,7 +217,7 @@ internal static class IndexBTreeBuilder
 
         while (childPageCount > 1)
         {
-            (List<List<IntermediateEntry>> groups, List<IndexEntry> nextLevelLast) =
+            (var groups, var nextLevelLast) =
                 PackIntermediate(childPageBase, childPageCount, childLastEntries, entryAreaSize);
 
             int levelCount = groups.Count;
@@ -286,7 +286,7 @@ internal static class IndexBTreeBuilder
         }
 
         var packed = new List<IntermediateEntry>(entries.Count);
-        foreach (DecodedIntermediateEntry e in entries)
+        foreach (var e in entries)
         {
             packed.Add(new IntermediateEntry(e.Entry, e.ChildPage));
         }
@@ -387,7 +387,7 @@ internal static class IndexBTreeBuilder
 
         for (int i = 0; i < entries.Count; i++)
         {
-            IntermediateEntry e = entries[i];
+            var e = entries[i];
             byte[] key = e.Summary.Key;
             int keyOffset = i == 0 ? 0 : prefLen;
             int keyLen = key.Length - keyOffset;

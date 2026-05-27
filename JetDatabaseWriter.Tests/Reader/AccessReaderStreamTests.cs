@@ -25,7 +25,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_YieldsAtLeastOneRow(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return; // all tables are empty — nothing to assert
@@ -114,7 +114,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsAsStrings_YieldsAtLeastOneRow(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
+        var stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return; // all tables are empty — nothing to assert
@@ -194,7 +194,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         }
 
         await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
 
@@ -237,7 +237,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_Jackcess_ReadsAllTablesWithoutException(string path)
     {
         await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
 
@@ -275,7 +275,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        await foreach (StreamGenericRow item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
+        await foreach (var item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
             Assert.NotNull(item);
         }
@@ -289,7 +289,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var reported = new List<long>();
 
-        await foreach (StreamGenericRow item in reader.Rows<StreamGenericRow>(table, new SyncProgress<long>(reported.Add), TestContext.Current.CancellationToken))
+        await foreach (var item in reader.Rows<StreamGenericRow>(table, new SyncProgress<long>(reported.Add), TestContext.Current.CancellationToken))
         {
             _ = item;
         }
@@ -308,7 +308,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int count = 0;
 
-        await foreach (StreamGenericRow item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken))
+        await foreach (var item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken))
         {
             _ = item;
             count++;

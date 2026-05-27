@@ -96,24 +96,24 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(CompIndexFixtures))]
     public async Task CompIndex_RowCount_EqualsLeafEntryCount(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         // The compIndex fixtures all have a "Table1" with a non-FK index
         // whose entry count equals the table row count. Jackcess hard-codes
         // the row count (512) — we instead read it from the table so the
         // assertion stays meaningful even if the fixture is regenerated.
-        DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
         int rowCount = dt.Rows.Count;
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", ct);
-        IndexMetadata? primary = indexes.FirstOrDefault(i => !i.IsForeignKey && i.FirstDp > 0);
+        var indexes = await reader.ListIndexesAsync("Table1", ct);
+        var primary = indexes.FirstOrDefault(i => !i.IsForeignKey && i.FirstDp > 0);
         if (primary is null)
         {
             Assert.Fail($"No non-FK index with first_dp on Table1 of '{fixturePath}'.");
@@ -142,19 +142,19 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafChain_IsSortedByUnsignedByteOrder(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         int btreesChecked = 0;
         int totalEntries = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;
@@ -167,7 +167,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 continue;
             }
 
-            foreach (IndexMetadata index in indexes)
+            foreach (var index in indexes)
             {
                 if (index.IsForeignKey || index.FirstDp <= 0)
                 {
@@ -222,13 +222,13 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafEntryTrailers_PointAtValidDataPages(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        var ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         long fileLength = new FileInfo(fixturePath).Length;
@@ -237,7 +237,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         var seenInvalidPages = new HashSet<long>();
         int totalEntries = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        var tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;
@@ -250,7 +250,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 continue;
             }
 
-            foreach (IndexMetadata index in indexes)
+            foreach (var index in indexes)
             {
                 if (index.IsForeignKey || index.FirstDp <= 0)
                 {
@@ -267,7 +267,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                     continue;
                 }
 
-                foreach (IndexEntry e in entries)
+                foreach (var e in entries)
                 {
                     totalEntries++;
                     if (e.DataPage <= 0 || e.DataPage > maxPageNumber)
@@ -304,7 +304,7 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(BigIndexFixtures))]
     public async Task BigIndex_PopulatedAtRuntime_RowCount_EqualsLeafEntryCount(string fixturePath)
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         const int rowCount = 2000;
 
         string temp = Path.Combine(
@@ -315,7 +315,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
         try
         {
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            await using (var writer = await AccessWriter.OpenAsync(
                 temp,
                 new AccessWriterOptions { UseLockFile = false },
                 ct))
@@ -339,20 +339,20 @@ public sealed class IndexBTreeStructuralFixtureTests
                 }
             }
 
-            await using AccessReader reader = await AccessReader.OpenAsync(
+            await using var reader = await AccessReader.OpenAsync(
                 temp,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
 
-            IndexLeafPageBuilder.LeafPageLayout layout =
+            var layout =
                 IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
-            DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+            var dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
             Assert.Equal(rowCount, dt.Rows.Count);
 
-            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", ct);
-            IndexMetadata index = indexes.Single(i => !i.IsForeignKey && i.FirstDp > 0);
+            var indexes = await reader.ListIndexesAsync("Table1", ct);
+            var index = indexes.Single(i => !i.IsForeignKey && i.FirstDp > 0);
 
             // Walk down through any intermediate levels and confirm the tree
             // actually has at least one — otherwise this test isn't covering
@@ -362,7 +362,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 rootPage[0] == Constants.IndexLeafPage.PageTypeIntermediate,
                 $"Expected root page 0x{index.FirstDp:X} to be intermediate (0x03) for a populated big-index B-tree; got 0x{rootPage[0]:X2}.");
 
-            List<IndexEntry> leafEntries = await CollectAllLeafEntriesAsync(
+            var leafEntries = await CollectAllLeafEntriesAsync(
                 reader, layout, pageSize, index.FirstDp, ct);
 
             Assert.Equal(rowCount, leafEntries.Count);
@@ -395,7 +395,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         long rootPage,
         CancellationToken ct)
     {
-        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
+        var entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
         return entries.Count;
     }
 
@@ -406,7 +406,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         long rootPage,
         CancellationToken ct)
     {
-        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
+        var entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
         return entries.Select(e => e.Key).ToList();
     }
 
@@ -433,7 +433,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            List<DecodedIntermediateEntry> entries =
+            var entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -459,7 +459,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
             result.AddRange(entries);
 
             (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);

@@ -68,19 +68,19 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
         int realIdxDescStart = namePos;
         var anchors = writer._indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = writer.Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
+        var logIdxNames = writer.Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
-        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
+        var catalog = IndexCatalogReader.ReadResolved(
             tdefBuffer, writer._indexLayout, anchors, tableDef.Columns, logIdxNames);
 
-        foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
+        foreach ((int realIdxNum, var slot) in catalog.RealIdxByNum)
         {
             if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
             {
                 continue;
             }
 
-            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo> keyColInfos))
+            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out var keyColInfos))
             {
                 continue;
             }
@@ -109,7 +109,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         // Single-column fast path: avoid the per-column array + copy.
         if (keyCount == 1)
         {
-            (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[0];
+            (var col, int snapIdx, bool ascending) = descriptor.KeyColumns[0];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
             return col.Type == T_NUMERIC
@@ -123,7 +123,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         int totalLen = 0;
         for (int k = 0; k < keyCount; k++)
         {
-            (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
+            (var col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
             perColumn[k] = col.Type == T_NUMERIC
@@ -164,7 +164,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        var descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;
@@ -175,9 +175,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         // snapshot path until the byte-for-byte key normalization is validated
         // against the descriptor scale and Jet4/ACE numeric encoding variants.
         bool needsSnapshot = false;
-        foreach (UniqueIndexDescriptor desc in descriptors)
+        foreach (var desc in descriptors)
         {
-            foreach ((ColumnInfo col, _, _) in desc.KeyColumns)
+            foreach ((var col, _, _) in desc.KeyColumns)
             {
                 if (col.Type == T_NUMERIC)
                 {
@@ -194,13 +194,13 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
         if (needsSnapshot)
         {
-            using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+            using var snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
             CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
             return;
         }
 
         // Gather existing key-column values directly from data pages.
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         await CheckUniqueIndexesFastPathAsync(tableName, descriptors, tableDef, locations, pendingRows, cancellationToken).ConfigureAwait(false);
     }
 
@@ -254,7 +254,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         // Read existing rows (key columns only).
-        foreach (RowLocation loc in locations)
+        foreach (var loc in locations)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -266,7 +266,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
             for (int d = 0; d < descriptors.Count; d++)
             {
-                UniqueIndexDescriptor descriptor = descriptors[d];
+                var descriptor = descriptors[d];
                 int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
 
                 // Map from the columnOrdinalsArray position back to the full row object[].
@@ -281,7 +281,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         {
             for (int d = 0; d < descriptors.Count; d++)
             {
-                UniqueIndexDescriptor descriptor = descriptors[d];
+                var descriptor = descriptors[d];
                 int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
                 byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
 
@@ -317,7 +317,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        var descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;
@@ -337,7 +337,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         int[] scales = new int[descriptor.KeyColumns.Count];
         for (int k = 0; k < descriptor.KeyColumns.Count; k++)
         {
-            ColumnInfo kCol = descriptor.KeyColumns[k].Col;
+            var kCol = descriptor.KeyColumns[k].Col;
             scales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
         }
 
@@ -397,12 +397,12 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         int pendingCount = pendingInsertRows.Count;
         int totalRows = snapshotRowCount + pendingCount;
 
-        foreach (UniqueIndexDescriptor descriptor in descriptors)
+        foreach (var descriptor in descriptors)
         {
             int[] numericTargetScales = new int[descriptor.KeyColumns.Count];
             for (int k = 0; k < descriptor.KeyColumns.Count; k++)
             {
-                ColumnInfo kCol = descriptor.KeyColumns[k].Col;
+                var kCol = descriptor.KeyColumns[k].Col;
                 numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
             }
 

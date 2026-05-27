@@ -70,7 +70,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - (rowCount / 5), dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)
@@ -129,7 +129,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(560, dt!.Rows.Count);
 
@@ -195,7 +195,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         }
 
         await using var reader = await OpenReaderAsync(stream);
-        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
 
         const int deletedCount = (initialRows + 10) / 11; // ceil(700/11) = 64

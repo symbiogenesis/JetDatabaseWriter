@@ -50,7 +50,7 @@ internal sealed class ConstraintRegistry(
             return;
         }
 
-        foreach ((ColumnConstraint c, long? prev) in checkpoints)
+        foreach ((var c, long? prev) in checkpoints)
         {
             c.NextAutoValue = prev;
         }
@@ -60,9 +60,9 @@ internal sealed class ConstraintRegistry(
     {
         var list = new List<ColumnConstraint>(defs.Count);
         bool anyConstraint = false;
-        foreach (ColumnDefinition def in defs)
+        foreach (var def in defs)
         {
-            ColumnConstraint c = ToConstraint(def);
+            var c = ToConstraint(def);
             anyConstraint |= c.HasAnyConstraint;
 
             if (c.IsAutoIncrement && !IsIntegralType(c.ClrType))
@@ -102,7 +102,7 @@ internal sealed class ConstraintRegistry(
 
     public void Rename(string oldName, string newName)
     {
-        if (_constraints.TryGetValue(oldName, out List<ColumnConstraint>? list))
+        if (_constraints.TryGetValue(oldName, out var list))
         {
             _constraints.Remove(oldName);
             _constraints[newName] = list;
@@ -135,7 +135,7 @@ internal sealed class ConstraintRegistry(
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
-        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        var list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
 
         // The constraint list is positionally aligned with the columns at registration time.
         // Add/Drop/Rename re-registers, so the count must match. Defensive bail-out otherwise.
@@ -149,7 +149,7 @@ internal sealed class ConstraintRegistry(
         {
             for (int i = 0; i < list.Count; i++)
             {
-                ColumnConstraint c = list[i];
+                var c = list[i];
                 object? value = values[i];
                 bool isNull = value is null || value is DBNull;
 
@@ -206,7 +206,7 @@ internal sealed class ConstraintRegistry(
 
     public async ValueTask ApplyCalculatedAsync(string tableName, TableDef tableDef, object[] values, bool force, CancellationToken cancellationToken)
     {
-        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        var list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
         if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
         {
             return;
@@ -236,7 +236,7 @@ internal sealed class ConstraintRegistry(
     {
         for (int i = 0; i < constraints.Count; i++)
         {
-            ColumnConstraint c = constraints[i];
+            var c = constraints[i];
             if (!c.IsCalculated)
             {
                 continue;
@@ -334,13 +334,13 @@ internal sealed class ConstraintRegistry(
             return 0;
         }
 
-        ColumnPropertyEntry? resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
+        var resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
         return resultType is not null && resultType.Value.Length > 0 ? resultType.Value[0] : col.Type;
     }
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
-        if (_constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) && list != null)
+        if (_constraints.TryGetValue(tableName, out var list) && list != null)
         {
             return list;
         }
@@ -349,7 +349,7 @@ internal sealed class ConstraintRegistry(
         // itself). Hydrate the registry from the persisted column flags and LvProp so
         // NOT NULL, AutoIncrement, and calculated-column expressions still take effect
         // after the database is closed and reopened.
-        ColumnPropertyBlock? props = readLvPropForTable is null
+        var props = readLvPropForTable is null
             ? null
             : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
         return HydrateFromTableDef(tableName, tableDef, props);
@@ -370,7 +370,7 @@ internal sealed class ConstraintRegistry(
     private List<ColumnConstraint> HydrateFromTableDef(string tableName, TableDef tableDef, ColumnPropertyBlock? properties = null)
     {
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
-        foreach (ColumnInfo col in tableDef.Columns)
+        foreach (var col in tableDef.Columns)
         {
             // Complex columns (T_ATTACHMENT / T_COMPLEX) carry a magic Flags = 0x07
             // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
@@ -423,7 +423,7 @@ internal sealed class ConstraintRegistry(
         if (c.NextAutoValue == null)
         {
             long max = 0;
-            using DataTable snapshot = await readTableSnapshot(tableName, cancellationToken).ConfigureAwait(false);
+            using var snapshot = await readTableSnapshot(tableName, cancellationToken).ConfigureAwait(false);
             if (snapshot.Columns.Count > columnIndex)
             {
                 foreach (DataRow row in snapshot.Rows)

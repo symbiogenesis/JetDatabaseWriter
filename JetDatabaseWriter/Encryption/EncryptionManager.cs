@@ -211,11 +211,11 @@ internal static class EncryptionManager
                 throwOnEndOfStream: false,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
+            var headerFormat = EncryptionConverter.Detect(sniff);
             if (headerFormat == AccessEncryptionFormat.AccdbAgileCfb)
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
-                AccessEncryptionFormat cfbFormat = await TryDetectCompoundFileFormatAsync(stream, cancellationToken)
+                var cfbFormat = await TryDetectCompoundFileFormatAsync(stream, cancellationToken)
                     .ConfigureAwait(false);
                 if (cfbFormat != AccessEncryptionFormat.None)
                 {
@@ -680,7 +680,7 @@ internal static class EncryptionManager
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
-        LockFileSlotWriter? lockSlot = AcquireReencryptLockSlot(path, options);
+        var lockSlot = AcquireReencryptLockSlot(path, options);
         try
         {
             byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
@@ -783,11 +783,11 @@ internal static class EncryptionManager
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
     {
-        ReadOnlyMemory<char> oldPwd = oldPassword.AsMemory();
-        ReadOnlyMemory<char> newPwd = newPassword.AsMemory();
+        var oldPwd = oldPassword.AsMemory();
+        var newPwd = newPassword.AsMemory();
 
         long origPos = source.Position;
-        AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
+        var detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
         _ = source.Seek(origPos, SeekOrigin.Begin);
 
         if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
@@ -802,11 +802,11 @@ internal static class EncryptionManager
                 $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
         }
 
-        (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
+        (byte[] plaintext, var sourceFormat) = await EncryptionConverter
             .ReadDecryptedAsync(source, oldPwd, cancellationToken)
             .ConfigureAwait(false);
 
-        AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
+        var effectiveTarget = targetFormat ?? sourceFormat;
         return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 
@@ -1050,7 +1050,7 @@ internal static class EncryptionManager
         int maxBytes = Encoding.UTF8.GetMaxByteCount(password.Length);
         Span<byte> stackBuf = stackalloc byte[256];
         byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
-        Span<byte> utf8 = rented ?? stackBuf;
+        var utf8 = rented ?? stackBuf;
 
         try
         {

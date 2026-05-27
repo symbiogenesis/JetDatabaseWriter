@@ -38,7 +38,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         string sourceTableName = GetUnqualifiedSourceName(foreignTableName);
-        List<ColumnIdentity> columns = CreateColumnIdentities(sourceColumns);
+        var columns = CreateColumnIdentities(sourceColumns);
         Guid tableGuid = Guid.NewGuid();
 
         var builder = new ColumnPropertyBlockBuilder();
@@ -89,7 +89,7 @@ internal static class LinkedOdbcLvPropBuilder
 
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var identities = new List<ColumnIdentity>(sourceColumns.Count);
-        foreach (ColumnDefinition column in sourceColumns)
+        foreach (var column in sourceColumns)
         {
             Guard.NotNull(column, nameof(sourceColumns));
             Guard.NotNullOrEmpty(column.Name, nameof(sourceColumns));
@@ -107,7 +107,7 @@ internal static class LinkedOdbcLvPropBuilder
 
     private static void AddColumnTarget(ColumnPropertyBlockBuilder builder, ColumnIdentity identity, int ordinal)
     {
-        ColumnDefinition column = identity.Column;
+        var column = identity.Column;
         var target = new ColumnPropertyBlockBuilder.TargetBuilder
         {
             Name = column.Name,
@@ -150,7 +150,7 @@ internal static class LinkedOdbcLvPropBuilder
         List<ColumnIdentity> columns,
         DatabaseFormat format)
     {
-        Encoding encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        var encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
         using var stream = new MemoryStream();
 
         WriteUInt32(stream, 0x550E_CC0A);
@@ -161,7 +161,7 @@ internal static class LinkedOdbcLvPropBuilder
         WriteUInt64(stream, 0);
         WriteNameMapString(stream, encoding, sourceTableName);
 
-        foreach (ColumnIdentity column in columns)
+        foreach (var column in columns)
         {
             WriteGuid(stream, column.Guid);
             WriteUInt16(stream, 0x0007);

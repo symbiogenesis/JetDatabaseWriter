@@ -29,11 +29,11 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ReadMSysQueries_ReturnsNonEmptyRowSet()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -49,15 +49,15 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ParameterisedQuery_HasParameterAttributeRows()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataRow[] paramRows = dt.AsEnumerable()
+        var paramRows = dt.AsEnumerable()
             .Where(r =>
             {
                 object attr = r["Attribute"];
@@ -83,16 +83,16 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task AllQueries_HaveTypeAttributeRows()
     {
-        AccessReader reader = await db.GetReaderAsync(
+        var reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        var dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Attribute == 0 marks TYPE rows (Jackcess TYPE_ATTRIBUTE).
-        DataRow[] typeRows = dt.AsEnumerable()
+        var typeRows = dt.AsEnumerable()
             .Where(r =>
             {
                 object attr = r["Attribute"];
