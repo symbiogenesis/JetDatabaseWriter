@@ -499,7 +499,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
         var requests = new List<(object?[] OldPk, byte Payload)>(parentPkRows.Count);
         foreach (object?[] primaryKey in parentPkRows)
         {
-            requests.Add((primaryKey, (byte)0));
+            requests.Add((primaryKey, 0));
         }
 
         List<(RowLocation Loc, byte Payload)>? hits = await childRowLocator.TrySeekChildLocationsAsync(

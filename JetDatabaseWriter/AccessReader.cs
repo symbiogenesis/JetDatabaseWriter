@@ -3455,7 +3455,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (buffer[i] is RowDecodePlan.LongValueRef lvr)
             {
                 buffer[i] = lvr.IsOle
-                    ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                    ? await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                     : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
             else if (buffer[i] is RowDecodePlan.CalculatedLongValueRef clvr)
@@ -3488,7 +3488,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);
         return reference.IsOle
-            ? (object)DecodeOleValueBytes(payload, 0, payload.Length)
+            ? DecodeOleValueBytes(payload, 0, payload.Length)
             : _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
     }
 

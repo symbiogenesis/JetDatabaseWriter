@@ -147,7 +147,7 @@ public sealed class IndexNumericKeyIncrementalTests
             // append optimisation is meaningfully different from the
             // single-leaf splice path.
             object[][] bulk = Enumerable.Range(1, 400)
-                .Select(i => new object[] { (decimal)i + 0.50m })
+                .Select(i => new object[] { i + 0.50m })
                 .ToArray();
             await writer.InsertRowsAsync("T", bulk, ct);
         }

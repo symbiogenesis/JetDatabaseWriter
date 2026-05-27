@@ -842,7 +842,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 // but the reader will handle the lookup gracefully.
                 BinaryPrimitives.WriteUInt32LittleEndian(
                     corrupted.AsSpan(memoHeaderPos + 4, 4),
-                    (uint)(3 << 8));
+                    3 << 8);
                 found = true;
             }
         }

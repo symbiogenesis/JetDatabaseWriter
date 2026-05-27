@@ -311,7 +311,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 byte flagsByte = Constants.TableDefinition.UnknownIndexFlag;
                 if (ri.IsPrimaryKey)
                 {
-                    flagsByte |= (byte)(Constants.TableDefinition.UniqueIndexFlag | Constants.TableDefinition.RequiredIndexFlag);
+                    flagsByte |= Constants.TableDefinition.UniqueIndexFlag | Constants.TableDefinition.RequiredIndexFlag;
                 }
                 else if (ri.IsUnique)
                 {

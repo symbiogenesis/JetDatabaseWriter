@@ -1496,7 +1496,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             sourceDatabasePath,
             foreignTableName,
             connectString: null,
-            objectType: (short)Constants.SystemObjects.LinkedTableType,
+            objectType: Constants.SystemObjects.LinkedTableType,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -1615,7 +1615,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             sourceDatabasePath: null,
             foreignName: foreignTableName,
             connectString: normalizedConnect,
-            objectType: (short)Constants.SystemObjects.LinkedOdbcType,
+            objectType: Constants.SystemObjects.LinkedOdbcType,
             cachedSchemaLvProp: lvProp,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -1678,7 +1678,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             sourceDirectoryPath,
             foreignFileName,
             connectString,
-            objectType: (short)Constants.SystemObjects.LinkedTableType,
+            objectType: Constants.SystemObjects.LinkedTableType,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 

@@ -1237,7 +1237,7 @@ public sealed class IndexKeyEncoderTests
             Assert.Equal(unchecked((byte)~asc[finalStart + b]), desc[finalStart + b]);
         }
 
-        Assert.Equal(unchecked((byte)~(byte)0x02), desc[finalStart + 8]); // final length flipped
+        Assert.Equal(unchecked((byte)~0x02), desc[finalStart + 8]); // final length flipped
     }
 
     [Fact]

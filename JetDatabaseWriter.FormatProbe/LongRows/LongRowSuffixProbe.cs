@@ -2818,7 +2818,7 @@ internal static class LongRowSuffixProbe
                 1 => (ushort)((value >> 16) & 0xFFFFu),               // high16
                 2 => ByteSwap((ushort)(value & 0xFFFFu)),             // low16 byte-swapped
                 3 => ByteSwap((ushort)((value >> 16) & 0xFFFFu)),     // high16 byte-swapped
-                _ => (ushort)0,
+                _ => 0,
             };
         }
     }
@@ -3868,7 +3868,7 @@ internal static class LongRowSuffixProbe
         var validatedPolynomials = new List<ushort>();
         foreach (ushort p in candidatePolynomials)
         {
-            uint pFull = 0x10000u | (uint)p;
+            uint pFull = 0x10000u | p;
             bool allMatch = true;
             for (int i = 0; i < sharedChars.Count && allMatch; i++)
             {
@@ -3893,7 +3893,7 @@ internal static class LongRowSuffixProbe
         foreach (ushort p in validatedPolynomials)
         {
             // Compute alpha^2 = col[0] / row[0] in GF(2^16) mod (x^16 + p)
-            uint pFull = 0x10000u | (uint)p;
+            uint pFull = 0x10000u | p;
             ushort alpha2 = Gf2Divide(sharedChars[0].Col, sharedChars[0].Row, pFull);
             sb.AppendLine(CultureInfo.InvariantCulture, $"  - P = 0x{p:X4}, alpha^2 = 0x{alpha2:X4}");
         }

@@ -530,7 +530,7 @@ public sealed class CompoundFileReaderTests
         // ── Sector 0: Directory ───────────────────────────────────────
         const int dirOff = Ss;
         WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
-        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, (uint)StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, StreamSize, child: 0xFFFFFFFF);
         WriteDirEntryUnused(file, dirOff + 256);
         WriteDirEntryUnused(file, dirOff + 384);
 
@@ -616,7 +616,7 @@ public sealed class CompoundFileReaderTests
         // ── Sector 0: Directory ───────────────────────────────────────
         const int dirOff = Ss;
         WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
-        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, (uint)StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, StreamSize, child: 0xFFFFFFFF);
         WriteDirEntryUnused(file, dirOff + 256);
         WriteDirEntryUnused(file, dirOff + 384);
 
@@ -764,7 +764,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 4096);
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), (uint)firstMiniFatSector);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), (uint)miniFatSectors);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), miniFatSectors);
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE);
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);
         BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), (uint)fatSector);
@@ -792,7 +792,7 @@ public sealed class CompoundFileReaderTests
             "A",
             2,
             0,
-            (uint)StreamSize,
+            StreamSize,
             child: 0xFFFFFFFF,
             left: 0xFFFFFFFF,
             right: 0xFFFFFFFF);
@@ -801,8 +801,8 @@ public sealed class CompoundFileReaderTests
             dirOff + 256,
             "B",
             2,
-            (uint)miniSectorsPerStream,
-            (uint)StreamSize,
+            miniSectorsPerStream,
+            StreamSize,
             child: 0xFFFFFFFF,
             left: 1,
             right: 3);
@@ -811,8 +811,8 @@ public sealed class CompoundFileReaderTests
             dirOff + 384,
             "C",
             2,
-            (uint)(miniSectorsPerStream * 2),
-            (uint)StreamSize,
+            miniSectorsPerStream * 2,
+            StreamSize,
             child: 0xFFFFFFFF,
             left: 0xFFFFFFFF,
             right: 0xFFFFFFFF);
