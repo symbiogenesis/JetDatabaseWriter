@@ -73,6 +73,33 @@ Notes:
 
 ## Measured Baseline
 
+### Clean Solution Baseline
+
+After fixing the unrelated Release test analyzer failures, a 2026-05-27 forced
+strict Release rebuild of [JetDatabaseWriter.slnx](../../JetDatabaseWriter.slnx)
+used SDK `10.0.300` and this command:
+
+```powershell
+dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m -t:Rebuild /p:ReportAnalyzer=true -bl:obj/AnalyzerTiming/release-sln-rebuild-20260527-133323.binlog -v:detailed
+```
+
+Result: exit code `0`, outer stopwatch `00:00:18.8843371`, MSBuild reported
+`Time Elapsed 00:00:18.55`, `0 Warning(s)`, and `0 Error(s)`. Detailed text log:
+[release-sln-rebuild-20260527-133323.log](../../obj/AnalyzerTiming/release-sln-rebuild-20260527-133323.log).
+Binary log:
+[release-sln-rebuild-20260527-133323.binlog](../../obj/AnalyzerTiming/release-sln-rebuild-20260527-133323.binlog).
+
+Analyzer totals by compiler invocation:
+
+| Compiler invocation | Total analyzer execution time |
+|---------------------|-------------------------------|
+| `JetDatabaseWriter` `net10.0` | 20.485s |
+| `JetDatabaseWriter` `netstandard2.1` | 18.199s |
+| `JetDatabaseWriter.Scaffold` `net10.0` | 0.286s |
+| `JetDatabaseWriter.Benchmarks` `net10.0` | 1.003s |
+| `JetDatabaseWriter.FormatProbe` `net10.0` | 15.438s |
+| `JetDatabaseWriter.Tests` `net10.0` | 21.727s |
+
 ### Library Project
 
 A 2026-05-27 forced Release rebuild of
@@ -106,10 +133,10 @@ analyzer execution time.
 | `Roslynator.Analyzers` | 0.279s | Cheap in tests. |
 | `Microsoft.CodeAnalysis.BannedApiAnalyzers` | less than 0.001s | Keep. |
 
-Current strict Release solution builds were not a clean baseline on this date
-because the test project already had analyzer failures unrelated to this note,
-including `SA1216`, `SA1204`, `xUnit1026`, `CA1062`, `CA1859`, and `SA1118`.
-Treat full-solution timing from that state as directional only.
+The initial strict Release solution baseline attempt on this date failed on
+test-project analyzer diagnostics unrelated to this note, including `SA1216`,
+`SA1204`, `xUnit1026`, `CA1062`, `CA1859`, and `SA1118`. Those were fixed
+before the clean solution baseline above was captured.
 
 ### FormatProbe Spot Check
 
@@ -410,7 +437,7 @@ Practical model:
 
 ## Suggested Order of Work
 
-- [ ] Capture current clean Release build time, analyzer timing, warning count,
+- [x] Capture current clean Release build time, analyzer timing, warning count,
       and binary log after the unrelated test analyzer failures are fixed.
 - [ ] Remove `Roslynator.Refactorings` from build `PackageReference` items.
 - [ ] Run a one-package-at-a-time local-build removal experiment for
