@@ -990,7 +990,7 @@ public sealed class IndexKeyEncoderTests
         // pushes it beyond 16 bytes after rescaling to scale 28.
         // 79228162514264337593543950335 (29 digits, scale 0).
         // Re-encoding at scale 28 needs 29+28 = 57 digits, well beyond 128 bits.
-        decimal big = decimal.MaxValue;
+        const decimal big = decimal.MaxValue;
         Assert.Throws<NotSupportedException>(() =>
             IndexKeyEncoder.EncodeNumericEntry(big, ascending: true, targetScale: 28, legacy: false));
     }
@@ -1192,7 +1192,7 @@ public sealed class IndexKeyEncoderTests
         }
 
         // Segment 5 (final): 2 valid bytes + 6 zero-pad bytes + length 0x02.
-        int finalStart = 1 + (5 * 9);
+        const int finalStart = 1 + (5 * 9);
         Assert.Equal(payload[40], encoded[finalStart]);
         Assert.Equal(payload[41], encoded[finalStart + 1]);
         for (int b = 2; b < 8; b++)
@@ -1231,7 +1231,7 @@ public sealed class IndexKeyEncoderTests
         }
 
         // Final segment: data + pad flipped, final length flipped.
-        int finalStart = 1 + (5 * 9);
+        const int finalStart = 1 + (5 * 9);
         for (int b = 0; b < 8; b++)
         {
             Assert.Equal(unchecked((byte)~asc[finalStart + b]), desc[finalStart + b]);

@@ -476,7 +476,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // where PageNumber is a 4-byte little-endian integer.
         uint dbKey = BitConverter.ToUInt32(data, 0x3E);
 
-        int pageSize = Constants.PageSizes.Jet4;
+        const int pageSize = Constants.PageSizes.Jet4;
         for (int pageNum = 1; pageNum * pageSize < data.Length; pageNum++)
         {
             int offset = pageNum * pageSize;

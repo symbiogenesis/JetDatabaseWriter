@@ -201,7 +201,7 @@ internal static class RoundTripBisect
 
         string srcLit = src.Replace("'", "''", StringComparison.Ordinal);
         string dstLit = dst.Replace("'", "''", StringComparison.Ordinal);
-        string script =
+        const string script =
             """
             $ErrorActionPreference='Stop'
 

@@ -117,7 +117,7 @@ internal static class OfficeCryptoStandard
         }
 
         int headerSize = Ri32(encryptionInfo, 8);
-        int headerStart = 12;
+        const int headerStart = 12;
         int headerEnd = headerStart + headerSize;
 
         if (headerEnd > encryptionInfo.Length || headerSize < 28)
@@ -184,7 +184,7 @@ internal static class OfficeCryptoStandard
         // iterations. The spin count is not stored in the binary EncryptionInfo
         // for version (3,2)/(4,2) — it is implied.
         // However, some implementations may vary. We use the standard 50000.
-        int spinCount = 50_000;
+        const int spinCount = 50_000;
 
         return new StandardDescriptor
         {
@@ -387,7 +387,7 @@ internal static class OfficeCryptoStandard
     private static byte[] BuildEncryptionInfo(byte[] salt, byte[] encryptedVerifier, byte[] encryptedVerifierHash, int keyBits, int spinCount)
     {
         // CSPName: "Microsoft Enhanced RSA and AES Cryptographic Provider\0" in UTF-16LE.
-        string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
+        const string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
         byte[] cspNameBytes = Encoding.Unicode.GetBytes(cspName + '\0');
 
         // EncryptionHeader: 7 fixed uint32 fields (28 bytes) + CSPName.

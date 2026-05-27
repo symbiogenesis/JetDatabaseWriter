@@ -565,7 +565,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int tdNumCols = isJet3 ? 25 : 45;
         int tdBlockEnd = isJet3 ? 43 : 63;
         int colDescSz = isJet3 ? 18 : 25;
-        int colTypeOff = 0;
+        const int colTypeOff = 0;
         int colNumOff = isJet3 ? 1 : 5;
         int colVarOff = isJet3 ? 3 : 7;
         int colFlagsOff = isJet3 ? 13 : 15;

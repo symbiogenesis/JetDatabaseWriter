@@ -343,7 +343,7 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        int size = DaoLabAlphabetLength;
+        const int size = DaoLabAlphabetLength;
         int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
         int spaceIndex = DaoLabAlphabet.IndexOf(' ', StringComparison.Ordinal);
         int baseOffset = (baseIndex * size) + baseIndex;
@@ -1200,7 +1200,7 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        int size = DaoLabAlphabetLength;
+        const int size = DaoLabAlphabetLength;
         int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
         int spaceIndex = DaoLabAlphabet.IndexOf(' ', StringComparison.Ordinal);
         int normalBaseOffset = (baseIndex * size) + baseIndex;
@@ -1337,7 +1337,7 @@ internal static class LongRowSuffixProbe
         out ushort[] suffixes,
         out bool[] present)
     {
-        int size = DaoLabAlphabetLength;
+        const int size = DaoLabAlphabetLength;
         suffixes = new ushort[size * size];
         present = new bool[size * size];
 
@@ -3708,7 +3708,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("Derives constraints on P from cross-products of row/column contributions.");
         sb.AppendLine();
 
-        int size = DaoLabAlphabetLength;
+        const int size = DaoLabAlphabetLength;
         var suffixes = new ushort[size * size];
         var present = new bool[size * size];
 

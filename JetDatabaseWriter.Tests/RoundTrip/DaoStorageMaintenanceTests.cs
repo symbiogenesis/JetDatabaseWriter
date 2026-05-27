@@ -228,7 +228,7 @@ public sealed class DaoStorageMaintenanceTests
             await writer.InsertRowAsync(TableName, [Jet3IndexRows + 1, "J3_INSERTED", 12345], TestContext.Current.CancellationToken);
         }
 
-        string preCompactScript =
+        const string preCompactScript =
             """
             $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_Jet3Index]', 4)
             try {
@@ -486,7 +486,7 @@ public sealed class DaoStorageMaintenanceTests
             await writer.InsertRowsAsync(TableName, [BuildAdvancedIndexRow(301)], TestContext.Current.CancellationToken);
         }
 
-        string advancedIndexSeekProbe =
+        const string advancedIndexSeekProbe =
             """
             $lookup = $null
             $rs = $null

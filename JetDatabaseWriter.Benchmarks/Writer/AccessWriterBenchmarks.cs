@@ -145,7 +145,7 @@ public class AccessWriterBenchmarks
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
         await writer.InsertRowAsync(BenchmarkTableName, _dummyRow);
 
-        string predicateCol = IdColumnName;
+        const string predicateCol = IdColumnName;
         object? predicateVal = _dummyRow[0];
         var updates = new Dictionary<string, object?>
         {
@@ -160,7 +160,7 @@ public class AccessWriterBenchmarks
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
         await writer.InsertRowAsync(BenchmarkTableName, _dummyRow);
 
-        string predicateCol = IdColumnName;
+        const string predicateCol = IdColumnName;
         object? predicateVal = _dummyRow[0];
         return await writer.DeleteRowsAsync(BenchmarkTableName, predicateCol, predicateVal);
     }

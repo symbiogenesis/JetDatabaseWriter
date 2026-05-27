@@ -744,7 +744,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         int saltSize = 16,
         bool truncateVerifier = false)
     {
-        string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
+        const string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
         byte[] cspNameBytes = Encoding.Unicode.GetBytes(cspName + '\0');
         int headerSize = 28 + cspNameBytes.Length;
 

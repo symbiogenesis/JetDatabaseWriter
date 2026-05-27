@@ -78,7 +78,7 @@ public class NameCleanerTests
     [Fact]
     public void ToPropertyName_And_ToClassName_Are_Consistent()
     {
-        string input = "some_column_name";
+        const string input = "some_column_name";
         Assert.Equal(NameCleaner.ToClassName(input), NameCleaner.ToPropertyName(input));
     }
 

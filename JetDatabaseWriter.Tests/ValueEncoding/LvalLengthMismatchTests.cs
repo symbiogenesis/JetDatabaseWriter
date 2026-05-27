@@ -72,7 +72,7 @@ public sealed class LvalLengthMismatchTests
 
         // Access-style LVAL pages do not carry a separate single-page payload length,
         // so a corrupted oversized header is capped by the remaining page capacity.
-        int singlePageCapacity = 4096 - Constants.LongValue.LvalRowStart;
+        const int singlePageCapacity = 4096 - Constants.LongValue.LvalRowStart;
         Assert.True(result.Length <= singlePageCapacity, $"Expected ≤ {singlePageCapacity} bytes, got {result.Length}.");
         Assert.True(result.Length > 0, "Expected non-empty result.");
     }

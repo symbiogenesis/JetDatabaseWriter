@@ -407,7 +407,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     {
         // The fixture builder uses v4 (4096-byte sectors). The directory
         // is at sector 1. Scan directory entries to find "EncryptedPackage".
-        int dirOffset = Constants.CompoundFile.V4.SectorSize + Constants.CompoundFile.V4.SectorSize; // sector 1
+        const int dirOffset = Constants.CompoundFile.V4.SectorSize + Constants.CompoundFile.V4.SectorSize; // sector 1
 
         for (int entry = 0; entry < 4; entry++)
         {

@@ -101,7 +101,7 @@ public sealed class IndexBTreeBuilderTests
         Assert.Equal(1, prefLen);
 
         // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
-        int entry0KeyLen = 200;
+        const int entry0KeyLen = 200;
         int entry0Stride = entry0KeyLen + 4 + 4;
         int firstChildOffset = layout.FirstEntryOffset + entry0KeyLen + 4;
         Assert.Equal(FirstPage + 0, ReadI32BE(intermediate, firstChildOffset));
@@ -152,7 +152,7 @@ public sealed class IndexBTreeBuilderTests
         Assert.Equal(r.FirstPageNumber + 0, ReadI32BE(intermediate, firstChildOffset));
 
         // Entry 1 (compressed): key (200 - prefLen=1) + 4 + 4.
-        int entry0Stride = entry0KeyLen + 4 + 4;
+        const int entry0Stride = entry0KeyLen + 4 + 4;
         int compressedKeyLen = 200 - prefLen;
         int entry1Start = layout.FirstEntryOffset + entry0Stride;
         int secondChildOffset = entry1Start + compressedKeyLen + 4;

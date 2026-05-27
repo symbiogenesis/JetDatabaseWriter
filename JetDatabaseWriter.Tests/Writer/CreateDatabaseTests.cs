@@ -114,7 +114,7 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_Stream_CreateTable_TableIsReadable(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        string tableName = "People";
+        const string tableName = "People";
         var columns = new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
@@ -147,7 +147,7 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_Stream_InsertAndReadBack_DataSurvives(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        string tableName = "Items";
+        const string tableName = "Items";
         var columns = new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
@@ -330,7 +330,7 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_VariousColumnTypes_SurviveRoundTrip(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        string tableName = "TypeTest";
+        const string tableName = "TypeTest";
         var columns = new List<ColumnDefinition>
         {
             new("IntCol", typeof(int)),

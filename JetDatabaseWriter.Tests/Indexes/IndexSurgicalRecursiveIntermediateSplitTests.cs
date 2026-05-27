@@ -198,7 +198,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
 
-        int deletedCount = (initialRows + 10) / 11; // ceil(700/11) = 64
+        const int deletedCount = (initialRows + 10) / 11; // ceil(700/11) = 64
         int expected = initialRows - deletedCount + 20;
         Assert.Equal(expected, dt!.Rows.Count);
 

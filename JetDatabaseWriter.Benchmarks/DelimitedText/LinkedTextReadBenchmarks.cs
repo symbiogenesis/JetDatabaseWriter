@@ -42,8 +42,8 @@ public class LinkedTextReadBenchmarks
         Directory.CreateDirectory(_rootDirectory);
 
         string databasePath = Path.Combine(_rootDirectory, "LinkedText.accdb");
-        string headeredFileName = "headered.csv";
-        string headerlessFileName = "headerless.csv";
+        const string headeredFileName = "headered.csv";
+        const string headerlessFileName = "headerless.csv";
 
         await File.WriteAllTextAsync(
             Path.Combine(_rootDirectory, headeredFileName),

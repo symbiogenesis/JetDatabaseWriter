@@ -85,7 +85,7 @@ public sealed class IndexRebalanceBorrowPathTests
         // Phase 3: Insert new rows into gaps left by deletes. These keys
         // interleave with survivors, forcing splits on leaves that the
         // surgical path may have already thinned.
-        int insertCount = 200;
+        const int insertCount = 200;
         var insertedIds = new HashSet<int>();
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -259,7 +259,7 @@ public sealed class IndexRebalanceBorrowPathTests
         await using var reader = await OpenReaderAsync(stream);
         DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
 
-        int expectedCount = rowCount - (2 * deletePerSide);
+        const int expectedCount = rowCount - (2 * deletePerSide);
         Assert.Equal(expectedCount, dt.Rows.Count);
 
         var ids = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
