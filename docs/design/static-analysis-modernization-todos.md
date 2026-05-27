@@ -17,8 +17,7 @@ or moves to a slower CI/security lane.
   checked arithmetic globally.
 - [Directory.Build.props](../../Directory.Build.props) references
   `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `Roslynator.Analyzers`,
-  `Roslynator.Refactorings`, `SecurityCodeScan.VS2019`, and
-  `StyleCop.Analyzers` for every project.
+  `SecurityCodeScan.VS2019`, and `StyleCop.Analyzers` for every project.
 - [Directory.Packages.props](../../Directory.Packages.props) currently pins
   `StyleCop.Analyzers` to `1.2.0-beta.556`, with package-lock files resolving
   `StyleCop.Analyzers.Unstable` transitively.
@@ -165,14 +164,20 @@ Why:
 
 TODOs:
 
-- [ ] Remove the `Roslynator.Refactorings` package reference from
+- [x] Remove the `Roslynator.Refactorings` package reference from
       [Directory.Build.props](../../Directory.Build.props).
-- [ ] Restore/build once and verify package-lock churn is limited to removing
+- [x] Restore/build once and verify package-lock churn is limited to removing
       that analyzer/refactoring payload.
-- [ ] Keep `Roslynator.Analyzers` separately unless its diagnostics stop paying
+- [x] Keep `Roslynator.Analyzers` separately unless its diagnostics stop paying
       for their small measured cost.
 - [ ] Use the Roslynator VS Code extension or command-line tooling for
       refactorings instead of project `PackageReference` delivery.
+
+Completed on 2026-05-27: removed the global package reference and the unused
+central package version pin. `dotnet restore JetDatabaseWriter.slnx` removed
+only direct `Roslynator.Refactorings` lock-file entries, and
+`dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m`
+passed in `50.8s`.
 
 ### 2. Remove or Move `SecurityCodeScan.VS2019` Out of Local Builds
 
@@ -439,7 +444,7 @@ Practical model:
 
 - [x] Capture current clean Release build time, analyzer timing, warning count,
       and binary log after the unrelated test analyzer failures are fixed.
-- [ ] Remove `Roslynator.Refactorings` from build `PackageReference` items.
+- [x] Remove `Roslynator.Refactorings` from build `PackageReference` items.
 - [ ] Run a one-package-at-a-time local-build removal experiment for
       `SecurityCodeScan.VS2019`.
 - [ ] Decide whether broad security scanning should move to CodeQL,
