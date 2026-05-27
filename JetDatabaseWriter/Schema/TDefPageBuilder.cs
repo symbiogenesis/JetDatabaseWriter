@@ -625,7 +625,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             if (isJet3)
             {
                 db[namePos] = (byte)nameBytes.Length;
-                namePos += 1;
+                namePos++;
             }
             else
             {
