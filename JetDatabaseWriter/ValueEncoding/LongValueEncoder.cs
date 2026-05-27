@@ -21,12 +21,15 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// Owned by <see cref="AccessWriter"/>; the writer delegates long-value
 /// pre-encoding through this class.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="pageAllocator">The page allocator.</param>
 internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAllocator)
 {
     /// <summary>
     /// Wraps short data (≤ inline cap) into the 12-byte inline LVAL header form
     /// (bitmask <c>0x80</c>): header + raw payload contiguous in the row body.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
     internal static byte[]? WrapInlineLongValue(byte[]? data)
         => LongValueStore.WrapInlineLongValue(data);
 
@@ -39,6 +42,10 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
     /// found and a defensively-cloned array otherwise so the caller's original
     /// <c>values</c> stays untouched.
     /// </summary>
+    /// <param name="ownerTdefPage">The owner TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="values">The values.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<object[]> PreEncodeLongValuesAsync(long ownerTdefPage, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
         _ = ownerTdefPage;
@@ -123,6 +130,10 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
     /// header. Pages are appended in reverse so each predecessor row can hold
     /// its successor's <c>lval_dp</c> pointer.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="lvalTokenOverride">The long value token override.</param>
+    /// <param name="packRowsAtEnd">The pack rows at end.</param>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
         CancellationToken cancellationToken,

@@ -34,6 +34,9 @@ internal static class OfficeCryptoStandard
     /// <see cref="UnauthorizedAccessException"/> when the password fails
     /// verification.
     /// </summary>
+    /// <param name="encryptionInfo">The encryption info.</param>
+    /// <param name="encryptedPackage">The encrypted package.</param>
+    /// <param name="password">The password.</param>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
@@ -58,6 +61,8 @@ internal static class OfficeCryptoStandard
     /// the resulting <c>EncryptionInfo</c> descriptor and
     /// <c>EncryptedPackage</c> stream bytes.
     /// </summary>
+    /// <param name="innerPackage">The inner package.</param>
+    /// <param name="password">The password.</param>
     public static (byte[] EncryptionInfo, byte[] EncryptedPackage) Encrypt(
         byte[] innerPackage,
         ReadOnlySpan<char> password)

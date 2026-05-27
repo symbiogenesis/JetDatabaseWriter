@@ -98,6 +98,8 @@ internal static class GeneralLegacyTextIndexEncoder
     /// (flag byte + payload + END_EXTRA_TEXT). For null inputs returns a
     /// single-byte block with the null flag.
     /// </summary>
+    /// <param name="text">The text to encode.</param>
+    /// <param name="ascending">The ascending.</param>
     public static byte[] Encode(string? text, bool ascending)
         => EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value);
 
@@ -264,6 +266,11 @@ internal static class GeneralLegacyTextIndexEncoder
     /// accumulating extras / unprintable / crazy state in
     /// <paramref name="state"/>.
     /// </summary>
+    /// <param name="chars">The chars.</param>
+    /// <param name="codes">The codes.</param>
+    /// <param name="extCodes">The ext codes.</param>
+    /// <param name="bout">The output byte buffer.</param>
+    /// <param name="state">The state.</param>
     private static void EmitChunkInline(
         ReadOnlySpan<char> chars,
         CharHandler[] codes,
@@ -316,6 +323,10 @@ internal static class GeneralLegacyTextIndexEncoder
     /// one's-complement pass) to <paramref name="bout"/>. Shared between the
     /// single-chunk and two-chunk paths.
     /// </summary>
+    /// <param name="bout">The output byte buffer.</param>
+    /// <param name="payloadStart">The payload start.</param>
+    /// <param name="state">The state.</param>
+    /// <param name="ascending">The ascending.</param>
     private static void FinishEntry(
         List<byte> bout,
         int payloadStart,

@@ -10,6 +10,9 @@ using JetDatabaseWriter.Enums;
 /// original index, declaration order is preserved (a Replace for the
 /// original entry followed by an InsertAfter that produces a leaf split).
 /// </summary>
+/// <param name="OriginalIndex">The original index.</param>
+/// <param name="Type">The operation type.</param>
+/// <param name="NewEntry">The new entry.</param>
 internal readonly record struct IntermediateOp(
     int OriginalIndex,
     IntermediateOpType Type,

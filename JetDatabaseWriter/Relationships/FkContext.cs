@@ -7,6 +7,7 @@ using JetDatabaseWriter.Indexes.Models;
 /// <summary>
 /// Per-mutation-call cache for enforced relationship metadata and FK lookup state.
 /// </summary>
+/// <param name="all">The complete set of contexts.</param>
 internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
 {
     public IReadOnlyList<FkRelationship> All { get; } = all;

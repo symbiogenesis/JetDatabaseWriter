@@ -19,6 +19,7 @@ internal static class JetExpressionConverter
     /// Converts a CLR literal default value to its Jet expression representation,
     /// or returns <see langword="null"/> when the value is null / <see cref="DBNull"/>.
     /// </summary>
+    /// <param name="value">The value.</param>
     /// <exception cref="NotSupportedException">If the value's type cannot be expressed as a Jet literal (e.g. <c>byte[]</c>).</exception>
     public static string? ToJetExpression(object? value)
     {
@@ -98,6 +99,9 @@ internal static class JetExpressionConverter
     /// persisted-property fields of <paramref name="col"/>. No-op when the column declares
     /// no persisted properties (and is nullable, since <c>Required</c> is otherwise emitted).
     /// </summary>
+    /// <param name="builder">The builder.</param>
+    /// <param name="col">The column descriptor.</param>
+    /// <param name="format">The format.</param>
     public static void ApplyColumn(ColumnPropertyBlockBuilder builder, ColumnDefinition col, DatabaseFormat format)
     {
         Guard.NotNull(builder, nameof(builder));

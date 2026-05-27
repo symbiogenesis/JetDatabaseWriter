@@ -36,6 +36,7 @@ public sealed class IndexChildTailPointerTests
     /// the <c>tail_page</c> header field is either zero (single-level tree)
     /// or points at a valid page within the file bounds.
     /// </summary>
+    /// <param name="fixturePath">The fixture path.</param>
     [Theory]
     [MemberData(nameof(Fixtures))]
     public async Task IntermediatePages_TailPointer_IsZeroOrValid(string fixturePath)

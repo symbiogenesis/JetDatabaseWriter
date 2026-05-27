@@ -197,6 +197,8 @@ public sealed class WriterTDefAutoNumFlagTests
     /// <c>true</c> if any column descriptor has the autonumber bit
     /// (<c>0x04</c>) set in its flags byte.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="tdefOff">The TDEF off.</param>
     private static bool HasAnyAutonumColumn(byte[] fileBytes, int tdefOff)
     {
         // Jet4 TDEF: numCols at +45 (uint16), numRealIdx at +51 (int32),

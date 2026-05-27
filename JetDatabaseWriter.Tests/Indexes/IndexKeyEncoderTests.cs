@@ -1039,6 +1039,10 @@ public sealed class IndexKeyEncoderTests
     /// </description></item>
     /// </list>
     /// </summary>
+    /// <param name="ascending">The ascending.</param>
+    /// <param name="negative">The negative.</param>
+    /// <param name="legacy">The legacy.</param>
+    /// <param name="expectedSignByte">The expected sign byte.</param>
     [Theory]
     [InlineData(true, false, true, 0xFF)] // asc, pos, legacy -> 0xFF (positive sign post-overwrite)
     [InlineData(true, true, true, 0x00)] // asc, neg, legacy -> 0x00 (negative sign post-overwrite)
@@ -1069,6 +1073,9 @@ public sealed class IndexKeyEncoderTests
     /// ≥ 0x80 before XOR) become <c>&lt; 0x80</c>. Descending is the
     /// ones-complement of ascending, so the sign byte flips accordingly.
     /// </summary>
+    /// <param name="ascending">The ascending.</param>
+    /// <param name="negative">The negative.</param>
+    /// <param name="expectedSignByte">The expected sign byte.</param>
     [Theory]
     [InlineData(true, false, 0x80)] // asc, pos: scaled=10000, top BE byte=0x00, XOR 0x80 → 0x80
     [InlineData(true, true, 0x7F)] // asc, neg: scaled=-10000, top BE byte=0xFF, XOR 0x80 → 0x7F

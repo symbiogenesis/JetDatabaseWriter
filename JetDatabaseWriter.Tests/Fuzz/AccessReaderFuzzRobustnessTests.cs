@@ -154,6 +154,8 @@ public sealed class AccessReaderFuzzRobustnessTests
     /// swallow only the documented failure types. Anything else escapes and
     /// fails the test (the harness contract).
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private static async Task TryParseAsync(byte[] data, System.Threading.CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(data, writable: false);

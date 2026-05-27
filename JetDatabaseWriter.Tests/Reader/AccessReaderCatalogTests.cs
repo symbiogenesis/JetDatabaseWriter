@@ -13,6 +13,7 @@ using Xunit;
 /// Tests for: ListTables, GetTableStats, GetTablesAsDataTable, GetStatistics,
 /// GetColumnMetadata, GetRealRowCount, ReadFirstTable, ReadTablePreview, Dispose.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private static readonly int[] ValidPageSizes = [2048, 4096];

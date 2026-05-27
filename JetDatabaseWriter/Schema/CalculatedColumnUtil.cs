@@ -32,6 +32,7 @@ internal static class CalculatedColumnUtil
     /// responsible for that encoding \u2014 e.g. UCS-2 LE for <c>T_TEXT</c>,
     /// little-endian int32 for <c>T_LONG</c>).
     /// </summary>
+    /// <param name="payload">The payload.</param>
     public static byte[] Wrap(byte[] payload)
     {
         Guard.NotNull(payload, nameof(payload));
@@ -46,6 +47,7 @@ internal static class CalculatedColumnUtil
     /// payload bytes. Returns <paramref name="data"/> unchanged when shorter
     /// than the wrapper header (defensive parity with Jackcess).
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
     public static byte[] Unwrap(byte[] data)
     {
         Guard.NotNull(data, nameof(data));

@@ -15,6 +15,7 @@ using Xunit;
 /// the reader handles the malformation gracefully: no OOM, no infinite loop,
 /// no unhandled exception escaping to the caller.
 /// </summary>
+/// <param name="db">The database input.</param>
 /// <remarks>
 /// Related CVEs:
 ///   CVE-2005-0944 / CVE-2007-6026 / CVE-2008-1092 (crafted column counts),

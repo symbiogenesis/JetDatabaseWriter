@@ -43,6 +43,9 @@ internal static class IndexBTreeBuilder
     /// the root, which the caller writes into the real-index
     /// <c>first_dp</c> field on the TDEF.
     /// </summary>
+    /// <param name="pages">The pages.</param>
+    /// <param name="rootPageNumber">The root page number.</param>
+    /// <param name="firstPageNumber">The first page number.</param>
     internal readonly struct BuildResult(IReadOnlyList<byte[]> pages, long rootPageNumber, long firstPageNumber)
     {
         /// <summary>Gets the rendered pages, indexed [0..N-1]. Page i lives at
@@ -82,6 +85,11 @@ internal static class IndexBTreeBuilder
     /// <paramref name="layout"/> (Jet3 or Jet4 / ACE). See the parameterless-layout
     /// overload for the contract.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="firstPageNumber">The first page number.</param>
     public static BuildResult Build(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
@@ -250,6 +258,14 @@ internal static class IndexBTreeBuilder
     /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>
     /// (full-tree rebuild) on overflow.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="maxPrefixLength">The max prefix length.</param>
     public static byte[]? TryBuildIntermediatePage(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,

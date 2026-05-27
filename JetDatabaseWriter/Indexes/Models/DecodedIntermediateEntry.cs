@@ -9,4 +9,6 @@ namespace JetDatabaseWriter.Indexes.Models;
 /// writer can re-emit a single intermediate page in place after a
 /// summary-key change or a leaf-split insert.
 /// </summary>
+/// <param name="Entry">The entry.</param>
+/// <param name="ChildPage">The child page.</param>
 internal readonly record struct DecodedIntermediateEntry(IndexEntry Entry, long ChildPage);

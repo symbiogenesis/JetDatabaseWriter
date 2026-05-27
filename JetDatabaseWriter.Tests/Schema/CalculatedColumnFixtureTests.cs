@@ -17,6 +17,7 @@ using Xunit;
 /// <see cref="ColumnMetadata.CalculatedResultType"/> are populated
 /// correctly, and that the cached result values decode without error.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

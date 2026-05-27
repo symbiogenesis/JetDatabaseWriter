@@ -13,6 +13,7 @@ using Xunit;
 /// Tests for async-specific behaviour (cancellation, IAsyncDisposable, idempotency).
 /// Catalog/metadata operations are covered in AccessReaderCatalogTests and table-content reads in AccessReaderReadTests.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── OpenAsync ─────────────────────────────────────────────────────

@@ -29,6 +29,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     private LockFileSlotWriter? _slot;
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessReaderOptions"/>.</summary>
+    /// <param name="databasePath">The database path.</param>
+    /// <param name="options">The options.</param>
     public static LockFileCoordinator ForReader(string databasePath, AccessReaderOptions options)
     {
         Guard.NotNull(options, nameof(options));
@@ -43,6 +45,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     }
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessWriterOptions"/>.</summary>
+    /// <param name="databasePath">The database path.</param>
+    /// <param name="options">The options.</param>
     public static LockFileCoordinator ForWriter(string databasePath, AccessWriterOptions options)
     {
         Guard.NotNull(options, nameof(options));
@@ -61,6 +65,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// where <paramref name="options"/> may be <see langword="null"/> and the defaults
     /// honour any existing lock-file.
     /// </summary>
+    /// <param name="databasePath">The database path.</param>
+    /// <param name="options">The options.</param>
     public static LockFileCoordinator ForReencrypt(string databasePath, AccessWriterOptions? options)
         => new(
             databasePath,

@@ -28,6 +28,7 @@ using Xunit;
 /// runs in environments where the optional mdbtools/ directory has not been
 /// populated.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── nwind.mdb (Jet4 / Access 2000 .mdb) ───────────────────────────────────

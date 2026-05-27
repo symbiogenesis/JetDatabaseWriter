@@ -13,6 +13,7 @@ using Xunit;
 /// <c>queryTestV2010.accdb</c> fixture. Verifies that the reader can
 /// decode system-table rows including parameterised query definitions.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

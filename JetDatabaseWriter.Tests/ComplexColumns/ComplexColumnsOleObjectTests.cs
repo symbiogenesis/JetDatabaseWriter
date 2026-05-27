@@ -21,6 +21,7 @@ using Xunit;
 /// <para>Jackcess analogue: <c>util/OleBlobTest.java</c>.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

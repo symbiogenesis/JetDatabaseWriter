@@ -729,6 +729,11 @@ public sealed class LinkedTableTests : IDisposable
     /// <summary>
     /// Asynchronously injects a linked table entry (MSysObjects type 6) into a database's catalog.
     /// </summary>
+    /// <param name="dbPath">The db path.</param>
+    /// <param name="linkedTableName">The linked table name.</param>
+    /// <param name="sourceDbPath">The source db path.</param>
+    /// <param name="foreignTableName">The foreign table name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private static async ValueTask InjectLinkedTableEntryAsync(
         string dbPath,
         string linkedTableName,
@@ -741,6 +746,7 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     /// <summary>Creates a temporary empty ACCDB.</summary>
+    /// <param name="prefix">The prefix.</param>
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");

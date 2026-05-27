@@ -20,6 +20,7 @@ using Xunit;
 /// FK column lands in <c>MSysRelationships</c> with the appendix-confirmed
 /// column layout. The per-TDEF FK logical-index entries are not exercised here.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

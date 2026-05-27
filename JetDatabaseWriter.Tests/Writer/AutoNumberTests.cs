@@ -21,6 +21,7 @@ using Xunit;
 /// <para>Jackcess analogue: <c>impl/AutoNumberTest.java</c>.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // Auto-increment values start at 1 and increase monotonically when null

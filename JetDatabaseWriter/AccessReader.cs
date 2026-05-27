@@ -560,6 +560,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// buffer before the next iteration overwrites it, so no caller ever
     /// observes the pooled array.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="entry">The entry.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="wantedColumns">The wanted columns.</param>
+    /// <param name="factory">The factory.</param>
+    /// <param name="progress">The progress.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async IAsyncEnumerable<T> EnumerateMappedRowsPooledAsync<T>(
         string tableName,
         CatalogEntry entry,
@@ -635,6 +642,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// the page scan here keeps the typed and projected entry points on a
     /// single iterator (one C# async state machine instead of two).
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="entry">The entry.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="progress">The progress.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
         string tableName,
         CatalogEntry entry,
@@ -654,6 +666,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// flagged column indices are decoded and the complex-attachment / Hyperlink
     /// post-processing passes are skipped when no wanted column is affected by them.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="entry">The entry.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="wantedColumns">The wanted columns.</param>
+    /// <param name="progress">The progress.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
         string tableName,
         CatalogEntry entry,
@@ -722,6 +740,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// when every bound column is directly decodable; otherwise the
     /// projection-aware fallback path runs.
     /// </summary>
+    /// <param name="entry">The entry.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="directDecoder">The direct decoder.</param>
+    /// <param name="progress">The progress.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<T>(
         CatalogEntry entry,
         TableDef td,
@@ -938,6 +961,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// flag byte, so the fallback reads as <c>true</c> (nullable) for any file
     /// authored outside this library.
     /// </summary>
+    /// <param name="col">The column descriptor.</param>
+    /// <param name="target">The target.</param>
     private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
     {
         if ((col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
@@ -1347,6 +1372,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A list of user table names.</returns>
     public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
@@ -2070,6 +2096,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="DatabaseStatistics"/> object containing various metrics about the database.</returns>
     public async ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
@@ -2204,6 +2231,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// file bytes, so package-aware extraction must run before the generic
     /// sliding magic-byte scan.
     /// </summary>
+    /// <param name="b">The second value or byte buffer.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     internal static string? TryDecodeOleObject(byte[] b, int start, int len)
     {
         if (b == null || len < 4)
@@ -2500,6 +2530,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
     /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
     /// </summary>
+    /// <param name="columns">The columns.</param>
+    /// <param name="wantedColumns">The wanted columns.</param>
+    /// <param name="type1">The type1.</param>
+    /// <param name="type2">The type2.</param>
     private static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, byte type1, byte type2)
     {
         int limit = Math.Min(columns.Count, wantedColumns.Length);
@@ -2826,6 +2860,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
         List<CatalogEntry>? cached = GetCatalogCache();
@@ -2972,6 +3007,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Reads a page through the cache when one is configured (PageCacheSize &gt; 0) and no transaction journal is active.</summary>
+    /// <param name="n">The item count.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
     {
         ThrowIfDisposedOrCancelled(cancellationToken);
@@ -3014,6 +3051,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// callers must not mutate it. Used by the typed/untyped scan paths to avoid
     /// re-parsing the row-offset trailer on repeated scans of the same table.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="page">The page bytes.</param>
     internal RowBound[] GetLiveRowBoundsCached(long pageNumber, byte[] page)
     {
         if (ActiveJournal is not null)
@@ -3336,6 +3375,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// already skips <see langword="null"/>/<see cref="DBNull"/> slots, so unbound
     /// columns simply produce no work).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="wantedColumns">The wanted columns.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, CancellationToken cancellationToken)
         => CrackRowTypedAsync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing), cancellationToken);
 
@@ -3371,6 +3416,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// to reuse a single <see cref="ArrayPool{T}.Shared"/>-rented array
     /// across the entire scan.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="decodePlan">The decode plan.</param>
+    /// <param name="buffer">The buffer.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private ValueTask<bool> CrackRowTypedIntoBufferAsync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, object?[] buffer, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -3394,6 +3445,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <paramref name="buffer"/> (the pooled array may be larger than
     /// <c>td.Columns.Count</c>).
     /// </summary>
+    /// <param name="buffer">The buffer.</param>
+    /// <param name="validLength">The valid length.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<bool> ResolveLongValueRefsIntoBufferAsync(object?[] buffer, int validLength, byte[] page, CancellationToken cancellationToken)
     {
         for (int i = 0; i < validLength; i++)
@@ -3420,6 +3475,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// such sentinel was emitted — fixed-only / inline-only rows skip this
     /// entirely and never allocate an async state machine.
     /// </summary>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<object?[]?> ResolveLongValueRefsAsync(object?[] row, byte[] page, CancellationToken cancellationToken)
     {
         _ = await ResolveLongValueRefsIntoBufferAsync(row, row.Length, page, cancellationToken).ConfigureAwait(false);
@@ -3444,6 +3502,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// slots are filled with a <see cref="RowDecodePlan.LongValueRef"/> sentinel that the
     /// async wrapper (<c>CrackRowTypedAsync</c>) replaces.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="needsLongValue">The needs long value.</param>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, out object?[]? row, out bool needsLongValue)
         => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns: null, _strictParsing), out row, out needsLongValue);
 
@@ -3456,6 +3520,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// row), and <c>ResolveColumnSlice</c> is independent per column — skipping
     /// decode of one var column does not affect the offsets of any later column.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="wantedColumns">The wanted columns.</param>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="needsLongValue">The needs long value.</param>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
         => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing), out row, out needsLongValue);
 
@@ -3482,6 +3553,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// &gt;= <c>td.Columns.Count</c>; the first <c>td.Columns.Count</c>
     /// slots are fully overwritten on success.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="decodePlan">The decode plan.</param>
+    /// <param name="buffer">The buffer.</param>
+    /// <param name="needsLongValue">The needs long value.</param>
     private bool TryCrackRowSyncIntoBuffer(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, object?[] buffer, out bool needsLongValue)
         => decodePlan.TryDecodeTypedIntoBuffer(this, page, rowStart, rowSize, _longValueDecoder, buffer, out needsLongValue);
 
@@ -3507,6 +3584,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// callable from <see cref="JetDatabaseWriter.ValueDecoding.RowMapper{T}"/>'s
     /// compiled direct-decoder delegate.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="hasVarColumns">A value indicating whether has var columns.</param>
+    /// <param name="layout">The layout.</param>
     internal bool TryParseRowLayoutForDirectDecode(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
         => TryParseRowLayout(page, rowStart, rowSize, hasVarColumns, out layout);
 
@@ -3516,6 +3598,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <paramref name="layout"/> by value (not <c>in</c>) so expression
     /// trees can pass a <c>ParameterExpression</c> directly.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="layout">The layout.</param>
+    /// <param name="col">The column descriptor.</param>
     internal ColumnSlice ResolveColumnSliceForDirectDecode(byte[] page, int rowStart, int rowSize, RowLayout layout, ColumnInfo col)
         => ResolveColumnSlice(page, rowStart, rowSize, layout, col);
 
@@ -3524,6 +3611,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Picks the format-appropriate path (Jet4 Unicode/compressed vs Jet3
     /// ANSI) and returns <see cref="string.Empty"/> for empty slices.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     internal string DecodeTextSliceForDirectDecode(byte[] page, int start, int len)
         => DecodeTextForFormat(page, start, len);
 
@@ -3538,6 +3628,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Internal helper for the compiled direct decoder's first-row-bytes
     /// peek (matches the rawNumCols extraction in <c>TryCrackRowSync</c>).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
     internal int ReadRawNumCols(byte[] page, int rowStart)
         => ReadRowColumnCount(page, rowStart);
 
@@ -3547,6 +3639,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
     /// Centralises the common scan-all-pages-and-decode-rows pattern used by catalog/system-table readers.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
         long tdefPage,
         TableDef td,
@@ -3567,10 +3662,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Loads the MSysObjects TableDef (page 2). Exposed for <see cref="LinkedTableManager"/>.</summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<TableDef?> GetMSysObjectsTableDefAsync(CancellationToken cancellationToken) =>
         ReadTableDefAsync(2, cancellationToken);
 
     /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="LinkedTableManager"/>.</summary>
+    /// <param name="msys">The system-table data.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal IAsyncEnumerable<string[]> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
         EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
@@ -3581,6 +3679,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <see langword="null"/> when the page is not a valid TDEF root. Diagnostic-only
     /// helper for the format-probe tool under <c>JetDatabaseWriter.FormatProbe</c>.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<byte[]?> GetRawTDefBytesAsync(long tdefPage, CancellationToken cancellationToken) =>
         ReadTDefBytesAsync(tdefPage, cancellationToken);
 
@@ -3589,6 +3689,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// (post-decryption). Diagnostic-only helper for the format-probe tool under
     /// <c>JetDatabaseWriter.FormatProbe</c>; production code should not call this.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<byte[]> GetRawPageBytesAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pooled = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -3605,6 +3707,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// schemas written by older versions of this library), the row is missing, the
     /// blob is empty, or the magic header is unrecognised.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -3661,6 +3765,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds the TDEF page number for a system table by name (case-insensitive).
     /// Unlike GetUserTables, this includes system tables (SYSTABLE_MASK set).
     /// </summary>
+    /// <param name="name">The name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
         FindSystemTablePageAsync(
             n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase),
@@ -3670,6 +3776,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>.
     /// Shared by exact-name and suffix lookups against MSysObjects.
     /// </summary>
+    /// <param name="nameMatches">The name matches.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);

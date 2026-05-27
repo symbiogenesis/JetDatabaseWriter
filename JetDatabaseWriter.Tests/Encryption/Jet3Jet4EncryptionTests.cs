@@ -23,6 +23,7 @@ using Xunit;
 ///   4. ACCDB AES      — detection and page decryption (OLE2 CFB magic)
 ///   5. ACCDB AES      — genuine AesEncrypted.accdb fixture from Access 16 CompactDatabase.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
     private readonly List<string> _tempFiles = [];
@@ -414,6 +415,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     }
 
     /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="mask">The encryption mask or page bitmask.</param>
     private static void ApplyXorMask(byte[] data, byte[] mask)
     {
         // Apply mask starting from page 1 (offset 2048) through the data
@@ -424,6 +427,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     }
 
     /// <summary>Sets the Office97 password flag (0x01) in a Jet3 database header.</summary>
+    /// <param name="data">The data bytes or values.</param>
     private static void SetJet3EncryptionFlag(byte[] data)
     {
         data[0x62] = 0x01; // Office97 password flag
@@ -434,6 +438,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// in a Jet4 database header. Data pages are <em>not</em> RC4-encrypted —
     /// use <see cref="Rc4EncryptDataPages"/> to also encrypt the page data.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
     private static void SetJet4PasswordFlag(byte[] data)
     {
         // Encode password "test" as UTF-16LE, XOR with masks, write to 0x42
@@ -458,6 +463,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// Sets the encryption flag (0x02), encodes the password, and applies RC4
     /// to pages 1+ using the standard Jet4 page-key derivation.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="password">The password.</param>
     private static void Rc4EncryptDataPages(byte[] data, string password)
     {
         // Step 1: Write the RC4 encryption flag (0x02) and encode the password in the header
@@ -484,6 +491,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// Sets the RC4 page-encryption flag (0x02) and encodes a password
     /// in a Jet4 database header.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="password">The password.</param>
     private static void SetJet4Rc4EncryptionFlag(byte[] data, string password)
     {
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
@@ -505,6 +514,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// Derives the RC4 key for a specific page using the Jet4 algorithm:
     /// key = first 4 bytes of MD5(dbKey LE bytes + pageNumber LE bytes).
     /// </summary>
+    /// <param name="dbKey">The db key.</param>
+    /// <param name="pageNumber">The page number.</param>
     private static byte[] DeriveJet4PageKey(uint dbKey, uint pageNumber)
     {
         byte[] input = new byte[8];
@@ -519,6 +530,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 #pragma warning restore CA5351, RS0030
 
     /// <summary>In-place RC4 transform (encrypt/decrypt are the same operation).</summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="length">The length.</param>
+    /// <param name="key">The key bytes or index key.</param>
     private static void Rc4Transform(byte[] data, int offset, int length, byte[] key)
     {
         // RC4 key scheduling
@@ -552,6 +567,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// The reader detects the CFB magic (D0 CF 11 E0) and throws
     /// <see cref="UnauthorizedAccessException"/> regardless of password.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
     private static void SetAccdbEncryptionHeader(byte[] data)
     {
         // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.

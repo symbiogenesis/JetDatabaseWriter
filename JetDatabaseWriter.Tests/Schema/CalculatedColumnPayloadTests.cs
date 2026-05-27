@@ -20,6 +20,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Byte-level coverage for Access-authored calculated-column cached values.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private const string JackcessTableName = "Table1";

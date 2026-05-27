@@ -45,6 +45,7 @@ internal static class OfficeCryptoAgile
     /// Returns true when the EncryptionInfo header indicates the Agile
     /// (version 4.4 with the 0x40 AgileEncryption flag) variant.
     /// </summary>
+    /// <param name="encryptionInfo">The encryption info.</param>
     public static bool IsAgileEncryptionInfo(byte[] encryptionInfo)
     {
         if (encryptionInfo == null || encryptionInfo.Length < 8)
@@ -68,6 +69,7 @@ internal static class OfficeCryptoAgile
     /// used by Office 2007 (Access 2007) password-encrypted .accdb files and
     /// is handled by <see cref="OfficeCryptoStandard"/>.
     /// </summary>
+    /// <param name="encryptionInfo">The encryption info.</param>
     public static bool IsStandardEncryptionInfo(byte[] encryptionInfo)
     {
         if (encryptionInfo == null || encryptionInfo.Length < 8)
@@ -87,6 +89,9 @@ internal static class OfficeCryptoAgile
     /// <see cref="UnauthorizedAccessException"/> when the password fails
     /// verification.
     /// </summary>
+    /// <param name="encryptionInfo">The encryption info.</param>
+    /// <param name="encryptedPackage">The encrypted package.</param>
+    /// <param name="password">The password.</param>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
@@ -118,6 +123,8 @@ internal static class OfficeCryptoAgile
     /// PBKDF iterations) and returns the resulting <c>EncryptionInfo</c>
     /// descriptor and <c>EncryptedPackage</c> stream bytes.
     /// </summary>
+    /// <param name="innerPackage">The inner package.</param>
+    /// <param name="password">The password.</param>
     public static (byte[] EncryptionInfo, byte[] EncryptedPackage) Encrypt(
         byte[] innerPackage,
         ReadOnlySpan<char> password)
@@ -214,6 +221,7 @@ internal static class OfficeCryptoAgile
     /// EncryptionInfo descriptor at offset 0x299, the layout emitted by ACE /
     /// DAO for encrypted Access databases.
     /// </summary>
+    /// <param name="database">The database.</param>
     public static bool IsFlatAgileEncrypted(byte[] database)
     {
         if (!TryGetFlatEncryptionInfo(database, out byte[] encryptionInfo))
@@ -229,6 +237,8 @@ internal static class OfficeCryptoAgile
     /// EncryptionInfo descriptor is embedded in page 0 and every data page is
     /// AES-CBC encrypted in place.
     /// </summary>
+    /// <param name="plaintext">The plaintext.</param>
+    /// <param name="password">The password.</param>
     public static byte[] EncryptFlatDatabase(byte[] plaintext, ReadOnlySpan<char> password)
     {
         Guard.NotNull(plaintext, nameof(plaintext));
@@ -275,6 +285,8 @@ internal static class OfficeCryptoAgile
     /// Decrypts an Access-native flat Agile ACCDB and returns a clean plaintext
     /// database image with the page-0 encryption metadata cleared.
     /// </summary>
+    /// <param name="encryptedDatabase">The encrypted database.</param>
+    /// <param name="password">The password.</param>
     public static byte[] DecryptFlatDatabase(byte[] encryptedDatabase, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptedDatabase, nameof(encryptedDatabase));
@@ -458,6 +470,9 @@ internal static class OfficeCryptoAgile
     /// mismatch. Silently skips verification when the descriptor has no
     /// HMAC fields (e.g. files created before HMAC support was added).
     /// </summary>
+    /// <param name="d">The Agile encryption descriptor.</param>
+    /// <param name="intermediateKey">The intermediate key.</param>
+    /// <param name="encryptedPackage">The encrypted package.</param>
     private static void VerifyDataIntegrity(AgileDescriptor d, byte[] intermediateKey, byte[] encryptedPackage)
     {
         if (d.EncryptedHmacKey.Length == 0 || d.EncryptedHmacValue.Length == 0)
@@ -740,6 +755,8 @@ internal static class OfficeCryptoAgile
     /// key value, HMAC key/value) by mixing each block-key constant into the
     /// shared iterated hash. Avoids running PBKDF five separate times.
     /// </summary>
+    /// <param name="passwordUtf16">The password utf16.</param>
+    /// <param name="passwordSalt">The password salt.</param>
     private static (byte[] VerifierInput, byte[] VerifierHash, byte[] KeyValue, byte[] HmacKey, byte[] HmacValue)
         DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt)
     {

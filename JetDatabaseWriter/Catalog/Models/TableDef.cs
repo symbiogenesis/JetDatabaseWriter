@@ -93,6 +93,7 @@ internal sealed class TableDef
     /// <paramref name="columnName"/> case-insensitively, or -1 when no
     /// such column exists.
     /// </summary>
+    /// <param name="columnName">The column name.</param>
     public int FindColumnIndex(string columnName)
     {
         return Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
@@ -102,6 +103,7 @@ internal sealed class TableDef
     /// Returns the column whose name matches <paramref name="columnName"/>
     /// case-insensitively, or <see langword="null"/> when no such column exists.
     /// </summary>
+    /// <param name="columnName">The column name.</param>
     public ColumnInfo? FindColumn(string columnName)
     {
         return Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
@@ -111,6 +113,7 @@ internal sealed class TableDef
     /// Resolves <paramref name="columnNames"/> to their <see cref="ColumnInfo.ColNum"/>
     /// values in the supplied order. Returns an empty array if any name is unknown.
     /// </summary>
+    /// <param name="columnNames">The column names.</param>
     public int[] ResolveColNumsOrEmpty(string[] columnNames)
     {
         var result = new int[columnNames.Length];
@@ -133,6 +136,9 @@ internal sealed class TableDef
     /// corresponding to <paramref name="columnName"/>. No-op when the column does
     /// not exist.
     /// </summary>
+    /// <param name="values">The values.</param>
+    /// <param name="columnName">The column name.</param>
+    /// <param name="value">The value.</param>
     public void SetValueByName(object[] values, string columnName, object value)
     {
         int index = FindColumnIndex(columnName);

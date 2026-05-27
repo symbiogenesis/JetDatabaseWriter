@@ -28,6 +28,7 @@ using Xunit;
 ///   4. Change the password; verify only the new password works.
 ///   5. Decrypt; verify the file opens with no password and matches the original tables.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
     private const string FirstPassword = "OriginalPa$$";

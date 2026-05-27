@@ -99,6 +99,7 @@ internal static class IndexCatalogReader
     /// to <see cref="IndexLayout.TryResolveKeyColumnInfos"/>'s expected
     /// <c>snapshotIndexByColNum</c> argument.
     /// </summary>
+    /// <param name="tableColumns">The table columns.</param>
     public static Dictionary<int, int> BuildColumnNumberToSnapshotIndex(IReadOnlyList<ColumnInfo> tableColumns)
     {
         var map = new Dictionary<int, int>(tableColumns.Count);
@@ -122,6 +123,11 @@ internal static class IndexCatalogReader
     /// Collapses the catalog-touching prelude shared by every catalog-using
     /// path in <see cref="JetDatabaseWriter.AccessWriter"/>.
     /// </summary>
+    /// <param name="tdefBuffer">The TDEF buffer.</param>
+    /// <param name="layout">The layout.</param>
+    /// <param name="anchors">The anchors.</param>
+    /// <param name="tableColumns">The table columns.</param>
+    /// <param name="logIdxNames">The log index names.</param>
     public static ResolvedIndexCatalog ReadResolved(
         byte[] tdefBuffer,
         IndexLayout layout,
@@ -163,6 +169,7 @@ internal static class IndexCatalogReader
         /// or the synthetic <c>realidx#N</c> fallback when no logical-idx
         /// references this real-idx (or when names were not captured).
         /// </summary>
+        /// <param name="realIdxNum">The real index number of.</param>
         public string GetNameOrFallback(int realIdxNum)
             => NameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
 
@@ -172,6 +179,7 @@ internal static class IndexCatalogReader
         /// PK promotion (any logical-idx with <c>index_type = 0x01</c>
         /// references this slot).
         /// </summary>
+        /// <param name="realIdxNum">The real index number of.</param>
         public bool IsUniqueOrPk(int realIdxNum)
             => (RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
                 || PkRealIdxNums.Contains(realIdxNum);
@@ -202,6 +210,8 @@ internal static class IndexCatalogReader
         /// or <see langword="false"/> when the slot's columns could not be
         /// resolved against the table snapshot (deleted-column gap).
         /// </summary>
+        /// <param name="realIdxNum">The real index number of.</param>
+        /// <param name="keyColInfos">The key col infos.</param>
         public bool TryGetKeyColumnInfos(int realIdxNum, out List<IndexLayout.KeyColumnInfo> keyColInfos)
         {
             if (KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))

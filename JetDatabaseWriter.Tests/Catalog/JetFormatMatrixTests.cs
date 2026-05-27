@@ -23,6 +23,7 @@ using Xunit;
 /// </list>
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

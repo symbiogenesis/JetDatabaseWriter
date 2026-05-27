@@ -31,6 +31,8 @@ public sealed class DatabaseCache : IAsyncDisposable
     /// the file at <paramref name="path"/>. The cached bytes are never
     /// mutated — each call produces an independent stream positioned at 0.
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="MemoryStream"/> containing the file's bytes, positioned at 0.</returns>
     public async ValueTask<MemoryStream> CopyToStreamAsync(string path, CancellationToken cancellationToken = default)
     {

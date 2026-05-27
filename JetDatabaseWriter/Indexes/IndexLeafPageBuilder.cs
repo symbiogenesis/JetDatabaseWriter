@@ -46,6 +46,12 @@ internal static class IndexLeafPageBuilder
     /// empirically against Access-authored fixtures (see
     /// <c>Constants.IndexLeafPage</c> for the reference observation).
     /// </summary>
+    /// <param name="bitmaskOffset">The bitmask offset.</param>
+    /// <param name="firstEntryOffset">The first entry offset.</param>
+    /// <param name="prevPageOffset">The prev page offset.</param>
+    /// <param name="nextPageOffset">The next page offset.</param>
+    /// <param name="tailPageOffset">The tail page offset.</param>
+    /// <param name="prefLenOffset">The pref len offset.</param>
     internal readonly struct LeafPageLayout(
         int bitmaskOffset,
         int firstEntryOffset,
@@ -122,6 +128,12 @@ internal static class IndexLeafPageBuilder
     /// pointers. Used by <see cref="IndexBTreeBuilder"/> to chain a row of
     /// leaf pages together.
     /// </summary>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
     public static byte[] BuildJet4LeafPage(
         int pageSize,
         long parentTdefPage,
@@ -141,6 +153,13 @@ internal static class IndexLeafPageBuilder
     /// the first. The first entry is always written whole because it carries
     /// the canonical bytes that subsequent entries logically prepend (§4.4).
     /// </summary>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="enablePrefixCompression">A value indicating whether enable prefix compression.</param>
     public static byte[] BuildJet4LeafPage(
         int pageSize,
         long parentTdefPage,
@@ -161,6 +180,15 @@ internal static class IndexLeafPageBuilder
     /// Jet3 leaf pages, lifting the previous "Jet3 indexes are schema-only"
     /// limitation.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="enablePrefixCompression">A value indicating whether enable prefix compression.</param>
+    /// <param name="maxPrefixLength">The max prefix length.</param>
     public static byte[] BuildLeafPage(
         LeafPageLayout layout,
         int pageSize,

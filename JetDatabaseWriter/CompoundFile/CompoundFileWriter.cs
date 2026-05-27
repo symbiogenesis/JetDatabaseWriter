@@ -30,6 +30,7 @@ internal static class CompoundFileWriter
     /// Builds an in-memory CFB v3 compound document containing the supplied
     /// top-level streams. Stream names must be ≤ 31 UTF-16 code units.
     /// </summary>
+    /// <param name="streams">The streams.</param>
     public static byte[] Build(IReadOnlyList<KeyValuePair<string, byte[]>> streams)
     {
         return Build(
@@ -46,6 +47,7 @@ internal static class CompoundFileWriter
     /// standard 4096-byte mini-stream cutoff. Streams are stored in the regular
     /// FAT, so callers must pad any non-empty stream to at least the cutoff.
     /// </summary>
+    /// <param name="streams">The streams.</param>
     public static byte[] BuildOfficeCrypto(IReadOnlyList<KeyValuePair<string, byte[]>> streams)
     {
         return Build(

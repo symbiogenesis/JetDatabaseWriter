@@ -625,6 +625,8 @@ public sealed class IndexMaintenanceTests
     /// so the highest-numbered index page is the current root. Returns -1
     /// when no index page is found.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="format">The format.</param>
     private static int FindLatestRootPageType(byte[] fileBytes, DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);

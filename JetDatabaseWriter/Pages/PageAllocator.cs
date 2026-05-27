@@ -15,6 +15,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Owns the Access global page-allocation map on page 1 and exposes page
 /// reserve, free, scrub, and tail-shrink operations for the writer.
 /// </summary>
+/// <param name="writer">The writer.</param>
 internal sealed class PageAllocator(AccessWriter writer)
 {
     private const int GlobalUsageMapPageNumber = 1;

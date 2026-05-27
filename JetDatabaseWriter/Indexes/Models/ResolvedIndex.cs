@@ -7,6 +7,13 @@ using JetDatabaseWriter.Models;
 /// Resolved per-index column-number / direction / uniqueness tuple consumed
 /// by the TDEF emitter and the maintenance loop.
 /// </summary>
+/// <param name="name">The name.</param>
+/// <param name="columnNumbers">The column numbers.</param>
+/// <param name="ascending">The ascending.</param>
+/// <param name="isPrimaryKey">A value indicating whether is primary key.</param>
+/// <param name="isUnique">A value indicating whether is unique.</param>
+/// <param name="ignoreNulls">The ignore nulls.</param>
+/// <param name="isRequired">A value indicating whether is required.</param>
 internal readonly struct ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique, bool ignoreNulls, bool isRequired)
 {
     public string Name { get; } = name;

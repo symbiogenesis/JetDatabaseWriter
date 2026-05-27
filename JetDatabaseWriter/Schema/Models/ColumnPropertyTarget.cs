@@ -19,6 +19,7 @@ internal sealed record ColumnPropertyTarget(
     IReadOnlyList<ColumnPropertyEntry> Entries)
 {
     /// <summary>Returns the first entry with the given property name (case-insensitive), or <see langword="null"/>.</summary>
+    /// <param name="propertyName">The property name.</param>
     public ColumnPropertyEntry? Find(string propertyName)
     {
         foreach (ColumnPropertyEntry e in Entries)

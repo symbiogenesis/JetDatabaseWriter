@@ -24,6 +24,7 @@ using Xunit;
 /// any one of them causes err 3011 "could not find the object 'MSysDb'".
 /// See <see href="docs/design/round-trip-test-failures.md" />.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
@@ -573,6 +574,8 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     /// <summary>
     /// Finds all head-of-chain TDEF pages (page_type=0x02, next-chain=0) in the file.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="format">The format.</param>
     private static int[] FindTdefPages(byte[] fileBytes, DatabaseFormat format)
     {
         int pgSz = PageSize(format);
@@ -595,6 +598,9 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     /// Asserts every column descriptor on the given TDEF page has the
     /// Jet4 format magic at byte offset 1 within the descriptor.
     /// </summary>
+    /// <param name="db">The database input.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="format">The format.</param>
     private static void AssertColumnDescriptorMagic(byte[] db, int tdefPage, DatabaseFormat format)
     {
         int pgSz = PageSize(format);

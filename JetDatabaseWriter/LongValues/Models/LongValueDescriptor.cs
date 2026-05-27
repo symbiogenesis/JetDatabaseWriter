@@ -6,6 +6,10 @@ using System.Buffers.Binary;
 /// <summary>
 /// Parsed 12-byte JET long-value descriptor stored in MEMO/OLE row bodies.
 /// </summary>
+/// <param name="Length">The length.</param>
+/// <param name="StorageMode">The storage mode.</param>
+/// <param name="FirstDp">The first data page.</param>
+/// <param name="Token">The token.</param>
 internal readonly record struct LongValueDescriptor(int Length, byte StorageMode, uint FirstDp, uint Token)
 {
     public bool IsInline => StorageMode == Constants.LongValue.InlineStorageMode;

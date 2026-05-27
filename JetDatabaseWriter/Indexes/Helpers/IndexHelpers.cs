@@ -25,6 +25,8 @@ internal static class IndexHelpers
     /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until
     /// an unused name is found.
     /// </summary>
+    /// <param name="baseName">The base name.</param>
+    /// <param name="existing">The existing.</param>
     public static string MakeUniqueLogicalIdxName(string baseName, IReadOnlyList<string> existing)
     {
         var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
@@ -52,6 +54,9 @@ internal static class IndexHelpers
     /// (used slots agree, unused slots are 0xFFFF). Returns <see langword="false"/>
     /// when the descriptor would extend past <paramref name="td"/>'s end.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="phys">The physical column descriptor.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
     public static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
     {
         if (phys + Constants.TableDefinition.Jet4.RealIdx.PhysSize > td.Length)
@@ -89,6 +94,8 @@ internal static class IndexHelpers
     /// PK <see cref="IndexDefinition"/> in the same call throws
     /// <see cref="ArgumentException"/>.
     /// </summary>
+    /// <param name="columns">The columns.</param>
+    /// <param name="indexes">The indexes.</param>
     public static (IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<IndexDefinition> Indexes) ApplyPrimaryKeyShortcut(
         IReadOnlyList<ColumnDefinition> columns,
         IReadOnlyList<IndexDefinition> indexes)
@@ -180,6 +187,8 @@ internal static class IndexHelpers
     /// <paramref name="tableDef"/> and returns the resolved per-index
     /// column-number / direction tuples consumed by the TDEF emitter.
     /// </summary>
+    /// <param name="indexes">The indexes.</param>
+    /// <param name="tableDef">The table def.</param>
     public static List<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
     {
         if (indexes.Count == 0)
@@ -320,6 +329,8 @@ internal static class IndexHelpers
     /// (case-insensitive name match) in the rebuilt schema. Relationship-owned
     /// FK indexes are excluded from this default projection.
     /// </summary>
+    /// <param name="existing">The existing.</param>
+    /// <param name="newDefs">The new defs.</param>
     public static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
     {
         var result = new List<IndexDefinition>(existing.Count);
@@ -395,6 +406,8 @@ internal static class IndexHelpers
     /// <see langword="null"/> — Access treats a partial-null FK tuple as
     /// unconstrained (the row is allowed even if no parent matches).
     /// </summary>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="columnIndexes">The column indexes.</param>
     public static string? BuildCompositeKey(object?[] row, int[] columnIndexes)
     {
         var sb = new StringBuilder();
@@ -466,6 +479,8 @@ internal static class IndexHelpers
     /// is null (Access permits partial-null FK tuples — caller already
     /// short-circuited on this path) or when the encoder rejects any value.
     /// </summary>
+    /// <param name="idx">The index.</param>
+    /// <param name="values">The values.</param>
     public static byte[]? TryEncodeSeekKey(ParentSeekIndex idx, object[] values)
     {
         var pieces = new byte[idx.KeyColumns.Count][];
@@ -534,6 +549,8 @@ internal static class IndexHelpers
     /// (cascade callers already short-circuit on partial-null parent keys)
     /// or when the encoder rejects any value.
     /// </summary>
+    /// <param name="idx">The index.</param>
+    /// <param name="parentPkValues">The parent primary key values.</param>
     public static byte[]? TryEncodeChildSeekKey(ChildSeekIndex idx, object?[] parentPkValues)
     {
         if (parentPkValues.Length != idx.KeyColumns.Count)
@@ -599,6 +616,8 @@ internal static class IndexHelpers
     /// (every byte in <see cref="IndexKeyEncoder"/>'s output is already
     /// inverted on descending columns, so unsigned compare is correct).
     /// </summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
     public static int CompareKeyBytes(byte[] a, byte[] b)
         => IndexPageCodec.CompareKeyBytes(a, b);
 
@@ -608,6 +627,8 @@ internal static class IndexHelpers
     /// summary is &lt; searchKey (the descent would have to follow
     /// <c>tail_page</c>, which the surgical path rejects).
     /// </summary>
+    /// <param name="entries">The entries.</param>
+    /// <param name="searchKey">The search key.</param>
     public static int SelectChildIndexFromDecoded(
         List<DecodedIntermediateEntry> entries,
         byte[] searchKey)
@@ -633,6 +654,9 @@ internal static class IndexHelpers
     /// actually require a split. The returned list always has
     /// <c>Count &gt;= 2</c> on success; every page is non-empty.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="entries">The entries.</param>
     public static SplitPages? TryGreedySplitLeafInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
@@ -692,6 +716,10 @@ internal static class IndexHelpers
     /// per-page byte budget — including the §4.4 prefix-compression savings
     /// the simpler leaf splitter cannot model — is respected exactly.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
     public static List<List<DecodedIntermediateEntry>>? TryGreedySplitIntermediateInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
@@ -754,6 +782,8 @@ internal static class IndexHelpers
     /// (surgical mutation requires this; multi-leaf change-sets bail to
     /// the bulk path).
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="searchKey">The search key.</param>
     public static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
     {
         for (int level = 0; level < path.Count; level++)
@@ -774,6 +804,9 @@ internal static class IndexHelpers
     /// <paramref name="pageNumber"/> in <paramref name="ops"/>, allocating
     /// the list lazily when this is the first op for that page.
     /// </summary>
+    /// <param name="ops">The intermediate operations.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="op">The intermediate operation.</param>
     public static void AddIntermediateOp(
         Dictionary<long, List<IntermediateOp>> ops,
         long pageNumber,
@@ -794,6 +827,8 @@ internal static class IndexHelpers
     /// (OriginalIndex, declaration order); each entry index in
     /// <paramref name="original"/> is consumed at most once by a Replace.
     /// </summary>
+    /// <param name="original">The original.</param>
+    /// <param name="ops">The intermediate operations.</param>
     public static List<DecodedIntermediateEntry> ApplyIntermediateOps(
         List<DecodedIntermediateEntry> original,
         List<IntermediateOp> ops)

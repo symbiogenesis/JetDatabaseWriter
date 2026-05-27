@@ -151,6 +151,9 @@ public sealed class LvalLengthMismatchTests
     /// [len_low, len_mid, len_high, formBitmask]. Returns the offset of byte 0
     /// of the header, or -1 if not found.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="expectedLen">The expected len.</param>
+    /// <param name="formBitmask">The form bitmask.</param>
     private static int FindLvalHeader(byte[] data, int expectedLen, byte formBitmask)
     {
         byte b0 = unchecked((byte)(expectedLen & 0xFF));

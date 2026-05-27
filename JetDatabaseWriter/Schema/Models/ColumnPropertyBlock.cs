@@ -117,6 +117,7 @@ internal sealed class ColumnPropertyBlock
     /// matches <paramref name="name"/> case-insensitively, or <see langword="null"/>
     /// if no such target exists.
     /// </summary>
+    /// <param name="name">The name.</param>
     public ColumnPropertyTarget? FindTarget(string name)
     {
         foreach (ColumnPropertyTarget t in Targets)

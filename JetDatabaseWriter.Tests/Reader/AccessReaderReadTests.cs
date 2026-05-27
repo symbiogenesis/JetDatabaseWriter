@@ -15,6 +15,7 @@ using Xunit;
 /// Tests for: ReadTable (typed), ReadTableAsStringDataTable,
 /// ReadAllTables, ReadAllTablesAsStrings.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── ReadTable (typed) ─────────────────────────────────────────────

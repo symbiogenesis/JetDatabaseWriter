@@ -15,6 +15,7 @@ using Xunit;
 /// Closes the remaining §1.4 gap: "emitting or preserving Access-authored
 /// surrogate indexes on write.".
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

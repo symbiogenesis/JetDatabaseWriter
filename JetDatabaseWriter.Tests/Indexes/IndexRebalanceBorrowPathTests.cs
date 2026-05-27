@@ -37,6 +37,7 @@ public sealed class IndexRebalanceBorrowPathTests
     /// leaves underfull but not empty), then inserts new rows into the gaps.
     /// Verifies all surviving + newly inserted data round-trips.
     /// </summary>
+    /// <param name="format">The format.</param>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -128,6 +129,7 @@ public sealed class IndexRebalanceBorrowPathTests
     /// exercising the scenario where intermediate pages are repeatedly
     /// restructured. After each round the data must still round-trip.
     /// </summary>
+    /// <param name="format">The format.</param>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -208,6 +210,7 @@ public sealed class IndexRebalanceBorrowPathTests
     /// leftmost and rightmost intermediate page boundaries simultaneously.
     /// This exercises tail_page recomputation under multi-group delete.
     /// </summary>
+    /// <param name="format">The format.</param>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]

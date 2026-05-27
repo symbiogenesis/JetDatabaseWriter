@@ -9,11 +9,18 @@ using System.Collections.Generic;
 /// PK column, in declaration order) plus the foreign-table column index
 /// supplying each value.
 /// </summary>
+/// <param name="RootPage">The root page.</param>
+/// <param name="KeyColumns">The key columns.</param>
 internal sealed record ParentSeekIndex(
     long RootPage,
     IReadOnlyList<ParentSeekKeyColumn> KeyColumns);
 
 /// <summary>One column of a parent-seek composite key.</summary>
+/// <param name="ColumnType">The column type.</param>
+/// <param name="Ascending">The ascending.</param>
+/// <param name="ForeignColumnIndex">The foreign column index.</param>
+/// <param name="NumericScale">The numeric scale.</param>
+/// <param name="LegacyNumeric">The legacy numeric.</param>
 internal readonly record struct ParentSeekKeyColumn(
     byte ColumnType,
     bool Ascending,

@@ -35,6 +35,9 @@ internal static class EncryptionConverter
     /// differ from <paramref name="source"/>.Length when the source was an
     /// Agile CFB container).
     /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="password">The password.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static async ValueTask<(byte[] Plaintext, AccessEncryptionFormat SourceFormat)> ReadDecryptedAsync(
         Stream source,
         ReadOnlyMemory<char> password,
@@ -98,6 +101,9 @@ internal static class EncryptionConverter
     /// format and returns the resulting on-disk bytes. <paramref name="plaintext"/>
     /// must already be a clean (no-encryption) Jet3/Jet4/ACE database.
     /// </summary>
+    /// <param name="plaintext">The plaintext.</param>
+    /// <param name="targetFormat">The target format.</param>
+    /// <param name="targetPassword">The target password.</param>
     public static byte[] ApplyEncryption(
         byte[] plaintext,
         AccessEncryptionFormat targetFormat,
@@ -162,6 +168,7 @@ internal static class EncryptionConverter
     }
 
     /// <summary>Detects the on-disk encryption format of <paramref name="rawFile"/> without modifying it.</summary>
+    /// <param name="rawFile">The raw file.</param>
     public static AccessEncryptionFormat Detect(byte[] rawFile)
     {
         if (rawFile == null || rawFile.Length < HeaderLength)
@@ -197,6 +204,11 @@ internal static class EncryptionConverter
     /// 1+ using the password-derived keys, and returns a fully plaintext copy
     /// (clean header, no encryption flags, no password residue).
     /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="header">The header.</param>
+    /// <param name="password">The password.</param>
+    /// <param name="isLegacyAesCfb">A value indicating whether is legacy aes compound file.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private static async ValueTask<byte[]> ReadFlatDecryptedAsync(
         Stream source,
         byte[] header,
@@ -367,6 +379,9 @@ internal static class EncryptionConverter
     /// CFB magic) and clears the encryption flag + password area for all flat
     /// formats.
     /// </summary>
+    /// <param name="db">The database input.</param>
+    /// <param name="fmt">The database format.</param>
+    /// <param name="isLegacyAesCfb">A value indicating whether is legacy aes compound file.</param>
     private static void StripEncryptionFromHeader(byte[] db, DatabaseFormat fmt, bool isLegacyAesCfb)
     {
         if (isLegacyAesCfb)
@@ -412,6 +427,9 @@ internal static class EncryptionConverter
     /// The encoding is the inverse of <see cref="EncryptionManager"/>'s
     /// <c>DecodeJet4Password</c> / <c>DecodeAccdbPassword</c>.
     /// </summary>
+    /// <param name="header">The header.</param>
+    /// <param name="password">The password.</param>
+    /// <param name="useAccdbLegacyMask">A value indicating whether use accdb legacy mask.</param>
     private static void EncodeJet4StylePassword(byte[] header, ReadOnlySpan<char> password, bool useAccdbLegacyMask)
     {
         ReadOnlySpan<byte> mask = useAccdbLegacyMask
@@ -451,6 +469,7 @@ internal static class EncryptionConverter
     }
 
     /// <summary>SHA-256(password)[..16] — matches <c>EncryptionManager.DeriveAesPageKey</c>.</summary>
+    /// <param name="password">The password.</param>
     private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
     {
         int maxBytes = System.Text.Encoding.UTF8.GetMaxByteCount(password.Length);
@@ -485,6 +504,7 @@ internal static class EncryptionConverter
     /// Shared with <see cref="AccessBase"/> so format detection lives in
     /// exactly one place.
     /// </summary>
+    /// <param name="header">The header.</param>
     internal static DatabaseFormat DetectFormat(byte[] header)
     {
         byte ver = header[0x14];

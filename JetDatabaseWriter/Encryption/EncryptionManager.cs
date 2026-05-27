@@ -81,6 +81,7 @@ internal static class EncryptionManager
     internal static ReadOnlySpan<byte> AccdbLegacyPasswordMaskForWrite => AccdbLegacyPasswordMask;
 
     /// <summary>Returns true when the file begins with the OLE2 Compound File Binary magic bytes.</summary>
+    /// <param name="header">The header.</param>
     public static bool IsCompoundFileEncrypted(byte[] header) =>
         header != null && header.Length >= 4 &&
         header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0;
@@ -89,6 +90,8 @@ internal static class EncryptionManager
     /// Returns the Jet3 page XOR mask if the header has the Jet3 Office97 password
     /// flag set (offset 0x62, bit 0x01); otherwise returns null.
     /// </summary>
+    /// <param name="format">The format.</param>
+    /// <param name="hdr">The database header bytes.</param>
     public static byte[]? GetJet3PageMask(DatabaseFormat format, byte[] hdr)
     {
         if (format == DatabaseFormat.Jet3Mdb && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
@@ -114,6 +117,8 @@ internal static class EncryptionManager
     /// Returns 0 when the header does not carry a recognizable codepage, in
     /// which case callers should fall back to a sensible default (1252).
     /// </summary>
+    /// <param name="hdr">The database header bytes.</param>
+    /// <param name="format">The format.</param>
     public static int DecodeHeaderCodePage(byte[] hdr, DatabaseFormat format)
     {
         if (hdr is null || hdr.Length < 0x3E)
@@ -146,6 +151,7 @@ internal static class EncryptionManager
     /// Applies or removes the fixed RC4 mask Access uses for page-0 header
     /// bytes <c>0x18..0x97</c>. The transform is symmetric.
     /// </summary>
+    /// <param name="headerPage">The header page.</param>
     internal static void TransformHeaderMask(byte[] headerPage)
     {
         Guard.NotNull(headerPage, nameof(headerPage));
@@ -229,6 +235,11 @@ internal static class EncryptionManager
     /// Changes the password of an already-encrypted JET / ACE database in place,
     /// preserving the existing on-disk encryption format.
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="oldPassword">The old password.</param>
+    /// <param name="newPassword">The new password.</param>
+    /// <param name="options">The options.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask ChangePasswordAsync(
         string path,
         string oldPassword,
@@ -252,6 +263,11 @@ internal static class EncryptionManager
     /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
     /// requested <paramref name="targetFormat"/>.
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="newPassword">The new password.</param>
+    /// <param name="targetFormat">The target format.</param>
+    /// <param name="options">The options.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask EncryptAsync(
         string path,
         string newPassword,
@@ -281,6 +297,10 @@ internal static class EncryptionManager
     /// <summary>
     /// Removes encryption from a JET / ACE database in place.
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="oldPassword">The old password.</param>
+    /// <param name="options">The options.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask DecryptAsync(
         string path,
         string oldPassword,
@@ -301,6 +321,10 @@ internal static class EncryptionManager
     /// <summary>
     /// Stream-based equivalent of <see cref="ChangePasswordAsync(string,string,string,AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="oldPassword">The old password.</param>
+    /// <param name="newPassword">The new password.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask ChangePasswordAsync(
         Stream stream,
         string oldPassword,
@@ -321,6 +345,10 @@ internal static class EncryptionManager
     /// <summary>
     /// Stream-based equivalent of <see cref="EncryptAsync(string,string,AccessEncryptionFormat,AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="newPassword">The new password.</param>
+    /// <param name="targetFormat">The target format.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask EncryptAsync(
         Stream stream,
         string newPassword,
@@ -348,6 +376,9 @@ internal static class EncryptionManager
     /// <summary>
     /// Stream-based equivalent of <see cref="DecryptAsync(string,string,AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="oldPassword">The old password.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static ValueTask DecryptAsync(
         Stream stream,
         string oldPassword,
@@ -370,6 +401,10 @@ internal static class EncryptionManager
     /// Throws <see cref="UnauthorizedAccessException"/> when the database is
     /// encrypted but no / wrong password was supplied.
     /// </summary>
+    /// <param name="hdr">The database header bytes.</param>
+    /// <param name="format">The format.</param>
+    /// <param name="isCompoundFileEncrypted">A value indicating whether is compound file encrypted.</param>
+    /// <param name="password">The password.</param>
     public static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
         byte[] hdr,
         DatabaseFormat format,
@@ -477,6 +512,10 @@ internal static class EncryptionManager
     /// Throws <see cref="UnauthorizedAccessException"/> when an encrypted package
     /// is detected but no password was supplied.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="header">The header.</param>
+    /// <param name="password">The password.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
         byte[] header,
@@ -524,6 +563,10 @@ internal static class EncryptionManager
     /// the detected <see cref="AccessEncryptionFormat"/> so callers can
     /// distinguish Standard from Agile encryption.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="header">The header.</param>
+    /// <param name="password">The password.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
         Stream stream,
         byte[] header,
@@ -767,6 +810,10 @@ internal static class EncryptionManager
     /// <paramref name="buf"/> in place. A no-op when no keys are configured or
     /// when <paramref name="pageNumber"/> is 0 (the unencrypted header page).
     /// </summary>
+    /// <param name="buf">The page buffer.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="keys">The page encryption keys.</param>
     public static void DecryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
         DecryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
 
@@ -775,6 +822,11 @@ internal static class EncryptionManager
     /// that decrypts a page sitting at <paramref name="offset"/> within a larger
     /// backing array. Lets bulk callers skip per-page slice copies.
     /// </summary>
+    /// <param name="buf">The page buffer.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="keys">The page encryption keys.</param>
     public static void DecryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
     {
         if (pageNumber < 1 || keys == null)
@@ -809,6 +861,10 @@ internal static class EncryptionManager
     /// page). Operations are applied in reverse order so a page round-trips
     /// back to its original ciphertext.
     /// </summary>
+    /// <param name="buf">The page buffer.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="keys">The page encryption keys.</param>
     public static void EncryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
         EncryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
 
@@ -817,6 +873,11 @@ internal static class EncryptionManager
     /// that encrypts a page sitting at <paramref name="offset"/> within a larger
     /// backing array.
     /// </summary>
+    /// <param name="buf">The page buffer.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="keys">The page encryption keys.</param>
     public static void EncryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
     {
         if (pageNumber < 1 || keys == null)
@@ -849,6 +910,11 @@ internal static class EncryptionManager
     /// Applies the Jet3 cyclic XOR mask to a single page in place. Symmetric:
     /// the same operation encrypts and decrypts.
     /// </summary>
+    /// <param name="buf">The page buffer.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="mask">The encryption mask or page bitmask.</param>
     private static void ApplyJet3Xor(byte[] buf, int offset, long pageNumber, int pageSize, byte[] mask)
     {
         long fileOffset = pageNumber * pageSize;
@@ -859,6 +925,7 @@ internal static class EncryptionManager
     }
 
     /// <summary>Returns true when <paramref name="keys"/> has any active page encryption configured.</summary>
+    /// <param name="keys">The page encryption keys.</param>
     public static bool HasPageEncryption(PageDecryptionKeys keys) =>
         keys != null && (keys.Jet3XorMask != null || keys.Rc4DbKey.HasValue || keys.AesPageKey != null);
 
@@ -867,6 +934,9 @@ internal static class EncryptionManager
     /// <summary>
     /// Derives the RC4 key for a specific page: MD5(dbKey LE + pageNumber LE)[0..4].
     /// </summary>
+    /// <param name="dbKey">The db key.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="destination">The destination.</param>
     private static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
     {
         Span<byte> input = stackalloc byte[8];
@@ -887,6 +957,10 @@ internal static class EncryptionManager
     }
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="length">The length.</param>
+    /// <param name="key">The key bytes or index key.</param>
     private static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)
     {
         Span<byte> s = stackalloc byte[256];
@@ -919,6 +993,10 @@ internal static class EncryptionManager
     /// array as both input and output is safe and avoids any temporary
     /// allocations or block copies.
     /// </summary>
+    /// <param name="xform">The xform.</param>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="offset">The offset.</param>
+    /// <param name="length">The length.</param>
     private static void AesEcbInPlace(ICryptoTransform xform, byte[] data, int offset, int length)
     {
         int written = xform.TransformBlock(data, offset, length, data, offset);
@@ -937,6 +1015,8 @@ internal static class EncryptionManager
     /// NUL char because the encryption flag at 0x62 overlaps byte 32 of the area
     /// and can produce a non-null artifact.
     /// </summary>
+    /// <param name="hdr">The database header bytes.</param>
+    /// <param name="mask">The encryption mask or page bitmask.</param>
     private static string DecodeHeaderPassword(byte[] hdr, ReadOnlySpan<byte> mask)
     {
         Span<byte> decoded = stackalloc byte[40];
@@ -953,6 +1033,7 @@ internal static class EncryptionManager
     /// <summary>
     /// Derives a 128-bit AES key from a password using SHA-256 (truncated to 16 bytes).
     /// </summary>
+    /// <param name="password">The password.</param>
     private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
     {
         // Header-area passwords are capped at 15 UTF-16 chars by

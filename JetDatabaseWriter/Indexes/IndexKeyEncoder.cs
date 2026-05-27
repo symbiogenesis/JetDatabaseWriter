@@ -230,6 +230,8 @@ internal static class IndexKeyEncoder
     /// fixture. See <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The ascending.</param>
     private static byte[] EncodeGuidEntry(object value, bool ascending)
     {
         Guid g = value switch
@@ -274,6 +276,8 @@ internal static class IndexKeyEncoder
     /// <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The ascending.</param>
     private static byte[] EncodeBinaryEntry(object value, bool ascending)
     {
         byte[] data = value switch
@@ -298,6 +302,8 @@ internal static class IndexKeyEncoder
     /// (1 flag + 54 segment bytes). The final segment carries 2 valid bytes
     /// (42 mod 8 = 2) with a length trailer of <c>0x02</c>.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The ascending.</param>
     private static byte[] EncodeDateTimeExtEntry(object value, bool ascending)
     {
         byte[] data = value switch
@@ -325,6 +331,8 @@ internal static class IndexKeyEncoder
     /// the FINAL length byte are ones-complemented; intermediate length
     /// bytes (<c>0x09</c>) stay unflipped.
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="ascending">The ascending.</param>
     private static byte[] EncodeGeneralBinaryEntry(ReadOnlySpan<byte> data, bool ascending)
     {
         // Always emit at least one segment so empty input round-trips.
@@ -407,6 +415,10 @@ internal static class IndexKeyEncoder
     /// <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The ascending.</param>
+    /// <param name="targetScale">The target scale.</param>
+    /// <param name="legacy">The legacy.</param>
     public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)
     {
         bool isNull = value is null || value is DBNull;
@@ -500,6 +512,10 @@ internal static class IndexKeyEncoder
     /// now participate on numeric keys with no extra
     /// I/O. Null / <see cref="DBNull"/> emit the standard null flag byte.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The ascending.</param>
+    /// <param name="declaredScale">The declared scale.</param>
+    /// <param name="legacy">The legacy.</param>
     public static byte[] EncodeNumericEntryAtDeclaredScale(object? value, bool ascending, byte declaredScale, bool legacy)
     {
         Guard.InRange(declaredScale, 0, 28, nameof(declaredScale));
@@ -530,6 +546,7 @@ internal static class IndexKeyEncoder
     /// <see cref="EncodeNumericEntry"/> callers to compute a per-rebuild
     /// canonical <c>targetScale</c>.
     /// </summary>
+    /// <param name="values">The values.</param>
     public static int ComputeMaxNumericScale(System.Collections.Generic.IEnumerable<object?> values)
     {
         Guard.NotNull(values, nameof(values));
@@ -564,6 +581,7 @@ internal static class IndexKeyEncoder
     /// IEEE-754 sort-key twiddle (in-place): if the sign bit is zero (non-negative)
     /// flip the sign bit; otherwise (negative) ones-complement every byte.
     /// </summary>
+    /// <param name="be">The big-endian byte sequence.</param>
     private static void TwiddleIeeeBigEndianInPlace(byte[] be)
     {
         if ((be[0] & 0x80) == 0)
@@ -665,6 +683,7 @@ internal static class IndexKeyEncoder
     /// <c>T_BOOL</c> remains excluded because BOOL is stored in the row null
     /// mask, never in index key bytes.
     /// </summary>
+    /// <param name="columnType">The column type.</param>
     internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
     {
         T_BYTE or T_INT or T_LONG or T_MONEY or T_FLOAT or T_DOUBLE

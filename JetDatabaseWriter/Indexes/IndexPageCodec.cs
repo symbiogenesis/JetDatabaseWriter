@@ -21,6 +21,7 @@ internal static class IndexPageCodec
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
     /// index leaf page (<c>page_type = 0x04</c>).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static bool IsLeaf(byte[] page)
         => page != null && page.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeLeaf;
 
@@ -28,12 +29,15 @@ internal static class IndexPageCodec
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
     /// index intermediate page (<c>page_type = 0x03</c>).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static bool IsIntermediate(byte[] page)
         => page != null && page.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
 
     /// <summary>
     /// Returns the page number recorded in the <c>next_page</c> sibling field.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static long ReadNextPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.NextPageOffset + 4)
@@ -47,6 +51,8 @@ internal static class IndexPageCodec
     /// <summary>
     /// Returns the page number recorded in the <c>tail_page</c> header field.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static long ReadTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.TailPageOffset + 4)
@@ -60,6 +66,8 @@ internal static class IndexPageCodec
     /// <summary>
     /// Returns the page number recorded in the <c>prev_page</c> sibling field.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static long ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.PrevPageOffset + 4)
@@ -73,6 +81,8 @@ internal static class IndexPageCodec
     /// <summary>
     /// Reads the three sibling pointer fields from an index page header.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static (long Prev, long Next, long Tail) ReadSiblingPointers(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page)
@@ -92,6 +102,8 @@ internal static class IndexPageCodec
     /// Returns <see langword="true"/> when a page is a leaf root with no
     /// sibling or tail pointers.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static bool IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
         if (!IsLeaf(page) || page.Length < layout.TailPageOffset + 4)
@@ -107,6 +119,9 @@ internal static class IndexPageCodec
     /// Reads the first child pointer from an intermediate page, or zero when
     /// the page is malformed or not an intermediate page.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="intermediatePage">The intermediate page.</param>
+    /// <param name="pageSize">The page size.</param>
     public static long ReadFirstChildPointer(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] intermediatePage,
@@ -134,6 +149,8 @@ internal static class IndexPageCodec
     /// <summary>
     /// Reads a big-endian 4-byte child-page pointer from an intermediate entry.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="offset">The offset.</param>
     public static long DecodeIntermediateChildPointer(byte[] page, int offset)
     {
         if (page == null || offset < 0 || offset + 4 > page.Length)
@@ -147,6 +164,9 @@ internal static class IndexPageCodec
     /// <summary>
     /// Decodes leaf entries into canonical key plus data-row pointers.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
     public static List<IndexEntry> DecodeLeafEntries(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -201,6 +221,9 @@ internal static class IndexPageCodec
     /// Decodes intermediate entries into canonical summary key, row pointer,
     /// and child-page pointer tuples.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
     public static List<DecodedIntermediateEntry> DecodeIntermediateEntries(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -258,6 +281,10 @@ internal static class IndexPageCodec
     /// <paramref name="searchKey"/>, or <see langword="null"/> when every
     /// summary sorts before the search key.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="searchKey">The search key.</param>
     public static long? SelectChildPage(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -319,6 +346,10 @@ internal static class IndexPageCodec
     /// Scans one leaf page for an exact key match without materializing the
     /// page's decoded entries.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="searchKey">The search key.</param>
     public static (bool Found, bool ContinueToNext) ContainsKeyInLeafPage(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -339,6 +370,11 @@ internal static class IndexPageCodec
     /// Appends exact-key row-location matches from one leaf page without
     /// materializing the page's decoded entries.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="searchKey">The search key.</param>
+    /// <param name="matches">The matches.</param>
     public static bool CollectMatchingLeafEntries(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -358,6 +394,10 @@ internal static class IndexPageCodec
     /// Returns the start offset of the next entry on a page, or <c>-1</c>
     /// when the bitmask has no later entry start before the payload end.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="payloadEnd">The payload end.</param>
+    /// <param name="currentStart">The current start.</param>
     public static int NextEntryStart(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,
@@ -392,6 +432,8 @@ internal static class IndexPageCodec
     /// <summary>
     /// Lexicographically compares encoded index keys using unsigned byte order.
     /// </summary>
+    /// <param name="left">The left value.</param>
+    /// <param name="right">The right.</param>
     public static int CompareKeyBytes(byte[] left, byte[] right)
     {
         int length = Math.Min(left.Length, right.Length);

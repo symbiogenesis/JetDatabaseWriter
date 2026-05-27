@@ -75,6 +75,8 @@ internal static class TestDatabases
     /// Builds a path to a versioned Jackcess fixture: <c>V{version}/{baseName}V{version}.{ext}</c>,
     /// where the extension is <c>.mdb</c> for V2003 and earlier and <c>.accdb</c> for V2007+.
     /// </summary>
+    /// <param name="version">The version.</param>
+    /// <param name="baseName">The base name.</param>
     private static string Jc(int version, string baseName)
     {
         string ext = version <= 2003 ? "mdb" : "accdb";
@@ -311,6 +313,7 @@ internal static class TestDatabases
     /// Returns a skip reason string when the file is missing, or null when it exists.
     /// Use with <c>Skip = SkipIfMissing(path)</c> on [Fact].
     /// </summary>
+    /// <param name="path">The file path.</param>
     public static string? SkipIfMissing(string path) =>
         File.Exists(path) ? null : $"Test database not found: {path}";
 
@@ -331,6 +334,7 @@ internal static class TestDatabases
     }
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
+    /// <param name="path">The file path.</param>
     internal static bool IsReadable(string path) =>
         _readableCache.GetOrAdd(path, static p =>
         {
@@ -355,6 +359,8 @@ internal static class TestDatabases
         });
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal static async ValueTask<bool> IsReadableAsync(string path, CancellationToken cancellationToken = default)
     {
         if (_readableCache.TryGetValue(path, out bool cached))

@@ -17,6 +17,7 @@ using Xunit;
 /// <see cref="IAccessReader.RowsAsStrings(string, System.IProgress{long}?, System.Threading.CancellationToken)"/>
 /// surface composed with the standard <see cref="AsyncEnumerable"/> operators.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderRowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private sealed class QueryRow

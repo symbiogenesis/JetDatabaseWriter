@@ -12,6 +12,9 @@ using JetDatabaseWriter.Models;
 /// Orchestrates reading table schemas from a JET database and emitting C# entity-model source files.
 /// Extracted from the CLI entry point for testability.
 /// </summary>
+/// <param name="reader">The reader.</param>
+/// <param name="output">The output.</param>
+/// <param name="error">The error.</param>
 internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, TextWriter error)
 {
     /// <summary>

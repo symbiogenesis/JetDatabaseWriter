@@ -379,6 +379,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
     /// <summary>
     /// Minimal fake implementing only the methods ScaffoldRunner uses.
     /// </summary>
+    /// <param name="tables">The tables.</param>
+    /// <param name="columnsByTable">The columns by table.</param>
+    /// <param name="failingTables">The failing tables.</param>
     private sealed class FakeAccessReader(
         List<string> tables,
         Dictionary<string, List<ColumnMetadata>>? columnsByTable = null,

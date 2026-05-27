@@ -28,6 +28,7 @@ using Xunit;
 /// The fixture uses a simplified scheme (SHA-256 key + AES-128-ECB) — distinct
 /// from the ECMA-376 Agile path covered by <see cref="AgileEncryptionTests"/>.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ═══════════════════════════════════════════════════════════════════
@@ -269,6 +270,8 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     /// Encodes a password into the Jet4 password area at header offset 0x42
     /// using the standard XOR scheme: encoded[i] = password[i] ^ mask[i] ^ hdr[0x72 + i%4].
     /// </summary>
+    /// <param name="data">The data bytes or values.</param>
+    /// <param name="password">The password.</param>
     private static void EncodeJet4Password(byte[] data, string password)
     {
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
@@ -287,6 +290,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     /// This is a simplified stand-in; the real implementation should follow
     /// the MS-OFFCRYPTO key derivation (CryptoAPI or ECMA-376 Agile).
     /// </summary>
+    /// <param name="password">The password.</param>
     private static byte[] DeriveSimpleAesKey(string password)
     {
         byte[] hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(password));

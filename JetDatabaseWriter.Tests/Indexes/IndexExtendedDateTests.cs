@@ -14,6 +14,7 @@ using Xunit;
 /// The <c>extDateTestV2019</c> fixture is purpose-built by Jackcess to
 /// test this type. Closes §1.2 gap: "Extended Date/Time index keys.".
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

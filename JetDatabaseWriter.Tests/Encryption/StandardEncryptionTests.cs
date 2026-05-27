@@ -36,6 +36,7 @@ using Xunit;
 ///   5. Null guards
 ///   6. Format detection.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private const string TestPassword = "secret";
@@ -733,6 +734,10 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// verifier data is garbage (so password verification will fail or parsing
     /// will error out depending on which field is wrong).
     /// </summary>
+    /// <param name="algId">The alg id.</param>
+    /// <param name="algIdHash">The alg id hash.</param>
+    /// <param name="saltSize">The salt size.</param>
+    /// <param name="truncateVerifier">The truncate verifier.</param>
     private static byte[] BuildFakeStandardEncryptionInfo(
         int algId = 0x6601,
         int algIdHash = 0x8004,

@@ -48,6 +48,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// This verifies the legacy string formatter reads T_INT as signed
     /// little-endian rather than unsigned+cast under checked arithmetic.
     /// </summary>
+    /// <param name="value">The value.</param>
     [Theory]
     [InlineData((short)-1)]
     [InlineData(short.MinValue)]
@@ -101,6 +102,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// <c>"yyyy-MM-dd HH:mm:ss"</c> round-trip, so parity with the legacy path
     /// must hold here.
     /// </summary>
+    /// <param name="isoText">A value indicating whether iso text.</param>
     [Theory]
     [InlineData("1899-12-30 00:00:00")] // OADate epoch
     [InlineData("1900-01-01 00:00:00")]
@@ -144,6 +146,8 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// T_MONEY is stored as an OACurrency int64 with implicit scale=4. Verify
     /// the typed path returns the same decimal the round-trip parses.
     /// </summary>
+    /// <param name="oaCurrency">The oa currency.</param>
+    /// <param name="expectedDecimal">The expected decimal.</param>
     [Theory]
     [InlineData(0L, "0.0000")]
     [InlineData(12345L, "1.2345")]
@@ -179,6 +183,12 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// Numeric (T_NUMERIC) values inside the .NET decimal range round-trip
     /// through the legacy string path; the typed path must agree.
     /// </summary>
+    /// <param name="lo">The lower byte.</param>
+    /// <param name="mid">The middle byte.</param>
+    /// <param name="hi">The upper byte.</param>
+    /// <param name="negative">The negative.</param>
+    /// <param name="scale">The scale.</param>
+    /// <param name="expectedDecimal">The expected decimal.</param>
     [Theory]
     [InlineData(0u, 0u, 0u, false, (byte)0, "0")]
     [InlineData(12345u, 0u, 0u, false, (byte)0, "12345")]

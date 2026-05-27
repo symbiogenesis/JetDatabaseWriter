@@ -16,6 +16,7 @@ using Xunit;
 /// Layout assertions are grounded in
 /// <see href="docs/design/format-probe-appendix-index.md" />.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

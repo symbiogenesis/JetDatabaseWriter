@@ -41,6 +41,7 @@ public sealed class IndexLeafChainConsistencyTests
     /// current leaf page number. This validates doubly-linked list integrity
     /// which the existing unsigned-byte-order test does not check.
     /// </summary>
+    /// <param name="fixturePath">The fixture path.</param>
     [Theory]
     [MemberData(nameof(Fixtures))]
     public async Task LeafChain_PrevOfNext_EqualsCurrentPage(string fixturePath)

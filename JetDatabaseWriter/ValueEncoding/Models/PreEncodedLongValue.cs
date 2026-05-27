@@ -6,6 +6,7 @@ namespace JetDatabaseWriter.ValueEncoding.Models;
 /// the row-insert pipeline, so the row encoder just splices <see cref="HeaderBytes"/>
 /// straight into the row body without any further encoding.
 /// </summary>
+/// <param name="headerBytes">The header bytes.</param>
 internal sealed class PreEncodedLongValue(byte[] headerBytes)
 {
     public byte[] HeaderBytes { get; } = headerBytes;

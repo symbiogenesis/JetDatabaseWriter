@@ -15,6 +15,7 @@ using Xunit;
 /// Tests for: StreamRows (typed object[]) and StreamRowsAsStrings (string[]).
 /// Includes a memory-efficiency smoke test on the large Matrix database.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── StreamRows (typed) ────────────────────────────────────────────
@@ -327,6 +328,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     /// thread. Use in tests instead of Progress&lt;T&gt; to avoid thread-pool dispatch races
     /// when asserting the collected values immediately after iteration.
     /// </summary>
+    /// <param name="action">The action.</param>
     private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
     {
         private readonly Action<T> _action = action;

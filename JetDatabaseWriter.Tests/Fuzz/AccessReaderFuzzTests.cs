@@ -16,6 +16,7 @@ using Xunit;
 /// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it is slow and non-deterministic.
 /// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
 /// </summary>
+/// <param name="output">The output.</param>
 public class AccessReaderFuzzTests(ITestOutputHelper output)
 {
     [Trait("Category", "Fuzz")]
@@ -161,6 +162,8 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
     /// <summary>
     /// If the fuzzed input is too small or doesn't look like an MDB/ACCDB file, overlay it onto a valid minimal MDB file.
     /// </summary>
+    /// <param name="fuzzed">The fuzzed.</param>
+    /// <param name="random">The random.</param>
     private static async Task<System.IO.Stream> PreprocessFuzzedInputAsync(System.IO.Stream fuzzed, FuzzRandom? random = null)
     {
         // Known MDB file signatures: 0x00 0x01 0x00 0x00 (Jet3), 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 (Jet4), etc.
@@ -191,6 +194,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
     /// <summary>
     /// Attempts to find and load a random MDB or ACCDB test fixture from the test data directory.
     /// </summary>
+    /// <param name="random">The random.</param>
     private static async Task<byte[]?> TryGetRandomTestFixtureAsync(FuzzRandom? random = null)
     {
         try

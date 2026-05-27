@@ -10,6 +10,7 @@ using JetDatabaseWriter.LongValues.Models;
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and
 /// OLE field chains. Extracted from <see cref="AccessReader"/>.
 /// </summary>
+/// <param name="reader">The reader.</param>
 internal sealed class LongValueDecoder(AccessReader reader)
 {
     internal ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)

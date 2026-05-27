@@ -19,6 +19,7 @@ using Xunit;
 /// <c>MSysRelationships</c> system table), creates two scratch tables and a
 /// relationship, and then exercises the mutation API.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

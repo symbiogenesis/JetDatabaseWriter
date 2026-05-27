@@ -57,6 +57,8 @@ internal static class General97TextIndexEncoder
     /// (flag byte + payload). For null inputs returns a single-byte block
     /// with the null flag.
     /// </summary>
+    /// <param name="text">The text to encode.</param>
+    /// <param name="ascending">The ascending.</param>
     public static byte[] Encode(string? text, bool ascending)
     {
         if (text is null)

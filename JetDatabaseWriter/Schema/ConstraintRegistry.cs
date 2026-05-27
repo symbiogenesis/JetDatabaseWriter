@@ -42,6 +42,7 @@ internal sealed class ConstraintRegistry(
     /// deferred constraint (the post-write unique-index check) rejects the row
     /// after it has already consumed an auto-number value.
     /// </summary>
+    /// <param name="checkpoints">The checkpoints.</param>
     public static void RestoreAutoCounters(List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints)
     {
         if (checkpoints == null)
@@ -112,6 +113,8 @@ internal sealed class ConstraintRegistry(
     /// Attempts to retrieve the constraint list for a table.
     /// Returns <c>true</c> if constraints were registered for this table.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="constraints">The constraints.</param>
     public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints)
     {
         return _constraints.TryGetValue(tableName, out constraints);
@@ -125,6 +128,10 @@ internal sealed class ConstraintRegistry(
     /// data-page write, deferred unique-index check) rejects the row, so the
     /// counter rewinds to the value the failed insert tried to consume.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="values">The values.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
@@ -344,6 +351,9 @@ internal sealed class ConstraintRegistry(
     /// TDEF descriptor. DefaultValue and ValidationRule remain client-side and
     /// are only present when the same writer instance declared them.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="properties">The properties.</param>
     private List<ColumnConstraint> HydrateFromTableDef(string tableName, TableDef tableDef, ColumnPropertyBlock? properties = null)
     {
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);

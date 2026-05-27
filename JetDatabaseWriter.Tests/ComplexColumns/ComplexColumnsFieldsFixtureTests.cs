@@ -27,6 +27,7 @@ using Xunit;
 ///   • Cell values — attachment cells are decoded by resolving the complex_id
 ///     against the hidden flat attachment table recorded in MSysComplexColumns.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private const string DocumentsTable = "Documents";

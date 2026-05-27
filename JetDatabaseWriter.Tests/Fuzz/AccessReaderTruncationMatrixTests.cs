@@ -28,6 +28,7 @@ using Xunit;
 /// page-allocation pages, the catalog, and finally the data pages.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>
@@ -119,6 +120,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
     /// <see cref="AccessViolationException"/>, or unmanaged crash will
     /// always fail the test.
     /// </summary>
+    /// <param name="ex">The exception instance.</param>
     private static bool IsExpectedRobustnessException(Exception ex) =>
         ex is IOException
             or EndOfStreamException

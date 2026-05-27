@@ -35,6 +35,7 @@ internal static class RowMapper<T>
     /// Returns an array whose length equals <paramref name="headers"/>.Count.
     /// Each element is either an <see cref="Accessor"/> for a matched property, or <c>null</c> if no match.
     /// </summary>
+    /// <param name="headers">The headers.</param>
     public static Accessor?[] BuildIndex(IReadOnlyList<string> headers)
     {
         int count = headers.Count;
@@ -54,6 +55,7 @@ internal static class RowMapper<T>
     /// the read-path projection optimisation to skip per-row decode of columns
     /// that <typeparamref name="T"/> never reads.
     /// </summary>
+    /// <param name="headers">The headers.</param>
     public static bool[] GetBoundColumnMask(IReadOnlyList<string> headers)
     {
         Guard.NotNull(headers, nameof(headers));
@@ -73,6 +75,7 @@ internal static class RowMapper<T>
     /// <see langword="null"/> when no property matches. Used by the
     /// direct-decoder builder.
     /// </summary>
+    /// <param name="header">The header.</param>
     internal static Accessor? TryGetAccessor(string header)
     {
         PropertyMap.TryGetValue(header, out Accessor? acc);
@@ -92,6 +95,8 @@ internal static class RowMapper<T>
     /// fallback). Hyperlink ↔ string interop is preserved via the
     /// <see cref="CoerceToTarget"/> helper.
     /// </summary>
+    /// <param name="headers">The headers.</param>
+    /// <param name="sourceTypes">The source types.</param>
     public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null)
     {
         Guard.NotNull(headers, nameof(headers));
@@ -184,6 +189,7 @@ internal static class RowMapper<T>
     /// Convenience overload that pulls the header list and CLR source-type list
     /// from a column-metadata sequence in one shot.
     /// </summary>
+    /// <param name="meta">The column metadata.</param>
     public static Func<object?[], T> Build(IReadOnlyList<ColumnMetadata> meta)
     {
         Guard.NotNull(meta, nameof(meta));
@@ -203,6 +209,7 @@ internal static class RowMapper<T>
     /// and the CLR source types from the cached <see cref="TableDef.ClrTypes"/>
     /// projection (populated by <c>InitializeColumnMetadata</c>).
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
     public static Func<object?[], T> Build(TableDef td)
     {
         Guard.NotNull(td, nameof(td));
@@ -221,6 +228,8 @@ internal static class RowMapper<T>
     /// expression compilation happens at most once per <see cref="TableDef"/>
     /// instance and is transparently amortised across batch writes.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="item">The source item.</param>
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
@@ -233,6 +242,7 @@ internal static class RowMapper<T>
     /// <typeparamref name="T"/> into an <c>object[]</c> in the column order
     /// of <paramref name="td"/>. Unmatched columns produce <see cref="DBNull.Value"/>.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
     private static Func<T, object[]> BuildToRow(TableDef td)
     {
         int count = td.Columns.Count;
@@ -286,6 +296,8 @@ internal static class RowMapper<T>
     /// Hyperlink-typed property cannot parse the supplied string (signals "skip
     /// this assignment").
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="targetUnderlying">The target underlying.</param>
     private static object? CoerceToTarget(object value, Type targetUnderlying)
     {
         if (value.GetType() == targetUnderlying)
@@ -311,6 +323,8 @@ internal static class RowMapper<T>
     /// pre-built <paramref name="index"/>. Reflection-driven path retained for
     /// tests and ad-hoc callers; hot read paths should use <see cref="Build(IReadOnlyList{string}, IReadOnlyList{Type}?)"/>.
     /// </summary>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="index">The index.</param>
     public static T Map(IReadOnlyList<object?> row, Accessor?[] index)
     {
         T item = new();

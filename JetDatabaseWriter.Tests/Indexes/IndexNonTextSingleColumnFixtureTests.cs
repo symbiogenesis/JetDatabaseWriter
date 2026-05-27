@@ -281,6 +281,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
     /// to the JET type code expected by <see cref="IndexKeyEncoder.EncodeEntry"/>.
     /// Returns 0 for types this test doesn't know how to encode (caller skips).
     /// </summary>
+    /// <param name="clr">The CLR type.</param>
     private static byte ResolveColumnTypeCode(Type clr)
     {
         // mdbtools HACKING.md §3 column type code table.

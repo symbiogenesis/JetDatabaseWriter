@@ -29,6 +29,10 @@ internal static class TextIndexEncoderFixtureHarness
     /// against the on-disk leaf keys (sorted unsigned). Mirrors the original
     /// <c>GeneralLegacyEncoderFixtureTests</c> logic.
     /// </summary>
+    /// <param name="fixturePath">The fixture path.</param>
+    /// <param name="encode">The encode.</param>
+    /// <param name="skipTables">The skip tables.</param>
+    /// <param name="ct">The cancellation token.</param>
     public static async Task ValidateAsync(
         string fixturePath,
         EncodeText encode,

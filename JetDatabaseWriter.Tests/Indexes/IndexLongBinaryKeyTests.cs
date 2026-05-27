@@ -61,6 +61,7 @@ public sealed class IndexLongBinaryKeyTests
     /// index (ascending unsigned byte-lexicographic). The reader returns
     /// all rows without error, confirming the leaf chain is well-formed.
     /// </summary>
+    /// <param name="length">The length.</param>
     [Theory]
     [InlineData(64)]
     [InlineData(128)]

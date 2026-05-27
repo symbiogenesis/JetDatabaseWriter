@@ -13,6 +13,7 @@ using Xunit;
 /// Jackcess-authored overflow fixtures. Closes §2.1 gap: "Reader-side
 /// coverage of an Access-authored fixture containing long values.".
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class OverflowMemoReadTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

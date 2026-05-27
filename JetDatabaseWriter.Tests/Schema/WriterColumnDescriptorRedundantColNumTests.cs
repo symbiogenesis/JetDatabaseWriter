@@ -131,6 +131,9 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
     /// callers should pick fixtures whose TDEF fits in one 4096-byte page
     /// (true for all single-table-per-test cases used here).
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="pageSize">The page size.</param>
     private static (int Primary, int Redundant)[] ReadColumnNumberPairs(
         byte[] fileBytes,
         int tdefPage,

@@ -54,6 +54,8 @@ internal static class AgileEncryptionFixtureBuilder
     /// Decrypts the Agile <c>encryptedVerifierHashInput</c> field using the
     /// supplied parameters and password.
     /// </summary>
+    /// <param name="p">The page or position value.</param>
+    /// <param name="password">The password.</param>
     public static byte[] DecryptVerifierHashInput(Parameters p, string password)
     {
         byte[] encrypted = EncryptVerifierHashInput(p, password);
@@ -66,6 +68,8 @@ internal static class AgileEncryptionFixtureBuilder
     /// Decrypts the Agile <c>encryptedVerifierHashValue</c> field using the
     /// supplied parameters and password.
     /// </summary>
+    /// <param name="p">The page or position value.</param>
+    /// <param name="password">The password.</param>
     public static byte[] DecryptVerifierHashValue(Parameters p, string password)
     {
         byte[] encrypted = EncryptVerifierHashValue(p, password);
@@ -77,6 +81,8 @@ internal static class AgileEncryptionFixtureBuilder
     /// <summary>
     /// Builds the in-memory Agile-encrypted .accdb fixture wrapping <paramref name="innerAccdb"/>.
     /// </summary>
+    /// <param name="innerAccdb">The inner accdb.</param>
+    /// <param name="password">The password.</param>
     public static byte[] Build(byte[] innerAccdb, string password)
     {
         var p = new Parameters
@@ -299,6 +305,9 @@ internal static class AgileEncryptionFixtureBuilder
     /// Hi+1 = H(uint32_le(i) || Hi); Hfinal = H(HspinCount || blockKey);
     /// truncate or pad-with-0x36 to keyBits/8.
     /// </summary>
+    /// <param name="password">The password.</param>
+    /// <param name="salt">The salt bytes.</param>
+    /// <param name="blockKey">The block key.</param>
     private static byte[] DeriveKey(string password, byte[] salt, byte[] blockKey)
     {
         // Initial hash: H(salt || pwdUTF16LE). Password is short in tests, so

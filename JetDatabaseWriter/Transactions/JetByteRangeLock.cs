@@ -102,6 +102,8 @@ internal sealed class JetByteRangeLock
     /// Returns a disposable that releases the lock when disposed; on a disabled
     /// instance returns a no-op sentinel.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
     /// <exception cref="IOException">Thrown if the lock cannot be acquired within the timeout.</exception>
     public IDisposable AcquirePageLock(long pageNumber, int pageSize)
     {
@@ -119,6 +121,9 @@ internal sealed class JetByteRangeLock
     /// Asynchronously acquires an exclusive byte-range lock on the database page at
     /// <paramref name="pageNumber"/>, polling up to the configured timeout.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<IDisposable> AcquirePageLockAsync(long pageNumber, int pageSize, CancellationToken cancellationToken = default)
     {
         if (!IsEnabled)
@@ -155,6 +160,7 @@ internal sealed class JetByteRangeLock
     }
 
     /// <summary>Releases a commit-lock sentinel acquired by <see cref="AcquireCommitLockOffsetAsync"/>.</summary>
+    /// <param name="offset">The offset.</param>
     public void ReleaseCommitLock(long? offset)
     {
         if (offset.HasValue && IsEnabled && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))

@@ -173,6 +173,10 @@ internal sealed class RelationshipManager
     /// <summary>
     /// Pre-computed real-idx slot information for one side of a relationship.
     /// </summary>
+    /// <param name="RealIdxNum">The real index number of.</param>
+    /// <param name="LogicalIdxNum">The logical index number of.</param>
+    /// <param name="AllocatesNewRealIdx">The allocates new real index.</param>
+    /// <param name="NewLeafPageNumber">The new leaf page number.</param>
     private readonly record struct FkSidePlan(int RealIdxNum, int LogicalIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
     {
         // RealIdxNum:           real-idx slot index used for index_num2 on this side.
@@ -190,6 +194,12 @@ internal sealed class RelationshipManager
     /// single-page TDEFs only; throws <see cref="NotSupportedException"/> if
     /// either TDEF is multi-page or would overflow a single page after growth.
     /// </summary>
+    /// <param name="relationship">The relationship.</param>
+    /// <param name="primaryTdefPage">The primary TDEF page.</param>
+    /// <param name="primaryDef">The primary def.</param>
+    /// <param name="foreignTdefPage">The foreign TDEF page.</param>
+    /// <param name="foreignDef">The foreign def.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask EmitFkPerTdefEntriesAsync(
         RelationshipDefinition relationship,
         long primaryTdefPage,
@@ -299,6 +309,9 @@ internal sealed class RelationshipManager
     /// (sharing per §3.3), and returns the resulting plan plus the existing
     /// logical-idx-name list (used to avoid name collisions on the new entry).
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareFkSideAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -329,6 +342,10 @@ internal sealed class RelationshipManager
     /// second side must reserve the slot after the first side's pending slot;
     /// preparing each side independently would make both claim the same slot.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="pkColumnNumbers">The primary key column numbers.</param>
+    /// <param name="fkColumnNumbers">The foreign key column numbers.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<(FkSidePlan PkPlan, FkSidePlan FkPlan, List<string> ExistingNames)> PrepareSelfReferentialFkSidesAsync(
         long tdefPage,
         int[] pkColumnNumbers,
@@ -383,6 +400,19 @@ internal sealed class RelationshipManager
     /// physical descriptor) to the TDEF at <paramref name="tdefPage"/>. The
     /// TDEF must fit on a single page after the addition.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="indexName">The index name.</param>
+    /// <param name="realIdxNumThisSide">The real index number of this side.</param>
+    /// <param name="logicalIdxNumThisSide">The logical index number of this side.</param>
+    /// <param name="allocateNewRealIdx">The allocate new real index.</param>
+    /// <param name="preAllocatedLeafPage">The pre allocated leaf page.</param>
+    /// <param name="relTblTypeThisSide">The relationship table type this side.</param>
+    /// <param name="relIdxNumOtherSide">The relationship index number of other side.</param>
+    /// <param name="relTblPageOther">The relationship table page other.</param>
+    /// <param name="cascadeUps">The cascade ups.</param>
+    /// <param name="cascadeDels">The cascade dels.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask EmitFkLogicalIdxAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -558,6 +588,9 @@ internal sealed class RelationshipManager
     /// offset of the real-index physical-descriptor section start, or -1
     /// when the column-name walk fails.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="numCols">The number of cols.</param>
+    /// <param name="numRealIdx">The number of real index.</param>
     internal int LocateRealIdxDescStart(byte[] td, int numCols, int numRealIdx)
     {
         int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
@@ -577,6 +610,9 @@ internal sealed class RelationshipManager
     /// Returns the byte length of the existing logical-idx-name section, or
     /// -1 if the walk fails.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="logIdxNamesStart">The log index names start.</param>
+    /// <param name="numIdx">The number of index.</param>
     private int MeasureLogicalIdxNamesLength(byte[] td, int logIdxNamesStart, int numIdx)
     {
         int pos = logIdxNamesStart;
@@ -595,6 +631,9 @@ internal sealed class RelationshipManager
     /// Materializes the existing logical-idx-name list (used to avoid name
     /// collisions when appending a new FK index entry).
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="logIdxNamesStart">The log index names start.</param>
+    /// <param name="numIdx">The number of index.</param>
     internal List<string> ReadLogicalIdxNames(byte[] td, int logIdxNamesStart, int numIdx)
     {
         var list = new List<string>(numIdx);
@@ -642,6 +681,10 @@ internal sealed class RelationshipManager
     /// order); -1 when no covering real-idx exists. Jet4 col_map is fixed at
     /// 10 slots × {col_num(2), col_order(1)}.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="numRealIdx">The number of real index.</param>
     private static int FindCoveringRealIdx(byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
     {
         for (int ri = 0; ri < numRealIdx; ri++)
@@ -922,6 +965,9 @@ internal sealed class RelationshipManager
     /// <see cref="IndexHelpers.MakeUniqueLogicalIdxName"/>; this overload reads the TDEF
     /// for callers that have only the page number.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="baseName">The base name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<string> PickUniqueLogicalIdxNameAsync(
         long tdefPage,
         string baseName,
@@ -948,6 +994,10 @@ internal sealed class RelationshipManager
     /// matching entry exists (already removed, or never created — Jet3 path,
     /// or out-of-band catalog).
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="otherTdefPage">The other TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> TryRemoveFkLogicalIdxEntryAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -1029,6 +1079,8 @@ internal sealed class RelationshipManager
     /// against a Jet3 TDEF.
     /// </para>
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask TryReclaimTrailingRealIdxAsync(
         long tdefPage,
         CancellationToken cancellationToken)
@@ -1111,6 +1163,11 @@ internal sealed class RelationshipManager
     /// trailing variable-column block; growth can spill into a continuation page
     /// through the logical TDEF-chain writer.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="otherTdefPage">The other TDEF page.</param>
+    /// <param name="newName">The new name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<bool> TryRenameFkLogicalIdxNameAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -1187,6 +1244,8 @@ internal sealed class RelationshipManager
     /// back the chain. The first page contributes all <c>_pgSz</c> bytes;
     /// continuation pages contribute only their body bytes after offset 8.
     /// </summary>
+    /// <param name="Bytes">The bytes.</param>
+    /// <param name="PageNumbers">The page numbers.</param>
     private sealed record LogicalTDefChain(byte[] Bytes, List<long> PageNumbers);
 
     /// <summary>
@@ -1194,6 +1253,8 @@ internal sealed class RelationshipManager
     /// <c>AccessBase.ReadTDefBytesAsync</c>, while retaining the physical
     /// page numbers so mutations can be materialised back to disk.
     /// </summary>
+    /// <param name="startPage">The start page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<LogicalTDefChain> ReadRequiredLogicalTDefChainAsync(
         long startPage,
         CancellationToken cancellationToken)
@@ -1342,6 +1403,16 @@ internal sealed class RelationshipManager
     /// logical-idx mutation helpers (rename / remove / reclaim) to share the
     /// header validation and offset-computation boilerplate.
     /// </summary>
+    /// <param name="NumCols">The number of cols.</param>
+    /// <param name="NumIdx">The number of index.</param>
+    /// <param name="NumRealIdx">The number of real index.</param>
+    /// <param name="RealIdxDescStart">The real index desc start.</param>
+    /// <param name="LogIdxStart">The log index start.</param>
+    /// <param name="LogIdxNamesStart">The log index names start.</param>
+    /// <param name="LogIdxNamesLen">The log index names len.</param>
+    /// <param name="TrailingStart">The trailing start.</param>
+    /// <param name="CurrentEnd">The current end.</param>
+    /// <param name="TrailingLen">The trailing len.</param>
     private readonly record struct FkTDefLayout(
         int NumCols,
         int NumIdx,
@@ -1361,6 +1432,8 @@ internal sealed class RelationshipManager
     /// the buffer is not a TDEF, has out-of-range counts, or the column-name
     /// / idx-name walk fails.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="layout">The layout.</param>
     private bool TryParseFkTDefLayout(byte[] td, out FkTDefLayout layout)
     {
         layout = default;
@@ -1429,6 +1502,11 @@ internal sealed class RelationshipManager
     /// Returns <c>-1</c> when no entry matches; on success
     /// <paramref name="realIdxNum"/> is the matched real-idx slot.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="layout">The layout.</param>
+    /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="otherTdefPage">The other TDEF page.</param>
+    /// <param name="realIdxNum">The real index number of.</param>
     private static int FindFkLogicalIdxEntry(
         byte[] td,
         in FkTDefLayout layout,
@@ -1477,6 +1555,11 @@ internal sealed class RelationshipManager
     /// length of that entry's name record. Returns <see langword="false"/>
     /// when the walk fails before reaching the requested index.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="layout">The layout.</param>
+    /// <param name="matchEntryIdx">The match entry index.</param>
+    /// <param name="nameStart">The name start.</param>
+    /// <param name="nameLen">The name len.</param>
     private bool TryGetLogicalIdxNameRange(
         byte[] td,
         in FkTDefLayout layout,
@@ -1514,6 +1597,14 @@ internal sealed class RelationshipManager
     /// sides of one (PK table, FK table) pair, with the FK column list in
     /// <c>icolumn</c> order.
     /// </summary>
+    /// <param name="PkTableName">The primary key table name.</param>
+    /// <param name="PkEntry">The primary key entry.</param>
+    /// <param name="PkDef">The primary key def.</param>
+    /// <param name="PkColNums">The primary key col nums.</param>
+    /// <param name="FkTableName">The foreign key table name.</param>
+    /// <param name="FkEntry">The foreign key entry.</param>
+    /// <param name="FkDef">The foreign key def.</param>
+    /// <param name="FkColNums">The foreign key col nums.</param>
     private readonly record struct FkPairContext(
         string PkTableName,
         CatalogEntry PkEntry,
@@ -1535,6 +1626,9 @@ internal sealed class RelationshipManager
     /// cannot be resolved are silently skipped (the caller still removes
     /// the catalog rows).
     /// </summary>
+    /// <param name="matches">The matches.</param>
+    /// <param name="action">The action.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask ForEachRelationshipFkPairAsync(
         List<RelationshipRowSnapshot> matches,
         Func<FkPairContext, CancellationToken, ValueTask> action,
@@ -1610,6 +1704,8 @@ internal sealed class RelationshipManager
     /// Locates a system or user table's TDEF page number by name (case-insensitive)
     /// by scanning every <c>MSysObjects</c> row. Returns <c>0</c> when not found.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<long> FindSystemTableTdefPageAsync(string tableName, CancellationToken cancellationToken)
         => catalog.FindSystemTableTdefPageAsync(tableName, cancellationToken);
 }

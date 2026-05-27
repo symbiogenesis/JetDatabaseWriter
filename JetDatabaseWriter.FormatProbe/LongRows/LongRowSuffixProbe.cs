@@ -2665,6 +2665,8 @@ internal static class LongRowSuffixProbe
     /// structural slices as the CRC-16 solver. Catches patterns where the suffix is a 16-bit projection
     /// of a wider 32-bit hash with absorbed init/finalXor.
     /// </summary>
+    /// <param name="sb">The string builder.</param>
+    /// <param name="contexts">The contexts.</param>
     private static void AppendCrc32DerivedInitSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         sb.AppendLine("CRC-32 derived-init solver (standard polys, 16-bit projection):");
@@ -2839,6 +2841,8 @@ internal static class LongRowSuffixProbe
     /// same (pos, {bA,bB}) producing different deltas across rows is hard evidence of
     /// nonlinearity localized to that position/byte.
     /// </summary>
+    /// <param name="sb">The string builder.</param>
+    /// <param name="contexts">The contexts.</param>
     private static void AppendLinearTableExtractorSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         const int WindowStart = 503;
@@ -2997,6 +3001,8 @@ internal static class LongRowSuffixProbe
     /// Exhaustively tests rotate-left + add/XOR models: h = rotl16(h, k) OP byte for each byte in full[508..].
     /// Tests all 16 rotation amounts × 65536 init values × 2 operations (add, XOR) plus ESE-style rotl+add.
     /// </summary>
+    /// <param name="sb">The string builder.</param>
+    /// <param name="contexts">The contexts.</param>
     private static void AppendRotlFoldSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         sb.AppendLine("Rotate-fold solver (rotl16 + add/XOR, byte-at-a-time):");
@@ -3157,6 +3163,8 @@ internal static class LongRowSuffixProbe
     /// the residual (actual XOR predicted) and checks for carry-induced patterns.
     /// Also tests whether the function could be addition-based with XOR lookup tables.
     /// </summary>
+    /// <param name="sb">The string builder.</param>
+    /// <param name="contexts">The contexts.</param>
     private static void AppendBitContributionMatrixSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         sb.AppendLine("Bit contribution matrix and XOR residual analysis:");
@@ -3689,6 +3697,9 @@ internal static class LongRowSuffixProbe
     /// suffix = XOR(W[byte_i] * alpha^i) in GF(2^16) mod P.
     /// Uses cross-multiplication constraints from the pair matrix to derive candidate P values.
     /// </summary>
+    /// <param name="sb">The string builder.</param>
+    /// <param name="table">The table.</param>
+    /// <param name="matrixStart">The matrix start.</param>
     private static void AppendGf2CrossMultiplicationSolverSummary(StringBuilder sb, SuffixPatternTable table, int matrixStart)
     {
         sb.AppendLine("GF(2^16) cross-multiplication solver:");
@@ -3891,6 +3902,8 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Carryless (polynomial) multiplication of two 16-bit values → 32-bit result.</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
     private static uint CarrylessMultiply16(ushort a, ushort b)
     {
         uint result = 0;
@@ -3907,6 +3920,8 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>GCD of two GF(2) polynomials (represented as bit vectors).</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
     private static uint Gf2PolyGcd(uint a, uint b)
     {
         while (b != 0)
@@ -3920,6 +3935,8 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Remainder of polynomial a divided by b in GF(2)[x].</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
     private static uint Gf2PolyRemainder(uint a, uint b)
     {
         int degA = Gf2PolyDegree(a);
@@ -3934,6 +3951,7 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Degree of a GF(2) polynomial (highest set bit position).</summary>
+    /// <param name="p">The page or position value.</param>
     private static int Gf2PolyDegree(uint p)
     {
         if (p == 0)
@@ -3945,6 +3963,9 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Multiply two elements in GF(2^16) mod P (P given as full 17-bit polynomial).</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
+    /// <param name="p">The page or position value.</param>
     private static ushort Gf2Multiply(ushort a, ushort b, uint p)
     {
         uint product = CarrylessMultiply16(a, b);
@@ -3952,6 +3973,9 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Divide a by b in GF(2^16) mod P: returns a * b^(-1).</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
+    /// <param name="p">The page or position value.</param>
     private static ushort Gf2Divide(ushort a, ushort b, uint p)
     {
         ushort bInv = Gf2Inverse(b, p);
@@ -3959,6 +3983,8 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>Multiplicative inverse in GF(2^16) via extended Euclidean algorithm.</summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="p">The page or position value.</param>
     private static ushort Gf2Inverse(ushort a, uint p)
     {
         if (a == 0)
@@ -4751,6 +4777,8 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// ESE-style checksum: shift-left-1 + add per byte (from ESE's UlChecksum in checksum.cxx).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="low">The lower bound value.</param>
     private static ushort EseChecksum16(byte[] bytes, bool low)
     {
         unchecked
@@ -4769,6 +4797,7 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// Internet checksum: one's complement 16-bit sum (RFC 1071).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
     private static ushort InternetChecksum(byte[] bytes)
     {
         unchecked
@@ -4797,6 +4826,7 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// Simple XOR fold: XOR all bytes into a 16-bit accumulator (alternating high/low byte).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
     private static ushort XorFold16(byte[] bytes)
     {
         unchecked
@@ -4821,6 +4851,7 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// Simple ADD fold: add all bytes into a 16-bit accumulator (alternating high/low byte).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
     private static ushort AddFold16(byte[] bytes)
     {
         unchecked
@@ -4845,6 +4876,8 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// XOR fold of 16-bit words (big or little endian).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="bigEndian">The big endian.</param>
     private static ushort XorFoldWord16(byte[] bytes, bool bigEndian)
     {
         unchecked
@@ -4870,6 +4903,8 @@ internal static class LongRowSuffixProbe
     /// <summary>
     /// ADD fold of 16-bit words (big or little endian).
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="bigEndian">The big endian.</param>
     private static ushort AddFoldWord16(byte[] bytes, bool bigEndian)
     {
         unchecked

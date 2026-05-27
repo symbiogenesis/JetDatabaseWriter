@@ -214,6 +214,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
+    /// <param name="format">The format.</param>
     internal static int GetPageSize(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet4 : Constants.PageSizes.Jet3;
 
     /// <summary>
@@ -270,6 +271,8 @@ public abstract class AccessBase : IAccessBase
     /// which the reader decodes via <c>DecompressJet4</c>.
     /// Otherwise emits plain UCS-2 LE.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="compress">The compress.</param>
     /// <remarks>
     /// The "no NUL" restriction (chars must be > U+0000) avoids ambiguity
     /// with the compressed-mode toggle byte (<c>0x00</c>). The compressed
@@ -344,6 +347,9 @@ public abstract class AccessBase : IAccessBase
     /// If data starts with the compressed-unicode marker 0xFF 0xFE, the
     /// JET4 compressed-string algorithm is applied first.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     /// <returns>The decoded string.</returns>
     internal static string DecodeJet4Text(byte[] bytes, int start, int len)
     {
@@ -366,6 +372,9 @@ public abstract class AccessBase : IAccessBase
     /// Decodes Jet4 text from a span-backed buffer. Array-backed reader hot paths
     /// use the byte-array overload so compressed strings can be built directly.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     /// <returns>The decoded string.</returns>
     internal static string DecodeJet4Text(ReadOnlySpan<byte> bytes, int start, int len)
     {
@@ -389,6 +398,9 @@ public abstract class AccessBase : IAccessBase
     /// A 0x00 byte toggles between 1-byte compressed (ASCII) and 2-byte
     /// uncompressed (UCS-2) mode.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     /// <returns>The decompressed string.</returns>
     private protected static string DecompressJet4(byte[] bytes, int start, int len)
     {
@@ -417,6 +429,9 @@ public abstract class AccessBase : IAccessBase
     /// <summary>
     /// Decodes the JET4 "compressed unicode" encoding from a span-backed buffer.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     /// <returns>The decompressed string.</returns>
     private protected static string DecompressJet4(ReadOnlySpan<byte> bytes, int start, int len)
     {
@@ -580,6 +595,10 @@ public abstract class AccessBase : IAccessBase
     /// Used by both <see cref="AccessReader"/> (read-only sequential) and
     /// <see cref="AccessWriter"/> (read-write random-access).
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="access">The access.</param>
+    /// <param name="share">The share.</param>
+    /// <param name="options">The options.</param>
     private protected static FileStream OpenDatabaseFileStream(string path, FileAccess access, FileShare share, FileOptions options)
     {
         return FileStreamFactory.Open(path, FileMode.Open, access, share, options);
@@ -668,6 +687,8 @@ public abstract class AccessBase : IAccessBase
     /// into a single byte array. Pages after the first have their 8-byte
     /// TDEF header stripped before appending.
     /// </summary>
+    /// <param name="startPage">The start page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private protected async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -835,6 +856,8 @@ public abstract class AccessBase : IAccessBase
     /// uses a 16-bit little-endian word. Consolidates the format ternary
     /// previously repeated at every row-cracker entry point.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal int ReadRowColumnCount(byte[] page, int rowStart)
         => _format == DatabaseFormat.Jet3Mdb ? page[rowStart] : Ru16(page, rowStart);
@@ -846,6 +869,9 @@ public abstract class AccessBase : IAccessBase
     /// (Jet4 compressed/UCS-2 or Jet3 ANSI). Empty slices return
     /// <see cref="string.Empty"/>.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="len">The length in bytes.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal string DecodeTextForFormat(byte[] bytes, int start, int len)
     {
@@ -861,6 +887,8 @@ public abstract class AccessBase : IAccessBase
     /// Encodes a string for storage using the format-appropriate codec
     /// (Jet4 with optional compression vs Jet3 ANSI code-page bytes).
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal byte[] EncodeTextForFormat(string value, bool compress = true)
         => _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetBytes(value) : EncodeJet4Text(value, compress);
@@ -869,6 +897,9 @@ public abstract class AccessBase : IAccessBase
     /// Encodes a string for storage using the format-appropriate codec,
     /// truncating the Jet4 path to at most <paramref name="maxBytes"/> output bytes.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="maxBytes">The max bytes.</param>
+    /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal byte[] EncodeTextForFormat(string value, int maxBytes, bool compress = true)
         => _format == DatabaseFormat.Jet3Mdb ? _ansiEncoding.GetBytes(value) : EncodeJet4Text(value, maxBytes, compress);
@@ -886,6 +917,7 @@ public abstract class AccessBase : IAccessBase
     /// <c>ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested();</c>
     /// that opens nearly every public writer entry point.
     /// </summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
     {
@@ -898,6 +930,9 @@ public abstract class AccessBase : IAccessBase
     /// advancing <paramref name="pos"/> past the name bytes.
     /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="pos">The byte position.</param>
+    /// <param name="name">The name.</param>
     internal int ReadColumnName(byte[] td, ref int pos, out string name)
     {
         name = string.Empty;
@@ -946,6 +981,8 @@ public abstract class AccessBase : IAccessBase
     /// buffer is never mutated so it can be reused safely after writing.
     /// Page 0 (the unencrypted header) is always returned as-is.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="page">The page bytes.</param>
     private protected byte[] PrepareEncryptedPageForWrite(long pageNumber, byte[] page)
     {
         if (pageNumber < 1 || !EncryptionManager.HasPageEncryption(_pageKeys))
@@ -1027,6 +1064,8 @@ public abstract class AccessBase : IAccessBase
     // ── Catalog access ───────────────────────────────────────────────
 
     /// <summary>Finds a catalog entry by name (case-insensitive).</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
         var userTables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -1034,6 +1073,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private protected abstract ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default);
 
     // ── Table page enumeration ───────────────────────────────────────
@@ -1042,6 +1082,7 @@ public abstract class AccessBase : IAccessBase
     /// Yields the bounds (row index, start offset, size) of every live (non-deleted, non-overflow)
     /// row on the given data <paramref name="page"/>.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     internal IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page)
     {
         int numRows = Ru16(page, _dataPage.NumRows);
@@ -1111,6 +1152,7 @@ public abstract class AccessBase : IAccessBase
     /// where the same page may be visited by multiple
     /// streaming consumers.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     private protected RowBound[] ComputeLiveRowBoundsArray(byte[] page)
     {
         int numRows = Ru16(page, _dataPage.NumRows);
@@ -1262,6 +1304,11 @@ public abstract class AccessBase : IAccessBase
     /// <paramref name="col"/> within a row whose layout has been parsed by
     /// <see cref="TryParseRowLayout"/>.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="layout">The layout.</param>
+    /// <param name="col">The column descriptor.</param>
     private protected ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
     {
         bool nullBit = false;
@@ -1343,6 +1390,8 @@ public abstract class AccessBase : IAccessBase
     /// over <see cref="EnumerateLiveRowBounds(byte[])"/> for callers that need to round-trip
     /// the originating page number (update / delete paths).
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="page">The page bytes.</param>
     internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
@@ -1357,6 +1406,10 @@ public abstract class AccessBase : IAccessBase
     /// followed (they require LVAL chain traversal); those return <see cref="string.Empty"/>
     /// here. Used by writer-side catalog walks that only need scalar metadata columns.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    /// <param name="column">The column.</param>
     internal string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
         if (column == null || rowSize < _rowSz.NumCols)
@@ -1426,12 +1479,14 @@ public abstract class AccessBase : IAccessBase
     private protected List<CatalogEntry>? GetCatalogCache() => _catalogCache;
 
     /// <summary>Stores the catalog list returned by <see cref="GetUserTablesAsync"/>.</summary>
+    /// <param name="cache">The cache.</param>
     private protected void SetCatalogCache(List<CatalogEntry> cache) => _catalogCache = cache;
 
     /// <summary>Returns the cached linked-table list, or <see langword="null"/> if not yet populated.</summary>
     private protected List<LinkedTableInfo>? GetLinkedTableCache() => _linkedTableCache;
 
     /// <summary>Stores the linked-table list returned by the MSysObjects linked-table scan.</summary>
+    /// <param name="cache">The cache.</param>
     private protected void SetLinkedTableCache(List<LinkedTableInfo> cache) => _linkedTableCache = cache;
 
     /// <summary>Discards the cached catalog lists so the next call re-scans MSysObjects.</summary>
@@ -1446,6 +1501,11 @@ public abstract class AccessBase : IAccessBase
     internal readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
 
     /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
+    /// <param name="NumCols">The number of cols.</param>
+    /// <param name="NullMaskPos">The null mask pos.</param>
+    /// <param name="VarLen">The var len.</param>
+    /// <param name="VarTableStart">The var table start.</param>
+    /// <param name="Eod">The end-of-data marker size.</param>
     internal readonly record struct RowLayout(
         int NumCols,
         int NullMaskPos,
@@ -1475,6 +1535,10 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Per-column slice produced by <see cref="ResolveColumnSlice"/>.</summary>
+    /// <param name="Kind">The table name kind.</param>
+    /// <param name="DataStart">The data start.</param>
+    /// <param name="DataLen">The data len.</param>
+    /// <param name="BoolValue">The bool value.</param>
     internal readonly record struct ColumnSlice(
         ColumnSliceKind Kind,
         int DataStart,

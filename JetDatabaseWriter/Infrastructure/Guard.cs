@@ -15,6 +15,8 @@ internal static class Guard
     /// <see langword="null"/>. Forwards to <c>ArgumentNullException.ThrowIfNull</c> on
     /// .NET 6+ for JIT-friendlier codegen and falls back to a manual check on older targets.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="paramName">The param name.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNull<T>([NotNull] T? value, string paramName)
         where T : class
@@ -48,6 +50,10 @@ internal static class Guard
     /// whose message is deterministically derived from <paramref name="paramName"/>
     /// and the bounds.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="min">The minimum allowed value.</param>
+    /// <param name="max">The maximum allowed value.</param>
+    /// <param name="paramName">The param name.</param>
     public static void InRange<T>(T value, T min, T max, string paramName)
         where T : IComparable<T>
     {
@@ -98,6 +104,8 @@ internal static class Guard
     /// throwing <see cref="FileNotFoundException"/> with a consistent "Database file not found"
     /// message when it does not exist.
     /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="paramName">The param name.</param>
     public static void RequireExistingDatabaseFile([NotNull] string? path, string paramName)
     {
         NotNullOrEmpty(path, paramName);
@@ -111,6 +119,8 @@ internal static class Guard
     /// Validates that <paramref name="stream"/> is non-<see langword="null"/>, readable, and
     /// seekable, throwing <see cref="ArgumentException"/> for any unmet capability.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="paramName">The param name.</param>
     public static void RequireReadableSeekableStream([NotNull] Stream? stream, string paramName)
     {
         NotNull(stream, paramName);
@@ -129,6 +139,8 @@ internal static class Guard
     /// Validates that <paramref name="stream"/> is non-<see langword="null"/>, readable,
     /// writable, and seekable, throwing <see cref="ArgumentException"/> for any unmet capability.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="paramName">The param name.</param>
     public static void RequireReadWriteSeekableStream([NotNull] Stream? stream, string paramName)
     {
         NotNull(stream, paramName);

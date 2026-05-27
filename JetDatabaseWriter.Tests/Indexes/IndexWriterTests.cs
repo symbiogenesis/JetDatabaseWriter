@@ -402,6 +402,7 @@ public sealed class IndexWriterTests
     /// in one page at this size and exercise the legacy single-page path.
     /// </para>
     /// </summary>
+    /// <param name="format">The format.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]

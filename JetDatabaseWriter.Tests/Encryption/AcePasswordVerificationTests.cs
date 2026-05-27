@@ -27,6 +27,7 @@ using Xunit;
 /// <see cref="UnauthorizedAccessException"/>; opening with the correct password
 /// succeeds and returns data.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private static readonly AccessReaderOptions CorrectPasswordOptions = new()

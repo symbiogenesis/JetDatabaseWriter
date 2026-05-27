@@ -32,6 +32,8 @@ internal static class CompoundFileReader
     /// <summary>
     /// Parses the compound file and returns its named top-level streams.
     /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken)
     {
         Guard.NotNull(stream, nameof(stream));
@@ -385,6 +387,10 @@ internal static class CompoundFileReader
     /// <paramref name="remaining"/> bytes, so callers can stop early on the
     /// final partial sector.
     /// </summary>
+    /// <param name="sector">The sector.</param>
+    /// <param name="fat">The FAT sector table.</param>
+    /// <param name="sectorSize">The sector size.</param>
+    /// <param name="remaining">The remaining.</param>
     private static (uint RunStart, int RunSectors, uint Next) CoalesceRun(
         uint sector, uint[] fat, int sectorSize, int remaining)
     {
@@ -407,6 +413,9 @@ internal static class CompoundFileReader
     /// returns its length in sectors, validating that each link is in range and
     /// that the chain neither loops nor exceeds the table size.
     /// </summary>
+    /// <param name="startSector">The start sector.</param>
+    /// <param name="fat">The FAT sector table.</param>
+    /// <param name="fatKind">The fat kind.</param>
     private static int WalkChainLength(uint startSector, uint[] fat, string fatKind)
     {
         int count = 0;
@@ -439,6 +448,9 @@ internal static class CompoundFileReader
     /// raw sector capacity the buffer is sized to the exact logical length, so no
     /// trailing Array.Resize is needed once the chain has been read.
     /// </summary>
+    /// <param name="chainLength">The chain length.</param>
+    /// <param name="sectorSize">The sector size.</param>
+    /// <param name="exactSize">The exact size.</param>
     private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize)
     {
         long capacity = (long)chainLength * sectorSize;

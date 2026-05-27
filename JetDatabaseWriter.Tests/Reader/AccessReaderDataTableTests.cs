@@ -13,6 +13,7 @@ using Xunit;
 /// <summary>
 /// Integration tests for ReadDataTableAsync and ReadTableAsStringsAsync.
 /// </summary>
+/// <param name="db">The database input.</param>
 public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── ReadDataTableAsync ────────────────────────────────────────────

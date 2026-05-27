@@ -19,6 +19,7 @@ using Xunit;
 /// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it is slow and non-deterministic.
 /// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
 /// </summary>
+/// <param name="output">The output.</param>
 public class AccessWriterFuzzTests(ITestOutputHelper output)
 {
     private static readonly DatabaseFormat[] Formats = Enum.GetValues<DatabaseFormat>();

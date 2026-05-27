@@ -22,6 +22,7 @@ using Xunit;
 /// <para>Jackcess analogue: <c>DatabaseTest.testLinkedTables</c>.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     public static IEnumerable<object[]> LinkedTableFixtures()

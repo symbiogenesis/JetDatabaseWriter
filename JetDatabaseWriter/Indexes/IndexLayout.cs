@@ -87,6 +87,7 @@ internal readonly struct IndexLayout
     public int ColMapStartWithinPhys { get; }
 
     /// <summary>Returns the layout matching <paramref name="format"/>.</summary>
+    /// <param name="format">The format.</param>
     public static IndexLayout For(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
         ? new IndexLayout(
             format,
@@ -132,6 +133,8 @@ internal readonly struct IndexLayout
     }
 
     /// <summary>Returns the absolute byte offset of a <c>col_map</c> slot's <c>col_num</c> within a TDEF buffer.</summary>
+    /// <param name="physStart">The phys start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
     public int ColMapSlotOffset(int physStart, int slot)
         => physStart + ColMapStartWithinPhys + (slot * Constants.TableDefinition.ColMapSlotSize);
 
@@ -142,6 +145,8 @@ internal readonly struct IndexLayout
     /// which is what every consumer that decodes a real-idx slot ultimately
     /// builds.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="physStart">The phys start.</param>
     public List<KeyColumn> ReadColMapEntries(ReadOnlySpan<byte> td, int physStart)
     {
         var result = new List<KeyColumn>(Constants.TableDefinition.ColMapSlotCount);
@@ -166,6 +171,7 @@ internal readonly struct IndexLayout
     /// Returns the absolute byte offset within a TDEF buffer at which a real-idx
     /// physical descriptor's <c>first_dp</c> field begins.
     /// </summary>
+    /// <param name="physStart">The phys start.</param>
     public int FirstDpAbsoluteOffset(int physStart)
         => physStart + RealIdxFieldsOffset + Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
 
@@ -173,6 +179,7 @@ internal readonly struct IndexLayout
     /// Returns the absolute byte offset within a TDEF buffer at which a real-idx
     /// physical descriptor's <c>flags</c> byte begins.
     /// </summary>
+    /// <param name="physStart">The phys start.</param>
     public int FlagsAbsoluteOffset(int physStart)
         => physStart + FlagsOffsetWithinPhys;
 
@@ -181,6 +188,8 @@ internal readonly struct IndexLayout
     /// <paramref name="slot"/>-th real-idx physical descriptor, given the
     /// start of the real-idx descriptor block.
     /// </summary>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
     public int RealIdxPhysOffset(int realIdxDescStart, int slot)
         => realIdxDescStart + (slot * RealIdxPhysSize);
 
@@ -189,6 +198,8 @@ internal readonly struct IndexLayout
     /// logical-idx entry block begins (immediately after the
     /// <paramref name="numRealIdx"/> real-idx physical descriptors).
     /// </summary>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="numRealIdx">The number of real index.</param>
     public int LogicalIdxStart(int realIdxDescStart, int numRealIdx)
         => realIdxDescStart + (numRealIdx * RealIdxPhysSize);
 
@@ -197,6 +208,8 @@ internal readonly struct IndexLayout
     /// <paramref name="slot"/>-th logical-idx entry (start of the entry,
     /// including the leading 4-byte cookie on Jet4/ACE).
     /// </summary>
+    /// <param name="logIdxStart">The log index start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
     public int LogicalIdxEntryOffset(int logIdxStart, int slot)
         => logIdxStart + (slot * LogicalEntrySize);
 
@@ -208,6 +221,8 @@ internal readonly struct IndexLayout
     /// (e.g. <see cref="Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset"/>)
     /// to reach a specific field.
     /// </summary>
+    /// <param name="logIdxStart">The log index start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
     public int LogicalIdxFieldsOffset(int logIdxStart, int slot)
         => logIdxStart + (slot * LogicalEntrySize) + LogicalEntryFieldsOffset;
 
@@ -216,6 +231,8 @@ internal readonly struct IndexLayout
     /// logical-idx names block begins (immediately after the
     /// <paramref name="numIdx"/> logical-idx entries).
     /// </summary>
+    /// <param name="logIdxStart">The log index start.</param>
+    /// <param name="numIdx">The number of index.</param>
     public int LogicalIdxNamesStart(int logIdxStart, int numIdx)
         => logIdxStart + (numIdx * LogicalEntrySize);
 
@@ -225,6 +242,10 @@ internal readonly struct IndexLayout
     /// emits <paramref name="physStart"/> when the slot fits entirely within
     /// the buffer; otherwise returns <see langword="false"/>.
     /// </summary>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
+    /// <param name="bufferLength">The buffer length.</param>
+    /// <param name="physStart">The phys start.</param>
     public bool TryGetRealIdxPhysOffset(int realIdxDescStart, int slot, int bufferLength, out int physStart)
     {
         physStart = realIdxDescStart + (slot * RealIdxPhysSize);
@@ -240,6 +261,10 @@ internal readonly struct IndexLayout
     /// reach a specific field) when the slot fits entirely within the
     /// buffer; otherwise returns <see langword="false"/>.
     /// </summary>
+    /// <param name="logIdxStart">The log index start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
+    /// <param name="bufferLength">The buffer length.</param>
+    /// <param name="fieldsOffset">The fields offset.</param>
     public bool TryGetLogicalIdxFieldsOffset(int logIdxStart, int slot, int bufferLength, out int fieldsOffset)
     {
         int entryStart = logIdxStart + (slot * LogicalEntrySize);
@@ -257,6 +282,8 @@ internal readonly struct IndexLayout
     /// Decoded view of a single populated <c>col_map</c> entry: the column
     /// number and ascending/descending direction.
     /// </summary>
+    /// <param name="ColNum">The col number of.</param>
+    /// <param name="Ascending">The ascending.</param>
     public readonly record struct KeyColumn(int ColNum, bool Ascending);
 
     /// <summary>
@@ -265,6 +292,9 @@ internal readonly struct IndexLayout
     /// and the logical-idx names block start. Combines
     /// <see cref="LogicalIdxStart"/> + <see cref="LogicalIdxNamesStart"/>.
     /// </summary>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="numRealIdx">The number of real index.</param>
+    /// <param name="numIdx">The number of index.</param>
     public IndexSectionAnchors GetIndexSection(int realIdxDescStart, int numRealIdx, int numIdx)
     {
         int logIdxStart = LogicalIdxStart(realIdxDescStart, numRealIdx);
@@ -280,6 +310,10 @@ internal readonly struct IndexLayout
     /// Returns <see langword="false"/> when the slot does not fit within
     /// <paramref name="td"/>.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
+    /// <param name="info">The index metadata.</param>
     public bool TryReadRealIdxSlot(ReadOnlySpan<byte> td, int realIdxDescStart, int slot, out RealIdxSlot info)
     {
         if (!TryGetRealIdxPhysOffset(realIdxDescStart, slot, td.Length, out int phys))
@@ -304,6 +338,11 @@ internal readonly struct IndexLayout
     /// <paramref name="td"/>; <paramref name="keyColumns"/> is then an
     /// empty list.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="realIdxDescStart">The real index desc start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
+    /// <param name="info">The index metadata.</param>
+    /// <param name="keyColumns">The key columns.</param>
     public bool TryReadRealIdxSlotWithKeyColumns(
         ReadOnlySpan<byte> td,
         int realIdxDescStart,
@@ -329,6 +368,10 @@ internal readonly struct IndexLayout
     /// <see langword="false"/> when the slot does not fit within
     /// <paramref name="td"/>.
     /// </summary>
+    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="logIdxStart">The log index start.</param>
+    /// <param name="slot">The zero-based slot index.</param>
+    /// <param name="entry">The entry.</param>
     public bool TryReadLogicalEntry(ReadOnlySpan<byte> td, int logIdxStart, int slot, out LogicalIdxEntry entry)
     {
         if (!TryGetLogicalIdxFieldsOffset(logIdxStart, slot, td.Length, out int e))
@@ -356,6 +399,11 @@ internal readonly struct IndexLayout
     /// piece of state a catalog walker needs so callers pass a single value
     /// instead of four parallel arguments.
     /// </summary>
+    /// <param name="RealIdxDescStart">The real index desc start.</param>
+    /// <param name="LogIdxStart">The log index start.</param>
+    /// <param name="LogIdxNamesStart">The log index names start.</param>
+    /// <param name="NumRealIdx">The number of real index.</param>
+    /// <param name="NumIdx">The number of index.</param>
     public readonly record struct IndexSectionAnchors(
         int RealIdxDescStart,
         int LogIdxStart,
@@ -368,6 +416,9 @@ internal readonly struct IndexLayout
     /// <c>flags</c> byte and <c>first_dp</c> field offset, returned by
     /// <see cref="TryReadRealIdxSlot"/>.
     /// </summary>
+    /// <param name="PhysStart">The phys start.</param>
+    /// <param name="FirstDpOffset">The first data page offset.</param>
+    /// <param name="Flags">The flags.</param>
     public readonly record struct RealIdxSlot(int PhysStart, int FirstDpOffset, byte Flags)
     {
         /// <summary>Gets a value indicating whether the unique flag bit (0x01) is set.</summary>
@@ -382,6 +433,8 @@ internal readonly struct IndexLayout
         /// <c>false</c> when the caller will resolve uniqueness later, or
         /// <c>true</c> when an associated logical-idx PK promotes the slot).
         /// </summary>
+        /// <param name="keyColumns">The key columns.</param>
+        /// <param name="overrideUnique">The override unique.</param>
         public RealIdxEntry ToEntry(IReadOnlyList<KeyColumn> keyColumns, bool? overrideUnique = null)
             => new(keyColumns, FirstDpOffset, overrideUnique ?? IsUnique);
     }
@@ -392,6 +445,14 @@ internal readonly struct IndexLayout
     /// is exposed as <see cref="IndexKind"/> rather than the raw byte so
     /// consumers compare against enum values directly.
     /// </summary>
+    /// <param name="FieldsOffset">The fields offset.</param>
+    /// <param name="IndexNum">The index number of.</param>
+    /// <param name="IndexNum2">The index num2.</param>
+    /// <param name="RelIdxNum">The relationship index number of.</param>
+    /// <param name="RelTblPage">The relationship table page.</param>
+    /// <param name="CascadeUps">The cascade ups.</param>
+    /// <param name="CascadeDels">The cascade dels.</param>
+    /// <param name="IndexType">The index type.</param>
     public readonly record struct LogicalIdxEntry(
         int FieldsOffset,
         int IndexNum,
@@ -410,6 +471,9 @@ internal readonly struct IndexLayout
     /// the writer's index-maintenance and unique-check paths to carry
     /// per-real-idx state without re-decoding the TDEF block.
     /// </summary>
+    /// <param name="IndexKeyColumns">The index key columns.</param>
+    /// <param name="FirstDpOffset">The first data page offset.</param>
+    /// <param name="IsUnique">A value indicating whether is unique.</param>
     public readonly record struct RealIdxEntry(
         IReadOnlyList<KeyColumn> IndexKeyColumns,
         int FirstDpOffset,
@@ -422,6 +486,9 @@ internal readonly struct IndexLayout
     /// deleted), and the ascending/descending direction copied from the
     /// originating <c>col_map</c> slot.
     /// </summary>
+    /// <param name="Col">The column descriptor.</param>
+    /// <param name="SnapIdx">The snap index.</param>
+    /// <param name="Ascending">The ascending.</param>
     public readonly record struct KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
 
     /// <summary>
@@ -430,6 +497,9 @@ internal readonly struct IndexLayout
     /// list. Produced by the writer's pre-write unique-index loader and
     /// consumed by the composite-key encoder + collision detector.
     /// </summary>
+    /// <param name="RealIdxNum">The real index number of.</param>
+    /// <param name="Name">The name.</param>
+    /// <param name="KeyColumns">The key columns.</param>
     public readonly record struct UniqueIndexDescriptor(
         int RealIdxNum,
         string Name,
@@ -443,6 +513,10 @@ internal readonly struct IndexLayout
     /// deletion that has not yet been propagated to the index slot); on
     /// failure <paramref name="keyColInfos"/> is set to an empty list.
     /// </summary>
+    /// <param name="indexKeyColumns">The index key columns.</param>
+    /// <param name="tableColumns">The table columns.</param>
+    /// <param name="snapshotIndexByColNum">The snapshot index by col number of.</param>
+    /// <param name="keyColInfos">The key col infos.</param>
     public static bool TryResolveKeyColumnInfos(
         IReadOnlyList<KeyColumn> indexKeyColumns,
         IReadOnlyList<ColumnInfo> tableColumns,

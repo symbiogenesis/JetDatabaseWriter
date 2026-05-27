@@ -13,6 +13,7 @@ using Xunit;
 /// Access engine (<c>DAO.DBEngine.120</c>). Skipped automatically when
 /// Microsoft Access is not installed.
 /// </summary>
+/// <param name="fixture">The fixture.</param>
 /// <remarks>
 /// Covers DAO OpenRecordset row-count, DAO index traversal, DAO AutoNumber
 /// continuation, and DAO-authored Memo with embedded NULs. DAO/Access-authored

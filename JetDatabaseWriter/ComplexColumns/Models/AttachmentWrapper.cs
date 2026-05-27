@@ -67,6 +67,9 @@ internal static class AttachmentWrapper
     /// Returns the input bytes unchanged when the wrapper signature is not
     /// recognised (legacy / heuristic path).
     /// </summary>
+    /// <param name="wrapped">The wrapped.</param>
+    /// <param name="fileExtension">The file extension.</param>
+    /// <param name="payload">The payload.</param>
     public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload)
     {
         fileExtension = string.Empty;
@@ -128,6 +131,7 @@ internal static class AttachmentWrapper
     /// COMPRESSED_FORMATS skip-list (i.e. the payload should be deflate-compressed).
     /// Empty extensions are compressed.
     /// </summary>
+    /// <param name="fileExtension">The file extension.</param>
     public static bool ShouldCompress(string fileExtension)
         => !CompressedFormats.Contains(fileExtension ?? string.Empty);
 

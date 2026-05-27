@@ -11,6 +11,7 @@ using Xunit;
 /// Access-authored ACCDB file and referenced by Jackcess but were not
 /// previously asserted by our test suite.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

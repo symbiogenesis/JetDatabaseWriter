@@ -15,6 +15,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="AccessWriter"/>. Handles finding/creating target pages,
 /// writing row bytes, and patching usage-map / autonumber TDEF fields.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="pageAllocator">The page allocator.</param>
 internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAllocator)
 {
     internal static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
@@ -195,6 +197,9 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     /// outside the existing INLINE window, the row is left untouched; this append-only
     /// path does not rewrite REFERENCE-form maps.
     /// </summary>
+    /// <param name="tdefPageNumber">The TDEF page number.</param>
+    /// <param name="dataPageNumber">The data page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
     {
         byte[] tdef = await writer.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);

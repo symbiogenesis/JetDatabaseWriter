@@ -14,6 +14,7 @@ using Xunit;
 /// may throw <c>JetLimitationException</c> due to deleted-column schema
 /// gaps in the fixture.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>
@@ -79,6 +80,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// deleted-column schema gaps that trigger
     /// <c>JetLimitationException</c> — those are excluded.
     /// </summary>
+    /// <param name="fieldName">The field name.</param>
     [Theory]
     [InlineData(nameof(TestDatabases.OverflowTestV2010))]
     [InlineData(nameof(TestDatabases.OverflowTestV2007))]

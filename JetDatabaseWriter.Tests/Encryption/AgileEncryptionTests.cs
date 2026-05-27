@@ -42,6 +42,7 @@ using Xunit;
 ///   6. Decrypt the EncryptedPackage segments
 ///   7. Hand the decrypted bytes to the existing JET page reader.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ═══════════════════════════════════════════════════════════════════
@@ -401,6 +402,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     /// Finds the file offset of the EncryptedPackage stream's data
     /// (the first byte of its first sector) in the CFB fixture.
     /// </summary>
+    /// <param name="cfbFile">The compound file file.</param>
     private static int FindEncryptedPackageDataOffset(byte[] cfbFile)
     {
         // The fixture builder uses v4 (4096-byte sectors). The directory

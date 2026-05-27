@@ -59,6 +59,7 @@ internal static class JetTypeInfo
     /// area when the per-column <c>FLAG_FIXED</c> bit is cleared in the TDEF
     /// descriptor — see <see cref="Models.ColumnInfo.IsFixed"/>.
     /// </summary>
+    /// <param name="type">The JET column type or operation type.</param>
     public static bool IsAlwaysVariableLength(byte type)
         => type is T_TEXT or T_BINARY or T_MEMO or T_OLE;
 
@@ -71,6 +72,7 @@ internal static class JetTypeInfo
     /// IsMultiValue) must still special-case those codes before reaching this
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
+    /// <param name="type">The JET column type or operation type.</param>
     public static Type? GetClrType(byte type) => type switch
     {
         T_BOOL => typeof(bool),
@@ -98,6 +100,7 @@ internal static class JetTypeInfo
     /// surfaces such columns through the Hyperlink data-format affordance.
     /// See <see href="docs/design/hyperlink-format-notes.md" />.
     /// </summary>
+    /// <param name="col">The column descriptor.</param>
     public static bool IsHyperlinkColumn(ColumnInfo col)
         => col.Type == T_MEMO && (col.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0;
 
@@ -107,6 +110,7 @@ internal static class JetTypeInfo
     /// to <see cref="string"/> for unknown type codes — matching the
     /// long-standing reader contract.
     /// </summary>
+    /// <param name="col">The column descriptor.</param>
     public static Type ResolveClrType(ColumnInfo col)
         => IsHyperlinkColumn(col) ? typeof(Hyperlink) : GetClrType(ResolveValueType(col)) ?? typeof(string);
 
@@ -115,6 +119,7 @@ internal static class JetTypeInfo
     /// this prefers the persisted <c>ResultType</c> LvProp value when the
     /// reader has hydrated it; otherwise it falls back to the descriptor type.
     /// </summary>
+    /// <param name="col">The column descriptor.</param>
     public static byte ResolveValueType(ColumnInfo col)
         => col.IsCalculated && col.CalculatedResultType != 0 ? col.CalculatedResultType : col.Type;
 
@@ -124,6 +129,7 @@ internal static class JetTypeInfo
     /// the hex representation <c>"0xNN"</c>. Mirrors Access's UI labels and the
     /// names exposed by the legacy DAO/ADO type-name properties.
     /// </summary>
+    /// <param name="type">The JET column type or operation type.</param>
     public static string GetTypeDisplayName(byte type) => type switch
     {
         T_BOOL => "Yes/No",
@@ -152,6 +158,8 @@ internal static class JetTypeInfo
     /// per-column <c>size</c> field) used for variable-width types like
     /// <c>T_TEXT</c> (Jet4 stores chars * 2 there) and unknown fixed types.
     /// </summary>
+    /// <param name="type">The JET column type or operation type.</param>
+    /// <param name="declaredSize">The declared size.</param>
     public static ColumnSize GetColumnSize(byte type, int declaredSize) => type switch
     {
         T_BOOL => ColumnSize.FromBits(1),
@@ -182,6 +190,11 @@ internal static class JetTypeInfo
     /// surface as <see cref="JetLimitationException"/> instead of being silently elided
     /// to the empty string — the contract the typed reader path relies on.
     /// </summary>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="type">The JET column type or operation type.</param>
+    /// <param name="size">The size in bytes.</param>
+    /// <param name="strictNumeric">The strict numeric.</param>
     internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
     {
         try
@@ -263,6 +276,11 @@ internal static class JetTypeInfo
     /// <see langword="false"/> they collapse to <see cref="DBNull.Value"/>.
     /// </para>
     /// </summary>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="type">The JET column type or operation type.</param>
+    /// <param name="size">The size in bytes.</param>
+    /// <param name="strictNumeric">The strict numeric.</param>
     internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
     {
         try
@@ -327,6 +345,10 @@ internal static class JetTypeInfo
     /// <see langword="true"/> (the typed-reader path) those conditions throw
     /// <see cref="JetLimitationException"/> so the caller can surface the schema mismatch.
     /// </summary>
+    /// <param name="b">The second value or byte buffer.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="scale">The scale.</param>
+    /// <param name="strict">The strict.</param>
     private static string ReadNumericString(ReadOnlySpan<byte> b, int start, int scale, bool strict)
     {
         if (!TryReadNumericDecimal(b, start, scale, strict, out decimal value))
@@ -345,6 +367,10 @@ internal static class JetTypeInfo
     /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
     /// <see cref="ReadNumericString"/>'s empty-string return).
     /// </summary>
+    /// <param name="b">The second value or byte buffer.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="scale">The scale.</param>
+    /// <param name="strict">The strict.</param>
     private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, int scale, bool strict)
     {
         return TryReadNumericDecimal(b, start, scale, strict, out decimal value)
@@ -519,14 +545,17 @@ internal static class JetTypeInfo
         BinaryPrimitives.WriteInt64LittleEndian(b.Slice(o, 8), value);
 
     /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
+    /// <param name="source">The source.</param>
     internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
         source[0] | (source[1] << 8) | (source[2] << 16);
 
     /// <summary>Reads a 24-bit big-endian unsigned integer.</summary>
+    /// <param name="source">The source.</param>
     internal static int ReadUInt24BigEndian(ReadOnlySpan<byte> source) =>
         (source[0] << 16) | (source[1] << 8) | source[2];
 
     /// <summary>Reads an IEEE-754 single-precision float in little-endian byte order.</summary>
+    /// <param name="source">The source.</param>
     internal static float ReadSingleLittleEndian(ReadOnlySpan<byte> source) =>
 #if NET5_0_OR_GREATER
         BinaryPrimitives.ReadSingleLittleEndian(source);
@@ -535,6 +564,7 @@ internal static class JetTypeInfo
 #endif
 
     /// <summary>Reads an IEEE-754 double-precision float in little-endian byte order.</summary>
+    /// <param name="source">The source.</param>
     internal static double ReadDoubleLittleEndian(ReadOnlySpan<byte> source) =>
 #if NET5_0_OR_GREATER
         BinaryPrimitives.ReadDoubleLittleEndian(source);
@@ -543,6 +573,7 @@ internal static class JetTypeInfo
 #endif
 
     /// <summary>Encodes <paramref name="source"/> as an upper-case hex string with no separators.</summary>
+    /// <param name="source">The source.</param>
     internal static string ToHexStringNoSeparator(ReadOnlySpan<byte> source) =>
 #if NET5_0_OR_GREATER
         Convert.ToHexString(source);
@@ -564,6 +595,7 @@ internal static class JetTypeInfo
     /// length must be even; the caller is responsible for trimming any odd
     /// trailing byte before calling. Allocates exactly one string.
     /// </summary>
+    /// <param name="bytes">The bytes.</param>
     internal static string DecodeUtf16LE(ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty)
@@ -586,33 +618,49 @@ internal static class JetTypeInfo
     // <c>start + size</c> is within the page; the helpers do not catch.
 
     /// <summary>Direct byte read at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static byte ReadByteAt(byte[] page, int start) => page[start];
 
     /// <summary>Reads a little-endian Int16 (T_INT) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static short ReadInt16LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2));
 
     /// <summary>Reads a little-endian Int32 (T_LONG) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static int ReadInt32LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4));
 
     /// <summary>Reads a little-endian Single (T_FLOAT) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static float ReadFloatLE(byte[] page, int start) =>
         ReadSingleLittleEndian(page.AsSpan(start, 4));
 
     /// <summary>Reads a little-endian Double (T_DOUBLE) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static double ReadDoubleLE(byte[] page, int start) =>
         ReadDoubleLittleEndian(page.AsSpan(start, 8));
 
     /// <summary>Reads a T_DATETIME (8-byte OLE date) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static DateTime ReadDateTimeLE(byte[] page, int start) =>
         DateTime.FromOADate(ReadDoubleLittleEndian(page.AsSpan(start, 8)));
 
     /// <summary>Reads a T_MONEY (8-byte OLE currency) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static decimal ReadMoneyLE(byte[] page, int start) =>
         decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)));
 
     /// <summary>Reads a T_GUID (16-byte) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
     internal static Guid ReadGuidAt(byte[] page, int start) =>
         new(page.AsSpan(start, 16));
 
@@ -624,6 +672,9 @@ internal static class JetTypeInfo
     /// invalid scale or out-of-range values; the direct decoder
     /// catches these and leaves the property at its default.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="scale">The scale.</param>
     internal static decimal ReadDecimalLE(byte[] page, int start, int scale)
     {
         _ = TryReadNumericDecimal(page, start, scale, strict: true, out decimal value);
@@ -637,4 +688,5 @@ internal static class JetTypeInfo
 /// complex_id directly so the post-processing pass can resolve attachment
 /// bytes without parsing the legacy <c>"__CX:N__"</c> string format.
 /// </summary>
+/// <param name="Id">The identifier.</param>
 internal readonly record struct ComplexIdRef(int Id);

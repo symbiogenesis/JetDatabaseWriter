@@ -17,6 +17,10 @@ internal static class NumericEncoder
     /// unsigned 96-bit mantissa, writing the mantissa as 12 little-endian
     /// bytes into <paramref name="mantissaLe"/>.
     /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="mantissaLe">The mantissa le.</param>
+    /// <param name="negative">The negative.</param>
+    /// <param name="scale">The scale.</param>
     public static void Decompose(decimal value, Span<byte> mantissaLe, out bool negative, out int scale)
     {
         int[] bits = decimal.GetBits(value);
@@ -33,6 +37,7 @@ internal static class NumericEncoder
     /// little-endian bytes were produced by <see cref="Decompose"/>, clamped
     /// to <c>1..28</c> (the range Access stores in the NUMERIC precision byte).
     /// </summary>
+    /// <param name="mantissaLe">The mantissa le.</param>
     public static byte ComputePrecision(ReadOnlySpan<byte> mantissaLe)
     {
         int lo = Ri32(mantissaLe, 0);

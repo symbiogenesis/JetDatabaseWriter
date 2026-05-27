@@ -16,6 +16,7 @@ using Xunit;
 /// <c>linkeeTest.accdb</c>. Validates that the reader correctly
 /// distinguishes Access-linked (type 6) from ODBC-linked (type 4) tables.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

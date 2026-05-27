@@ -21,11 +21,13 @@ using Xunit;
 /// <para>Jackcess analogue: <c>DatabaseTest.testDeleteColumn</c>.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>
     /// The fixture lists at least one user table without throwing.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -42,6 +44,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// Every table reports columns via metadata — deleted-column slots must
     /// be excluded from the public schema.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -62,6 +65,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// No column exposed by the reader has a blank or null name (which would
     /// indicate a deleted-column slot leaking through).
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -88,6 +92,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// reference the pre-deletion column count. The surviving columns' absolute
     /// offsets (ColNum, FixedOff, VarIdx) are stable across deletions.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -109,6 +114,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// metadata column count — ensures the schema and data paths agree on
     /// deleted-column exclusion.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -133,6 +139,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The <c>Rows()</c> async enumerable path (<c>CrackRowTypedAsync</c>)
     /// decodes stale rows without throwing.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -158,6 +165,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The <c>RowsAsStrings()</c> path exercises <c>CrackRowAsync</c> which
     /// has its own deleted-column guard.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -183,6 +191,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The <c>ReadTableAsStringsAsync</c> path exercises <c>CrackRowAsync</c>
     /// via a DataTable return. The column count must match metadata.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -208,6 +217,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// All read paths produce the same row count — verifies no path silently
     /// drops stale rows that another path accepts.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -244,6 +254,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// Values decoded via <c>Rows()</c> match those from <c>ReadDataTableAsync</c>,
     /// verifying no column misalignment from the stale-row fix.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -294,6 +305,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The <c>ReadTableAsync&lt;T&gt;</c> full-map path exercises
     /// <c>CrackMappedRowAsync</c> with a POCO that binds all columns.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -312,6 +324,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The <c>ReadTableAsync&lt;T&gt;</c> projected path exercises
     /// <c>CrackProjectedRowAsync</c> with a POCO that binds a subset of columns.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]
@@ -330,6 +343,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     /// The typed <c>Rows&lt;T&gt;</c> path exercises the streaming generic
     /// enumerable over deleted-column fixtures.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.DelCol), MemberType = typeof(TestDatabases))]

@@ -15,6 +15,7 @@ using Xunit;
 /// these extreme <see cref="DateTime"/> values without throwing or
 /// truncating. Jackcess analogue: <c>CalendarTest.java</c>.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

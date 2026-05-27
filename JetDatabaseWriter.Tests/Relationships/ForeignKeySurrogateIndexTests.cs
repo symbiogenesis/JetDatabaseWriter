@@ -14,6 +14,7 @@ using Xunit;
 /// <see cref="AccessReader.ListIndexesAsync"/> and marked with
 /// <see cref="IndexMetadata.IsForeignKey"/> = true.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>
@@ -100,6 +101,7 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
     /// The indexTest fixtures typically contain relationships and thus should
     /// contain FK surrogate indexes. Verifies at least one is visible.
     /// </summary>
+    /// <param name="fieldName">The field name.</param>
     [Theory]
     [InlineData(nameof(TestDatabases.IndexTestV2007))]
     [InlineData(nameof(TestDatabases.IndexTestV2010))]

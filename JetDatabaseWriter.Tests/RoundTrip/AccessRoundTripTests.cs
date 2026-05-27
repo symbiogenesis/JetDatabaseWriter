@@ -305,6 +305,11 @@ public sealed class AccessRoundTripTests
     /// FK relationship rows recorded. Failures here indicate a writer bug
     /// (output is unreadable by our own reader) rather than a DAO issue.
     /// </summary>
+    /// <param name="snap">The row or relationship snapshot.</param>
+    /// <param name="tables">The tables.</param>
+    /// <param name="fkNames">The foreign key names.</param>
+    /// <param name="expectedParentRows">The expected parent rows.</param>
+    /// <param name="expectedChildRows">The expected child rows.</param>
     private static void AssertPreCompactConsistency(
         Snapshot snap,
         IReadOnlyList<string> tables,
@@ -331,6 +336,9 @@ public sealed class AccessRoundTripTests
     /// stamped in every real-idx physical descriptor. Failures here point to a
     /// writer bug in TDEF construction rather than a DAO compact issue.
     /// </summary>
+    /// <param name="dbPath">The db path.</param>
+    /// <param name="tableNames">The table names.</param>
+    /// <param name="ct">The cancellation token.</param>
     private static async Task AssertTdefMagicStampsAsync(
         string dbPath,
         IReadOnlyList<string> tableNames,

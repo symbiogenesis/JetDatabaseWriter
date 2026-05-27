@@ -20,6 +20,7 @@ using Xunit;
 /// Each test copies a test database to a temp file, writes via AccessWriter,
 /// then reads back via AccessReader to verify correctness.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── Open / Dispose ────────────────────────────────────────────────
@@ -468,6 +469,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// empty data page whose <c>free_space</c> equals the full page-size
     /// minus header.
     /// </summary>
+    /// <param name="path">The file path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
@@ -1930,6 +1932,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// bulk-insert tests against fixtures with unique indexes do not trip
     /// the unique-violation detection.
     /// </summary>
+    /// <param name="columns">The columns.</param>
+    /// <param name="seed">The random seed.</param>
     private static object[] BuildDummyRow(List<ColumnMetadata> columns, int seed = 0)
     {
         var values = new object[columns.Count];
@@ -2014,6 +2018,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>Creates a table with known text data for UpdateRows tests and returns the table name.</summary>
+    /// <param name="stream">The stream.</param>
     private static async Task<string> SeedUpdateTableAsync(MemoryStream stream)
     {
         string tableName = $"UpdTest_{Guid.NewGuid():N}"[..20];
@@ -2033,6 +2038,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>Opens a writer asynchronously with lockfile disabled.</summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken = default)
     {
         stream.Position = 0;
@@ -2040,6 +2047,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>Opens a reader asynchronously with lockfile disabled.</summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken cancellationToken = default)
     {
         stream.Position = 0;

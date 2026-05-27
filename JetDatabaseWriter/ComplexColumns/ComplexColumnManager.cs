@@ -35,6 +35,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// when the parent column or table changes shape. See
 /// <see href="docs/design/complex-columns-format-notes.md" />.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="indexes">The indexes.</param>
+/// <param name="pageAllocator">The page allocator.</param>
 internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
 {
     private readonly AccessWriter _writer = writer;
@@ -48,6 +51,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// 9-column legacy catalog schema because that mode targets
     /// backward-compatible byte hashing and must not introduce additional pages.
     /// </summary>
+    /// <param name="format">The format.</param>
+    /// <param name="fullCatalogSchema">The full catalog schema.</param>
+    /// <param name="coreSystemTableStartPage">The core system table start page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask ScaffoldSystemTablesAsync(DatabaseFormat format, bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
         if (format != DatabaseFormat.AceAccdb || !fullCatalogSchema)
@@ -247,6 +254,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
     /// see <see href="docs/format-probe/format-probe-appendix-complex.md" />.
     /// </summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
         foreach ((string name, ColumnDefinition[] cols) in _complexTypeTemplates)
@@ -271,6 +279,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <c>MSysComplexType_*</c> template name. Returns <see langword="null"/>
     /// when the column is not complex or its element type has no matching template.
     /// </summary>
+    /// <param name="col">The column descriptor.</param>
     private static string? ResolveComplexTypeTemplateName(ColumnDefinition col)
     {
         if (col.IsAttachment)
@@ -343,6 +352,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <c>0x80000000</c> (system / hidden) so the table is excluded from
     /// <c>GetUserTablesAsync</c>.
     /// </summary>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
     {
         var columns = new[]
@@ -378,6 +388,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// Per-column scratch state captured by <see cref="PrepareComplexColumnAllocationsAsync"/>
     /// and consumed by <see cref="EmitComplexColumnArtifactsAsync"/>.
     /// </summary>
+    /// <param name="ColumnIndex">The column index.</param>
+    /// <param name="ComplexId">The complex id.</param>
     internal readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId);
 
     /// <summary>
@@ -388,6 +400,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// fresh per-database <c>ComplexID</c> for each.
     /// Returns <see langword="null"/> when no allocation is needed.
     /// </summary>
+    /// <param name="columns">The columns.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
         IReadOnlyList<ColumnDefinition> columns,
         CancellationToken cancellationToken)
@@ -445,6 +459,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// Returns one greater than the largest <c>ComplexID</c> stored in
     /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty.
     /// </summary>
+    /// <param name="msysComplexPg">The MSysComplexColumns page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await _writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -496,6 +512,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// §2.3 / §2.4 and append the corresponding <c>MSysComplexColumns</c> row so
     /// readers can join parent rows to their child values.
     /// </summary>
+    /// <param name="parentTableName">The parent table name.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="columns">The columns.</param>
+    /// <param name="allocations">The allocations.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <remarks>
     /// Emits the hidden flat-table schema, including the FK back-reference,
     /// per-kind value columns, Access-style scalar PK, and the known supporting
@@ -553,6 +574,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// Generates the canonical hidden-flat-table name <c>f_&lt;32-hex-uppercase&gt;_&lt;userColumnName&gt;</c>
     /// per the design doc §2.3 / format-probe-appendix-complex.md observations.
     /// </summary>
+    /// <param name="userColumnName">A value indicating whether user column name.</param>
     private static string BuildFlatTableName(string userColumnName)
     {
         // The 32 hex chars are a GUID without dashes — Access uses a fresh GUID per
@@ -566,6 +588,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// Builds the flat-table column list and the system-managed indexes per
     /// the per-kind schemas in the design doc §2.4 / §4.2.
     /// </summary>
+    /// <param name="parentTableName">The parent table name.</param>
+    /// <param name="parentColumn">The parent column.</param>
     /// <remarks>
     /// <para>
     /// Two LONG columns participate in the back-reference plumbing:
@@ -680,6 +704,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <see cref="ComplexColumnAllocation.ComplexId"/> to its hidden flat-table TDEF
     /// page. Schema verified in <see href="format-probe-appendix-complex.md" />.
     /// </summary>
+    /// <param name="parentColumnName">The parent column name.</param>
+    /// <param name="complexId">The complex id.</param>
+    /// <param name="conceptualTableId">The conceptual table id.</param>
+    /// <param name="flatTableId">The flat table id.</param>
+    /// <param name="complexTypeObjectId">The complex type object id.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask InsertMSysComplexColumnsRowAsync(
         string parentColumnName,
         int complexId,
@@ -855,6 +885,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// to drive <c>ApplyConstraintsAsync</c> for the autoincrement
     /// scalar PK column emitted by the complex-column scaffold.
     /// </summary>
+    /// <param name="flatTdefPage">The flat TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
         TableDef? msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
@@ -881,6 +913,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <paramref name="columnName"/> and <paramref name="complexId"/> and returns
     /// the lower-24-bit TDEF page number of the hidden flat child table.
     /// </summary>
+    /// <param name="columnName">The column name.</param>
+    /// <param name="complexId">The complex id.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<long> ResolveFlatTableTdefPageAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
         long msysPg = await _writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -1104,6 +1139,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// single <c>T_LONG</c> column whose name starts with <c>"_"</c> per
     /// <c>BuildFlatTableSchema</c>.
     /// </summary>
+    /// <param name="flatTdefPage">The flat TDEF page.</param>
+    /// <param name="flatDef">The flat def.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
     {
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
@@ -1208,6 +1246,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// complex-reference slot value is needed to identify which flat
     /// rows to delete.
     /// </summary>
+    /// <param name="parentDef">The parent def.</param>
+    /// <param name="deletedParentLocations">The deleted parent locations.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <remarks>
     /// Per-flat-table cost is O(P) where P is the database page count
     /// (full sequential scan, no index seek). Multiple complex columns on
@@ -1399,6 +1440,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// attachment / multi-value column. Returns silently if no matching row is
     /// found (idempotent).
     /// </summary>
+    /// <param name="columnName">The column name.</param>
+    /// <param name="complexId">The complex id.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask DropSingleComplexChildAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
         long msysCxPg = await _writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -1514,6 +1558,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <c>RenameRelationshipAsync</c> trade-off that leaves TDEF logical-idx
     /// name cookies stale until Compact &amp; Repair.
     /// </summary>
+    /// <param name="oldColumnName">The old column name.</param>
+    /// <param name="newColumnName">The new column name.</param>
+    /// <param name="complexId">The complex id.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
     {
         long msysCxPg = await _writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -1682,6 +1730,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// ACCDB without the system table) and missing catalog rows for a
     /// flat table (already removed) by silently skipping.
     /// </summary>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
     {
         TableDef? parentDef = await _writer.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);

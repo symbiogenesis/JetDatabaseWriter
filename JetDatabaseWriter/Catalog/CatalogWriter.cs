@@ -17,17 +17,28 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Owns insertion of catalog entries, ACE rows, table renames, and
 /// catalog row scanning.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="indexes">The indexes.</param>
 internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes)
 {
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with default flags.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tdefPageNumber">The TDEF page number.</param>
+    /// <param name="lvProp">The LvProp payload.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
         => InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
 
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tdefPageNumber">The TDEF page number.</param>
+    /// <param name="lvProp">The LvProp payload.</param>
+    /// <param name="catalogFlags">The catalog flags.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -54,6 +65,14 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Inserts a caller-shaped row into <c>MSysObjects</c> for Access bootstrap
     /// containers whose <c>Id</c> is not a physical TDEF page number.
     /// </summary>
+    /// <param name="objectId">The object id.</param>
+    /// <param name="parentId">The parent id.</param>
+    /// <param name="objectName">The object name.</param>
+    /// <param name="objectType">The object type.</param>
+    /// <param name="catalogFlags">The catalog flags.</param>
+    /// <param name="owner">The owner.</param>
+    /// <param name="lvProp">The LvProp payload.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask InsertCatalogObjectAsync(
         int objectId,
         int parentId,
@@ -95,6 +114,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <summary>
     /// Inserts the Type=8 <c>MSysObjects</c> row DAO creates for a relationship.
     /// </summary>
+    /// <param name="relationshipName">The relationship name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -124,6 +145,13 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Inserts a Type=4/6 linked-table row into <c>MSysObjects</c> using a
     /// catalog-only object id and the MSysObjects splice path.
     /// </summary>
+    /// <param name="linkedTableName">The linked table name.</param>
+    /// <param name="sourceDatabasePath">The source database path.</param>
+    /// <param name="foreignName">The foreign name.</param>
+    /// <param name="connectString">The connect string.</param>
+    /// <param name="objectType">The object type.</param>
+    /// <param name="cachedSchemaLvProp">The cached schema LvProp payload.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<int> InsertLinkedTableCatalogEntryAsync(
         string linkedTableName,
         string? sourceDatabasePath,
@@ -200,6 +228,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <summary>
     /// Inserts 3 ACE rows into <c>MSysACEs</c> for a newly-created user table.
     /// </summary>
+    /// <param name="tdefPageNumber">The TDEF page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
         long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
@@ -229,6 +259,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <summary>
     /// Inserts DAO-shaped ACE rows for a Type=8 relationship object.
     /// </summary>
+    /// <param name="objectId">The object id.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken)
         => await InsertAceRowsForCatalogObjectAsync(
             objectId,
@@ -328,6 +360,9 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Reads an existing ACE row from <c>MSysACEs</c> and extracts the
     /// Admins-group SID blob.
     /// </summary>
+    /// <param name="acesTdefPage">The aces TDEF page.</param>
+    /// <param name="acesDef">The aces def.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<byte[]?> HarvestAdminsSidAsync(long acesTdefPage, TableDef acesDef, CancellationToken cancellationToken)
     {
         ColumnInfo? sidCol = acesDef.FindColumn("SID");
@@ -370,6 +405,10 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Renames a table in the catalog by deleting the old row and inserting a
     /// new one with the updated name and LvProp.
     /// </summary>
+    /// <param name="oldName">The old name.</param>
+    /// <param name="newName">The new name.</param>
+    /// <param name="lvProp">The LvProp payload.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -419,6 +458,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Scans all data pages belonging to <c>MSysObjects</c> (TDEF page 2) and
     /// returns a decoded row for each live catalog entry.
     /// </summary>
+    /// <param name="msys">The system-table data.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");

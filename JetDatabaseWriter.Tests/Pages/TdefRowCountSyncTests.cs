@@ -93,6 +93,8 @@ public sealed class TdefRowCountSyncTests
     /// every real-idx slot. Indexes contain every live row, so the two
     /// counters must always agree.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="format">The format.</param>
     private static void AssertAllTdefsHaveSyncedCounters(byte[] fileBytes, DatabaseFormat format)
     {
         int pageSize = format == DatabaseFormat.Jet3Mdb

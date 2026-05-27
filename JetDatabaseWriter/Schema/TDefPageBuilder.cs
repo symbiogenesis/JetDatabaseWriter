@@ -21,6 +21,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// empty database file. Owned by <see cref="AccessWriter"/>, which keeps thin
 /// compatibility forwarders for existing call sites.
 /// </summary>
+/// <param name="writer">The writer.</param>
 internal sealed class TDefPageBuilder(AccessWriter writer)
 {
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)

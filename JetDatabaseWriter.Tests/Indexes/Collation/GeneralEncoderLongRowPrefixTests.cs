@@ -405,6 +405,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
     /// keeping the sort total — the on-disk keys break ties identically since
     /// Access's own suffix is a deterministic function of the entry body.
     /// </summary>
+    /// <param name="a">The first value to compare.</param>
+    /// <param name="b">The second value or byte buffer.</param>
     private static int CompareBytesUnsignedPrefix(byte[] a, byte[] b)
     {
         int prefix = Math.Min(Math.Min(a.Length, b.Length), PrefixMatchLength);

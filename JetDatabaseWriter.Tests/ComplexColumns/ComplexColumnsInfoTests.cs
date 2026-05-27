@@ -18,6 +18,7 @@ using Xunit;
 /// Schema assertions are grounded in
 /// <see href="docs/design/format-probe-appendix-complex.md" />.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

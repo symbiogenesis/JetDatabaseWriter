@@ -19,6 +19,7 @@ using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexD
 /// Pre-write unique-index enforcement: detects duplicate keys before any
 /// disk page is mutated. Owned by <see cref="AccessWriter"/>.
 /// </summary>
+/// <param name="writer">The writer.</param>
 internal sealed class UniqueIndexChecker(AccessWriter writer)
 {
     /// <summary>
@@ -26,6 +27,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// Returns an empty list on Jet3 (no index emission) or when the TDEF
     /// declares no indexes.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
         long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
@@ -91,6 +95,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// Encodes the composite index key for one row using a previously
     /// computed canonical numeric scale per key column.
     /// </summary>
+    /// <param name="descriptor">The descriptor.</param>
+    /// <param name="row">The row values or row bytes.</param>
+    /// <param name="numericTargetScales">The numeric target scales.</param>
     internal byte[] EncodeCompositeKeyForUniqueCheck(
         UniqueIndexDescriptor descriptor,
         object[] row,
@@ -140,6 +147,11 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <summary>
     /// Pre-write unique-index validation for an insert batch.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="pendingRows">The pending rows.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask CheckUniqueIndexesPreInsertAsync(
         long tdefPage,
         TableDef tableDef,
@@ -196,6 +208,12 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// Fast-path uniqueness check: reads only the key columns from existing
     /// rows (no DataTable materialization) and validates the pending batch.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="descriptors">The descriptors.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="locations">The locations.</param>
+    /// <param name="pendingRows">The pending rows.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
@@ -279,6 +297,12 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <summary>
     /// Pre-write unique-index validation for an update batch.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="snapshot">The snapshot.</param>
+    /// <param name="updates">The updates.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask CheckUniqueIndexesPreUpdateAsync(
         long tdefPage,
         TableDef tableDef,
@@ -355,6 +379,11 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// unique-key collision. Throws <see cref="InvalidOperationException"/>
     /// on first violation.
     /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="descriptors">The descriptors.</param>
+    /// <param name="snapshot">The snapshot.</param>
+    /// <param name="pendingInsertRows">The pending insert rows.</param>
+    /// <param name="replaceAtSnapshotIndex">The replace at snapshot index.</param>
     private void CheckUniqueIndexesCore(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,

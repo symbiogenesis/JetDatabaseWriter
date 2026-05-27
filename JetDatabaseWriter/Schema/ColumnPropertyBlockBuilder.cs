@@ -49,6 +49,7 @@ internal sealed class ColumnPropertyBlockBuilder
     /// Constructs a builder seeded with the parsed targets and unknown chunks of an
     /// existing block — the entry point for round-trip preservation.
     /// </summary>
+    /// <param name="block">The block.</param>
     public static ColumnPropertyBlockBuilder FromBlock(ColumnPropertyBlock block)
     {
         Guard.NotNull(block, nameof(block));
@@ -86,6 +87,7 @@ internal sealed class ColumnPropertyBlockBuilder
     /// Adds (or returns an existing) target by case-insensitive name. New targets
     /// default to chunk-type <c>0x01</c> (the property-block subtype DAO emits for new columns).
     /// </summary>
+    /// <param name="name">The name.</param>
     public TargetBuilder GetOrAddTarget(string name)
     {
         Guard.NotNullOrEmpty(name, nameof(name));
@@ -106,6 +108,7 @@ internal sealed class ColumnPropertyBlockBuilder
     /// Removes the target whose name matches <paramref name="name"/> case-insensitively.
     /// No-op if no such target exists. Returns <see langword="true"/> when a target was removed.
     /// </summary>
+    /// <param name="name">The name.</param>
     public bool RemoveTarget(string name)
     {
         for (int i = 0; i < Targets.Count; i++)
@@ -124,6 +127,8 @@ internal sealed class ColumnPropertyBlockBuilder
     /// Renames the target whose current name matches <paramref name="oldName"/> to
     /// <paramref name="newName"/>. No-op if no such target exists.
     /// </summary>
+    /// <param name="oldName">The old name.</param>
+    /// <param name="newName">The new name.</param>
     public void RenameTarget(string oldName, string newName)
     {
         Guard.NotNullOrEmpty(newName, nameof(newName));
@@ -393,6 +398,9 @@ internal sealed class ColumnPropertyBlockBuilder
         public List<EntryBuilder> Entries { get; } = [];
 
         /// <summary>Adds a Text-typed (<c>0x0A</c>) string property using the supplied database format's encoding.</summary>
+        /// <param name="propertyName">The property name.</param>
+        /// <param name="value">The value.</param>
+        /// <param name="format">The format.</param>
         public void AddText(string propertyName, string value, DatabaseFormat format)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
@@ -408,6 +416,9 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         /// <summary>Adds a Memo-typed (<c>0x0C</c>) string property using the supplied database format's encoding.</summary>
+        /// <param name="propertyName">The property name.</param>
+        /// <param name="value">The value.</param>
+        /// <param name="format">The format.</param>
         public void AddMemoText(string propertyName, string value, DatabaseFormat format)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
@@ -423,6 +434,8 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         /// <summary>Adds a Byte-typed (<c>0x02</c>) property.</summary>
+        /// <param name="propertyName">The property name.</param>
+        /// <param name="value">The value.</param>
         public void AddByte(string propertyName, byte value)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
@@ -440,6 +453,8 @@ internal sealed class ColumnPropertyBlockBuilder
         /// byte: <c>0xFF</c> = true, <c>0x00</c> = false. Matches the wire format
         /// DAO/Access emit for Boolean column properties such as <c>Required</c>.
         /// </summary>
+        /// <param name="propertyName">The property name.</param>
+        /// <param name="value">The value.</param>
         public void AddBoolean(string propertyName, bool value)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));

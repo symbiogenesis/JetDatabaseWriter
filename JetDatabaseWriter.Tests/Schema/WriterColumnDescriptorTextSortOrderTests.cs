@@ -217,6 +217,10 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
     /// (bytes 13-14). Reads only one TDEF page; callers should pick fixtures
     /// whose TDEF fits in one 4096-byte page.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="tableName">The table name.</param>
     private static IEnumerable<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)> ReadTextColumnSortInfo(
         byte[] fileBytes,
         int tdefPage,

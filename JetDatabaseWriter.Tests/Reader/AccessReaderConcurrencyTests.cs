@@ -17,6 +17,7 @@ using Xunit;
 /// Complements the lower-level <c>JetByteRangeLockTests</c> by exercising
 /// the public read path end-to-end.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

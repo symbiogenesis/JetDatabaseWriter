@@ -30,6 +30,7 @@ internal static class IndexLeafIncremental
     /// fast path to decide whether to descend through the tree to the
     /// leftmost leaf before walking the leaf-sibling chain.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static bool IsIntermediate(byte[] page)
         => IndexPageCodec.IsIntermediate(page);
 
@@ -39,12 +40,15 @@ internal static class IndexLeafIncremental
     /// Defaults to the Jet4 / ACE layout (next_page at offset 16);
     /// callers targeting Jet3 should use the layout overload.
     /// </summary>
+    /// <param name="leafPage">The leaf page.</param>
     public static long ReadNextLeafPage(byte[] leafPage)
         => ReadNextLeafPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, leafPage);
 
     /// <summary>
     /// Layout-aware overload of <see cref="ReadNextLeafPage(byte[])"/>.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="leafPage">The leaf page.</param>
     public static long ReadNextLeafPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] leafPage)
         => IndexPageCodec.ReadNextPage(layout, leafPage);
 
@@ -56,12 +60,15 @@ internal static class IndexLeafIncremental
     /// root it is 0 (the leaf is its own tail). Defaults to the Jet4 / ACE
     /// layout (tail_page at offset 20).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static long ReadTailPage(byte[] page)
         => ReadTailPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
 
     /// <summary>
     /// Layout-aware overload of <see cref="ReadTailPage(byte[])"/>.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static long ReadTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
         => IndexPageCodec.ReadTailPage(layout, page);
 
@@ -70,12 +77,15 @@ internal static class IndexLeafIncremental
     /// pointer of any index page (signed 32-bit little-endian). Defaults to
     /// the Jet4 / ACE layout (prev_page at offset 12).
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static long ReadPrevPage(byte[] page)
         => ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
 
     /// <summary>
     /// Layout-aware overload of <see cref="ReadPrevPage(byte[])"/>.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static long ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
         => IndexPageCodec.ReadPrevPage(layout, page);
 
@@ -86,6 +96,8 @@ internal static class IndexLeafIncremental
     /// (zero = absent). Returns <c>(0, 0, 0)</c> when the page is too short
     /// to contain all three fields.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static (long Prev, long Next, long Tail) ReadSiblingPointers(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
         => IndexPageCodec.ReadSiblingPointers(layout, page);
 
@@ -97,6 +109,8 @@ internal static class IndexLeafIncremental
     /// payload end when the entry is the only one on the page). Returns 0 on
     /// a malformed page so the caller can bail to the bulk-rebuild path.
     /// </summary>
+    /// <param name="intermediatePage">The intermediate page.</param>
+    /// <param name="pageSize">The page size.</param>
     public static long ReadFirstChildPointer(byte[] intermediatePage, int pageSize)
         => ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout.Jet4, intermediatePage, pageSize);
 
@@ -105,6 +119,9 @@ internal static class IndexLeafIncremental
     /// for callers that may target Jet3 (§4.2 bitmask at <c>0x16</c>, first
     /// entry at <c>0xF8</c>).
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="intermediatePage">The intermediate page.</param>
+    /// <param name="pageSize">The page size.</param>
     public static long ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout layout, byte[] intermediatePage, int pageSize)
         => IndexPageCodec.ReadFirstChildPointer(layout, intermediatePage, pageSize);
 
@@ -118,6 +135,8 @@ internal static class IndexLeafIncremental
     /// intermediates and is now matched by
     /// <see cref="IndexBTreeBuilder"/>.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="offset">The offset.</param>
     internal static long DecodeIntermediateChildPointer(byte[] page, int offset)
         => IndexPageCodec.DecodeIntermediateChildPointer(page, offset);
 
@@ -129,12 +148,15 @@ internal static class IndexLeafIncremental
     /// sibling pointers indicate an intermediate's child or a tail-page
     /// chain, neither of which the fast path handles.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     public static bool IsSingleRootLeaf(byte[] page)
         => IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
 
     /// <summary>
     /// Layout-aware overload of <see cref="IsSingleRootLeaf(byte[])"/>.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
     public static bool IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
         => IndexPageCodec.IsSingleRootLeaf(layout, page);
 
@@ -143,6 +165,8 @@ internal static class IndexLeafIncremental
     /// canonical (key, data_page, data_row) tuple, re-prepending the §4.4
     /// shared prefix to entries beyond the first.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
     public static List<IndexEntry> DecodeEntries(byte[] page, int pageSize)
         => DecodeEntries(IndexLeafPageBuilder.LeafPageLayout.Jet4, page, pageSize);
 
@@ -151,6 +175,9 @@ internal static class IndexLeafIncremental
     /// callers that may target Jet3 leaf pages (§4.2 bitmask at <c>0x16</c>,
     /// first entry at <c>0xF8</c>).
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
     public static List<IndexEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
         => IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
 
@@ -240,6 +267,9 @@ internal static class IndexLeafIncremental
     /// <see langword="null"/> when the new entries do not fit on one page —
     /// the caller must fall back to the bulk-rebuild path.
     /// </summary>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
     public static byte[]? TryRebuildLeaf(
         int pageSize,
         long parentTdefPage,
@@ -250,6 +280,10 @@ internal static class IndexLeafIncremental
     /// Layout-aware overload of <see cref="TryRebuildLeaf(int, long, IReadOnlyList{IndexEntry})"/>
     /// for callers that may target Jet3 leaf pages.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
     public static byte[]? TryRebuildLeaf(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
@@ -281,6 +315,13 @@ internal static class IndexLeafIncremental
     /// <see langword="null"/> when the spliced entry list overflows a single
     /// page (caller falls back to a leaf split or the bulk rebuild).
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
     public static byte[]? TryRebuildLeafWithSiblings(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
@@ -317,6 +358,9 @@ internal static class IndexLeafIncremental
     /// insert a new summary for a freshly-split leaf without rebuilding the
     /// whole tree.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
     public static List<DecodedIntermediateEntry> DecodeIntermediateEntries(
         IndexLeafPageBuilder.LeafPageLayout layout,
         byte[] page,

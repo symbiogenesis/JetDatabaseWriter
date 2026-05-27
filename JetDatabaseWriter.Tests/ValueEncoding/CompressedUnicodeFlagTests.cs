@@ -189,6 +189,7 @@ public sealed class CompressedUnicodeFlagTests
     /// plain UCS-2 for any Latin-1 string, even if it would be
     /// compressible.
     /// </summary>
+    /// <param name="value">The value.</param>
     [Theory]
     [InlineData("A")]
     [InlineData("AB")]
@@ -209,6 +210,7 @@ public sealed class CompressedUnicodeFlagTests
     /// Verifies that EncodeJet4Text with compress=true produces the
     /// compressed form for Latin-1 strings ≥ 3 characters.
     /// </summary>
+    /// <param name="value">The value.</param>
     [Theory]
     [InlineData("ABC")]
     [InlineData("HelloWorld_Test_12345")]
@@ -228,6 +230,7 @@ public sealed class CompressedUnicodeFlagTests
     /// The reader's DecodeJet4Text correctly decompresses FF FE
     /// marker data.
     /// </summary>
+    /// <param name="expected">The expected.</param>
     [Theory]
     [InlineData("Hello")]
     [InlineData("TestTable")]
@@ -246,6 +249,7 @@ public sealed class CompressedUnicodeFlagTests
     /// The reader's DecodeJet4Text correctly reads plain UCS-2 LE
     /// data (no FF FE marker).
     /// </summary>
+    /// <param name="expected">The expected.</param>
     [Theory]
     [InlineData("Hello")]
     [InlineData("TestTable")]
@@ -263,6 +267,7 @@ public sealed class CompressedUnicodeFlagTests
     /// Round-trip: compress=true → decode, compress=false → decode
     /// both yield the original string.
     /// </summary>
+    /// <param name="original">The original.</param>
     [Theory]
     [InlineData("ShortText")]
     [InlineData("A medium-length string for round-tripping")]
@@ -280,6 +285,7 @@ public sealed class CompressedUnicodeFlagTests
     /// the reader reads the value back — verifying the entire
     /// ExtraFlags-aware encode/decode pipeline.
     /// </summary>
+    /// <param name="format">The format.</param>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]

@@ -20,6 +20,7 @@ using Xunit;
 /// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, and
 /// <c>DeleteRowsAsync</c>.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]

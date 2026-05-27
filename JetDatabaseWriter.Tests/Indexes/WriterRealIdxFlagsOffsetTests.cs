@@ -208,6 +208,9 @@ public sealed class WriterRealIdxFlagsOffsetTests
     /// only — sufficient for the small synthetic tables used here and for
     /// every NorthwindTraders user table.
     /// </summary>
+    /// <param name="fileBytes">The file bytes.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="pageSize">The page size.</param>
     private static List<int> LocateRealIdxPhysOffsets(byte[] fileBytes, int tdefPage, int pageSize)
     {
         int off = tdefPage * pageSize;

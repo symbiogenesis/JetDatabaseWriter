@@ -16,11 +16,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="pageAllocator">The page allocator.</param>
 internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAllocator)
 {
     /// <summary>
     /// Reads a page through the writer cache and returns a caller-owned clone.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -41,6 +45,9 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// both surgical split paths so the (file-end / staging-counter)
     /// allocation source is the only thing the caller varies.
     /// </summary>
+    /// <param name="originalPage">The original page.</param>
+    /// <param name="count">The count.</param>
+    /// <param name="firstNewPage">The first new page.</param>
     internal static long[] AllocateSplitPageNumbers(long originalPage, int count, long firstNewPage)
     {
         long[] pageNumbers = new long[count];
@@ -63,6 +70,13 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <see langword="null"/> on any single-entry overflow
     /// (<see cref="ArgumentOutOfRangeException"/> from the page builder).
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="splitPages">The split pages.</param>
+    /// <param name="pageNumbers">The page numbers.</param>
+    /// <param name="leafPrev">The leaf prev.</param>
+    /// <param name="leafNext">The leaf next.</param>
+    /// <param name="maxPrefixLength">The max prefix length.</param>
     internal byte[][]? TryBuildSplitLeafPages(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -168,6 +182,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <summary>
     /// Adds a parent-intermediate op for a split leaf/intermediate.
     /// </summary>
+    /// <param name="parentOps">The parent ops.</param>
+    /// <param name="parentPageNumber">The parent page number.</param>
+    /// <param name="originalIndex">The original index.</param>
+    /// <param name="type">The JET column type or operation type.</param>
+    /// <param name="newEntry">The new entry.</param>
     private static void AddParentOp(
         Dictionary<long, List<IntermediateOp>> parentOps,
         long parentPageNumber,
@@ -264,6 +283,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <see cref="IndexCursor"/> does.
     /// </para>
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="rootPage">The root page.</param>
+    /// <param name="addEntries">The add entries.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<bool> TryAppendToTailLeafAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -372,6 +396,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// rebuild. Pages are rewritten at their existing page numbers (no
     /// orphans) on success.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="firstDp">The first data page.</param>
+    /// <param name="addEntries">The add entries.</param>
+    /// <param name="removeEntries">The remove entries.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<bool> TrySurgicalMultiLevelMaintainAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -585,6 +615,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// doesn't need a clean (page, taken-index) pair at every level.
     /// </para>
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="rootPage">The root page.</param>
+    /// <param name="searchKey">The search key.</param>
+    /// <param name="path">The file path.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="allowTailOvershoot">A value indicating whether allow tail overshoot.</param>
     internal async ValueTask<long> DescendCapturingAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long rootPage,
@@ -661,6 +697,10 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// when any intermediate page would overflow on rebuild — caller bails
     /// to bulk rebuild without committing any partial state.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="path">The file path.</param>
+    /// <param name="newSummary">The new summary.</param>
     private List<(long PageNum, byte[] Bytes)>? PrepareAncestorReplaceWrites(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -731,6 +771,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// the single-leaf surgical path bails to the bulk rebuild when its parent
     /// overflows). Callers commit the writes after the leaf-side writes.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="path">The file path.</param>
+    /// <param name="leftSummary">The left summary.</param>
+    /// <param name="rightSummaries">The right summaries.</param>
     internal List<(long PageNum, byte[] Bytes)>? PrepareAncestorSplitWrites(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -813,6 +858,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// to this leaf (every key in the bucket picked the same child at every
     /// level above, by definition of "same target leaf").
     /// </summary>
+    /// <param name="leafPage">The leaf page.</param>
+    /// <param name="path">The file path.</param>
     private sealed class LeafGroup(long leafPage, List<DescentStep> path)
     {
         /// <summary>Gets the page number of the target leaf.</summary>
@@ -862,6 +909,13 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     ///   replace+insert at the same position bails).</item>
     /// </list>
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="firstDp">The first data page.</param>
+    /// <param name="firstDpOffset">The first data page offset.</param>
+    /// <param name="addEntries">The add entries.</param>
+    /// <param name="removeEntries">The remove entries.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<bool> TrySurgicalCrossLeafMaintainAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -1324,6 +1378,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// tail_page chain, malformed page, encoder mismatch) or when the
     /// distinct-leaf count exceeds the cap supplied by the caller.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="firstDp">The first data page.</param>
+    /// <param name="addEntries">The add entries.</param>
+    /// <param name="removeEntries">The remove entries.</param>
+    /// <param name="maxLeafGroupCount">The max leaf group count.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<Dictionary<long, LeafGroup>?> GroupChangesByTargetLeafAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long firstDp,
@@ -1427,6 +1487,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     ///   <item>live page bytes via the page cache (untouched intermediates).</item>
     /// </list>
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="intermediatePage">The intermediate page.</param>
+    /// <param name="overrides">The overrides.</param>
+    /// <param name="rewrites">The rewrites.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<long> GetEffectiveTailPageAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long intermediatePage,
@@ -1474,6 +1539,14 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// reallocation) is supported; only 3+-page splits at any single level
     /// (TryGreedySplitIntermediateInTwo overflow) still bail to the bulk path.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="groups">The groups.</param>
+    /// <param name="parentOps">The parent ops.</param>
+    /// <param name="existingPageRewrites">The existing page rewrites.</param>
+    /// <param name="stagingState">The staging state.</param>
+    /// <param name="newPageAppends">The new page appends.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<bool> TryStageIntermediateRewritesAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -1884,6 +1957,9 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <c>payloadEnd</c>, so the child pointer occupies
     /// <c>[payloadEnd-4, payloadEnd)</c>.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="layout">The layout.</param>
     private static long ReadLastChildPointer(byte[] page, int pageSize, IndexLeafPageBuilder.LeafPageLayout layout)
     {
         if (page == null || page.Length < pageSize)

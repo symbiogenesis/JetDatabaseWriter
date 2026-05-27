@@ -28,6 +28,8 @@ using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 /// Owned by an <see cref="AccessWriter"/> via a private field, with direct
 /// access to the writer's page allocator for index page reservation and cleanup.
 /// </summary>
+/// <param name="writer">The writer.</param>
+/// <param name="pageAllocator">The page allocator.</param>
 internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAllocator)
 {
     private readonly IndexBTreeEditor btreeEditor = new(writer, pageAllocator);
@@ -45,6 +47,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// returned to the pool before this method returns, so callers must not
     /// retain any reference to the original buffer.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -64,6 +68,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// counts, and the byte offset at which the real-idx descriptor block
     /// begins (i.e. just past the column-name table).
     /// </summary>
+    /// <param name="Buffer">The buffer.</param>
+    /// <param name="NumCols">The number of cols.</param>
+    /// <param name="NumIdx">The number of index.</param>
+    /// <param name="NumRealIdx">The number of real index.</param>
+    /// <param name="RealIdxDescStart">The real index desc start.</param>
+    /// <param name="FailedColumnIndex">The failed column index.</param>
+    /// <param name="FailedColumnNamePos">The failed column name pos.</param>
     private readonly record struct TdefPreamble(
         byte[] Buffer,
         int NumCols,
@@ -81,6 +92,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// (silent return for the bulk path, <c>LastIncrementalBail</c> string for
     /// the incremental and catalog-splice paths).
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<(TdefPreambleStatus Status, TdefPreamble Preamble)> ReadTdefPreambleAsync(
         long tdefPage,
         CancellationToken cancellationToken)
@@ -136,6 +149,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// removed the only legitimate trigger for the prior silent-skip path).
     /// </para>
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
         // Jet3 (.mdb Access 97) live leaf maintenance is now
@@ -684,6 +701,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// encoder-rejected indexes that fall through anyway.
     /// </para>
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="insertedRows">The inserted rows.</param>
+    /// <param name="deletedRows">The deleted rows.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<bool> TryMaintainIndexesIncrementalAsync(
         long tdefPage,
         TableDef tableDef,
@@ -1032,6 +1054,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// / <see cref="OverflowException"/>); callers that want soft-fail
     /// behaviour should use <see cref="TryEncodeCompositeKey"/>.
     /// </summary>
+    /// <param name="keyColInfos">The key col infos.</param>
+    /// <param name="cells">The cells.</param>
     private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
     {
         bool legacyNumeric = writer._format == DatabaseFormat.Jet4Mdb;
@@ -1069,6 +1093,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// Used by the incremental + catalog-splice paths to bail to bulk on any
     /// encoder rejection.
     /// </summary>
+    /// <param name="keyColInfos">The key col infos.</param>
+    /// <param name="row">The row values or row bytes.</param>
     private byte[]? TryEncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object[] row)
     {
         object?[] cells = new object?[keyColInfos.Count];
@@ -1109,6 +1135,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// detects this by comparing <c>Count</c> to the input count and bailing
     /// to the bulk-rebuild path.
     /// </summary>
+    /// <param name="rows">The row collection.</param>
+    /// <param name="keyColInfos">The key col infos.</param>
     private List<IndexEntry> EncodeHintEntries(
         List<(RowLocation Loc, object[] Row)>? rows,
         List<KeyColumnInfo> keyColInfos)
@@ -1138,6 +1166,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// slot on a system table's index B-tree without re-encoding any
     /// pre-existing entries.
     /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="newRowLoc">The new row loc.</param>
+    /// <param name="newRowValues">The new row values.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <remarks>
     /// <para>
     /// Used by <c>InsertCatalogEntryAsync</c> for MSysObjects to keep

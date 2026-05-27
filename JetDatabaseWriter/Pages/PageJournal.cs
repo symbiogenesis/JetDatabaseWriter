@@ -57,6 +57,8 @@ internal sealed class PageJournal
     /// Buffers a write to <paramref name="pageNumber"/>. The supplied bytes are
     /// copied; the caller's buffer can be reused / returned to a pool immediately.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="page">The page bytes.</param>
     /// <exception cref="JetLimitationException">
     /// Thrown when adding this page would exceed the configured page budget.
     /// </exception>
@@ -90,6 +92,7 @@ internal sealed class PageJournal
     /// Buffers an append of a new page past the (snapshotted) end-of-file and
     /// returns the assigned page number.
     /// </summary>
+    /// <param name="page">The page bytes.</param>
     /// <exception cref="JetLimitationException">
     /// Thrown when adding this page would exceed the configured page budget.
     /// </exception>
@@ -115,6 +118,7 @@ internal sealed class PageJournal
     /// Returns the buffered page bytes for <paramref name="pageNumber"/>, or
     /// <see langword="null"/> when the journal does not contain it.
     /// </summary>
+    /// <param name="pageNumber">The page number.</param>
     public byte[]? TryGet(long pageNumber)
         => _pages.TryGetValue(pageNumber, out byte[]? p) ? p : null;
 

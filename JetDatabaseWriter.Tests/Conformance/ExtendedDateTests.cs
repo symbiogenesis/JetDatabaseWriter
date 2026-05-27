@@ -20,6 +20,7 @@ using Xunit;
 /// caught explicitly.
 /// </para>
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>

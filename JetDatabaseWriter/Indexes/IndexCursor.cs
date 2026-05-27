@@ -22,6 +22,8 @@ internal sealed class IndexCursor
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexCursor"/> class for Jet4 / ACE pages.
     /// </summary>
+    /// <param name="readPage">The read page.</param>
+    /// <param name="pageSize">The page size.</param>
     public IndexCursor(Func<long, CancellationToken, ValueTask<byte[]>> readPage, int pageSize)
         : this(IndexLeafPageBuilder.LeafPageLayout.Jet4, readPage, pageSize)
     {
@@ -30,6 +32,9 @@ internal sealed class IndexCursor
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexCursor"/> class using the supplied per-format index page layout.
     /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="readPage">The read page.</param>
+    /// <param name="pageSize">The page size.</param>
     public IndexCursor(
         IndexLeafPageBuilder.LeafPageLayout layout,
         Func<long, CancellationToken, ValueTask<byte[]>> readPage,
@@ -46,6 +51,9 @@ internal sealed class IndexCursor
     /// Returns <see langword="true"/> when the B-tree contains at least one
     /// entry with a canonical key equal to <paramref name="searchKey"/>.
     /// </summary>
+    /// <param name="rootPageNumber">The root page number.</param>
+    /// <param name="searchKey">The search key.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<bool> ContainsKeyAsync(
         long rootPageNumber,
         byte[] searchKey,
@@ -66,6 +74,9 @@ internal sealed class IndexCursor
     /// Returns every data-row pointer whose canonical key equals
     /// <paramref name="searchKey"/>.
     /// </summary>
+    /// <param name="rootPageNumber">The root page number.</param>
+    /// <param name="searchKey">The search key.</param>
+    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsAsync(
         long rootPageNumber,
         byte[] searchKey,

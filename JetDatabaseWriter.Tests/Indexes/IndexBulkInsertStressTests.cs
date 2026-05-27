@@ -34,6 +34,7 @@ public sealed class IndexBulkInsertStressTests
     /// to the leafs. Verifies the data round-trips through
     /// <see cref="AccessReader.ReadDataTableAsync"/>.
     /// </summary>
+    /// <param name="format">The format.</param>
     /// <remarks>
     /// One Jet4 leaf page holds roughly <c>(0x1000 - 0x1E0) / 5 ≈ 612</c>
     /// fixed-int entries, so 1500 rows guarantees the builder must produce
@@ -101,6 +102,7 @@ public sealed class IndexBulkInsertStressTests
     /// been written (see <c>AccessWriter.MaintainIndexesAsync</c>), so the
     /// throw appears at the end of the call rather than mid-iteration.
     /// </summary>
+    /// <param name="format">The format.</param>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
@@ -134,6 +136,7 @@ public sealed class IndexBulkInsertStressTests
     /// insert is rejected before any data is written, the next successful
     /// auto-increment value must <b>not</b> skip the rejected row's slot.
     /// </summary>
+    /// <param name="format">The format.</param>
     /// <remarks>
     /// The Jackcess test rejects via a unique-index violation, but our
     /// uniqueness check is a post-write check (the offending row is already
@@ -200,6 +203,7 @@ public sealed class IndexBulkInsertStressTests
     /// tail must leave the index consistent with the surviving row set.
     /// Adapted from the second half of Jackcess <c>BigIndexTest.testBigIndex</c>.
     /// </summary>
+    /// <param name="format">The format.</param>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]

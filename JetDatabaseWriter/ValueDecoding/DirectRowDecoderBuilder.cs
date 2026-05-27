@@ -51,6 +51,9 @@ internal static class DirectRowDecoderBuilder
     /// <paramref name="headers"/>/<paramref name="columns"/>, or returns
     /// <see langword="null"/> when any bound column requires the slow path.
     /// </summary>
+    /// <param name="headers">The headers.</param>
+    /// <param name="columns">The columns.</param>
+    /// <param name="clrTypes">The clr types.</param>
     public static DirectRowDecoder<T>? TryBuild<T>(
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
@@ -301,6 +304,12 @@ internal static class DirectRowDecoderBuilder
 /// bypassing the per-row <c>object?[]</c> buffer and the box/unbox round-trip
 /// that the projection-aware path still pays.
 /// </summary>
+/// <param name="reader">The reader.</param>
+/// <param name="page">The page bytes.</param>
+/// <param name="rowStart">The row start.</param>
+/// <param name="rowSize">The row size.</param>
+/// <param name="hasVarColumns">A value indicating whether has var columns.</param>
+/// <param name="target">The target.</param>
 /// <returns>
 /// <see langword="true"/> when the row was decoded; <see langword="false"/>
 /// when the row should be skipped (empty / malformed trailer).

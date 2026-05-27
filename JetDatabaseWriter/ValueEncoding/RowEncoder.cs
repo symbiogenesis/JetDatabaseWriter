@@ -19,6 +19,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// Encodes in-memory value arrays into on-disk row byte layouts for a JET
 /// data page.  Extracted from <see cref="AccessWriter"/>.
 /// </summary>
+/// <param name="writer">The writer.</param>
 internal sealed class RowEncoder(AccessWriter writer)
 {
     internal static byte[]? EncodeOleValue(object value)
@@ -284,6 +285,8 @@ internal sealed class RowEncoder(AccessWriter writer)
     /// Serializes a typed value array into the binary row format understood
     /// by the JET engine (null mask, fixed area, variable-length trailers).
     /// </summary>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="values">The values.</param>
     internal byte[] SerializeRow(TableDef tableDef, object[] values)
     {
         int numCols = 0;

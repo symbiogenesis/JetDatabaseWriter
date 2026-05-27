@@ -19,6 +19,7 @@ using Xunit;
 /// themselves assert overflow-page allocation. True LVAL/overflow paths
 /// are covered by the LVAL and complex-column test suites.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Theory]
