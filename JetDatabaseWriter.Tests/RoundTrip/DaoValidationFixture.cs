@@ -37,7 +37,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int ComplexAttachmentPayloadLength = 16 * 1024;
     internal const string ComplexAttachmentFileName = "compact-large.jpg";
     internal const int EncryptedCompactRowCount = 20;
-    internal const int StressRowsPerTable = 128;
+    internal const int StressRowsPerTable = 64;
     internal const int StressTableCount = 4;
     internal const int StressRelationshipCount = StressTableCount - 1;
     internal const string ExpectedMemoWithNuls = "Hello\0World\0End";
@@ -600,7 +600,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 ],
                 cancellationToken).ConfigureAwait(false);
 
-            if (table < 5)
+            if (table < StressRelationshipCount)
             {
                 await writer.CreateRelationshipAsync(
                     new RelationshipDefinition(

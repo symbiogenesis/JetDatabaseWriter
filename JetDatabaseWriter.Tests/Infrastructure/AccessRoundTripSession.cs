@@ -202,6 +202,13 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     public AccessRoundTripEnvironment.CompactResult RunDaoDatabaseScript(string databasePath, string databaseScript, TimeSpan timeout) =>
         AccessRoundTripEnvironment.RunDaoDatabaseScript(databasePath, databaseScript, WorkDir, timeout);
 
+    /// <summary>Runs a DAO database script against <see cref="SourcePath" />, then compacts to <see cref="CompactedPath" /> in the same host.</summary>
+    /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public AccessRoundTripEnvironment.CompactResult RunDaoDatabaseScriptThenCompact(string databaseScript, TimeSpan timeout) =>
+        AccessRoundTripEnvironment.RunDaoDatabaseScriptThenCompact(SourcePath, CompactedPath, databaseScript, WorkDir, timeout);
+
     /// <summary>Runs a DAO create-database script in this session's temporary workspace.</summary>
     /// <param name="databasePath">Database path to create.</param>
     /// <param name="attributes">DAO create-database attributes string.</param>

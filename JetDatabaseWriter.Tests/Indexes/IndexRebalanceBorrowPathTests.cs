@@ -54,6 +54,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Val", typeof(string), maxLength: 50),
+                    new ColumnDefinition("DeleteBucket", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 ct);
@@ -61,7 +62,7 @@ public sealed class IndexRebalanceBorrowPathTests
             var rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
             {
-                rows[i] = [i * 10, string.Create(CultureInfo.InvariantCulture, $"v{i}")];
+                rows[i] = [i * 10, string.Create(CultureInfo.InvariantCulture, $"v{i}"), i % 3 == 0 ? 0 : 1];
             }
 
             await writer.InsertRowsAsync("T", rows, ct);
@@ -70,16 +71,14 @@ public sealed class IndexRebalanceBorrowPathTests
         // Phase 2: Scattered deletes — remove every 3rd row. This thins
         // each leaf without emptying any, exercising the underflow-
         // without-collapse path.
-        var deletedIds = new HashSet<int>();
+        var deletedIds = Enumerable.Range(0, initialRows)
+            .Where(i => i % 3 == 0)
+            .Select(i => i * 10)
+            .ToHashSet();
         await using (var writer = await OpenWriterAsync(stream))
         {
-            for (int i = 0; i < initialRows; i += 3)
-            {
-                int id = i * 10;
-                int d = await writer.DeleteRowsAsync("T", "Id", id, ct);
-                Assert.Equal(1, d);
-                deletedIds.Add(id);
-            }
+            int deleted = await writer.DeleteRowsAsync("T", "DeleteBucket", 0, ct);
+            Assert.Equal(deletedIds.Count, deleted);
         }
 
         // Phase 3: Insert new rows into gaps left by deletes. These keys
@@ -94,7 +93,7 @@ public sealed class IndexRebalanceBorrowPathTests
             {
                 // Keys that fall between existing survivors: id*10 + 5
                 int id = (i * 3 * 10) + 5;
-                rows[i] = [id, string.Create(CultureInfo.InvariantCulture, $"new{i}")];
+                rows[i] = [id, string.Create(CultureInfo.InvariantCulture, $"new{i}"), 2];
                 insertedIds.Add(id);
             }
 

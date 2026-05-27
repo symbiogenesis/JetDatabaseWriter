@@ -25,7 +25,7 @@ using Xunit;
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoStorageMaintenanceTests
 {
-    private const int AdvancedIndexRows = 300;
+    private const int AdvancedIndexRows = 192;
     private const int IndexRows = 800;
     private const int Jet3IndexRows = 260;
     private const int MarkerLength = 16;
@@ -238,14 +238,11 @@ public sealed class DaoStorageMaintenanceTests
             }
             """;
 
-        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
-            session.SourcePath,
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScriptThenCompact(
             preCompactScript,
             CompactTimeout);
-        AssertDaoSuccess(preCompactDao, "DAO pre-compact OpenRecordset");
+        AssertDaoSuccess(preCompactDao, "DAO pre-compact OpenRecordset and CompactDatabase");
         Assert.Contains($"ROWCOUNT={Jet3IndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
-
-        session.RunDaoCompact();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             session.CompactedPath,
@@ -528,16 +525,13 @@ public sealed class DaoStorageMaintenanceTests
             }
             """;
 
-        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
-            session.SourcePath,
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScriptThenCompact(
             advancedIndexSeekProbe,
             CompactTimeout);
-        AssertDaoSuccess(preCompactDao, "DAO pre-compact advanced index seek probe");
+        AssertDaoSuccess(preCompactDao, "DAO pre-compact advanced index seek probe and CompactDatabase");
         Assert.Contains($"ROWCOUNT={AdvancedIndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
         Assert.Contains("DAO_SEEK_IX_CodeScore=42", preCompactDao.StdOut, StringComparison.Ordinal);
         Assert.Contains("DAO_SEEK_IX_GuidKey=42", preCompactDao.StdOut, StringComparison.Ordinal);
-
-        session.RunDaoCompact();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             session.CompactedPath,

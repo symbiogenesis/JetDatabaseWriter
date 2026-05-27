@@ -120,6 +120,76 @@ internal static class AccessRoundTripEnvironment
     }
 
     /// <summary>
+    /// Opens an existing database through DAO, runs a script body with
+    /// <c>$db</c> bound to the open database, closes it, then compacts the
+    /// same source database to <paramref name="dest" /> in the same DAO host.
+    /// </summary>
+    /// <param name="source">Existing database file to open and compact.</param>
+    /// <param name="dest">Output path; will be overwritten if it exists.</param>
+    /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoDatabaseScriptThenCompact(
+        string source,
+        string dest,
+        string databaseScript,
+        string workDir,
+        TimeSpan timeout)
+    {
+        string script = $$"""
+                $src = {{ToPowerShellSingleQuotedLiteral(source)}}
+                $dst = {{ToPowerShellSingleQuotedLiteral(dest)}}
+                $db = $engine.OpenDatabase($src)
+                try {
+                {{IndentScript(databaseScript, "  ")}}} finally {
+                    $db.Close()
+                }
+
+                if (Test-Path $dst) { Remove-Item -LiteralPath $dst -Force }
+                $engine.CompactDatabase($src, $dst)
+
+                """;
+
+        return RunDaoEngineScript(script, workDir, timeout);
+    }
+
+    /// <summary>
+    /// Compacts a database through DAO, opens the compacted output, runs a
+    /// script body with <c>$db</c> bound to that output database, then closes it
+    /// in the same DAO host.
+    /// </summary>
+    /// <param name="source">Existing database file to compact.</param>
+    /// <param name="dest">Output path; will be overwritten if it exists.</param>
+    /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoCompactThenDatabaseScript(
+        string source,
+        string dest,
+        string databaseScript,
+        string workDir,
+        TimeSpan timeout)
+    {
+        string script = $$"""
+                $src = {{ToPowerShellSingleQuotedLiteral(source)}}
+                $dst = {{ToPowerShellSingleQuotedLiteral(dest)}}
+                if (Test-Path $dst) { Remove-Item -LiteralPath $dst -Force }
+                $engine.CompactDatabase($src, $dst)
+
+                $db = $engine.OpenDatabase($dst)
+                try {
+                {{IndentScript(databaseScript, "  ")}}} finally {
+                    $db.Close()
+                }
+
+                """;
+
+        return RunDaoEngineScript(script, workDir, timeout);
+    }
+
+    /// <summary>
     /// Creates a database through DAO, runs a script body with <c>$db</c>
     /// bound to the new database, then closes it.
     /// </summary>

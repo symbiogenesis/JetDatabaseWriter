@@ -130,11 +130,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedCatalogDao_{Guid.NewGuid():N}.accdb");
         tempFiles.Add(compactedPath);
         AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
-            "DAO CompactDatabase linked table");
-        AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedTableCountScript("LinkedTable1"), workDir, TimeSpan.FromSeconds(60)),
-            "DAO OpenRecordset compacted linked table");
+            AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
+                frontEndPath,
+                compactedPath,
+                LinkedTableCountScript("LinkedTable1"),
+                workDir,
+                TimeSpan.FromSeconds(60)),
+            "DAO CompactDatabase and OpenRecordset linked table");
     }
 
     [Fact]
@@ -405,11 +407,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedTextDao_{Guid.NewGuid():N}.accdb");
         tempFiles.Add(compactedPath);
         AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
-            "DAO CompactDatabase text linked table");
-        AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedCsvDataScript("LinkedCsv"), workDir, TimeSpan.FromSeconds(60)),
-            "DAO OpenRecordset compacted text linked table data");
+            AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
+                frontEndPath,
+                compactedPath,
+                LinkedCsvDataScript("LinkedCsv"),
+                workDir,
+                TimeSpan.FromSeconds(60)),
+            "DAO CompactDatabase and OpenRecordset compacted text linked table data");
     }
 
     [Fact(
@@ -451,11 +455,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceDao_{Guid.NewGuid():N}.accdb");
         tempFiles.Add(compactedPath);
         AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
-            "DAO CompactDatabase text linked table whitespace data");
-        AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedCsvWhitespaceScript("LinkedCsv"), workDir, TimeSpan.FromSeconds(60)),
-            "DAO OpenRecordset linked text whitespace data");
+            AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
+                frontEndPath,
+                compactedPath,
+                LinkedCsvWhitespaceScript("LinkedCsv"),
+                workDir,
+                TimeSpan.FromSeconds(60)),
+            "DAO CompactDatabase and OpenRecordset linked text whitespace data");
     }
 
     [Fact]
