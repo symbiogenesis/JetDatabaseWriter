@@ -10,11 +10,10 @@ using SharpFuzz;
 using Xunit;
 
 /// <summary>
-/// SharpFuzz harness for the internal delimited text reader.
+/// SharpFuzz harness for the internal delimited text reader. Run explicitly with the <c>Category=Fuzz</c> trait.
 /// </summary>
 public sealed class DelimitedTextReaderFuzzTests
 {
-    private const string SharpFuzzOptInSkipReason = "Set JETDATABASEWRITER_RUN_SHARPFUZZ=1 to run the open-ended SharpFuzz harness.";
     private const int MaxGeneratedRows = 64;
     private const int MaxGeneratedColumns = 24;
     private const int MaxGeneratedFieldLength = 48;
@@ -30,16 +29,10 @@ public sealed class DelimitedTextReaderFuzzTests
         "MaxColumnCount");
 
     /// <summary>
-    /// Gets a value indicating whether the open-ended SharpFuzz harness should run under xUnit.
-    /// </summary>
-    public static bool SharpFuzzHarnessEnabled =>
-        string.Equals(Environment.GetEnvironmentVariable("JETDATABASEWRITER_RUN_SHARPFUZZ"), "1", StringComparison.Ordinal);
-
-    /// <summary>
     /// Runs the SharpFuzz delimited text harness.
     /// </summary>
     [Trait("Category", "Fuzz")]
-    [Fact(Skip = SharpFuzzOptInSkipReason, SkipUnless = nameof(SharpFuzzHarnessEnabled))]
+    [Fact]
     public void FuzzDelimitedTextReader()
     {
         Fuzzer.Run(stream =>

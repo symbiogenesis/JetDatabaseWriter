@@ -5,11 +5,35 @@
       "label": "test: all",
       "type": "process",
       "command": "dotnet",
-      "args": ["test", "--project", "JetDatabaseWriter.Tests"],
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--filter-not-trait",
+        "Category=Fuzz"
+      ],
       "group": {
         "kind": "test",
         "isDefault": true
       },
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: fuzz",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--filter-trait",
+        "Category=Fuzz"
+      ],
+      "group": "test",
       "problemMatcher": "$msCompile",
       "presentation": {
         "reveal": "always",
@@ -78,6 +102,8 @@
         "test",
         "--project",
         "JetDatabaseWriter.Tests",
+        "--filter-not-trait",
+        "Category=Fuzz",
         "--stop-on-fail",
         "on"
       ],
