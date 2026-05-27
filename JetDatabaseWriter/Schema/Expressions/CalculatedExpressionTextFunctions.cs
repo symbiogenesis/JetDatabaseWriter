@@ -10,7 +10,7 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
-internal static class CalculatedExpressionTextFunctions
+internal static partial class CalculatedExpressionTextFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
@@ -191,8 +191,8 @@ internal static class CalculatedExpressionTextFunctions
 
     private static double Val(string text)
     {
-        string compact = Regex.Replace(text, "\\s+", string.Empty);
-        Match match = Regex.Match(compact, "^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?", RegexOptions.CultureInvariant);
+        string compact = WhitespaceRegex().Replace(text, string.Empty);
+        Match match = ValNumberPrefixRegex().Match(compact);
         return match.Success && double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             ? parsed
             : 0d;
@@ -239,4 +239,10 @@ internal static class CalculatedExpressionTextFunctions
 
         return result;
     }
+
+    [GeneratedRegex("\\s+")]
+    private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex("^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?", RegexOptions.CultureInvariant)]
+    private static partial Regex ValNumberPrefixRegex();
 }
