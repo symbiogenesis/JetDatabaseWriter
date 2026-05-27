@@ -176,12 +176,9 @@ internal static class FkDaoBaselineProbe
         {
             string name = ValueText(GetValue(row, ordinals, "Name"));
             if (!string.Equals(name, Parent, StringComparison.Ordinal)
-                && !string.Equals(name, Child, StringComparison.Ordinal))
+                && !string.Equals(name, Child, StringComparison.Ordinal) && !string.Equals(name, FkName, StringComparison.Ordinal))
             {
-                if (!string.Equals(name, FkName, StringComparison.Ordinal))
-                {
-                    continue;
-                }
+                continue;
             }
 
             int id = ToInt32(GetValue(row, ordinals, "Id"));

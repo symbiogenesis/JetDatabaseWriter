@@ -1101,20 +1101,14 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 // or more emptying leaves are stitched together below.
                 if (!prevAlsoEmptying && !nextAlsoEmptying)
                 {
-                    if (leafPrev > 0)
+                    if (leafPrev > 0 && !leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
                     {
-                        if (!leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
-                        {
-                            return false;
-                        }
+                        return false;
                     }
 
-                    if (leafNext > 0)
+                    if (leafNext > 0 && !leafNextPointerPatches.TryAdd(leafNext, leafPrev))
                     {
-                        if (!leafNextPointerPatches.TryAdd(leafNext, leafPrev))
-                        {
-                            return false;
-                        }
+                        return false;
                     }
                 }
 
@@ -1252,22 +1246,16 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             // dead leaves in the same run all compute the same survLeft /
             // survRight, so TryAdd may legitimately collide; treat the
             // collision as success when the staged value matches).
-            if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev))
-            {
-                if (!leafPrevPointerPatches.TryAdd(deadPrev, surv) &&
+            if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev) && !leafPrevPointerPatches.TryAdd(deadPrev, surv) &&
                     leafPrevPointerPatches[deadPrev] != surv)
-                {
-                    return false;
-                }
+            {
+                return false;
             }
 
-            if (nextIsRightBoundary && deadNext > 0 && !groups.ContainsKey(deadNext))
-            {
-                if (!leafNextPointerPatches.TryAdd(deadNext, survLeft) &&
+            if (nextIsRightBoundary && deadNext > 0 && !groups.ContainsKey(deadNext) && !leafNextPointerPatches.TryAdd(deadNext, survLeft) &&
                     leafNextPointerPatches[deadNext] != survLeft)
-                {
-                    return false;
-                }
+            {
+                return false;
             }
         }
 

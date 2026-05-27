@@ -340,14 +340,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
         }
 
-        if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null)
-        {
-            if (!HasLongOrComplexStorageColumns(tableDef)
+        if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null && !HasLongOrComplexStorageColumns(tableDef)
                 && !IsGeneratedComplexFlatTableName(tableName)
                 && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
-            {
-                await DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
-            }
+        {
+            await DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
         }
     }
 
