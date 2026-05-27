@@ -3846,154 +3846,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return null;
             }
 
-            bool hasVarColumns = false;
-            foreach (var column in tableDef.Columns)
-            {
-                if (!column.IsFixed)
-                {
-                    hasVarColumns = true;
-                    break;
-                }
-            }
-
-            if (!TryParseRowLayout(pageBytes, loc.RowStart, loc.RowSize, hasVarColumns, out RowLayout layout))
-            {
-                return null;
-            }
-
+            RowDecodePlan decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
             var result = new object?[columnOrdinals.Length];
-            for (int i = 0; i < columnOrdinals.Length; i++)
-            {
-                int ord = columnOrdinals[i];
-                if (ord < 0 || ord >= tableDef.Columns.Count)
-                {
-                    return null;
-                }
-
-                ColumnInfo col = tableDef.Columns[ord];
-                ColumnSlice slice = ResolveColumnSlice(pageBytes, loc.RowStart, loc.RowSize, layout, col);
-
-                switch (slice.Kind)
-                {
-                    case ColumnSliceKind.Bool:
-                        result[i] = slice.BoolValue;
-                        break;
-
-                    case ColumnSliceKind.Null:
-                    case ColumnSliceKind.Empty:
-                        result[i] = null;
-                        break;
-
-                    // Fixed and Var share the decoder; types it can't decode
-                    // here (T_MEMO/OLE/COMPLEX/ATTACHMENT) return null and
-                    // force the caller to the snapshot path.
-                    case ColumnSliceKind.Fixed:
-                    case ColumnSliceKind.Var:
-                        if (col.IsCalculated)
-                        {
-                            return null;
-                        }
-
-                        result[i] = TryDecodeColumnSlice(pageBytes, loc.RowStart + slice.DataStart, col, slice.DataLen);
-                        if (result[i] is null)
-                        {
-                            return null;
-                        }
-
-                        break;
-
-                    default:
-                        return null;
-                }
-            }
-
-            return result;
+            return decodePlan.TryDecodePartialColumns(this, pageBytes, loc.RowStart, loc.RowSize, result)
+                ? result
+                : null;
         }
         finally
         {
             ReturnPage(pageBytes);
-        }
-    }
-
-    /// <summary>
-    /// Decodes a fixed-area or var-inline column slice into the canonical
-    /// CLR object the public InsertRow API accepts back. Returns
-    /// <see langword="null"/> on unsupported / malformed types so callers
-    /// fall back to the snapshot path. T_NUMERIC uses the descriptor scale
-    /// carried on <paramref name="column"/>; T_MEMO / T_OLE / T_COMPLEX /
-    /// T_ATTACHMENT return null because they require LVAL or complex-table traversal.
-    /// </summary>
-    private object? TryDecodeColumnSlice(byte[] page, int start, ColumnInfo column, int size)
-    {
-        if (size <= 0)
-        {
-            return null;
-        }
-
-        switch (column.Type)
-        {
-            case T_BYTE:
-                return page[start];
-            case T_INT:
-                return size >= 2 ? Ri16(page, start) : null;
-            case T_LONG:
-                return size >= 4 ? Ri32(page, start) : null;
-            case T_FLOAT:
-                return size >= 4 ? JetTypeInfo.ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
-            case T_DOUBLE:
-                return size >= 8 ? JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
-            case T_MONEY:
-                return size >= 8 ? Ri64(page, start) / 10000m : null;
-
-            case T_DATETIME:
-                if (size < 8)
-                {
-                    return null;
-                }
-
-                try
-                {
-                    return DateTime.FromOADate(JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)));
-                }
-                catch (ArgumentException)
-                {
-                    return null;
-                }
-
-            case T_GUID:
-                if (size < 16)
-                {
-                    return null;
-                }
-
-                return new Guid(page.AsSpan(start, 16));
-
-            case T_NUMERIC:
-                if (size < 17)
-                {
-                    return null;
-                }
-
-                try
-                {
-                    object decoded = JetTypeInfo.ReadFixedTyped(page, start, column, size, strictNumeric: true);
-                    return decoded is DBNull ? null : decoded;
-                }
-                catch (JetLimitationException)
-                {
-                    return null;
-                }
-
-            case T_TEXT:
-                return DecodeTextForFormat(page, start, size);
-
-            case T_BINARY:
-                return page.AsSpan(start, size).ToArray();
-
-            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT need LVAL or
-            // complex-table traversal this inline helper does not have.
-            default:
-                return null;
         }
     }
 

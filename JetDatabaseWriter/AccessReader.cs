@@ -580,6 +580,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing);
 
         int colCount = td.Columns.Count;
         object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
@@ -596,7 +597,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         continue;
                     }
 
-                    bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns, rowBuffer, cancellationToken).ConfigureAwait(false);
+                    bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                     if (!ok)
                     {
                         continue;
@@ -675,6 +676,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ? await _complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing);
 
         await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
@@ -687,7 +689,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                object?[]? row = await CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns, cancellationToken).ConfigureAwait(false);
+                object?[]? row = await CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
                     continue;
@@ -1309,7 +1311,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        object?[]? row = await CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, td, cancellationToken).ConfigureAwait(false);
+        RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, _strictParsing);
+        object?[]? row = await CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
         if (row == null)
         {
             return null;
@@ -1438,6 +1441,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // never retained by the table.
             int colCount = td.Columns.Count;
             long loadedRows = 0;
+            RowDecodePlan decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, _strictParsing);
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
@@ -1452,7 +1456,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                             continue;
                         }
 
-                        bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns: null, rowBuffer, cancellationToken).ConfigureAwait(false);
+                        bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                         if (!ok)
                         {
                             continue;
@@ -3322,7 +3326,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // gated by the per-table HasComplexColumns / HasHyperlinkColumns flags.
 
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
-        => CrackRowTypedAsync(page, rowStart, rowSize, td, wantedColumns: null, cancellationToken);
+        => CrackRowTypedAsync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns: null, _strictParsing), cancellationToken);
 
     /// <summary>
     /// Projection-aware overload of <c>CrackRowTypedAsync</c>.
@@ -3333,10 +3337,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// columns simply produce no work).
     /// </summary>
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, CancellationToken cancellationToken)
+        => CrackRowTypedAsync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing), cancellationToken);
+
+    private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!TryCrackRowSync(page, rowStart, rowSize, td, wantedColumns, out object?[]? row, out bool needsLongValue))
+        if (!TryCrackRowSync(page, rowStart, rowSize, decodePlan, out object?[]? row, out bool needsLongValue))
         {
             return new ValueTask<object?[]?>((object?[]?)null);
         }
@@ -3364,11 +3371,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// to reuse a single <see cref="ArrayPool{T}.Shared"/>-rented array
     /// across the entire scan.
     /// </summary>
-    private ValueTask<bool> CrackRowTypedIntoBufferAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, object?[] buffer, CancellationToken cancellationToken)
+    private ValueTask<bool> CrackRowTypedIntoBufferAsync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, object?[] buffer, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, td, wantedColumns, buffer, out bool needsLongValue))
+        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, decodePlan, buffer, out bool needsLongValue))
         {
             return new ValueTask<bool>(false);
         }
@@ -3378,7 +3385,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return new ValueTask<bool>(true);
         }
 
-        return ResolveLongValueRefsIntoBufferAsync(buffer, td.Columns.Count, page, cancellationToken);
+        return ResolveLongValueRefsIntoBufferAsync(buffer, decodePlan.ColumnCount, page, cancellationToken);
     }
 
     /// <summary>
@@ -3391,13 +3398,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         for (int i = 0; i < validLength; i++)
         {
-            if (buffer[i] is LongValueRef lvr)
+            if (buffer[i] is RowDecodePlan.LongValueRef lvr)
             {
                 buffer[i] = lvr.IsOle
                     ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                     : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
-            else if (buffer[i] is CalculatedLongValueRef clvr)
+            else if (buffer[i] is RowDecodePlan.CalculatedLongValueRef clvr)
             {
                 buffer[i] = await ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
             }
@@ -3408,7 +3415,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Async slow-path that walks the LVAL chain for any
-    /// <see cref="LongValueRef"/> sentinels left in <paramref name="row"/>
+    /// <see cref="RowDecodePlan.LongValueRef"/> sentinels left in <paramref name="row"/>
     /// by <c>TryCrackRowSync</c>. Only invoked when at least one
     /// such sentinel was emitted — fixed-only / inline-only rows skip this
     /// entirely and never allocate an async state machine.
@@ -3419,7 +3426,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return row;
     }
 
-    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, CancellationToken cancellationToken)
+    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, RowDecodePlan.CalculatedLongValueRef reference, CancellationToken cancellationToken)
     {
         byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);
@@ -3434,11 +3441,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// schema sanity-check rejects the row (caller should skip).
     /// <paramref name="needsLongValue"/> is set when one or more
     /// <c>T_MEMO</c>/<c>T_OLE</c> slots require an LVAL-chain walk; those
-    /// slots are filled with a <see cref="LongValueRef"/> sentinel that the
+    /// slots are filled with a <see cref="RowDecodePlan.LongValueRef"/> sentinel that the
     /// async wrapper (<c>CrackRowTypedAsync</c>) replaces.
     /// </summary>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, out object?[]? row, out bool needsLongValue)
-        => TryCrackRowSync(page, rowStart, rowSize, td, wantedColumns: null, out row, out needsLongValue);
+        => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns: null, _strictParsing), out row, out needsLongValue);
 
     /// <summary>
     /// Projection-aware overload of <c>TryCrackRowSync</c>.
@@ -3450,9 +3457,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// decode of one var column does not affect the offsets of any later column.
     /// </summary>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
+        => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, _strictParsing), out row, out needsLongValue);
+
+    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, out object?[]? row, out bool needsLongValue)
     {
-        var result = new object?[td.Columns.Count];
-        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, td, wantedColumns, result, out needsLongValue))
+        var result = new object?[decodePlan.ColumnCount];
+        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, decodePlan, result, out needsLongValue))
         {
             row = null;
             return false;
@@ -3472,71 +3482,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// &gt;= <c>td.Columns.Count</c>; the first <c>td.Columns.Count</c>
     /// slots are fully overwritten on success.
     /// </summary>
-    private bool TryCrackRowSyncIntoBuffer(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, object?[] buffer, out bool needsLongValue)
-    {
-        needsLongValue = false;
-
-        if (rowSize < _rowSz.NumCols)
-        {
-            return false;
-        }
-
-        int rawNumCols = ReadRowColumnCount(page, rowStart);
-        if (rawNumCols == 0)
-        {
-            return false;
-        }
-
-        // Stale rows: force var-area parsing when deleted-column gaps exist.
-        bool effectiveHasVarCols = td.HasVarColumns || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
-
-        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
-        {
-            return false;
-        }
-
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            if (wantedColumns != null && !wantedColumns[i])
-            {
-                // Column not bound by the caller's projection — clear the
-                // slot so a re-used pooled buffer doesn't leak the prior
-                // row's value into the compiled RowMapper<T> mapper (which
-                // skips null/DBNull slots).
-                buffer[i] = null;
-                continue;
-            }
-
-            ColumnInfo col = td.Columns[i];
-            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
-
-            switch (slice.Kind)
-            {
-                case ColumnSliceKind.Bool:
-                    buffer[i] = slice.BoolValue;
-                    break;
-
-                case ColumnSliceKind.Null:
-                case ColumnSliceKind.Empty:
-                    buffer[i] = DBNull.Value;
-                    break;
-
-                case ColumnSliceKind.Fixed:
-                    buffer[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col, slice.DataLen, _strictParsing);
-                    break;
-
-                case ColumnSliceKind.Var:
-                    buffer[i] = ReadVarTypedSync(page, rowStart + slice.DataStart, slice.DataLen, col, ref needsLongValue);
-                    break;
-
-                default:
-                    buffer[i] = DBNull.Value;
-                    break;
-            }
-        }
-
-        return true;
-    }
+    private bool TryCrackRowSyncIntoBuffer(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, object?[] buffer, out bool needsLongValue)
+        => decodePlan.TryDecodeTypedIntoBuffer(this, page, rowStart, rowSize, _longValueDecoder, buffer, out needsLongValue);
 
     // ── Direct page → T decoder support ───────────────────────────────
     //
@@ -3593,156 +3540,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     internal int ReadRawNumCols(byte[] page, int rowStart)
         => ReadRowColumnCount(page, rowStart);
-
-    /// <summary>
-    /// Synchronous decode of a variable-area column slice into its CLR
-    /// projection. T_TEXT → <see cref="string"/>, T_BINARY → <see cref="byte"/>[],
-    /// T_MEMO/T_OLE → inline payload when the bitmask is 0x80 (sync) or a
-    /// <see cref="LongValueRef"/> sentinel (async resolution required —
-    /// flips <paramref name="needsLongValue"/>). Fixed-type columns living
-    /// in the variable area (numeric/datetime/etc. with FLAG_FIXED cleared)
-    /// route through <c>JetTypeInfo.ReadFixedTyped</c>.
-    /// </summary>
-    private object? ReadVarTypedSync(byte[] page, int start, int len, ColumnInfo col, ref bool needsLongValue)
-    {
-        if (len <= 0)
-        {
-            return TypedRowFallbackPolicy.EmptyVariableValue(col);
-        }
-
-        if (col.IsCalculated)
-        {
-            return ReadCalculatedVarTypedSync(page, start, len, col, ref needsLongValue);
-        }
-
-        try
-        {
-            switch (col.Type)
-            {
-                case T_TEXT:
-                    return DecodeTextForFormat(page, start, len);
-
-                case T_BINARY:
-                    return page.AsSpan(start, len).ToArray();
-
-                case T_MEMO:
-                case T_OLE:
-                    {
-                        bool isOle = col.Type == T_OLE;
-                        if (len >= Constants.LongValue.HeaderSize
-                            && (page[start + 3] & Constants.LongValue.StorageModeMask) == Constants.LongValue.InlineStorageMode)
-                        {
-                            // Inline payload: data follows the 12-byte header
-                            // directly within this row, no LVAL chain walk.
-                            int memoLen = JetTypeInfo.ReadUInt24LittleEndian(page.AsSpan(start, 3));
-                            int memoStart = start + Constants.LongValue.HeaderSize;
-                            int inlineLen = Math.Min(memoLen, page.Length - memoStart);
-                            if (inlineLen <= 0)
-                            {
-                                return isOle ? Array.Empty<byte>() : string.Empty;
-                            }
-
-                            return isOle
-                                ? (object)DecodeOleValueBytes(page, memoStart, inlineLen)
-                                : _longValueDecoder.DecodeLongValue(page, memoStart, inlineLen, isOle: false);
-                        }
-
-                        // Single-LVAL (0x40) or chained LVAL (0x00) — defer to
-                        // the async wrapper for the LVAL chain walk.
-                        needsLongValue = true;
-                        return new LongValueRef(start, len, isOle);
-                    }
-
-                case T_BYTE:
-                case T_INT:
-                case T_LONG:
-                case T_FLOAT:
-                case T_DOUBLE:
-                case T_DATETIME:
-                case T_MONEY:
-                case T_GUID:
-                case T_COMPLEX:
-                case T_ATTACHMENT:
-                    {
-                        // Fixed-width types stored in the variable area
-                        // (FLAG_FIXED cleared). The fallback policy owns the
-                        // strict/non-strict decision when the slot is too short.
-                        int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                        return len >= required
-                            ? JetTypeInfo.ReadFixedTyped(page, start, col, required, _strictParsing)
-                            : TypedRowFallbackPolicy.FixedVariableSlotTooShort(col, len, required, _strictParsing);
-                    }
-
-                default:
-                    return DBNull.Value;
-            }
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-        catch (IndexOutOfRangeException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-        catch (OverflowException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-    }
-
-    private object? ReadCalculatedVarTypedSync(byte[] page, int start, int len, ColumnInfo col, ref bool needsLongValue)
-    {
-        try
-        {
-            switch (col.Type)
-            {
-                case T_TEXT:
-                    return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(page.AsSpan(start, len)));
-                case T_BINARY:
-                    return CalculatedColumnUtil.Unwrap(page.AsSpan(start, len));
-                case T_MEMO:
-                case T_OLE:
-                    needsLongValue = true;
-                    return new CalculatedLongValueRef(start, len, col.Type == T_OLE);
-                default:
-                    return CalculatedColumnUtil.ReadPayloadTyped(
-                        CalculatedColumnUtil.Unwrap(page.AsSpan(start, len)),
-                        JetTypeInfo.ResolveValueType(col),
-                        _strictParsing);
-            }
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-        catch (IndexOutOfRangeException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-        catch (OverflowException ex)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(col, ex, _strictParsing);
-        }
-    }
-
-    /// <summary>
-    /// Sentinel placed in the typed-row buffer for variable-area MEMO/OLE
-    /// slots that need an LVAL chain walk to resolve. Replaced by the
-    /// final <see cref="string"/> or <see cref="byte"/>[] payload by
-    /// <c>CrackRowTypedAsync</c>.
-    /// </summary>
-    private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
-
-    private readonly record struct CalculatedLongValueRef(int Start, int Len, bool IsOle);
 
     private readonly record struct TableScanPage(long PageNumber, byte[] Page);
 

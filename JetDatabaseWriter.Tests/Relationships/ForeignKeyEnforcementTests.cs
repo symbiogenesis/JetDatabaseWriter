@@ -803,6 +803,81 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(12.345m, values[1]);
     }
 
+    [Fact]
+    public async Task TryReadColumnValuesTyped_DecodesInlinePlanSupportedColumns()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string table = MakeTableName("IP");
+        byte[] payload = [0x10, 0x20, 0x30];
+        var stamp = new DateTime(2026, 5, 27, 9, 30, 0, DateTimeKind.Unspecified);
+        Guid rowGuid = Guid.NewGuid();
+
+        await using var writer = await OpenWriterAsync(temp);
+        await writer.CreateTableAsync(
+            table,
+            [
+                new("Id", typeof(int)),
+                new("Flag", typeof(bool)),
+                new("Label", typeof(string), maxLength: 40),
+                new("Payload", typeof(byte[]), maxLength: 16),
+                new("Amount", typeof(decimal)) { NumericScale = 3 },
+                new("Stamp", typeof(DateTime)),
+                new("RowGuid", typeof(Guid)),
+            ],
+            TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(
+            table,
+            [42, true, "Alpha", payload, 12.345m, stamp, rowGuid],
+            TestContext.Current.CancellationToken);
+
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation location = Assert.Single(locations);
+
+        object?[]? values = await writer.TryReadColumnValuesTypedAsync(
+            location,
+            def,
+            [0, 1, 2, 3, 4, 5, 6],
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(values);
+        Assert.Equal(42, values![0]);
+        Assert.Equal(true, values[1]);
+        Assert.Equal("Alpha", values[2]);
+        Assert.Equal(payload, Assert.IsType<byte[]>(values[3]));
+        Assert.Equal(12.345m, values[4]);
+        Assert.Equal(stamp, values[5]);
+        Assert.Equal(rowGuid, values[6]);
+    }
+
+    [Fact]
+    public async Task TryReadColumnValuesTyped_MemoColumn_ReturnsNullForSnapshotFallback()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string table = MakeTableName("MF");
+
+        await using var writer = await OpenWriterAsync(temp);
+        await writer.CreateTableAsync(
+            table,
+            [new("Id", typeof(int)), new("Notes", typeof(string))],
+            TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
+
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation location = Assert.Single(locations);
+
+        object?[]? values = await writer.TryReadColumnValuesTypedAsync(
+            location,
+            def,
+            [0, 1],
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(values);
+    }
+
     /// <summary>
     /// Self-referential FK with cascade-update — a single table whose
     /// <c>ParentId</c> column references its own <c>Id</c> column. Asserts

@@ -95,19 +95,41 @@ column slicing rules, but each has its own switch/fallback surface.
 
 Target shape:
 
-- [ ] Introduce a `RowDecodePlan` built from `TableDef`, projected columns,
+- [x] Introduce a `RowDecodePlan` built from `TableDef`, projected columns,
       strictness, and caller requirements.
 - [ ] Let the plan parse row layout once and feed specialized sinks:
       string row sink, object-buffer sink, pooled object-buffer sink, direct
       POCO sink, and partial key-column sink.
-- [ ] Move variable-slice typed decode decisions out of `AccessReader` and
+- [x] Move variable-slice typed decode decisions out of `AccessReader` and
       writer helper code into shared plan components.
-- [ ] Preserve the current async LVAL sentinel model so rows without external
+- [x] Preserve the current async LVAL sentinel model so rows without external
       long values still complete synchronously.
-- [ ] Make the writer's key-column reader use the same plan instead of its
+- [x] Make the writer's key-column reader use the same plan instead of its
       private `TryDecodeColumnSlice` path.
-- [ ] Keep `RowsAsStrings()` compatibility semantics intact unless an explicit
+- [x] Keep `RowsAsStrings()` compatibility semantics intact unless an explicit
       compatibility review says otherwise.
+
+Progress 2026-05-27: first slice landed in
+`ValueDecoding/RowDecodePlan.cs`. The plan now owns row-layout preflight,
+projection masks, typed fixed/variable decode decisions, calculated-column
+payload decode, async LVAL sentinels, pooled object-buffer fills, and the
+writer's partial key-column reader. `AccessReader` still owns async LVAL
+resolution and post-processing for complex columns/hyperlinks. `RowsAsStrings()`
+and the direct POCO expression-tree decoder remain separate sinks for future
+slices.
+
+Evidence 2026-05-27: full test suite passed (`dotnet test --project
+JetDatabaseWriter.Tests`: 3,537 passed, 3 expected skips). BenchmarkDotNet
+ShortRun was run against a clean `HEAD` worktree and then against the current
+branch using the same command:
+`dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter
+*AccessReaderRowDecodeBenchmarks* --job short`. The latest current run showed
+unchanged allocation profiles and no hot-path regression versus the same-machine
+baseline: numeric untyped 10.05 ms vs 10.20 ms, numeric typed 11.28 ms vs
+11.31 ms, text untyped 25.45 ms vs 25.68 ms, text typed 25.98 ms vs 27.50 ms,
+text as strings 26.75 ms vs 26.73 ms, and wide narrow projection 11.01 ms vs
+23.10 ms. MEMO/OLE submode results were faster in that ShortRun but noisy, so
+treat them as non-regression evidence rather than a claimed optimization.
 
 Guardrails:
 

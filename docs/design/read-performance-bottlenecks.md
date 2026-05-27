@@ -12,7 +12,7 @@ optimization threads.
 
 ## Evidence sources
 
-- Row decode results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.AccessReaderRowDecodeBenchmarks-report-github.md`
+- Row decode results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.Reader.AccessReaderRowDecodeBenchmarks-report-github.md`
 - Open-floor results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.AccessReaderOpenBenchmarks-report-github.md`
 - DataTable strategy benchmarks: `JetDatabaseWriter.Benchmarks/DataTableMaterializationBenchmarks.cs`
 - Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
@@ -29,10 +29,13 @@ release-quality benchmark results justify reopening a specific area.
 
 - `Rows()`, `Rows<T>()`, and `ReadDataTableAsync()` decode through the typed
   crack path. `CrackRowTypedAsync` calls `TryCrackRowSync` /
-  `TryCrackRowSyncIntoBuffer`, fills `object?[]` buffers directly, and returns a
-  sync-completed `ValueTask` on rows that do not require long-value resolution.
-- `T_MEMO` and `T_OLE` slots emit `LongValueRef` during sync cracking. The async
-  wrapper resolves only the rows and cells that actually contain long values.
+  `TryCrackRowSyncIntoBuffer`, which delegate layout preflight and typed
+  fixed/variable slice decoding to `RowDecodePlan`, fill `object?[]` buffers
+  directly, and return a sync-completed `ValueTask` on rows that do not require
+  long-value resolution.
+- `T_MEMO` and `T_OLE` slots emit `RowDecodePlan.LongValueRef` during sync
+  cracking. The async wrapper resolves only the rows and cells that actually
+  contain long values.
 - `RowsAsStrings()` intentionally remains on the string compatibility path over
   `EnumerateRowsAsync` and `List<string>` materialization.
 - `RowMapper<T>.Build(headers, sourceTypes?)` builds an expression-tree

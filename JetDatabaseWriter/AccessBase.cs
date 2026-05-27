@@ -839,6 +839,8 @@ public abstract class AccessBase : IAccessBase
     internal int ReadRowColumnCount(byte[] page, int rowStart)
         => _format == DatabaseFormat.Jet3Mdb ? page[rowStart] : Ru16(page, rowStart);
 
+    internal int RowColumnCountFieldSize => _rowSz.NumCols;
+
     /// <summary>
     /// Decodes a text/memo slice using the format-appropriate codec
     /// (Jet4 compressed/UCS-2 or Jet3 ANSI). Empty slices return
@@ -1328,6 +1330,12 @@ public abstract class AccessBase : IAccessBase
 
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
+
+    internal bool TryParseRowLayoutForDecodePlan(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
+        => TryParseRowLayout(page, rowStart, rowSize, hasVarColumns, out layout);
+
+    internal ColumnSlice ResolveColumnSliceForDecodePlan(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo column)
+        => ResolveColumnSlice(page, rowStart, rowSize, layout, column);
 
     /// <summary>
     /// Yields <see cref="RowLocation"/>s (row index + start/size) for every live, non-overflow
