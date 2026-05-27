@@ -6,7 +6,6 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
