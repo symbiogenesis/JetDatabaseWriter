@@ -1001,37 +1001,38 @@ internal static class DaoBaselineProbe
         var wHdr = ParseTDefHeader(wt);
         var dHdr = ParseTDefHeader(dt);
 
-        var rows = new List<HypothesisRow>();
+        var rows = new List<HypothesisRow>
+        {
+            // ── H22: redundant col_num at descriptor byte 9 == col_num at byte 5
+            CheckRedundantColNum(wt, wHdr, dt, dHdr),
 
-        // ── H22: redundant col_num at descriptor byte 9 == col_num at byte 5
-        rows.Add(CheckRedundantColNum(wt, wHdr, dt, dHdr));
-
-        // ── H25: TDEF[0x18] autonum_flag == 0x01
-        rows.Add(new HypothesisRow(
+            // ── H25: TDEF[0x18] autonum_flag == 0x01
+            new HypothesisRow(
             "H25",
             "TDEF[0x18] autonum_flag == 0x01",
             wt[0x18] == 0x01 && dt[0x18] == 0x01 ? "✅ PASS" : (wt[0x18] != dt[0x18] ? "❌ FAIL" : "⚠️ INFO"),
             $"0x{wt[0x18]:X2}",
             $"0x{dt[0x18]:X2}",
-            wt[0x18] == dt[0x18] ? "matches DAO" : "diverges from DAO"));
+            wt[0x18] == dt[0x18] ? "matches DAO" : "diverges from DAO"),
 
-        // ── H27: every non-FK logical-idx descriptor's RelIdxNum (bytes [13..16]) == 0xFFFFFFFF
-        rows.Add(CheckLogIdxRelIdxNum(wt, wHdr, dt, dHdr));
+            // ── H27: every non-FK logical-idx descriptor's RelIdxNum (bytes [13..16]) == 0xFFFFFFFF
+            CheckLogIdxRelIdxNum(wt, wHdr, dt, dHdr),
 
-        // ── H28: every logical-idx descriptor's putInt(0) at bytes [24..27] preserved
-        rows.Add(CheckLogIdxTrailerInt(wt, wHdr, dt, dHdr));
+            // ── H28: every logical-idx descriptor's putInt(0) at bytes [24..27] preserved
+            CheckLogIdxTrailerInt(wt, wHdr, dt, dHdr),
 
-        // ── H31/H32/H33/H34: column-descriptor zero-fields
-        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H31", "NUMERIC col-desc bytes [13..14] == 0", isApplicable: (b, off) => b[off + 0 /*type*/] == 0x10, range: (13, 2)));
-        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H32", "non-text/numeric/complex col-desc bytes [11..14] == 0", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C and not 0x10 and not 0x12, range: (11, 4)));
-        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H33", "col-desc bytes [17..20] (always-0 putInt) == 0", isApplicable: (_, _) => true, range: (17, 4)));
-        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H34", "ExtraFlags byte [16] == 0 for non-TEXT/MEMO", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C, range: (16, 1)));
+            // ── H31/H32/H33/H34: column-descriptor zero-fields
+            CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H31", "NUMERIC col-desc bytes [13..14] == 0", isApplicable: (b, off) => b[off + 0 /*type*/] == 0x10, range: (13, 2)),
+            CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H32", "non-text/numeric/complex col-desc bytes [11..14] == 0", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C and not 0x10 and not 0x12, range: (11, 4)),
+            CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H33", "col-desc bytes [17..20] (always-0 putInt) == 0", isApplicable: (_, _) => true, range: (17, 4)),
+            CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H34", "ExtraFlags byte [16] == 0 for non-TEXT/MEMO", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C, range: (16, 1)),
 
-        // ── H37: real-idx flags byte at offset 46 has UNIQUE|REQUIRED|UNKNOWN bits for the PK
-        rows.Add(CheckRealIdxFlags(wt, wHdr, dt, dHdr));
+            // ── H37: real-idx flags byte at offset 46 has UNIQUE|REQUIRED|UNKNOWN bits for the PK
+            CheckRealIdxFlags(wt, wHdr, dt, dHdr),
 
-        // ── H38: real-idx 4-byte "unknown" gap at offsets 42..45 == 0
-        rows.Add(CheckRealIdxUnknownGap(wt, wHdr, dt, dHdr));
+            // ── H38: real-idx 4-byte "unknown" gap at offsets 42..45 == 0
+            CheckRealIdxUnknownGap(wt, wHdr, dt, dHdr)
+        };
 
         // ── H41: TDEF[0x1C..0x1F] (next_complex_auto_number on ACCDB) == 0
         uint wNext = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(0x1C, 4));
@@ -1693,7 +1694,7 @@ internal static class DaoBaselineProbe
         }
 
         var writerDiff = w is null
-            ? new HashSet<long>()
+            ? []
             : new HashSet<long>(w.PagesDifferingFromBaseline);
 
         var daoOnly = d.PagesDifferingFromBaseline.Where(p => !writerDiff.Contains(p)).ToList();

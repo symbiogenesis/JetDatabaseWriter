@@ -20,8 +20,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexChildTailPointerTests
 {
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.IndexTestV2000,
         TestDatabases.IndexTestV2003,
         TestDatabases.IndexTestV2007,
@@ -29,7 +29,7 @@ public sealed class IndexChildTailPointerTests
         TestDatabases.CompIndexTestV2000,
         TestDatabases.CompIndexTestV2007,
         TestDatabases.CompIndexTestV2010,
-    };
+    ];
 
     /// <summary>
     /// For every B-tree whose root is an intermediate page, verifies that

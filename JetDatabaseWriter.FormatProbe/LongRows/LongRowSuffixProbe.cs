@@ -2926,7 +2926,7 @@ internal static class LongRowSuffixProbe
                         : (diffPos, bb, ba);
                     if (!observations.TryGetValue(key, out HashSet<ushort>? set))
                     {
-                        set = new HashSet<ushort>();
+                        set = [];
                         observations[key] = set;
                     }
 

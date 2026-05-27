@@ -295,37 +295,36 @@ internal static class FormatProbeApplication
     private static async Task RunAppendicesAsync(string fixtures, string probeDir)
     {
         var appendices = new List<Task>
-    {
-        WriteIndexAppendixAsync(
+        {
+            WriteIndexAppendixAsync(
             Path.Combine(fixtures, "NorthwindTraders.accdb"),
             FormatProbeArtifacts.GetFilePath(probeDir, "appendix-index.md")),
 
-        WriteComplexAppendixAsync(
+            WriteComplexAppendixAsync(
             Path.Combine(fixtures, "ComplexFields.accdb"),
             FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md")),
-    };
-
-        // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
-        // limitation in docs/design/index-and-relationship-format-notes.md says Jet3
-        // rejects IndexDefinition entirely; format probe establishes empirical ground truth
-        // for the Jet3 real-idx physical descriptor (39 bytes per mdbtools), the
-        // logical-idx entry (20 bytes per mdbtools), and the leaf-page (0x04)
-        // bitmask layout (§4.2: bitmask at 0x16, first entry at 0xF8) by dumping
-        // the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
-        appendices.Add(WriteJet3IndexAppendixAsync(
+            // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
+            // limitation in docs/design/index-and-relationship-format-notes.md says Jet3
+            // rejects IndexDefinition entirely; format probe establishes empirical ground truth
+            // for the Jet3 real-idx physical descriptor (39 bytes per mdbtools), the
+            // logical-idx entry (20 bytes per mdbtools), and the leaf-page (0x04)
+            // bitmask layout (§4.2: bitmask at 0x16, first entry at 0xF8) by dumping
+            // the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
+            WriteJet3IndexAppendixAsync(
             fixtures,
-            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md")));
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md")),
 
-        // Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
-        // docs/design/index-and-relationship-format-notes.md asks whether
-        // MSysIndexes / MSysIndexColumns system tables exist in legacy .mdb
-        // formats (they are absent from modern .accdb). The probe recursively
-        // discovers every .mdb / .accdb fixture under the Databases/ tree
-        // (including the Jackcess/ corpus) so the answer is grounded across
-        // every format and Access version we have on disk.
-        appendices.Add(WriteMdbCatalogAppendixAsync(
+            // Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
+            // docs/design/index-and-relationship-format-notes.md asks whether
+            // MSysIndexes / MSysIndexColumns system tables exist in legacy .mdb
+            // formats (they are absent from modern .accdb). The probe recursively
+            // discovers every .mdb / .accdb fixture under the Databases/ tree
+            // (including the Jackcess/ corpus) so the answer is grounded across
+            // every format and Access version we have on disk.
+            WriteMdbCatalogAppendixAsync(
             fixtures,
-            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md")));
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"))
+        };
 
         await Task.WhenAll(appendices);
     }

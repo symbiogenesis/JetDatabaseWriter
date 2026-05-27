@@ -31,8 +31,8 @@ using Xunit;
 /// </summary>
 public sealed class GeneralLegacyEncoderFixtureTests
 {
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         // Scope:
         //  • V1997 covered by General97EncoderFixtureTests (Jet3 default sort
         //    order is "General 97", a different state machine).
@@ -42,7 +42,7 @@ public sealed class GeneralLegacyEncoderFixtureTests
         TestDatabases.TestIndexCodesV2000,
         TestDatabases.TestIndexCodesV2003,
         TestDatabases.TestIndexCodesV2007,
-    };
+    ];
 
     // Tables previously skipped because their indexed Memo values exceed
     // the single-chunk indexed-text cap (127 chars). The encoder now emits

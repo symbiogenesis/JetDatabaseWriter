@@ -22,13 +22,13 @@ using Xunit;
 /// </summary>
 public sealed class IndexFlagCombinationsTests
 {
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.TestIndexPropertiesV2000,
         TestDatabases.TestIndexPropertiesV2003,
         TestDatabases.TestIndexPropertiesV2007,
         TestDatabases.TestIndexPropertiesV2010,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]

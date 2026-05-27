@@ -2090,7 +2090,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 await _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
 
-            await UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, new List<object[]>(1) { values }, cancellationToken).ConfigureAwait(false);
+            await UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, [values], cancellationToken).ConfigureAwait(false);
         }
         catch
         {

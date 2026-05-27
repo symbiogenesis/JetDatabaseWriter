@@ -28,7 +28,7 @@ internal static class RowMapper<T>
     // rows pays the expression-compilation cost exactly once. TableDef is
     // already cached upstream by AccessWriter, so a ConditionalWeakTable
     // lets the entries fall out naturally when a TableDef is evicted.
-    private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = new();
+    private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = [];
 
     /// <summary>
     /// Builds the index mapping from column headers to compiled property accessors.

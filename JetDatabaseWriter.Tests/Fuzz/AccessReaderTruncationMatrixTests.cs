@@ -42,15 +42,15 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
     /// Larger values are deliberately omitted so the test stays fast and so
     /// every case still leaves a meaningful catalog prefix.
     /// </summary>
-    public static TheoryData<int> TruncationLengths => new()
-    {
+    public static TheoryData<int> TruncationLengths =>
+    [
         1,
         16,
         256,
         4096,
         8192,
         65536,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(TruncationLengths))]

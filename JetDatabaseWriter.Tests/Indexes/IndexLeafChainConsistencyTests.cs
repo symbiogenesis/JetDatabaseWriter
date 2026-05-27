@@ -20,8 +20,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexLeafChainConsistencyTests
 {
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.IndexTestV2000,
         TestDatabases.IndexTestV2003,
         TestDatabases.IndexTestV2007,
@@ -33,7 +33,7 @@ public sealed class IndexLeafChainConsistencyTests
         TestDatabases.TestIndexCodesV2003,
         TestDatabases.TestIndexCodesV2007,
         TestDatabases.TestIndexCodesV2010,
-    };
+    ];
 
     /// <summary>
     /// For every scannable B-tree in the fixture, walks the leaf chain and

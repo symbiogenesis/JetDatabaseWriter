@@ -14,10 +14,10 @@ using Xunit;
 /// </summary>
 public sealed class General97EncoderFixtureTests
 {
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.TestIndexCodesV1997,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]

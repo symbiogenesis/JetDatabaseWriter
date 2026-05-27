@@ -45,12 +45,12 @@ public sealed class IndexCodesAggregateTests
     // V2010+ stores text-index keys via the General (full Unicode collation)
     // encoder, not GeneralLegacy. Validating those would require
     // GeneralIndexEncoder, which lives in a separate diagnostic test.
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.TestIndexCodesV2000,
         TestDatabases.TestIndexCodesV2003,
         TestDatabases.TestIndexCodesV2007,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]

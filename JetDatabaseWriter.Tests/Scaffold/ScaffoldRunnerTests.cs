@@ -387,8 +387,8 @@ public sealed class ScaffoldRunnerTests : IDisposable
         Dictionary<string, List<ColumnMetadata>>? columnsByTable = null,
         Dictionary<string, Exception>? failingTables = null) : IAccessReader
     {
-        private readonly Dictionary<string, List<ColumnMetadata>> _columnsByTable = columnsByTable ?? new();
-        private readonly Dictionary<string, Exception> _failingTables = failingTables ?? new();
+        private readonly Dictionary<string, List<ColumnMetadata>> _columnsByTable = columnsByTable ?? [];
+        private readonly Dictionary<string, Exception> _failingTables = failingTables ?? [];
 
         public DatabaseFormat DatabaseFormat => DatabaseFormat.Jet4Mdb;
 
