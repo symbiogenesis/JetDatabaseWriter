@@ -63,7 +63,6 @@ public abstract class AccessBase : IAccessBase
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
     private protected readonly string _path;
-    private bool _useRandomAccessPageReads;
 
     internal Encoding AnsiEncoding => _ansiEncoding;
 
@@ -175,10 +174,7 @@ public abstract class AccessBase : IAccessBase
     /// <inheritdoc/>
     public int CodePage => _codePage;
 
-    internal bool UsesRandomAccessPageReads
-    {
-        get => _useRandomAccessPageReads;
-    }
+    internal bool UsesRandomAccessPageReads { get; private set; }
 
     private protected void EnableRandomAccessPageReadsIfSupported()
     {
@@ -187,10 +183,10 @@ public abstract class AccessBase : IAccessBase
             !fileStream.SafeFileHandle.IsInvalid &&
             !fileStream.SafeFileHandle.IsClosed)
         {
-            _useRandomAccessPageReads = true;
+            UsesRandomAccessPageReads = true;
         }
 #else
-        _useRandomAccessPageReads = false;
+        UsesRandomAccessPageReads = false;
 #endif
     }
 
@@ -618,7 +614,7 @@ public abstract class AccessBase : IAccessBase
         try
         {
 #if NET6_0_OR_GREATER
-            if (_useRandomAccessPageReads && ActiveJournal is null && _stream is FileStream fileStream)
+            if (UsesRandomAccessPageReads && ActiveJournal is null && _stream is FileStream fileStream)
             {
                 await ReadPageRandomAccessAsync(fileStream, n, buf, cancellationToken).ConfigureAwait(false);
             }

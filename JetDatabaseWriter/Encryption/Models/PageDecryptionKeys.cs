@@ -15,7 +15,6 @@ using System.Security.Cryptography;
 /// </summary>
 internal sealed class PageDecryptionKeys : IDisposable
 {
-    private byte[]? _aesPageKey;
     private Aes? _aes;
     private ICryptoTransform? _aesEncryptor;
     private ICryptoTransform? _aesDecryptor;
@@ -31,11 +30,11 @@ internal sealed class PageDecryptionKeys : IDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
     public byte[]? AesPageKey
     {
-        get => _aesPageKey;
+        get;
         set
         {
             DisposeAesTransforms();
-            _aesPageKey = value;
+            field = value;
         }
     }
 
@@ -63,14 +62,14 @@ internal sealed class PageDecryptionKeys : IDisposable
             return;
         }
 
-        if (_aesPageKey == null)
+        if (AesPageKey == null)
         {
             throw new InvalidOperationException("AesPageKey must be set before requesting AES transforms.");
         }
 
 #pragma warning disable CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
         _aes = Aes.Create();
-        _aes.Key = _aesPageKey;
+        _aes.Key = AesPageKey;
         _aes.Mode = CipherMode.ECB;
         _aes.Padding = PaddingMode.None;
 #pragma warning restore CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
