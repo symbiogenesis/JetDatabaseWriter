@@ -34,8 +34,8 @@ or moves to a slower CI/security lane.
   [Directory.Build.props](../../Directory.Build.props), so `RS0030` diagnostics
   are active in strict builds.
 - Several StyleCop rules are globally suppressed in
-  [Directory.Build.props](../../Directory.Build.props), so StyleCop is already
-  a partial style/documentation layer rather than the central quality gate.
+  [Directory.Build.props](../../Directory.Build.props), so StyleCop is retained
+  as a partial style/documentation layer rather than the central quality gate.
 - [JetDatabaseWriter.Tests.csproj](../../JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
   disables `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild`, and XML
   documentation generation for non-Release builds. That is the right shape for
@@ -43,8 +43,8 @@ or moves to a slower CI/security lane.
 - `dotnet outdated` reported no outdated direct dependencies on 2026-05-27.
 
 The repo is already using SDK analyzers as the center of gravity. The remaining
-questions are about local-build cost, analyzer scope, and whether older broad
-packages should be retired, moved to CI, or replaced with smaller local policy.
+questions are about local-build cost, analyzer scope, which older broad
+packages should stay local, and which checks belong in a slower CI/CD lane.
 
 ## Measurement Notes
 
@@ -379,42 +379,44 @@ Post-SCS local hardening completed on 2026-05-27:
 - Verified with `dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m`:
   build succeeded in `15.3s`.
 
-### 3. Gradually Retire `StyleCop.Analyzers`
+### 3. Keep `StyleCop.Analyzers` for Now
 
-Verdict: retire policy surface deliberately; do not replace it one-for-one.
+Verdict: keep StyleCop in strict local builds for now. Defer any retirement,
+replacement, or CI/CD-lane move until the broader analyzer-lane plan is
+revisited.
 
 Why:
 
 - The stable StyleCop package is old, and this repo uses a 2023 beta shim that
   resolves `StyleCop.Analyzers.Unstable`.
 - StyleCop costs several seconds per target framework in the measured library
-  build and about 2.790s in the measured test build.
+  build and about 2.790s in the measured test build, but that cost is not enough
+  on its own to justify removing a style policy the repo still wants.
 - The current `NoWarn` list already disables many StyleCop opinions, including
-  documentation, ordering, naming, and layout rules.
-- Current test-project Release failures include SA-only style policy such as
-  using-static order, member ordering, and multiline argument formatting. Those
-  may be useful team preferences, but they are not correctness checks.
+  documentation, ordering, naming, and layout rules, so the active policy is
+  already curated rather than one-size-fits-all StyleCop.
+- Remaining SA-only diagnostics are mostly style and documentation policy rather
+  than correctness checks. That makes them a policy choice, not an urgent local
+  analyzer-removal target.
 - There is no clear actively maintained drop-in replacement for the whole
   StyleCop surface. `Menees.Analyzers` and StyleCopPlus-like ports may replace
   a few preferences, but adopting another broad StyleCop-like package would
-  restart the same maintenance and performance problem.
+  restart the same maintenance and performance question.
 
-Replacement path:
+Deferred path:
 
-- [ ] List the StyleCop rules that still fire in a strict Release build.
-- [ ] For each useful StyleCop rule, decide whether it belongs in
-      [.editorconfig](../../.editorconfig), Roslynator configuration, SDK
-      analyzer configuration, documentation policy, or nowhere.
-- [ ] Move formatting and layout preferences to `.editorconfig` and
-      `dotnet format` where SDK tooling can enforce them.
-- [ ] Explicitly retire member-ordering and using-order rules unless they are
-      worth several seconds of analyzer cost per target framework.
-- [ ] Keep XML documentation policy only if it provides value beyond compiler
-      warning `CS1591` and API review discipline.
-- [ ] Remove StyleCop suppressions from `NoWarn` only when the corresponding
-      policy has a replacement or is intentionally retired.
-- [ ] Remove [stylecop.json](../../stylecop.json) and the StyleCop package only
-      after a clean Release build proves the replacement policy is complete.
+- [x] Keep `StyleCop.Analyzers`, [stylecop.json](../../stylecop.json), and the
+      current StyleCop suppressions in place for now.
+- [x] Defer the StyleCop inventory/removal experiment until the broader CI/CD
+      analyzer-lane decision is revisited.
+- [ ] If StyleCop build cost becomes a priority again, inventory current
+      StyleCop diagnostics in a strict Release build without assuming removal.
+- [ ] Decide as part of CI/CD analyzer-lane planning whether StyleCop stays
+      local, moves to CI, or gets narrowed by path or rule.
+- [ ] Move only obvious, low-cost style policy to [.editorconfig](../../.editorconfig)
+      when it reduces churn independently of StyleCop.
+- [ ] Remove StyleCop suppressions, [stylecop.json](../../stylecop.json), or the
+      package only after a deliberate future decision changes this policy.
 
 ### 4. Tune SDK Code Style and `AnalysisLevel latest-all` Last
 
@@ -615,15 +617,12 @@ Practical model:
 - [x] Defer the broad security-scanning lane decision for now; revisit CodeQL,
       SonarAnalyzer/SonarCloud, Puma Scan, or a scheduled CI lane after local
       analyzer-removal experiments are complete.
-- [ ] Inventory current StyleCop diagnostics in a strict Release build before
-      removing StyleCop.
+- [x] Keep `StyleCop.Analyzers` for now and defer StyleCop inventory/removal
+      work until broader CI/CD analyzer-lane planning.
 - [ ] Expand [.editorconfig](../../.editorconfig) only for obvious existing
-      style policy that can replace StyleCop or reduce diagnostic churn.
-- [ ] Move remaining useful StyleCop policy elsewhere or explicitly retire it.
-- [ ] Remove StyleCop only after replacement policy is quiet under Release
-      analyzer settings.
+      style policy that can reduce diagnostic churn independently of StyleCop.
 - [ ] Trial `AnalysisLevel latest` or category-specific analyzer modes against
-      `latest-all` after old third-party package cleanup.
+      `latest-all` after the current third-party analyzer decisions settle.
 - [ ] Consider curated `Meziantou.Analyzer`, `AsyncFixer`,
       `Microsoft.VisualStudio.Threading.Analyzers`, `IDisposableAnalyzers`,
       `ErrorProne.NET`, or `SonarAnalyzer.CSharp` only after removal experiments
