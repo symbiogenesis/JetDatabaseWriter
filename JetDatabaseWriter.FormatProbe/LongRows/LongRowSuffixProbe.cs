@@ -7024,9 +7024,9 @@ internal static class LongRowSuffixProbe
 
     private sealed class SuffixCandidateContext(LongRowSuffixProbe.SuffixPatternRow row, bool ascending)
     {
-        private Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
-        private Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
-        private Dictionary<DigestCacheKey, byte[]> digestBytes = [];
+        private readonly Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
+        private readonly Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
+        private readonly Dictionary<DigestCacheKey, byte[]> digestBytes = [];
         private byte[][]? inputCandidates;
         private byte[][]? normalizedInputCandidates;
         private byte[][]? byteRuleInputs;
