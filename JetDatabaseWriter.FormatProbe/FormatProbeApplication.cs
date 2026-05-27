@@ -1421,7 +1421,10 @@ internal static class FormatProbeApplication
                 _ = sb.AppendLine("**Complex columns detected:**");
                 _ = sb.AppendLine();
                 foreach (var (i, n, t, id) in complexCols)
+                {
                     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Column #{i} `{Md(n)}` — type 0x{t:X2} ({TypeName(t)}) — ComplexID bytes (LE u32 in misc): `{id}` = **{U32FromHex(id)}**");
+                }
+
                 _ = sb.AppendLine();
             }
         }
