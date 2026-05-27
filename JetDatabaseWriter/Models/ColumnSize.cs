@@ -28,17 +28,17 @@ public readonly record struct ColumnSize
 
     /// <summary>Creates a fixed size expressed in bits.</summary>
     /// <param name="count">The count.</param>
-    /// <returns></returns>
+    /// <returns>A column size with the specified count expressed in bits.</returns>
     public static ColumnSize FromBits(int count) => new(count, ColumnSizeUnit.Bits);
 
     /// <summary>Creates a fixed size expressed in bytes.</summary>
     /// <param name="count">The count.</param>
-    /// <returns></returns>
+    /// <returns>A column size with the specified count expressed in bytes.</returns>
     public static ColumnSize FromBytes(int count) => new(count, ColumnSizeUnit.Bytes);
 
     /// <summary>Creates a maximum character count for a text column.</summary>
     /// <param name="count">The count.</param>
-    /// <returns></returns>
+    /// <returns>A column size with the specified maximum character count.</returns>
     public static ColumnSize FromChars(int count) => new(count, ColumnSizeUnit.Chars);
 
     /// <inheritdoc/>
