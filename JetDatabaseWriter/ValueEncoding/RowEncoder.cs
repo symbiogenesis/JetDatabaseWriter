@@ -129,17 +129,16 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return 4;
 
             case T_GUID:
-                {
-                    Guid g = value is Guid guid
+                Guid g = value is Guid guid
                         ? guid
                         : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
-                    if (!g.TryWriteBytes(dest))
-                    {
-                        return 0;
-                    }
-
-                    return 16;
+                if (!g.TryWriteBytes(dest))
+                {
+                    return 0;
                 }
+
+                return 16;
+
 
             default:
                 return 0;
@@ -487,27 +486,25 @@ internal sealed class RowEncoder(AccessWriter writer)
             case T_GUID:
             case T_COMPLEX:
             case T_ATTACHMENT:
+                int fixedSize = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                if (fixedSize <= 0)
                 {
-                    int fixedSize = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
-                    if (fixedSize <= 0)
-                    {
-                        return null;
-                    }
-
-                    var payload = new byte[fixedSize];
-                    int written = TryEncodeFixedValue(column, value, payload);
-                    if (written <= 0)
-                    {
-                        return null;
-                    }
-
-                    if (written != payload.Length)
-                    {
-                        Array.Resize(ref payload, written);
-                    }
-
-                    return payload;
+                    return null;
                 }
+
+                var payload = new byte[fixedSize];
+                int written = TryEncodeFixedValue(column, value, payload);
+                if (written <= 0)
+                {
+                    return null;
+                }
+
+                if (written != payload.Length)
+                {
+                    Array.Resize(ref payload, written);
+                }
+
+                return payload;
 
             default:
                 return null;

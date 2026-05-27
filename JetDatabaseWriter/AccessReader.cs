@@ -3265,18 +3265,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_GUID:
                 case T_COMPLEX:
                 case T_ATTACHMENT:
-                    {
-                        // Delegate fixed-width primitive formatting to the shared
-                        // JetTypeInfo.ReadFixedString helper to avoid duplicating
-                        // the per-type Invariant-culture formatting block. The
-                        // length guard mirrors the historical behaviour (return
-                        // empty when the variable-length slice is too short to
-                        // contain the type's fixed payload) — JetTypeInfo gives
-                        // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
-                        // since they have no fixed-area size of their own.
-                        int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                        return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
-                    }
+                    // Delegate fixed-width primitive formatting to the shared
+                    // JetTypeInfo.ReadFixedString helper to avoid duplicating
+                    // the per-type Invariant-culture formatting block. The
+                    // length guard mirrors the historical behaviour (return
+                    // empty when the variable-length slice is too short to
+                    // contain the type's fixed payload) — JetTypeInfo gives
+                    // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
+                    // since they have no fixed-area size of their own.
+                    int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
+                    return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
+
 
                 default:
                     return string.Empty;
