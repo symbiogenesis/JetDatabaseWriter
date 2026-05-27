@@ -15,9 +15,10 @@ or moves to a slower CI/security lane.
   `WarningLevel 9999`, `AnalysisLevel latest-all`, .NET analyzers,
   warnings-as-errors, build-time code style, XML documentation generation, and
   checked arithmetic globally.
-- [Directory.Build.props](../../Directory.Build.props) references
-  `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `Roslynator.Analyzers`,
-  `SecurityCodeScan.VS2019`, and `StyleCop.Analyzers` for every project.
+- [Directory.Build.props](../../Directory.Build.props) currently references
+  `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `Roslynator.Analyzers`, and
+  `StyleCop.Analyzers` for every project. `SecurityCodeScan.VS2019` was
+  removed from local builds after the 2026-05-27 removal experiment below.
 - [Directory.Packages.props](../../Directory.Packages.props) currently pins
   `StyleCop.Analyzers` to `1.2.0-beta.556`, with package-lock files resolving
   `StyleCop.Analyzers.Unstable` transitively.
@@ -181,7 +182,8 @@ passed in `50.8s`.
 
 ### 2. Remove or Move `SecurityCodeScan.VS2019` Out of Local Builds
 
-Verdict: strongest heavy-package removal candidate.
+Verdict: removed from local builds. Bring it back only through an explicit
+slower CI/security-lane decision.
 
 Why:
 
@@ -199,21 +201,142 @@ Why:
 - In the test-project timing, the web-only rules were nearly free; the expensive
   portion was mostly taint and crypto analysis. Disabling irrelevant web rules
   may reduce noise but is not likely to recover most of the measured time.
+- SecurityCodeScan's unique value is broad interprocedural taint analysis. That
+  is not something [BannedSymbols.txt](../../BannedSymbols.txt) or curated
+  `Meziantou.Analyzer` rules can reproduce. For this library, the useful local
+  replacements are narrower: SDK security analyzers for common vulnerability
+  classes, banned APIs for hard local policy, and Meziantou rules for process
+  start, certificate validation, regex timeout, and adjacent correctness checks.
+
+Rule-level coverage review from 2026-05-27:
+
+| SCS rule | What it detects | Coverage or replacement read | Local recommendation |
+|----------|-----------------|------------------------------|----------------------|
+| `SCS0001` | Command injection through process execution. | Existing bans already block ambiguous `Process.Start` overloads. SDK security analyzers cover process-command injection patterns. Future Meziantou `MA0161`-`MA0163` can require safer `ProcessStartInfo`/`UseShellExecute` shape, but not full taint replacement. | Keep SCS out locally; keep the existing bans and add curated Meziantou process rules later. |
+| `SCS0002` | SQL injection. | SDK security analyzers cover SQL-injection patterns. BannedApi could ban SQL command APIs, but that would be a blunt policy and this repo does not execute SQL against user input. Meziantou does not replace this. | Do not keep SCS locally for this; use SDK coverage and avoid adding SQL-specific APIs unless a feature requires them. |
+| `SCS0003` | XPath injection. | SDK security analyzers cover XPath-injection patterns. BannedApi could ban XPath APIs, but cannot distinguish safe literal queries from unsafe dynamic query construction. | Rely on SDK coverage; only add bans if XPath APIs are never intended in this codebase. |
+| `SCS0004` | Disabled certificate validation. | SDK security analyzers cover common certificate-validation bypasses. Future Meziantou `MA0039` also flags custom certificate validation. BannedApi could ban certificate-validation callback APIs if this repo should never customize them. | Use SDK plus future Meziantou; no SCS local build need. |
+| `SCS0005` | Weak random number generation. | SDK `CA5394` already covers insecure randomness. BannedApi could ban `Random`, but this repo has legitimate fuzz/test use. | Keep SDK coverage and scoped suppressions for non-security randomness. |
+| `SCS0006` | Weak hashing such as MD5 or SHA-1. | SDK crypto rules plus existing bans for `MD5` and `SHA1` cover this. Current suppressions are for spec-required legacy formats. | Covered locally without SCS. |
+| `SCS0007` | XML external entity processing. | SDK XML security analyzers cover unsafe parser configuration. BannedApi can ban specific XML types or resolvers, but cannot express "configured safely" without blocking legitimate XML use. | Rely on SDK coverage; avoid broad XML bans unless a precise high-signal symbol appears. |
+| `SCS0008` | Cookie without `Secure`. | Web-only. BannedApi could only ban cookie APIs wholesale. Meziantou is not a replacement. | No fit for this library. |
+| `SCS0009` | Cookie without `HttpOnly`. | Web-only. BannedApi could only ban cookie APIs wholesale. Meziantou is not a replacement. | No fit for this library. |
+| `SCS0010` | Weak cipher algorithms such as DES/3DES. | SDK crypto rules plus existing bans for `DES`, `RC2`, `Rijndael`, and `TripleDES` cover this. | Covered locally without SCS. |
+| `SCS0011` | Unsafe XSLT settings. | SDK XML/XSLT security coverage is the better fit. BannedApi could ban XSLT APIs if this repo should never load XSLT, but that is a technology ban rather than a safety check. | Do not keep SCS locally; consider a ban only if XSLT appears unexpectedly. |
+| `SCS0012` | ASP.NET controller action missing authorization annotations. | ASP.NET-specific. BannedApi and Meziantou are not meaningful replacements. | No fit for this library. |
+| `SCS0013` | Weak or unauthenticated cipher modes. | SDK crypto rules already flag the relevant patterns; this repo intentionally suppresses some findings where Office/Jet compatibility requires ECB/CBC/IV behavior. BannedApi could ban `CipherMode.ECB`, but that would conflict with required legacy formats. | Keep SDK coverage and intentional suppressions; do not keep SCS locally. |
+| `SCS0015` | Hardcoded password passed to known password APIs. | Not well covered by BannedApi unless banning specific password setter APIs. Meziantou does not replace this. Secret scanning or CodeQL/Sonar-style scanning is a better slower-lane fit. | Low local value; use slower-lane secret scanning if desired. |
+| `SCS0016` | Missing anti-forgery token on ASP.NET POST actions. | ASP.NET-specific. | No fit for this library. |
+| `SCS0017` | ASP.NET request validation disabled by attribute. | ASP.NET-specific. | No fit for this library. |
+| `SCS0018` | Path traversal. | SDK security taint analyzers cover file-path injection. BannedApi is a poor replacement because file/path APIs are central to the library and cannot encode trust boundaries. Meziantou does not replace this. | The most plausible lost SCS check, but host applications own user-controlled paths; rely on SDK/local API design. |
+| `SCS0019` | ASP.NET output cache conflicts with authorization. | ASP.NET MVC-specific. | No fit for this library. |
+| `SCS0021` | `validateRequest=false` in Web.config. | ASP.NET/Web.config-specific. | No fit for this library. |
+| `SCS0022` | ASP.NET event validation disabled. | ASP.NET/Web.config-specific. | No fit for this library. |
+| `SCS0023` | View state not encrypted. | ASP.NET WebForms-specific. | No fit for this library. |
+| `SCS0024` | View state MAC disabled. | ASP.NET WebForms-specific. | No fit for this library. |
+| `SCS0026` | LDAP distinguished-name injection. | SDK security analyzers cover LDAP-injection patterns. BannedApi could ban LDAP APIs if they are never intended. Meziantou does not replace this. | No fit unless LDAP support is introduced. |
+| `SCS0027` | Open redirect. | Web-specific; SDK security analyzers cover common redirect vulnerabilities. BannedApi and Meziantou are poor replacements. | No fit for this library. |
+| `SCS0028` | Insecure deserialization of untrusted data. | SDK deserialization rules plus the existing `BinaryFormatter` ban cover the highest-value local policy. BannedApi could add more serializer bans if those APIs or packages are introduced. Meziantou is not a replacement. | Covered enough locally; add targeted bans only when new risky serializers appear. |
+| `SCS0029` | Cross-site scripting. | Web-output-specific; SDK security analyzers cover common XSS classes. BannedApi and Meziantou are not useful replacements. | No fit for this library. |
+| `SCS0030` | Request validation mode protects only pages, not all requests. | ASP.NET/Web.config-specific. | No fit for this library. |
+| `SCS0031` | LDAP filter injection. | SDK security analyzers cover LDAP-injection patterns. BannedApi could ban LDAP APIs if they are never intended. Meziantou does not replace this. | No fit unless LDAP support is introduced. |
+| `SCS0032` | ASP.NET Identity password minimum length too small. | ASP.NET Identity-specific. | No fit for this library. |
+| `SCS0033` | ASP.NET Identity password complexity too weak. | ASP.NET Identity-specific. | No fit for this library. |
+| `SCS0034` | ASP.NET Identity password required length not set. | ASP.NET Identity-specific. | No fit for this library. |
+
+Actionable interpretation:
+
+- Keep SDK security analyzers as the local default for injection, XML safety,
+  deserialization, and crypto categories.
+- Keep [BannedSymbols.txt](../../BannedSymbols.txt) focused on symbols that are
+  never acceptable here, such as weak crypto types, `BinaryFormatter`, blocking
+  APIs, legacy HTTP APIs, and ambiguous process-start overloads.
+- Do not try to encode taint-flow checks in BannedApi. It is excellent for
+  symbol policy, but it cannot model user-controlled input, sanitizer use, or
+  required safe configuration.
+- Treat Meziantou as a curated hygiene layer, not a SecurityCodeScan
+  replacement. The useful overlap is process-start shape, certificate
+  validation, regex timeout/source-generator guidance, stream-read checks,
+  awaited disposal, string/culture checks, and cancellation-token forwarding.
+- If broad taint/security scanning is desired, run it outside normal local
+  builds through CodeQL, SonarAnalyzer/SonarCloud, Puma Scan, or the
+  SecurityCodeScan standalone runner in a scheduled/manual lane.
+
+Removal experiment completed on 2026-05-27 after the
+`Roslynator.Refactorings` package removal. The removed-state command was:
+
+```powershell
+dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m -t:Rebuild /p:ReportAnalyzer=true -bl:<binlog> -v:detailed
+```
+
+Control state with `SecurityCodeScan.VS2019` still present after
+`Roslynator.Refactorings` removal:
+
+| Run | Text log | MSBuild elapsed | Warnings | Errors |
+|-----|----------|-----------------|----------|--------|
+| 1 | [securitycodescan-control-run1-20260527-144507.log](../../obj/AnalyzerTiming/securitycodescan-control-run1-20260527-144507.log) | `00:00:56.82` | 0 | 0 |
+| 2 | [securitycodescan-control-run2-20260527-144605.log](../../obj/AnalyzerTiming/securitycodescan-control-run2-20260527-144605.log) | `00:00:37.11` | 0 | 0 |
+| 3 | [securitycodescan-control-run3-20260527-144644.log](../../obj/AnalyzerTiming/securitycodescan-control-run3-20260527-144644.log) | `00:00:29.88` | 0 | 0 |
+
+Removed state:
+
+| Run | Text log | Binary log | Outer stopwatch | MSBuild elapsed | Warnings | Errors |
+|-----|----------|------------|-----------------|-----------------|----------|--------|
+| 1 | [securitycodescan-removed-run1-20260527-152229.log](../../obj/AnalyzerTiming/securitycodescan-removed-run1-20260527-152229.log) | [securitycodescan-removed-run1-20260527-152229.binlog](../../obj/AnalyzerTiming/securitycodescan-removed-run1-20260527-152229.binlog) | `00:00:14.7702552` | `00:00:14.32` | 0 | 0 |
+| 2 | [securitycodescan-removed-run2-20260527-152244.log](../../obj/AnalyzerTiming/securitycodescan-removed-run2-20260527-152244.log) | [securitycodescan-removed-run2-20260527-152244.binlog](../../obj/AnalyzerTiming/securitycodescan-removed-run2-20260527-152244.binlog) | `00:00:15.8959698` | `00:00:15.46` | 0 | 0 |
+| 3 | [securitycodescan-removed-run3-20260527-152300.log](../../obj/AnalyzerTiming/securitycodescan-removed-run3-20260527-152300.log) | [securitycodescan-removed-run3-20260527-152300.binlog](../../obj/AnalyzerTiming/securitycodescan-removed-run3-20260527-152300.binlog) | `00:00:16.6763203` | `00:00:16.23` | 0 | 0 |
+
+Result: the removed-state MSBuild median was `15.46s`, compared with the
+control median of `37.11s`. That is a median improvement of `21.65s`, or about
+`58%`, with no warnings or errors. The removed-state outer stopwatch median was
+`15.90s`; the earlier control outer-stopwatch median was about `38.00s`.
+
+The run 1 removed-state analyzer totals by compiler invocation were:
+
+| Compiler invocation | Total analyzer execution time |
+|---------------------|-------------------------------|
+| `JetDatabaseWriter` `net10.0` | 10.881s |
+| `JetDatabaseWriter` `netstandard2.1` | 11.203s |
+| `JetDatabaseWriter.Scaffold` `net10.0` | 0.133s |
+| `JetDatabaseWriter.Benchmarks` `net10.0` | 0.495s |
+| `JetDatabaseWriter.FormatProbe` `net10.0` | 13.767s |
+| `JetDatabaseWriter.Tests` `net10.0` | 15.627s |
+
+Decision: keep `SecurityCodeScan.VS2019` out of local builds. The measured
+speedup is large, the local warning count stayed at zero, and the rule-level
+coverage review above shows that the useful local concerns are already covered
+or better handled by SDK analyzers, focused BannedApi policy, and the later
+curated Meziantou trial. Broad taint/security scanning remains a separate
+slower-lane decision.
 
 Replacement path:
 
-- [ ] First remove `SecurityCodeScan.VS2019` from local builds and measure the
-      same Release commands three times.
-- [ ] Keep SDK security CA rules enabled unless a specific rule proves too slow
-      or too noisy.
+- [x] Remove `SecurityCodeScan.VS2019` from the global build package references
+      for the local-build removal experiment.
+- [x] Run the same forced Release commands three times in the removed state and
+      compare median elapsed time against the control median of `38.00s` from
+      the post-`Roslynator.Refactorings` state.
+- [x] Capture removed-state analyzer timing, warning/error counts, text logs,
+      and binlogs under `obj/AnalyzerTiming`.
+- [x] Keep SDK security CA rules enabled for the local-build removal decision.
 - [ ] Add cheap project-specific security bans to
-      [BannedSymbols.txt](../../BannedSymbols.txt) when the desired rule is just
-      "never call this API here".
-- [ ] Move broad security/code-smell scanning to a slower lane: CodeQL,
-      SonarAnalyzer/SonarCloud, Puma Scan, or a scheduled CI job.
+      [BannedSymbols.txt](../../BannedSymbols.txt) only when the desired rule is
+      just "never call this API here"; do not add broad bans for central library
+      APIs such as file/path handling or XML unless the symbol is truly
+      forbidden.
+- [ ] During the later Meziantou trial, include process-start rules, custom
+      certificate-validation rules, and regex-timeout rules as the
+      security-adjacent overlap that usefully replaces part of SCS locally.
+- [x] Defer the broad security/code-smell scanning lane decision until after
+      local analyzer-removal experiments are complete. Candidate lanes remain
+      CodeQL, SonarAnalyzer/SonarCloud, Puma Scan, SecurityCodeScan standalone,
+      or a scheduled CI job.
 - [ ] If a Roslyn security package is still wanted locally, trial
       `SonarAnalyzer.CSharp` or another security analyzer in isolation before
       adopting it. Assume it is costly until measured.
+- [x] Update this section and the Suggested Order of Work. No
+      [README.md](../../README.md) update was needed because it does not name
+      `SecurityCodeScan.VS2019`.
 
 ### 3. Gradually Retire `StyleCop.Analyzers`
 
@@ -445,10 +568,12 @@ Practical model:
 - [x] Capture current clean Release build time, analyzer timing, warning count,
       and binary log after the unrelated test analyzer failures are fixed.
 - [x] Remove `Roslynator.Refactorings` from build `PackageReference` items.
-- [ ] Run a one-package-at-a-time local-build removal experiment for
-      `SecurityCodeScan.VS2019`.
-- [ ] Decide whether broad security scanning should move to CodeQL,
-      SonarAnalyzer/SonarCloud, Puma Scan, or a scheduled CI lane.
+- [x] Complete the one-package-at-a-time local-build removal experiment for
+      `SecurityCodeScan.VS2019` by capturing removed-state timings and updating
+      the final decision.
+- [x] Defer the broad security-scanning lane decision for now; revisit CodeQL,
+      SonarAnalyzer/SonarCloud, Puma Scan, or a scheduled CI lane after local
+      analyzer-removal experiments are complete.
 - [ ] Inventory current StyleCop diagnostics in a strict Release build before
       removing StyleCop.
 - [ ] Expand [.editorconfig](../../.editorconfig) only for obvious existing

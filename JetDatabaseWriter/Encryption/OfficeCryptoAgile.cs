@@ -650,7 +650,6 @@ internal static class OfficeCryptoAgile
 
         using (aes)
         {
-#pragma warning disable SCS0013 // This is required for ECMA-376-compliant AES-CBC encryption.
 #if NET6_0_OR_GREATER
             aes.Key = key;
             return encrypt
@@ -658,7 +657,6 @@ internal static class OfficeCryptoAgile
                 : aes.DecryptCbc(data, iv, PaddingMode.None);
 #else
             aes.Mode = CipherMode.CBC;
-#pragma warning restore SCS0013 // This is required for ECMA-376-compliant AES-CBC encryption.
             aes.Padding = PaddingMode.None;
             aes.Key = key;
             aes.IV = iv;
