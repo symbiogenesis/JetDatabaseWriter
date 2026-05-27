@@ -16,7 +16,7 @@ using Xunit;
 
 /// <summary>
 /// Fuzz test for AccessWriter. This test is designed to find crashes and robustness issues by exploring random combinations of options and data.
-/// It is NOT required for full code coverage and should be run explicitly with the <c>Category=Fuzz</c> trait because it is slow and non-deterministic.
+/// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it is slow and non-deterministic.
 /// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
 /// </summary>
 public class AccessWriterFuzzTests(ITestOutputHelper output)
@@ -24,7 +24,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     private static readonly DatabaseFormat[] Formats = Enum.GetValues<DatabaseFormat>();
 
     [Trait("Category", "Fuzz")]
-    [Fact]
+    [Fact(Explicit = true)]
     public async Task FuzzAccessWriter()
     {
         var ct = TestContext.Current.CancellationToken;

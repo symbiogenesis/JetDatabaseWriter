@@ -13,13 +13,13 @@ using Xunit;
 
 /// <summary>
 /// Fuzz test for AccessReader. This test is designed to find crashes and robustness issues by exploring random input data.
-/// It is NOT required for full code coverage and should be run explicitly with the <c>Category=Fuzz</c> trait because it is slow and non-deterministic.
+/// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it is slow and non-deterministic.
 /// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
 /// </summary>
 public class AccessReaderFuzzTests(ITestOutputHelper output)
 {
     [Trait("Category", "Fuzz")]
-    [Fact]
+    [Fact(Explicit = true)]
     public async Task FuzzAccessReader()
     {
         var ct = TestContext.Current.CancellationToken;

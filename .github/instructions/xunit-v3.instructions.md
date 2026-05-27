@@ -22,6 +22,7 @@ applyTo: "**/*Tests*/**,**/*.Tests.csproj"
 | Run all tests in a namespace | `dotnet test --project JetDatabaseWriter.Tests --filter-namespace "JetDatabaseWriter.Tests.Internal"` |
 | Exclude class / method / namespace | `--filter-not-class`, `--filter-not-method`, `--filter-not-namespace` |
 | Run or exclude trait/category | `--filter-trait Category=Fuzz`, `--filter-not-trait Category=Fuzz` |
+| Run explicit fuzz harnesses | `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only` |
 | Stop on first failure | `dotnet test --project JetDatabaseWriter.Tests --stop-on-fail on` |
 | List tests | `dotnet test --project JetDatabaseWriter.Tests --list-tests` |
 | List switches | `dotnet test --project JetDatabaseWriter.Tests -?` |
@@ -29,7 +30,7 @@ applyTo: "**/*Tests*/**,**/*.Tests.csproj"
 - Prefer fully-qualified names (`Namespace.Class.Method`) for unambiguous filters.
 - Multiple filter values are space-separated after one switch, for example `--filter-class Foo Bar`; do not repeat the same switch for each value.
 - Discover tests with `--list-tests`, then pipe through `Select-String` for a partial name before constructing a filter.
-- This repo uses `[Trait("Category", "Fuzz")]` for open-ended SharpFuzz harnesses. The default VS Code `test: all` and `test: stop on first failure` tasks exclude them with `--filter-not-trait Category=Fuzz`; run `test: fuzz` or `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz` only when you intend to run the open-ended harnesses.
+- This repo uses `[Fact(Explicit = true)]` and `[Trait("Category", "Fuzz")]` for open-ended SharpFuzz harnesses. A plain `dotnet test --project JetDatabaseWriter.Tests` run skips them by default; run `test: fuzz` or `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only` only when you intend to run the open-ended harnesses.
 - Use `--xunit-info` only when you need xUnit's native discovery/run banner.
 
 ## Writing Tests

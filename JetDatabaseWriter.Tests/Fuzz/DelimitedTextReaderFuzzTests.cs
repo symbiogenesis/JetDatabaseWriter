@@ -10,7 +10,7 @@ using SharpFuzz;
 using Xunit;
 
 /// <summary>
-/// SharpFuzz harness for the internal delimited text reader. Run explicitly with the <c>Category=Fuzz</c> trait.
+/// SharpFuzz harness for the internal delimited text reader. Run as an explicit <c>Category=Fuzz</c> test.
 /// </summary>
 public sealed class DelimitedTextReaderFuzzTests
 {
@@ -32,7 +32,7 @@ public sealed class DelimitedTextReaderFuzzTests
     /// Runs the SharpFuzz delimited text harness.
     /// </summary>
     [Trait("Category", "Fuzz")]
-    [Fact]
+    [Fact(Explicit = true)]
     public void FuzzDelimitedTextReader()
     {
         Fuzzer.Run(stream =>

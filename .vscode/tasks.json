@@ -31,7 +31,9 @@
         "--project",
         "JetDatabaseWriter.Tests",
         "--filter-trait",
-        "Category=Fuzz"
+        "Category=Fuzz",
+        "--explicit",
+        "only"
       ],
       "group": "test",
       "problemMatcher": "$msCompile",
