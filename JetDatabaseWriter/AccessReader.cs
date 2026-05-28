@@ -1431,12 +1431,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 link => LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken),
                 (source, link) => source.ReadDataTableCoreAsync(link.SourceObjectName, maxRows, progress, preserveComplexReferences, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
-            if (linkedTable != null)
-            {
-                return linkedTable;
-            }
 
-            return new DataTable(tableName);
+#pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+            return linkedTable ?? new DataTable(tableName);
+#pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
         }
 
         var (entry, td) = resolved.Value;
@@ -2049,12 +2047,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 link => LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken),
                 (source, link) => source.ReadTableAsStringsAsync(link.SourceObjectName, maxRows, progress, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
-            if (linkedTable != null)
-            {
-                return linkedTable;
-            }
 
-            return new DataTable(tableName);
+#pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+            return linkedTable ?? new DataTable(tableName);
+#pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
         }
 
         var (entry, td) = resolved.Value;
