@@ -14,7 +14,7 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode NumberValue(Dictionary<string, string> context, SymbolRange range, double value) => new CalculatedExpressionValueNode(value);
 
-    public CalculatedExpressionNode TextValue(Dictionary<string, string> context, SymbolRange range, string value) => new CalculatedExpressionValueNode(value);
+    public CalculatedExpressionNode TextValue(Dictionary<string, string> context, SymbolRange range, string text) => new CalculatedExpressionValueNode(text);
 
     public CalculatedExpressionNode ErrorValue(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> error) => new CalculatedExpressionUnsupportedNode($"Calculated-column error literal '{error.ToString()}' is not supported.");
 
@@ -28,7 +28,7 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode NumberNode(Dictionary<string, string> context, SymbolRange range, double value) => new CalculatedExpressionValueNode(value);
 
-    public CalculatedExpressionNode TextNode(Dictionary<string, string> context, SymbolRange range, string value) => new CalculatedExpressionValueNode(value);
+    public CalculatedExpressionNode TextNode(Dictionary<string, string> context, SymbolRange range, string text) => new CalculatedExpressionValueNode(text);
 
     public CalculatedExpressionNode Reference(Dictionary<string, string> context, SymbolRange range, ReferenceArea reference) => new CalculatedExpressionUnsupportedNode("Calculated-column cell references are not supported; use column names instead.");
 
@@ -42,15 +42,15 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode ExternalReference3D(Dictionary<string, string> context, SymbolRange range, int workbookIndex, string firstSheet, string lastSheet, ReferenceArea reference) => new CalculatedExpressionUnsupportedNode("Calculated-column external references are not supported.");
 
-    public CalculatedExpressionNode Function(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> args) => CreateFunctionNode(functionName.ToString(), args);
+    public CalculatedExpressionNode Function(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> arguments) => CreateFunctionNode(functionName.ToString(), arguments);
 
-    public CalculatedExpressionNode Function(Dictionary<string, string> context, SymbolRange range, string prefix, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> args) => CreateFunctionNode(functionName.ToString(), args);
+    public CalculatedExpressionNode Function(Dictionary<string, string> context, SymbolRange range, string sheetName, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> args) => CreateFunctionNode(functionName.ToString(), args);
 
-    public CalculatedExpressionNode ExternalFunction(Dictionary<string, string> context, SymbolRange range, int workbookIndex, string prefix, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> args) => new CalculatedExpressionUnsupportedNode("Calculated-column external functions are not supported.");
+    public CalculatedExpressionNode ExternalFunction(Dictionary<string, string> context, SymbolRange range, int workbookIndex, string sheetName, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> arguments) => new CalculatedExpressionUnsupportedNode("Calculated-column external functions are not supported.");
 
-    public CalculatedExpressionNode ExternalFunction(Dictionary<string, string> context, SymbolRange range, int workbookIndex, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> args) => new CalculatedExpressionUnsupportedNode("Calculated-column external functions are not supported.");
+    public CalculatedExpressionNode ExternalFunction(Dictionary<string, string> context, SymbolRange range, int workbookIndex, ReadOnlySpan<char> functionName, IReadOnlyList<CalculatedExpressionNode> arguments) => new CalculatedExpressionUnsupportedNode("Calculated-column external functions are not supported.");
 
-    public CalculatedExpressionNode CellFunction(Dictionary<string, string> context, SymbolRange range, RowCol cell, IReadOnlyList<CalculatedExpressionNode> args) => new CalculatedExpressionUnsupportedNode("Calculated-column cell functions are not supported.");
+    public CalculatedExpressionNode CellFunction(Dictionary<string, string> context, SymbolRange range, RowCol cell, IReadOnlyList<CalculatedExpressionNode> arguments) => new CalculatedExpressionUnsupportedNode("Calculated-column cell functions are not supported.");
 
     public CalculatedExpressionNode StructureReference(Dictionary<string, string> context, SymbolRange range, StructuredReferenceArea area, string? firstColumn, string? lastColumn) => new CalculatedExpressionUnsupportedNode("Calculated-column structured references are not supported.");
 
@@ -74,9 +74,9 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode Nested(Dictionary<string, string> context, SymbolRange range, CalculatedExpressionNode node) => node;
 
-    private static CalculatedExpressionFunctionNode CreateFunctionNode(string functionName, IReadOnlyList<CalculatedExpressionNode> args)
+    private static CalculatedExpressionFunctionNode CreateFunctionNode(string functionName, IReadOnlyList<CalculatedExpressionNode> arguments)
     {
-        ValidateFunctionArgumentCount(functionName, args.Count);
-        return new CalculatedExpressionFunctionNode(functionName, args);
+        ValidateFunctionArgumentCount(functionName, arguments.Count);
+        return new CalculatedExpressionFunctionNode(functionName, arguments);
     }
 }
