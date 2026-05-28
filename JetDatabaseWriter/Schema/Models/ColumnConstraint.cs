@@ -26,7 +26,9 @@ internal sealed class ColumnConstraint
 
     public byte CalculatedResultType { get; set; }
 
-    // Lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
+    /// <summary>
+    /// Lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
+    /// </summary>
     public long? NextAutoValue { get; set; }
 
     internal Expressions.CalculatedExpressionEvaluator.Plan? CalculatedExpressionPlan { get; set; }

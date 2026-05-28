@@ -105,12 +105,14 @@ internal static class TestDatabases
     /// <summary>Small database created to regression-test mdbtools' date parser.</summary>
     public static readonly string MdbtoolsDateTestDatabase = Mt("DateTestDatabase.mdb");
 
-    // Root-level Jackcess fixtures
+    // ── Root-level Jackcess fixtures ───────────────────────────────────
+
     public static readonly string AdoxJet4 = Jc("adox_jet4.mdb");
     public static readonly string LinkeeTest = Jc("linkeeTest.accdb");
     public static readonly string Test2BinData = Jc("test2BinData.dat");
 
-    // V1997 — Jet 3 / Access 97
+    // ── V1997 — Jet 3 / Access 97 ──────────────────────────────────────
+
     public static readonly string CompIndexTestV1997 = Jc(1997, "compIndexTest");
     public static readonly string DelColTestV1997 = Jc(1997, "delColTest");
     public static readonly string DelTestV1997 = Jc(1997, "delTest");
@@ -121,7 +123,8 @@ internal static class TestDatabases
     public static readonly string TestIndexCodesV1997 = Jc(1997, "testIndexCodes");
     public static readonly string TestV1997 = Jc(1997, "test");
 
-    // V2000 — Jet 4 / Access 2000
+    // ── V2000 — Jet 4 / Access 2000 ────────────────────────────────────
+
     public static readonly string BigIndexTestV2000 = Jc(2000, "bigIndexTest");
     public static readonly string CompIndexTestV2000 = Jc(2000, "compIndexTest");
     public static readonly string DelColTestV2000 = Jc(2000, "delColTest");
@@ -139,7 +142,8 @@ internal static class TestDatabases
     public static readonly string TestRefGlobalV2000 = Jc(2000, "testRefGlobal");
     public static readonly string TestV2000 = Jc(2000, "test");
 
-    // V2003 — Jet 4 / Access 2003
+    // ── V2003 — Jet 4 / Access 2003 ────────────────────────────────────
+
     public static readonly string BigIndexTestV2003 = Jc(2003, "bigIndexTest");
     public static readonly string CompIndexTestV2003 = Jc(2003, "compIndexTest");
     public static readonly string DelColTestV2003 = Jc(2003, "delColTest");
@@ -157,7 +161,8 @@ internal static class TestDatabases
     public static readonly string TestUnicodeCompV2003 = Jc(2003, "testUnicodeComp");
     public static readonly string TestV2003 = Jc(2003, "test");
 
-    // V2007 — ACE / Access 2007
+    // ── V2007 — ACE / Access 2007 ────────────────────────────────────
+
     public static readonly string BigIndexTestV2007 = Jc(2007, "bigIndexTest");
     public static readonly string CompIndexTestV2007 = Jc(2007, "compIndexTest");
     public static readonly string ComplexDataTestV2007 = Jc(2007, "complexDataTest");
@@ -180,7 +185,8 @@ internal static class TestDatabases
     public static readonly string TestV2007 = Jc(2007, "test");
     public static readonly string UnsupportedFieldsTestV2007 = Jc(2007, "unsupportedFieldsTest");
 
-    // V2010 — ACE / Access 2010
+    // ── V2010 — ACE / Access 2010 ────────────────────────────────────
+
     public static readonly string BigIndexTestV2010 = Jc(2010, "bigIndexTest");
     public static readonly string BinIdxTestV2010 = Jc(2010, "binIdxTest");
     public static readonly string CalcFieldTestV2010 = Jc(2010, "calcFieldTest");
@@ -201,7 +207,8 @@ internal static class TestDatabases
     public static readonly string TestPromotionV2010 = Jc(2010, "testPromotion");
     public static readonly string TestV2010 = Jc(2010, "test");
 
-    // V2019 — ACE / Access 2019
+    // ── V2019 — ACE / Access 2019 ────────────────────────────────────
+
     public static readonly string ExtDateTestV2019 = Jc(2019, "extDateTest");
 
     // ── Curated lists ────────────────────────────────────────────────

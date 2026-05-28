@@ -298,7 +298,7 @@ public sealed class IndexWriterAdvancedTests
         Assert.False(col.IsAscending);
     }
 
-    // --- GUID-keyed index live B-tree maintenance ----------------------------
+    // ── GUID-keyed index live B-tree maintenance ─────────────────────────────
 
     [Fact]
     public async Task GuidIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
@@ -401,7 +401,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowAsync("T", [1.5m], ct));
     }
 
-    // --- helpers (page scanning) ---------------------------------------------
+    // ── helpers (page scanning) ─────────────────────────────────
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {

@@ -26,9 +26,11 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
     private const int LongVersionLength = 5000;
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(2);
 
-    // Versions whose payload should be long enough to spill into an LVAL chain
-    // (Memo inline limit is well below 5000 chars). The remaining versions stay
-    // short so the flat table mixes inline + chained values.
+    /// <summary>
+    /// Versions whose payload should be long enough to spill into an LVAL chain
+    /// (Memo inline limit is well below 5000 chars). The remaining versions stay
+    /// short so the flat table mixes inline + chained values.
+    /// </summary>
     private static readonly HashSet<int> LongVersionIndices = [25, 50, 75, 100, 109];
 
     /// <summary>

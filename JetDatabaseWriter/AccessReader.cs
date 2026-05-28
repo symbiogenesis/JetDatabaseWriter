@@ -85,12 +85,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly LruCache<long, byte[]>? pageCache;
     private readonly ValueDecoding.LongValueDecoder longValueDecoder;
 
-    // Memoize the parsed live-row directory per data page. Same eviction
-    // profile as _pageCache (sized 1:1 with it) so a page that's still hot in
-    // the byte-cache also keeps its bounds array. Stale entries left behind
-    // after a page is evicted from _pageCache simply age out of this LRU on
-    // their own — correctness doesn't depend on the two caches being kept in
-    // lock-step.
+    /// <summary>
+    /// Memoize the parsed live-row directory per data page. Same eviction
+    /// profile as _pageCache (sized 1:1 with it) so a page that's still hot in
+    /// the byte-cache also keeps its bounds array. Stale entries left behind
+    /// after a page is evicted from _pageCache simply age out of this LRU on
+    /// their own — correctness doesn't depend on the two caches being kept in
+    /// lock-step.
+    /// </summary>
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
     private readonly LruCache<long, RowBound[]>? rowBoundsCache;
 

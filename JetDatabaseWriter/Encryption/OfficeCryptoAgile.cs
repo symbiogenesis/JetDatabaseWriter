@@ -22,6 +22,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal static class OfficeCryptoAgile
 {
     // Agile spec block-key constants (ECMA-376 §2.3.4.13 — "Password Verifier").
+
     private static ReadOnlySpan<byte> BlockKeyVerifierHashInput =>
         [0xFE, 0xA7, 0xD2, 0x76, 0x3B, 0x4B, 0x9E, 0x79];
 
@@ -35,6 +36,7 @@ internal static class OfficeCryptoAgile
     // Emitted on encryption so MS Office files round-trip cleanly; the reader
     // tolerates a placeholder HMAC value because integrity is optional for
     // open-time decryption.
+
     private static ReadOnlySpan<byte> BlockKeyHmacKey =>
         [0x5F, 0xB2, 0xAD, 0x01, 0x0C, 0xB9, 0xE1, 0xF6];
 

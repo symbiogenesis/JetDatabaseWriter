@@ -24,8 +24,14 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    // Auto-increment values start at 1 and increase monotonically when null
-    // is supplied for each FLAG_AUTO_LONG CLR type supported by the writer.
+    /// <summary>
+    /// Auto-increment values start at 1 and increase monotonically when null
+    /// is supplied for each FLAG_AUTO_LONG CLR type supported by the writer.
+    /// </summary>
+    /// <param name="clrType">The CLR type of the column being tested.</param>
+    /// <param name="expected1">The expected value for the first row.</param>
+    /// <param name="expected2">The expected value for the second row.</param>
+    /// <param name="expected3">The expected value for the third row.</param>
     [Theory]
     [InlineData(typeof(int), 1, 2, 3)]
     [InlineData(typeof(short), (short)1, (short)2, (short)3)]
@@ -69,8 +75,11 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
     }
 
-    // FLAG_AUTO_LONG (0x04) is persisted in the TDEF column flags and surfaced
-    // through ColumnMetadata on reopen for the supported writer mappings.
+    /// <summary>
+    /// FLAG_AUTO_LONG (0x04) is persisted in the TDEF column flags and surfaced
+    /// through ColumnMetadata on reopen for the supported writer mappings.
+    /// </summary>
+    /// <param name="clrType">The CLR type of the column being tested.</param>
     [Theory]
     [InlineData(typeof(short))]
     [InlineData(typeof(int))]
@@ -100,9 +109,11 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.False(id.IsNullable);
     }
 
-    // After deleting all rows from an autonumber table, the next inserted
-    // row continues from the high-water mark — Access never re-uses counter
-    // values within a single writer session.
+    /// <summary>
+    /// After deleting all rows from an autonumber table, the next inserted
+    /// row continues from the high-water mark — Access never re-uses counter
+    /// values within a single writer session.
+    /// </summary>
     [Fact]
     public async Task AutoIncrement_AfterDeleteAllRows_DoesNotReuseValues()
     {
@@ -147,8 +158,10 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
     }
 
-    // When an explicit, non-null integer value is supplied for an autoincrement
-    // column, the writer honours the override and the value round-trips on read.
+    /// <summary>
+    /// When an explicit, non-null integer value is supplied for an autoincrement
+    /// column, the writer honours the override and the value round-trips on read.
+    /// </summary>
     [Fact]
     public async Task AutoIncrement_ExplicitValue_OverridesCounterAndRoundTrips()
     {
@@ -188,10 +201,13 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
     }
 
-    // Documents the gap relative to Jackcess: byte and long auto-increment
-    // (Jet "BigInt"/Large Number autonumber and tiny-int autonumber) remain
-    // outside the writer's supported auto-number schema. The Jackcess analogue
-    // is AutoNumberTest#testInsertLongAutoNumber.
+    /// <summary>
+    /// Documents the gap relative to Jackcess: byte and long auto-increment
+    /// (Jet "BigInt"/Large Number autonumber and tiny-int autonumber) remain
+    /// outside the writer's supported auto-number schema. The Jackcess analogue
+    /// is AutoNumberTest#testInsertLongAutoNumber.
+    /// </summary>
+    /// <param name="clrType">The CLR type of the unsupported integral type.</param>
     [Theory]
     [InlineData(typeof(byte))]
     [InlineData(typeof(long))]

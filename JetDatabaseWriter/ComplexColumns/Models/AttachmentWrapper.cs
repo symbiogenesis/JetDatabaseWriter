@@ -19,7 +19,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class AttachmentWrapper
 {
-    // Per Jackcess COMPRESSED_FORMATS: deflate is skipped for already-compressed media.
+    /// <summary>
+    /// Per Jackcess COMPRESSED_FORMATS: deflate is skipped for already-compressed media.
+    /// </summary>
     private static readonly HashSet<string> CompressedFormats = new(StringComparer.OrdinalIgnoreCase)
     {
         "jpg", "zip", "gz", "bz2", "z", "7z", "cab", "rar", "mp3", "mpg",

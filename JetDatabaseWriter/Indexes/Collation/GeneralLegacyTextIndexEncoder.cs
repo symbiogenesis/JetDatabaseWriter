@@ -44,14 +44,18 @@ internal static class GeneralLegacyTextIndexEncoder
     private const int UnprintableCountMultiplier = 4;
     private const int UnprintableOffsetFlags = 0x8000;
 
-    // V2010 (ACE / 4 KiB pages) hard cap on the encoded leaf-entry length.
-    // Empirically every Access-authored Table11 / Table11_desc long-row
-    // entry in testIndexCodesV2010.accdb is exactly 510 bytes; the encoder
-    // truncates the unflipped form mid-stream at this byte boundary,
-    // dropping END_TEXT, extras, END_EXTRA_TEXT, and the unflipped
-    // descending sentinel as needed. The exact derivation of 510 is
-    // unconfirmed; likely page_size/8 - 2 for 4 KiB pages.
-    // See docs/format-probe/format-probe-long-row-index-encoding.md.
+    /// <summary>
+    /// V2010 (ACE / 4 KiB pages) hard cap on the encoded leaf-entry length.
+    /// </summary>
+    /// <remarks>
+    /// Empirically every Access-authored Table11 / Table11_desc long-row
+    /// entry in testIndexCodesV2010.accdb is exactly 510 bytes; the encoder
+    /// truncates the unflipped form mid-stream at this byte boundary,
+    /// dropping END_TEXT, extras, END_EXTRA_TEXT, and the unflipped
+    /// descending sentinel as needed. The exact derivation of 510 is
+    /// unconfirmed; likely page_size/8 - 2 for 4 KiB pages.
+    /// See <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
+    /// </remarks>
     internal const int MaxEntryLengthGeneralV2010 = 510;
     private const byte UnprintableMidfix = 0x06;
     private const byte CrazyCodeStart = 0x80;
@@ -77,11 +81,22 @@ internal static class GeneralLegacyTextIndexEncoder
 
     internal static ReadOnlySpan<byte> SurrogateExtraBytes => [0x3F];
 
-    // 2-chunk "long-row" separators reverse-engineered from Access-authored
-    // testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
-    // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
+    /// <summary>
+    /// Gets the General Legacy two-chunk long-row separator reverse-engineered from Access-authored
+    /// testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
+    /// </summary>
+    /// <remarks>
+    /// See <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
+    /// </remarks>
     internal static ReadOnlySpan<byte> LongRowSeparatorGeneralLegacy => [0x08, 0x07, 0x08, 0x04];
 
+    /// <summary>
+    /// Gets the General two-chunk long-row separator reverse-engineered from Access-authored
+    /// testIndexCodes V2010 fixtures (Table11 / Table11_desc).
+    /// </summary>
+    /// <remarks>
+    /// See <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
+    /// </remarks>
     internal static ReadOnlySpan<byte> LongRowSeparatorGeneral => [0x07, 0x09, 0x07, 0x06];
 
     internal delegate ushort? LongRowSuffixProvider(string text, bool ascending, byte[] fullEntry);

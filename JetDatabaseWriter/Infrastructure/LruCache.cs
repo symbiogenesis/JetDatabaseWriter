@@ -24,8 +24,20 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     private readonly Node[] nodes;
     private readonly Action<TValue>? onEvict;
     private readonly ReaderWriterLockSlim rwLock = new();
-    private int nextSlot = 1; // 0 is reserved for sentinel
+
+    /// <summary>
+    /// Tracks the next allocatable node slot; slot 0 is reserved for the sentinel.
+    /// </summary>
+    private int nextSlot = 1;
+
+    /// <summary>
+    /// Cache hit counter for monitoring effectiveness. Updated under the write lock for simplicity, since hits are only recorded on entries that need to be moved to the front of the list.
+    /// </summary>
     private long hits;
+
+    /// <summary>
+    /// Cache miss counter for monitoring effectiveness. Updated under the write lock for simplicity, since misses are only recorded on entries that need to be moved to the front of the list.
+    /// </summary>
     private long misses;
 
     public LruCache(int capacity, Action<TValue>? onEvict = null)

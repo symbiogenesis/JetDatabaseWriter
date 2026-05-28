@@ -476,7 +476,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken));
     }
 
-    // --- helpers (page scanning) ---------------------------------------------
+    // ── helpers (page scanning) ─────────────────────────────────
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {

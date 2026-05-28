@@ -1045,19 +1045,28 @@ internal static class FormatProbeApplication
         Console.WriteLine($"Wrote {outPath}");
     }
 
-    // leaf-page dumper. For every real-idx in the supplied Jet3 TDEF, locates
-    // the `first_dp` page number and dumps the first leaf (page_type 0x04) bytes
-    // in their entirety. The dump is intended to be cross-referenced with §4.1
-    // (page header) and §4.2 (Jet3 bitmask at 0x16, first entry at 0xF8).
-    //
-    // Jet3's leading 8-byte real-idx skip entry block lives between the TDEF
-    // header (ends at 43) and the column descriptors (start at 43 + numRealIdx*8).
-    // mdbtools labels these per-entry fields `unknown(?) + num_idx_rows(?) + unknown(?)`
-    // — but per the Jet3 format-probe of `indexTestV1997.mdb` they almost certainly
-    // carry the `first_dp` page pointer (Jet4 carries it inside the 52-byte phys
-    // descriptor; Jet3 only has 39 bytes there with no obvious page-pointer slot).
-    // This helper tries multiple candidate offsets and reports which one resolves
-    // to a valid index page (`page_type == 0x03 || 0x04`).
+    /// <summary>
+    /// <para>
+    /// leaf-page dumper. For every real-idx in the supplied Jet3 TDEF, locates
+    /// the `first_dp` page number and dumps the first leaf (page_type 0x04) bytes
+    /// in their entirety. The dump is intended to be cross-referenced with §4.1
+    /// (page header) and §4.2 (Jet3 bitmask at 0x16, first entry at 0xF8).
+    /// </para>
+    /// <para>
+    /// Jet3's leading 8-byte real-idx skip entry block lives between the TDEF
+    /// header (ends at 43) and the column descriptors (start at 43 + numRealIdx*8).
+    /// mdbtools labels these per-entry fields `unknown(?) + num_idx_rows(?) + unknown(?)`
+    /// — but per the Jet3 format-probe of `indexTestV1997.mdb` they almost certainly
+    /// carry the `first_dp` page pointer (Jet4 carries it inside the 52-byte phys
+    /// descriptor; Jet3 only has 39 bytes there with no obvious page-pointer slot).
+    /// This helper tries multiple candidate offsets and reports which one resolves
+    /// to a valid index page (`page_type == 0x03 || 0x04`).
+    /// </para>
+    /// </summary>
+    /// <param name="reader">The AccessReader instance.</param>
+    /// <param name="sb">The StringBuilder to append output to.</param>
+    /// <param name="td">The TDEF bytes.</param>
+    /// <param name="numRealIdx">The number of real indexes.</param>
     private static async Task EmitJet3LeafPagesAsync(AccessReader reader, StringBuilder sb, byte[] td, int numRealIdx)
     {
         if (numRealIdx == 0)

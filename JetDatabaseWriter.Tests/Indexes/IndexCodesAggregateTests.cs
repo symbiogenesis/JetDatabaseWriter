@@ -41,9 +41,11 @@ public sealed class IndexCodesAggregateTests
 {
     private const int MaxDetailRowsPerIndex = 5;
 
-    // V2010+ stores text-index keys via the General (full Unicode collation)
-    // encoder, not GeneralLegacy. Validating those would require
-    // GeneralIndexEncoder, which lives in a separate diagnostic test.
+    /// <summary>
+    /// V2010+ stores text-index keys via the General (full Unicode collation)
+    /// encoder, not GeneralLegacy. Validating those would require
+    /// GeneralIndexEncoder, which lives in a separate diagnostic test.
+    /// </summary>
     public static TheoryData<string> Fixtures =>
     [
         TestDatabases.TestIndexCodesV2000,

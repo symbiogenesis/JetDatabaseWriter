@@ -179,10 +179,14 @@ internal sealed class RelationshipManager
     /// <param name="NewLeafPageNumber">The new leaf page number.</param>
     private readonly record struct FkSidePlan(int RealIdxNum, int LogicalIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
     {
-        // RealIdxNum:           real-idx slot index used for index_num2 on this side.
-        // LogicalIdxNum:        logical-idx number written as index_num for this side.
-        // AllocatesNewRealIdx:  true when a new real-idx slot must be appended.
-        // NewLeafPageNumber:    pre-allocated empty leaf page (set when AllocatesNewRealIdx).
+        /// <summary>
+        /// RealIdxNum:           real-idx slot index used for index_num2 on this side.
+        /// LogicalIdxNum:        logical-idx number written as index_num for this side.
+        /// AllocatesNewRealIdx:  true when a new real-idx slot must be appended.
+        /// NewLeafPageNumber:    pre-allocated empty leaf page (set when AllocatesNewRealIdx).
+        /// </summary>
+        /// <param name="page">The page number of the newly allocated leaf page for this side, if AllocatesNewRealIdx is true.</param>
+        /// <returns>The new plan with the given leaf page.</returns>
         public FkSidePlan WithLeafPage(long page) => this with { NewLeafPageNumber = page };
     }
 

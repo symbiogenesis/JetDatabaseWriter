@@ -478,6 +478,7 @@ internal static class JetTypeInfo
     // crackers and the encryption layer. R = read, W = write; u/i = unsigned/
     // signed; bit width. Each accepts a byte[] or (ReadOnly)Span<byte> base
     // plus an absolute offset.
+
     internal static short Ri16(byte[] b, int o) =>
         BinaryPrimitives.ReadInt16LittleEndian(b.AsSpan(o, 2));
 

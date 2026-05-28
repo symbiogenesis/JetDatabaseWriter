@@ -11,9 +11,15 @@ internal sealed class TableDef
 {
     public List<ColumnInfo> Columns { get; set; } = [];
 
-    public long RowCount { get; set; } // num_rows from TDEF page offset 16
+    /// <summary>
+    /// num_rows from TDEF page offset 16.
+    /// </summary>
+    public long RowCount { get; set; }
 
-    public bool HasDeletedColumns { get; set; } // true if ColNum sequence has gaps
+    /// <summary>
+    /// <c>true</c> if ColNum sequence has gaps.
+    /// </summary>
+    public bool HasDeletedColumns { get; set; }
 
     /// <summary>
     /// Gets the per-column CLR projection types, populated by

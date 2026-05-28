@@ -18,8 +18,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </remarks>
 internal sealed class ColumnPropertyBlock
 {
-    private const uint MagicMr2 = 0x0032524D; // "MR2\0" little-endian
-    private const uint MagicKkd = 0x00444B4B; // "KKD\0" little-endian
+    /// <summary>
+    /// &quot;MR2\0&quot; little-endian.
+    /// </summary>
+    private const uint MagicMr2 = 0x0032524D;
+
+    /// <summary>
+    /// &quot;KKD\0&quot; little-endian.
+    /// </summary>
+    private const uint MagicKkd = 0x00444B4B;
 
     /// <summary>Gets the database format the blob was parsed against.</summary>
     public DatabaseFormat Format { get; private init; }

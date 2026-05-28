@@ -203,8 +203,11 @@ public sealed class PersistedColumnPropertiesTests
 
     // ── End-to-end: CreateTableAsync persists; AccessReader reads back ─
 
-    // Keep this fixture small enough for inline LvProp storage so the test focuses
-    // on property persistence rather than external LVAL-page placement.
+    /// <summary>
+    /// Keep this fixture small enough for inline LvProp storage so the test focuses
+    /// on property persistence rather than external LVAL-page placement.
+    /// </summary>
+    /// <returns>A sample column list with various properties set, suitable for testing persistence of those properties.</returns>
     private static List<ColumnDefinition> SampleColumnsWithProperties() =>
     [
         new("Qty", typeof(int))

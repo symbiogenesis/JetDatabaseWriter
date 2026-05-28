@@ -231,6 +231,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     // ── Static helpers ────────────────────────────────────────────────
+
     internal static void ReturnPage(byte[] page)
     {
         ArrayPool<byte>.Shared.Return(page);

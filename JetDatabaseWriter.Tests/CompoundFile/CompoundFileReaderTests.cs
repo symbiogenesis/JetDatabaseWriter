@@ -137,8 +137,11 @@ public sealed class CompoundFileReaderTests
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
-    // Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    // magic signature (offset 0) MUST cause the reader to reject the file.
+    /// <summary>
+    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
+    /// magic signature (offset 0) MUST cause the reader to reject the file.
+    /// </summary>
+    /// <param name="fileName">The name of the file to test.</param>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptSignature_Throws(string fileName)
@@ -151,9 +154,13 @@ public sealed class CompoundFileReaderTests
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
-    // Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    // major-version field at offset 0x1A so it no longer matches the sector
-    // shift at 0x1E MUST be rejected.
+    /// <summary>
+    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
+    /// major-version field at offset 0x1A so it no longer matches the sector
+    /// shift at 0x1E MUST be rejected.
+    /// </summary>
+    /// <param name="fileName"></param>
+    /// <returns></returns>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptMajorVersion_Throws(string fileName)
@@ -167,9 +174,13 @@ public sealed class CompoundFileReaderTests
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
-    // Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    // sector-shift field at offset 0x1E so it is neither 9 nor 12 MUST be
-    // rejected.
+    /// <summary>
+    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
+    /// sector-shift field at offset 0x1E so it is neither 9 nor 12 MUST be
+    /// rejected.
+    /// </summary>
+    /// <param name="fileName"></param>
+    /// <returns></returns>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptSectorShift_Throws(string fileName)
@@ -183,10 +194,14 @@ public sealed class CompoundFileReaderTests
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
-    // Corrupting the NumFatSectors field (offset 0x2C) to an absurdly
-    // large value MUST NOT cause an out-of-memory crash or infinite loop.
-    // The reader clamps NumFatSectors to the physical sector count
-    // derivable from the stream length.
+    /// <summary>
+    /// Corrupting the NumFatSectors field (offset 0x2C) to an absurdly
+    /// large value MUST NOT cause an out-of-memory crash or infinite loop.
+    /// The reader clamps NumFatSectors to the physical sector count
+    /// derivable from the stream length.
+    /// </summary>
+    /// <param name="fileName"></param>
+    /// <returns></returns>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptNumFatSectors_DoesNotOom(string fileName)

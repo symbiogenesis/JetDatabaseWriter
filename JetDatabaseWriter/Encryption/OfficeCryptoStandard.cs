@@ -21,12 +21,14 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class OfficeCryptoStandard
 {
-    // AlgID constants per MS-OFFCRYPTO §2.3.6.1.
+    // ── AlgID constants per MS-OFFCRYPTO §2.3.6.1 ───────────
+
     private const int AlgIdAes128 = 0x6601;
     private const int AlgIdAes192 = 0x6602;
     private const int AlgIdAes256 = 0x6603;
 
-    // AlgIDHash constants.
+    // ── AlgIDHash constants ─────────────────────────────────
+
     private const int AlgIdHashSha1 = 0x8004;
 
     /// <summary>

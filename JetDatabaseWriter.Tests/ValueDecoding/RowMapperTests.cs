@@ -48,7 +48,10 @@ public class RowMapperTests
 
     private sealed class EmptyPoco
     {
-        // Intentionally left empty for testing.
+        /// <summary>
+        /// Intentionally left empty for testing.
+        /// </summary>
+        /// <returns>A string representation of the empty POCO, for debugging purposes.
         public override string ToString() => "EmptyPoco";
     }
 

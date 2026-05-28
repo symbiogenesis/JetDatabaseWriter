@@ -544,17 +544,32 @@ internal static class DaoBaselineProbe
 
         public required long PageCount { get; init; }
 
-        public required List<long> PagesDifferingFromBaseline { get; init; } // pages in shared range that differ
+        /// <summary>
+        /// pages in shared range that differ.
+        /// </summary>
+        public required List<long> PagesDifferingFromBaseline { get; init; }
 
-        public required List<long> PagesAddedBeyondBaseline { get; init; } // pages with index >= baseline count
+        /// <summary>
+        /// pages with index &gt;= baseline count.
+        /// </summary>
+        public required List<long> PagesAddedBeyondBaseline { get; init; }
 
-        public required Dictionary<long, byte> PageTypes { get; init; } // for the union of the above
+        /// <summary>
+        /// for the union of the above.
+        /// </summary>
+        public required Dictionary<long, byte> PageTypes { get; init; }
 
-        public required Dictionary<long, byte[]> PageBytes { get; init; } // same key set as PageTypes
+        /// <summary>
+        /// same key set as PageTypes.
+        /// </summary>
+        public required Dictionary<long, byte[]> PageBytes { get; init; }
 
         public required CatalogEntry? RtCustomers { get; init; }
 
-        public required byte[] RtTdefBytes { get; init; } // empty if not found
+        /// <summary>
+        /// empty if not found.
+        /// </summary>
+        public required byte[] RtTdefBytes { get; init; }
 
         public static async Task<ReaderSnapshot> CaptureAsync(
             AccessReader r,

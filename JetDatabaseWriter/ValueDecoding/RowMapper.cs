@@ -23,11 +23,13 @@ internal static class RowMapper<T>
     private static readonly MethodInfo CoerceToTargetMethod =
         typeof(RowMapper<T>).GetMethod(nameof(CoerceToTarget), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    // Per-TableDef cache for the compiled write delegate. Keyed by
-    // reference identity so the same TableDef instance reused across many
-    // rows pays the expression-compilation cost exactly once. TableDef is
-    // already cached upstream by AccessWriter, so a ConditionalWeakTable
-    // lets the entries fall out naturally when a TableDef is evicted.
+    /// <summary>
+    /// Per-TableDef cache for the compiled write delegate. Keyed by
+    /// reference identity so the same TableDef instance reused across many
+    /// rows pays the expression-compilation cost exactly once. TableDef is
+    /// already cached upstream by AccessWriter, so a ConditionalWeakTable
+    /// lets the entries fall out naturally when a TableDef is evicted.
+    /// </summary>
     private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = [];
 
     /// <summary>

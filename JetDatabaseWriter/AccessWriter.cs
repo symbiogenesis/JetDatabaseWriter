@@ -62,10 +62,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly ReaderWriterLockSlim stateLock = new(LockRecursionPolicy.NoRecursion);
 
-    // Office Crypto re-encryption context. When non-null, the underlying _stream is an
-    // in-memory MemoryStream containing the *decrypted* inner ACCDB; on
-    // DisposeAsync the bytes are re-encrypted with the original Office Crypto format
-    // and written back to _outerEncryptedStream (which holds the original CFB).
+    /// <summary>
+    /// Office Crypto re-encryption context. When non-null, the underlying _stream is an
+    /// in-memory MemoryStream containing the *decrypted* inner ACCDB; on
+    /// DisposeAsync the bytes are re-encrypted with the original Office Crypto format
+    /// and written back to _outerEncryptedStream (which holds the original CFB).
+    /// </summary>
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via RewrapAndCloseOuterEncryptedStreamAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly Stream? outerEncryptedStream;
     private readonly bool outerEncryptedLeaveOpen;
@@ -3076,9 +3078,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    // Matches the DAO-observed shape for a real-index usage-map page: table rows
-    // 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
-    // row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    /// <summary>
+    /// Matches the DAO-observed shape for a real-index usage-map page: table rows
+    /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
+    /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    /// </summary>
+    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The page number of the newly allocated usage-map page.</returns>
     internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
         => AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
 

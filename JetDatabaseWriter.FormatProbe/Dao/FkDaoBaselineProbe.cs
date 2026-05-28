@@ -13,9 +13,11 @@ using JetDatabaseWriter.Models;
 
 #pragma warning disable CA1303 // Diagnostic console output is not localized.
 
-// DAO-authored relationship output is the diagnostic oracle in this probe.
-// Writer-created output is only the comparison target; promote root-cause
-// findings into focused tests instead of treating generated files as fixtures.
+/// <summary>
+/// DAO-authored relationship output is the diagnostic oracle in this probe.
+/// Writer-created output is only the comparison target; promote root-cause
+/// findings into focused tests instead of treating generated files as fixtures.
+/// </summary>
 internal static class FkDaoBaselineProbe
 {
     private const string ProbeSlug = "fk-dao-baseline";

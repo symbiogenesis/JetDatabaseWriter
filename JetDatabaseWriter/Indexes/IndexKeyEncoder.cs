@@ -394,7 +394,7 @@ internal static class IndexKeyEncoder
     /// are multiplied by <c>10^(targetScale - naturalScale)</c> via
     /// <see cref="BigInteger"/> arithmetic; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
-    /// <see cref="NotSupportedException"/>, which the index maintenance maintenance loop
+    /// <see cref="NotSupportedException"/>, which the index maintenance loop
     /// catches to fall through to the stale-leaf path.
     /// </para>
     /// <para>

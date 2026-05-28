@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.LongValues.Models;
 
-// Result type for the internal LVAL chain reader.
+/// <summary>
+/// Result type for the internal LVAL chain reader.
+/// </summary>
 internal sealed record LvalChainResult
 {
     private LvalChainResult(byte[]? data, string? error)

@@ -6,13 +6,25 @@ internal sealed class ColumnInfo
 {
     public byte Type { get; set; }
 
-    public int ColNum { get; set; } // col_num: absolute column number (includes deleted cols)
+    /// <summary>
+    /// col_num: absolute column number (includes deleted cols).
+    /// </summary>
+    public int ColNum { get; set; }
 
-    public int VarIdx { get; set; } // offset_V: 0-based index in var_table
+    /// <summary>
+    /// offset_V: 0-based index in var_table.
+    /// </summary>
+    public int VarIdx { get; set; }
 
-    public int FixedOff { get; set; } // offset_F: byte offset within the fixed area
+    /// <summary>
+    /// offset_F: byte offset within the fixed area.
+    /// </summary>
+    public int FixedOff { get; set; }
 
-    public int Size { get; set; } // col_len (0 for MEMO/OLE/variable)
+    /// <summary>
+    /// col_len (0 for MEMO/OLE/variable).
+    /// </summary>
+    public int Size { get; set; }
 
     public byte Flags { get; set; }
 
@@ -88,12 +100,14 @@ internal sealed class ColumnInfo
     /// </summary>
     public byte NumericScale { get; set; }
 
-    // The FLAG_FIXED bit (0x01) in the TDEF column descriptor determines whether
-    // a column's data is stored in the fixed or variable area of the row.
-    // For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
-    // but Access system tables (e.g. complex-field flat tables) may store these
-    // types in the variable area with FLAG_FIXED cleared.
-    // Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.
+    /// <summary>
+    /// The FLAG_FIXED bit (0x01) in the TDEF column descriptor determines whether
+    /// a column's data is stored in the fixed or variable area of the row.
+    /// For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
+    /// but Access system tables (e.g. complex-field flat tables) may store these
+    /// types in the variable area with FLAG_FIXED cleared.
+    /// Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.
+    /// </summary>
     public bool IsFixed
     {
         get

@@ -700,9 +700,12 @@ public sealed class LockFileTests : IDisposable
             $"Finalizer should have removed the lockfile abandoned by the slot writer: {lockPath}");
     }
 
-    // Open the slot in a separate non-inlined helper so the local cannot
-    // stay JIT-rooted past the call site. The discarded result is then
-    // eligible for finalization on return.
+    /// <summary>
+    /// Open the slot in a separate non-inlined helper so the local cannot
+    /// stay JIT-rooted past the call site. The discarded result is then
+    /// eligible for finalization on return.
+    /// </summary>
+    /// <param name="dbPath">Path to the database (can be a synthetic empty file).</param>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void OpenAndAbandonSlot(string dbPath)
     {

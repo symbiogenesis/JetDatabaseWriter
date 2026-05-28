@@ -20,9 +20,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class EncryptionManager
 {
-    // Jet3 XOR mask (128 bytes, applied cyclically to pages 1+ when the
-    // Office97 password flag is set on a Jet3 .mdb). Sourced from mdbtools
-    // HACKING.md.
+    /// <summary>
+    /// Jet3 XOR mask (128 bytes, applied cyclically to pages 1+ when the
+    /// Office97 password flag is set on a Jet3 .mdb). Sourced from mdbtools
+    /// HACKING.md.
+    /// </summary>
     internal static readonly byte[] Jet3PageXorMask =
     [
         0xEC, 0x7B, 0x28, 0x07, 0x77, 0x26, 0x13, 0x82,
@@ -43,8 +45,10 @@ internal static class EncryptionManager
         0x19, 0xEB, 0xB1, 0xF9, 0x4F, 0x5D, 0xD1, 0x12,
     ];
 
-    // Jet4 password XOR mask (mdbtools / jackcess). Applied together with
-    // the 4-byte creation date at offset 0x72 to decode the stored password.
+    /// <summary>
+    /// Jet4 password XOR mask (mdbtools / jackcess). Applied together with
+    /// the 4-byte creation date at offset 0x72 to decode the stored password.
+    /// </summary>
     internal static readonly byte[] Jet4PasswordMask =
     [
         0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
@@ -54,8 +58,10 @@ internal static class EncryptionManager
         0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
     ];
 
-    // ACE legacy password mask used for password-only ACCDB files
-    // created via DBEngine.CompactDatabase(..., ";pwd=...").
+    /// <summary>
+    /// ACE legacy password mask used for password-only ACCDB files
+    /// created via DBEngine.CompactDatabase(..., ";pwd=...").
+    /// </summary>
     internal static readonly byte[] AccdbLegacyPasswordMask =
     [
         0x1F, 0x9B, 0xB7, 0xCA, 0xD4, 0x24, 0xD0, 0x07,
@@ -102,10 +108,12 @@ internal static class EncryptionManager
         return null;
     }
 
-    // Constant RC4 key Microsoft Access applies to header bytes [0x18 .. 0x18+126]
-    // (Jet3) or [0x18 .. 0x18+128] (Jet4/ACE) at file write time. The same key
-    // unscrambles the bytes again at read time. mdbtools applies it
-    // unconditionally in mdb_handle_from_stream (src/libmdb/file.c).
+    /// <summary>
+    /// Constant RC4 key Microsoft Access applies to header bytes [0x18 .. 0x18+126]
+    /// (Jet3) or [0x18 .. 0x18+128] (Jet4/ACE) at file write time. The same key
+    /// unscrambles the bytes again at read time. mdbtools applies it
+    /// unconditionally in mdb_handle_from_stream (src/libmdb/file.c).
+    /// </summary>
     private static readonly byte[] HeaderRc4Key = [0xC7, 0xDA, 0x39, 0x6B];
 
     /// <summary>

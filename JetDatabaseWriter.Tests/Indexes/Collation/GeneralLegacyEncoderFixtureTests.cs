@@ -43,13 +43,15 @@ public sealed class GeneralLegacyEncoderFixtureTests
         TestDatabases.TestIndexCodesV2007,
     ];
 
-    // Tables previously skipped because their indexed Memo values exceed
-    // the single-chunk indexed-text cap (127 chars). The encoder now emits
-    // the 2-chunk long-row layout reverse-engineered from the Access-authored
-    // fixtures (separator <c>08 07 08 04</c> for General Legacy, single
-    // unified extras/unprintable/crazy block, descending-pass complement
-    // applied to the joined chunks). See
-    // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
+    /// <summary>
+    /// Tables previously skipped because their indexed Memo values exceed
+    /// the single-chunk indexed-text cap (127 chars). The encoder now emits
+    /// the 2-chunk long-row layout reverse-engineered from the Access-authored
+    /// fixtures (separator <c>08 07 08 04</c> for General Legacy, single
+    /// unified extras/unprintable/crazy block, descending-pass complement
+    /// applied to the joined chunks). See
+    /// <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
+    /// </summary>
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase);
 
     [Theory]
