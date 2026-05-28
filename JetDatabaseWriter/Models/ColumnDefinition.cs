@@ -71,7 +71,7 @@ public sealed record ColumnDefinition
     /// Gets a value indicating whether this column is a Microsoft Access Hyperlink column.
     /// Persisted in the JET TDEF column-flag bit <c>HYPERLINK_FLAG_MASK = 0x80</c> so that
     /// Access opens the column with the Hyperlink data-format affordance (clickable values,
-    /// Insert Hyperlink dialog, etc.). Implies <c>T_MEMO</c>: the underlying CLR type must be
+    /// Insert Hyperlink dialog, etc.). Implies <c>Memo</c>: the underlying CLR type must be
     /// <see cref="string"/> or <see cref="Hyperlink"/> and any <see cref="MaxLength"/> hint
     /// is ignored. <c>CreateTableAsync</c> throws <see cref="ArgumentException"/>
     /// if the bit is requested on a non-text column. Surfaced to readers via
@@ -82,7 +82,7 @@ public sealed record ColumnDefinition
     public bool IsHyperlink { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this Jet4/ACE <c>T_TEXT</c> or <c>T_MEMO</c>
+    /// Gets a value indicating whether this Jet4/ACE <c>Text</c> or <c>Memo</c>
     /// column should be authored with the <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>
     /// (bit <c>0x01</c> of the descriptor ExtraFlags byte at offset 16) set.
     /// Default is <c>true</c> — matching what Microsoft Access emits when you
@@ -177,7 +177,7 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets a value indicating whether this column is an Access 2007+ Multi-Value
-    /// (complex) column (JET <c>T_COMPLEX = 0x12</c>). Stores zero or more values
+    /// (complex) column (JET <c>Complex = 0x12</c>). Stores zero or more values
     /// of <see cref="MultiValueElementType"/> per parent row in a hidden flat
     /// child table. ACE (.accdb) only.
     /// </summary>
@@ -218,22 +218,22 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets the declared precision (1..28, total significant digits) for a
-    /// <c>decimal</c> / <c>T_NUMERIC</c> column. Default <c>18</c> matches
+    /// <c>decimal</c> / <c>Numeric</c> column. Default <c>18</c> matches
     /// the Microsoft Access "Number → Decimal" UI default. Persisted to the
     /// JET TDEF column-descriptor <c>misc</c> slot at descriptor-relative
-    /// offset 11 (Jet4 / ACE only — Jet3 has no <c>T_NUMERIC</c>). Ignored
+    /// offset 11 (Jet4 / ACE only — Jet3 has no <c>Numeric</c>). Ignored
     /// for non-decimal columns.
     /// </summary>
     public byte NumericPrecision { get; init; } = 18;
 
     /// <summary>
     /// Gets the declared scale (0..28, decimal places) for a <c>decimal</c>
-    /// / <c>T_NUMERIC</c> column. Default <c>0</c> matches the Microsoft
+    /// / <c>Numeric</c> column. Default <c>0</c> matches the Microsoft
     /// Access "Number → Decimal" UI default. Persisted at descriptor-relative
     /// offset 12. Index encoders rescale every cell value to this scale via
     /// <see cref="MidpointRounding.ToEven"/> rounding so a single
     /// canonical scale governs the B-tree (mirroring Access, which stores
-    /// every <c>T_NUMERIC</c> cell at the declared scale). Must satisfy
+    /// every <c>Numeric</c> cell at the declared scale). Must satisfy
     /// <c>NumericScale &lt;= NumericPrecision</c>.
     /// </summary>
     public byte NumericScale { get; init; }

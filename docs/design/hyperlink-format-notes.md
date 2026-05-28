@@ -8,7 +8,7 @@
 
 | Aspect | Value |
 |--------|-------|
-| Column type code | `T_MEMO` (`0x0C`) |
+| Column type code | `Memo` (`0x0C`) |
 | Storage | inline (≤ 64 bytes) or LVAL chain — identical to a plain MEMO |
 | Flag bit | `0x80` on the column-descriptor flag byte (`_colFlagsOff`) |
 | Coexisting flag bits | `0x01 FLAG_FIXED` cleared (MEMO is variable), `0x02` always set (Jackcess `UNKNOWN_FF_FLAG_MASK`), `0x08` = NOT NULL, `0x04 FLAG_AUTO_LONG` not applicable, `0x40 AUTO_NUMBER_GUID` not applicable |
@@ -30,8 +30,8 @@ displaytext '#' address '#' subaddress '#' screentip
 
 | Surface | Behaviour |
 |---------|-----------|
-| `ColumnDefinition.IsHyperlink = true` | Forces `T_MEMO` and OR's `0x80` into the emitted column-flag byte. Throws `ArgumentException` if the column resolves to a non-MEMO type (e.g. `string` with `MaxLength ≤ 255`). |
-| `ColumnDefinition(name, typeof(Hyperlink))` | Equivalent shorthand: also produces `T_MEMO` with the hyperlink bit set. |
+| `ColumnDefinition.IsHyperlink = true` | Forces `Memo` and OR's `0x80` into the emitted column-flag byte. Throws `ArgumentException` if the column resolves to a non-MEMO type (e.g. `string` with `MaxLength ≤ 255`). |
+| `ColumnDefinition(name, typeof(Hyperlink))` | Equivalent shorthand: also produces `Memo` with the hyperlink bit set. |
 | `ColumnMetadata.IsHyperlink` | Reflects the bit observed on disk. |
 | `ColumnMetadata.ClrType` | `typeof(Hyperlink)` for hyperlink columns; `typeof(string)` for plain MEMO. |
 | `ColumnMetadata.TypeName` | `"Hyperlink"` for hyperlink columns; `"Memo"` for plain MEMO. |

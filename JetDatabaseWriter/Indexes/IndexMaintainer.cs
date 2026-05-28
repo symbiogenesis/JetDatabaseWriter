@@ -350,7 +350,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     {
         foreach (var column in tableDef.Columns)
         {
-            if (column.Type is T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX)
+            if (column.Type is MemoType or OleType or AttachmentType or ComplexType)
             {
                 return true;
             }
@@ -1044,7 +1044,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <summary>
     /// Encodes a single composite index key by per-column-encoding then
     /// concatenating. Honours <see cref="DatabaseFormat.Jet4Mdb"/>'s legacy
-    /// fixed-point byte-twiddling for <c>T_NUMERIC</c> columns. Throws
+    /// fixed-point byte-twiddling for <c>Numeric</c> columns. Throws
     /// whatever <see cref="IndexKeyEncoder"/> throws on encoder rejection
     /// (<see cref="NotSupportedException"/> / <see cref="ArgumentException"/>
     /// / <see cref="OverflowException"/>); callers that want soft-fail
@@ -1062,7 +1062,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         {
             (var col, int _, bool ascending) = keyColInfos[k];
             object? value = cells[k];
-            perColumn[k] = col.Type == T_NUMERIC
+            perColumn[k] = col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
                 : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
             totalLen += perColumn[k].Length;

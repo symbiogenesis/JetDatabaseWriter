@@ -68,7 +68,7 @@ public sealed record ColumnMetadata
 
     /// <summary>
     /// Gets or initializes the declared precision (1..28) for a
-    /// <c>decimal</c> / <c>T_NUMERIC</c> column. Sourced from the TDEF
+    /// <c>decimal</c> / <c>Numeric</c> column. Sourced from the TDEF
     /// column descriptor's <c>misc</c> slot at descriptor offset 11. Zero
     /// for non-numeric columns.
     /// </summary>
@@ -76,7 +76,7 @@ public sealed record ColumnMetadata
 
     /// <summary>
     /// Gets or initializes the declared scale (0..28) for a <c>decimal</c>
-    /// / <c>T_NUMERIC</c> column. Sourced from descriptor offset 12.
+    /// / <c>Numeric</c> column. Sourced from descriptor offset 12.
     /// Defines the canonical sort-key scale for any index over this column.
     /// </summary>
     public byte NumericScale { get; init; }

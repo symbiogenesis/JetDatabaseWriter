@@ -51,7 +51,7 @@ internal sealed class RowDecodePlan
         LongValueDecoder longValueDecoder,
         ref bool needsLongValue)
     {
-        bool isOle = column.Type == T_OLE;
+        bool isOle = column.Type == OleType;
         if (length >= Constants.LongValue.HeaderSize
             && (page[start + 3] & Constants.LongValue.StorageModeMask) == Constants.LongValue.InlineStorageMode)
         {
@@ -90,30 +90,30 @@ internal sealed class RowDecodePlan
         {
             switch (column.Type)
             {
-                case T_TEXT:
+                case TextType:
                     value = source.DecodeTextForFormat(page, start, length);
                     return true;
 
-                case T_BINARY:
+                case BinaryType:
                     value = page.AsSpan(start, length).ToArray();
                     return true;
 
-                case T_BYTE:
-                case T_INT:
-                case T_LONG:
-                case T_FLOAT:
-                case T_DOUBLE:
-                case T_DATETIME:
-                case T_MONEY:
-                case T_GUID:
-                case T_NUMERIC:
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case MoneyType:
+                case GuidType:
+                case NumericType:
                     int required = JetTypeInfo.GetFixedSize(column.Type);
                     if (length < required)
                     {
                         return false;
                     }
 
-                    value = JetTypeInfo.ReadFixedTyped(page, start, column, column.Type == T_NUMERIC ? length : required, strictNumeric: true);
+                    value = JetTypeInfo.ReadFixedTyped(page, start, column, column.Type == NumericType ? length : required, strictNumeric: true);
                     return value is not DBNull;
 
                 default:
@@ -296,27 +296,27 @@ internal sealed class RowDecodePlan
         {
             switch (column.Type)
             {
-                case T_TEXT:
+                case TextType:
                     return source.DecodeTextForFormat(page, start, length);
 
-                case T_BINARY:
+                case BinaryType:
                     return page.AsSpan(start, length).ToArray();
 
-                case T_MEMO:
-                case T_OLE:
+                case MemoType:
+                case OleType:
                     return DecodeLongVariableValue(source, page, start, length, column, longValueDecoder, ref needsLongValue);
 
-                case T_BYTE:
-                case T_INT:
-                case T_LONG:
-                case T_FLOAT:
-                case T_DOUBLE:
-                case T_DATETIME:
-                case T_MONEY:
-                case T_GUID:
-                case T_COMPLEX:
-                case T_ATTACHMENT:
-                    int required = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case MoneyType:
+                case GuidType:
+                case ComplexType:
+                case AttachmentType:
+                    int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                     return length >= required
                         ? JetTypeInfo.ReadFixedTyped(page, start, column, required, _strictParsing)
                         : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, _strictParsing);
@@ -355,15 +355,15 @@ internal sealed class RowDecodePlan
         {
             switch (column.Type)
             {
-                case T_TEXT:
+                case TextType:
                     byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
                     return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
-                case T_BINARY:
+                case BinaryType:
                     return CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                case T_MEMO:
-                case T_OLE:
+                case MemoType:
+                case OleType:
                     needsLongValue = true;
-                    return new CalculatedLongValueRef(start, length, column.Type == T_OLE);
+                    return new CalculatedLongValueRef(start, length, column.Type == OleType);
                 default:
                     return CalculatedColumnUtil.ReadPayloadTyped(
                         CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),

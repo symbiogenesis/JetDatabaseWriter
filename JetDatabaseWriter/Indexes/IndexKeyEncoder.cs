@@ -16,14 +16,14 @@ using static JetDatabaseWriter.Constants.IndexEntryFlags;
 /// described in <see href="docs/design/index-and-relationship-format-notes.md" /> §4.3
 /// (entry flag byte) and §5 (per-type sort-key encoding).
 /// <para>
-/// Supported column types: <c>T_BYTE (0x02)</c>, <c>T_INT (0x03)</c>,
-/// <c>T_LONG (0x04)</c>, <c>T_MONEY (0x05)</c>, <c>T_FLOAT (0x06)</c>,
-/// <c>T_DOUBLE (0x07)</c>, <c>T_DATETIME (0x08)</c>, <c>T_TEXT (0x0A)</c>
+/// Supported column types: <c>Byte (0x02)</c>, <c>Integer (0x03)</c>,
+/// <c>LongInteger (0x04)</c>, <c>Money (0x05)</c>, <c>Float (0x06)</c>,
+/// <c>Double (0x07)</c>, <c>DateTime (0x08)</c>, <c>Text (0x0A)</c>
 /// using the "General Legacy" encoding documented in HACKING.md (digits and
 /// ASCII letters only; any character outside <c>0-9 / A-Z / a-z</c> throws
 /// <see cref="NotSupportedException"/>, which the index-maintenance loop
-/// catches to leave the index leaf untouched), <c>T_GUID (0x0F)</c> and
-/// <c>T_BINARY (0x09)</c> using the Jackcess "general binary entry" wrapping
+/// catches to leave the index leaf untouched), <c>Guid (0x0F)</c> and
+/// <c>Binary (0x09)</c> using the Jackcess "general binary entry" wrapping
 /// (payload packed into 9-byte length-suffixed segments; ascending leaves
 /// data bytes intact and intermediate length bytes at <c>0x09</c> with the
 /// final length byte at the actual segment length, descending bit-flips
@@ -67,7 +67,7 @@ internal static class IndexKeyEncoder
     /// and appending the trailing 3-byte data page + 1-byte data row record
     /// pointer described in §4.3.
     /// </summary>
-    /// <param name="columnType">JET column type code (e.g. <c>T_LONG = 0x04</c>).</param>
+    /// <param name="columnType">JET column type code (e.g. <c>LongInteger = 0x04</c>).</param>
     /// <param name="value">Value to encode. <see langword="null"/> and
     /// <see cref="DBNull"/> are both treated as the SQL null marker.</param>
     /// <param name="ascending">Sort direction. <see langword="true"/> yields
@@ -91,12 +91,12 @@ internal static class IndexKeyEncoder
         // differs from the simple "ones-complement the whole entry" rule used
         // by the fixed-width numeric / IEEE / text encodings, so emit it
         // directly here instead of routing through the post-loop bulk flip.
-        if (columnType == T_GUID)
+        if (columnType == GuidType)
         {
             return EncodeGuidEntry(value!, ascending);
         }
 
-        if (columnType == T_BINARY)
+        if (columnType == BinaryType)
         {
             return EncodeBinaryEntry(value!, ascending);
         }
@@ -104,7 +104,7 @@ internal static class IndexKeyEncoder
         // Date/Time Extended (42-byte fixed) uses the same general-binary-entry
         // packing as GUID/BINARY — the raw in-row bytes are segmented into
         // 9-byte chunks with 0x09 intermediate length markers.
-        if (columnType == T_DATETIMEEXT)
+        if (columnType == DateTimeExtendedType)
         {
             return EncodeDateTimeExtEntry(value!, ascending);
         }
@@ -114,7 +114,7 @@ internal static class IndexKeyEncoder
         // + extra/unprintable/crazy streams + END_EXTRA_TEXT). The encoder
         // applies its own internal bit-flip for descending — the bulk flip
         // below is intentionally bypassed.
-        if (columnType == T_TEXT || columnType == T_MEMO)
+        if (columnType == TextType || columnType == MemoType)
         {
             return GeneralLegacyTextIndexEncoder.Encode(ToText(value!), ascending);
         }
@@ -143,11 +143,11 @@ internal static class IndexKeyEncoder
     {
         switch (columnType)
         {
-            case T_BYTE:
+            case ByteType:
                 // Access "Byte" is unsigned 0..255 — no sign bit to flip.
                 return [ToByte(value)];
 
-            case T_INT:
+            case IntegerType:
             {
                 byte[] r = new byte[2];
                 BinaryPrimitives.WriteInt16BigEndian(r, ToInt16(value));
@@ -155,7 +155,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_LONG:
+            case LongIntegerType:
             {
                 byte[] r = new byte[4];
                 BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
@@ -163,7 +163,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_MONEY:
+            case MoneyType:
             {
                 long scaled = decimal.ToOACurrency(ToDecimal(value));
                 byte[] r = new byte[8];
@@ -172,7 +172,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_FLOAT:
+            case FloatType:
             {
                 byte[] r = new byte[4];
                 BinaryPrimitives.WriteInt32BigEndian(r, BitConverter.SingleToInt32Bits(ToSingle(value)));
@@ -180,7 +180,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_DOUBLE:
+            case DoubleType:
             {
                 byte[] r = new byte[8];
                 BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(ToDouble(value)));
@@ -188,7 +188,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_DATETIME:
+            case DateTimeType:
             {
                 var dt = ToDateTime(value);
                 byte[] r = new byte[8];
@@ -197,7 +197,7 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
-            case T_BOOL:
+            case BooleanType:
                 throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
 
             default:
@@ -232,7 +232,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The ascending.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a <see cref="Guid"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a <see cref="GuidType"/>.</exception>
     private static byte[] EncodeGuidEntry(object value, bool ascending)
     {
         var g = value switch
@@ -263,7 +263,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// Variable-length <c>T_BINARY (0x09)</c> sort-key encoding via the
+    /// Variable-length <c>Binary (0x09)</c> sort-key encoding via the
     /// Jackcess general-binary-entry packing. Accepts <see cref="byte"/>[]
     /// (the canonical Access binary representation) and falls back to
     /// <see cref="Convert"/> coercion otherwise. Empty arrays are encoded as
@@ -289,7 +289,7 @@ internal static class IndexKeyEncoder
             ReadOnlyMemory<byte> rom => rom.ToArray(),
             Memory<byte> mem => mem.ToArray(),
             _ => throw new ArgumentException(
-                $"Cannot coerce value of type {value.GetType().Name} to byte[] for T_BINARY index key encoding.",
+                $"Cannot coerce value of type {value.GetType().Name} to byte[] for Binary index key encoding.",
                 nameof(value)),
         };
 
@@ -297,7 +297,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// Date/Time Extended (<c>T_DATETIMEEXT = 0x14</c>) sort-key encoding.
+    /// Date/Time Extended (<c>DateTimeExtended = 0x14</c>) sort-key encoding.
     /// The 42-byte fixed in-row representation is packed via the same
     /// general-binary-entry segmenting used for GUID and BINARY: 6 segments
     /// of 9 bytes each (8 data + 1 length), yielding a 55-byte result
@@ -313,10 +313,10 @@ internal static class IndexKeyEncoder
         {
             byte[] b when b.Length == 42 => b,
             byte[] b => throw new ArgumentException(
-                $"T_DATETIMEEXT expects exactly 42 bytes but received {b.Length}.",
+                $"DateTimeExtended expects exactly 42 bytes but received {b.Length}.",
                 nameof(value)),
             _ => throw new ArgumentException(
-                $"Cannot coerce value of type {value.GetType().Name} to byte[42] for T_DATETIMEEXT index key encoding.",
+                $"Cannot coerce value of type {value.GetType().Name} to byte[42] for DateTimeExtended index key encoding.",
                 nameof(value)),
         };
 
@@ -381,7 +381,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// Decimal (<c>T_NUMERIC = 0x10</c>) sort-key encoding via the Jackcess
+    /// Decimal (<c>Numeric = 0x10</c>) sort-key encoding via the Jackcess
     /// <c>FixedPointColumnDescriptor</c> / <c>LegacyFixedPointColumnDescriptor</c>
     /// layout. Produces the entry-flag byte (0x7F ascending non-null / 0x80
     /// descending non-null / 0x00 / 0xFF for null) followed by 17 bytes:
@@ -507,7 +507,7 @@ internal static class IndexKeyEncoder
 
     /// <summary>
     /// Decimal sort-key wrapper that mirrors Microsoft Access
-    /// semantics for canonical scale: a <c>T_NUMERIC</c> column has a single
+    /// semantics for canonical scale: a <c>Numeric</c> column has a single
     /// declared scale that governs every cell, so the index encoder rescales
     /// each value to <paramref name="declaredScale"/> via
     /// <see cref="MidpointRounding.ToEven"/> rounding before delegating to
@@ -536,7 +536,7 @@ internal static class IndexKeyEncoder
         {
             // Mirror Access: cells whose natural scale exceeds the column's
             // declared scale are rounded half-to-even to fit. (Access stores
-            // every T_NUMERIC cell at the declared scale on insert; we don't
+            // every Numeric cell at the declared scale on insert; we don't
             // round at the row-write boundary, but the index key MUST
             // be canonical or unique enforcement and seeks both break.)
             d = decimal.Round(d, declaredScale, MidpointRounding.ToEven);
@@ -684,15 +684,15 @@ internal static class IndexKeyEncoder
     /// Returns <see langword="true"/> when <paramref name="columnType"/> is
     /// supported by the relationship-seek RI enforcement path once the
     /// resolver has captured any descriptor metadata the encoder needs.
-    /// <c>T_NUMERIC</c> is seekable through the descriptor-scale wrapper;
-    /// <c>T_BOOL</c> remains excluded because BOOL is stored in the row null
+    /// <c>Numeric</c> is seekable through the descriptor-scale wrapper;
+    /// <c>Boolean</c> remains excluded because BOOL is stored in the row null
     /// mask, never in index key bytes.
     /// </summary>
     /// <param name="columnType">The column type.</param>
     internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
     {
-        T_BYTE or T_INT or T_LONG or T_MONEY or T_FLOAT or T_DOUBLE
-            or T_DATETIME or T_BINARY or T_TEXT or T_MEMO or T_GUID or T_NUMERIC => true,
+        ByteType or IntegerType or LongIntegerType or MoneyType or FloatType or DoubleType
+            or DateTimeType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
         _ => false,
     };
 }

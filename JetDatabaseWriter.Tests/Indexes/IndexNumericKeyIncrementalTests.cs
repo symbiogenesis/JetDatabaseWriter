@@ -11,7 +11,7 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
-/// Tests for T_NUMERIC incremental — drop the <c>T_NUMERIC</c> bail from the
+/// Tests for Numeric incremental — drop the <c>Numeric</c> bail from the
 /// incremental B-tree fast paths. The fast paths now use the column's DECLARED
 /// scale (persisted at TDEF column-descriptor offsets 11/12 — the same
 /// bytes Microsoft Access uses) as the canonical sort-key scale; values
@@ -68,10 +68,10 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task IncrementalSingleLeafSplice_NumericKey_DoesNotAppendFreshTree()
     {
-        // surgical single-leaf splice on a T_NUMERIC-keyed index. Before T_NUMERIC incremental
+        // surgical single-leaf splice on a Numeric-keyed index. Before Numeric incremental
         // this bailed to the bulk path which always allocates a fresh
         // leaf (and possibly intermediates) at the end of the file.
-        // After T_NUMERIC incremental the path participates: one new leaf is appended per
+        // After Numeric incremental the path participates: one new leaf is appended per
         // splice (same shape as the surgical non-numeric fast path).
         await using var stream = await CreateFreshAccdbStreamAsync();
 
@@ -129,7 +129,7 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task IncrementalTailAppend_NumericKey_RewritesTailLeafInPlace()
     {
-        // append-only tail rewrite on a T_NUMERIC-keyed index. With
+        // append-only tail rewrite on a Numeric-keyed index. With
         // declared scale=2 every value is canonical at scale 2; the
         // append fast path engages because every new key sorts strictly
         // after the current tail max.

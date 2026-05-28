@@ -409,7 +409,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.T_TEXT,
+                DataType = Constants.ColumnTypes.TextType,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -427,7 +427,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.T_MEMO,
+                DataType = Constants.ColumnTypes.MemoType,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -442,7 +442,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.T_BYTE,
+                DataType = Constants.ColumnTypes.ByteType,
                 DdlFlag = 0x01,
                 Value = [value],
             });
@@ -461,7 +461,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.T_BOOL,
+                DataType = Constants.ColumnTypes.BooleanType,
                 DdlFlag = 0x01,
                 Value = [value ? (byte)0xFF : (byte)0x00],
             });

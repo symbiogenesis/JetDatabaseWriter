@@ -31,7 +31,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         for (int i = 0; i < limit; i++)
         {
             var col = columns[i];
-            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
+            if (col.Type != ComplexType && col.Type != AttachmentType)
             {
                 continue;
             }
@@ -100,7 +100,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             }
 
             byte type = td[offset + _reader._colDesc.TypeOff];
-            if (type != T_COMPLEX && type != T_ATTACHMENT)
+            if (type != ComplexType && type != AttachmentType)
             {
                 continue;
             }
@@ -280,7 +280,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             cancellationToken.ThrowIfCancellationRequested();
 
             var col = columns[i];
-            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
+            if (col.Type != ComplexType && col.Type != AttachmentType)
             {
                 continue;
             }
@@ -341,7 +341,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         int limit = Math.Min(columns.Count, typedRow.Length);
         for (int i = 0; i < limit; i++)
         {
-            if (columns[i].Type == T_LONG && typedRow[i] is int id)
+            if (columns[i].Type == LongIntegerType && typedRow[i] is int id)
             {
                 return id;
             }
@@ -473,7 +473,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        if (colType == T_BINARY && value.AsSpan().IndexOf('-') >= 0)
+        if (colType == BinaryType && value.AsSpan().IndexOf('-') >= 0)
         {
             return BinaryStringParser.TryParseHexString(value.AsSpan(), out byte[] bytes) ? bytes : [];
         }
@@ -669,7 +669,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             int idxFk = td.FindColumnIndex(fkColName);
             if (idxFk < 0)
             {
-                idxFk = td.Columns.FindIndex(c => c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
+                idxFk = td.Columns.FindIndex(c => c.Type == LongIntegerType && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
             }
 
             if (idxFk < 0)

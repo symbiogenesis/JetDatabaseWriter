@@ -34,7 +34,7 @@ internal sealed record ColumnPropertyTarget(
     }
 
     /// <summary>
-    /// Returns the value of a Text-typed (<see cref="Constants.ColumnTypes.T_TEXT"/>)
+    /// Returns the value of a Text-typed (<see cref="Constants.ColumnTypes.TextType"/>)
     /// or Memo-typed property as a string, or <see langword="null"/> if absent or non-textual.
     /// </summary>
     /// <param name="propertyName">Property name (case-insensitive).</param>
@@ -47,8 +47,8 @@ internal sealed record ColumnPropertyTarget(
             return null;
         }
 
-        if (entry.DataType != Constants.ColumnTypes.T_TEXT &&
-            entry.DataType != Constants.ColumnTypes.T_MEMO)
+        if (entry.DataType != Constants.ColumnTypes.TextType &&
+            entry.DataType != Constants.ColumnTypes.MemoType)
         {
             return null;
         }
@@ -59,7 +59,7 @@ internal sealed record ColumnPropertyTarget(
     }
 
     /// <summary>
-    /// Returns the value of a Boolean-typed (<see cref="Constants.ColumnTypes.T_BOOL"/>)
+    /// Returns the value of a Boolean-typed (<see cref="Constants.ColumnTypes.BooleanType"/>)
     /// property as a <see cref="bool"/>, or <see langword="null"/> if absent or non-boolean.
     /// On-disk representation: single byte; any non-zero value reads as <see langword="true"/>.
     /// </summary>
@@ -67,7 +67,7 @@ internal sealed record ColumnPropertyTarget(
     public bool? GetBooleanValue(string propertyName)
     {
         var entry = Find(propertyName);
-        if (entry is null || entry.DataType != Constants.ColumnTypes.T_BOOL || entry.Value.Length == 0)
+        if (entry is null || entry.DataType != Constants.ColumnTypes.BooleanType || entry.Value.Length == 0)
         {
             return null;
         }

@@ -296,31 +296,31 @@ internal sealed class ConstraintRegistry(
     {
         switch (type)
         {
-            case T_BOOL:
+            case BooleanType:
                 return typeof(bool);
-            case T_BYTE:
+            case ByteType:
                 return typeof(byte);
-            case T_INT:
+            case IntegerType:
                 return typeof(short);
-            case T_LONG:
+            case LongIntegerType:
                 return typeof(int);
-            case T_MONEY:
+            case MoneyType:
                 return typeof(decimal);
-            case T_FLOAT:
+            case FloatType:
                 return typeof(float);
-            case T_DOUBLE:
+            case DoubleType:
                 return typeof(double);
-            case T_DATETIME:
+            case DateTimeType:
                 return typeof(DateTime);
-            case T_NUMERIC:
+            case NumericType:
                 return typeof(decimal);
-            case T_GUID:
+            case GuidType:
                 return typeof(Guid);
-            case T_TEXT:
-            case T_MEMO:
+            case TextType:
+            case MemoType:
                 return typeof(string);
-            case T_BINARY:
-            case T_OLE:
+            case BinaryType:
+            case OleType:
                 return typeof(byte[]);
             default:
                 return typeof(object);
@@ -372,13 +372,13 @@ internal sealed class ConstraintRegistry(
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
         foreach (var col in tableDef.Columns)
         {
-            // Complex columns (T_ATTACHMENT / T_COMPLEX) carry a magic Flags = 0x07
+            // Complex columns (Attachment / Complex) carry a magic Flags = 0x07
             // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
             // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
             // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. IsNullable
             // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format),
             // falling back to the legacy 0x08 bit only when LvProp is absent.
-            bool isComplex = col.Type == T_ATTACHMENT || col.Type == T_COMPLEX;
+            bool isComplex = col.Type == AttachmentType || col.Type == ComplexType;
             bool isNullable;
             bool isAutoIncrement = !isComplex && (col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
             if (isComplex)

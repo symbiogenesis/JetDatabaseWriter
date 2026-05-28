@@ -40,7 +40,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
             byte flags;
-            bool isComplex = type == T_ATTACHMENT || type == T_COMPLEX;
+            bool isComplex = type == AttachmentType || type == ComplexType;
             if (isComplex)
             {
                 flags = Constants.ColumnDescriptorFlags.ComplexColumn;
@@ -70,7 +70,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 bool wantsHyperlink = definition.IsHyperlink || definition.ClrType == typeof(Hyperlink);
                 if (wantsHyperlink)
                 {
-                    if (type != T_MEMO)
+                    if (type != MemoType)
                     {
                         throw new ArgumentException(
                             $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type 0x{type:X2}; " +
@@ -94,8 +94,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Size = size,
                 Flags = flags,
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
-                NumericPrecision = type == T_NUMERIC ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
-                NumericScale = type == T_NUMERIC ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
+                NumericPrecision = type == NumericType ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
+                NumericScale = type == NumericType ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
@@ -190,11 +190,11 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             Wu16(page, o + writer._colDesc.FixedOff, col.FixedOff);
             Wu16(page, o + writer._colDesc.SzOff, col.Size);
 
-            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            if (col.Type == AttachmentType || col.Type == ComplexType)
             {
                 Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
             }
-            else if (col.Type == T_NUMERIC && writer._format != DatabaseFormat.Jet3Mdb)
+            else if (col.Type == NumericType && writer._format != DatabaseFormat.Jet3Mdb)
             {
                 if (!col.IsCalculated)
                 {
@@ -206,7 +206,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
-            else if (jet4 && (col.Type == T_TEXT || col.Type == T_MEMO))
+            else if (jet4 && (col.Type == TextType || col.Type == MemoType))
             {
                 // Jet4/ACE text columns require two extra fields that DAO populates
                 // unconditionally; without them DAO refuses to OpenRecordset on the
@@ -516,25 +516,25 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     private static int GetDeclaredSize(byte type, int maxLength, DatabaseFormat format)
         => type switch
         {
-            T_BOOL => 0,
-            T_BYTE => 1,
-            T_INT => 2,
-            T_LONG => 4,
-            T_MONEY => 8,
-            T_FLOAT => 4,
-            T_DOUBLE => 8,
-            T_DATETIME => 8,
-            T_GUID => 16,
-            T_NUMERIC => 17,
-            T_TEXT => format != DatabaseFormat.Jet3Mdb ? Math.Max(2, (maxLength > 0 ? maxLength : 255) * 2) : (maxLength > 0 ? maxLength : 255),
-            T_BINARY => maxLength > 0 ? maxLength : 255,
-            T_ATTACHMENT or T_COMPLEX => 4,
+            BooleanType => 0,
+            ByteType => 1,
+            IntegerType => 2,
+            LongIntegerType => 4,
+            MoneyType => 8,
+            FloatType => 4,
+            DoubleType => 8,
+            DateTimeType => 8,
+            GuidType => 16,
+            NumericType => 17,
+            TextType => format != DatabaseFormat.Jet3Mdb ? Math.Max(2, (maxLength > 0 ? maxLength : 255) * 2) : (maxLength > 0 ? maxLength : 255),
+            BinaryType => maxLength > 0 ? maxLength : 255,
+            AttachmentType or ComplexType => 4,
             _ => 0,
         };
 
     private static int GetCalculatedDeclaredSize(byte type, int declaredSize)
     {
-        if (type == T_MEMO || type == T_OLE)
+        if (type == MemoType || type == OleType)
         {
             return 0;
         }
@@ -554,7 +554,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             return Constants.CalculatedColumn.ExtFlagMask;
         }
 
-        return (format != DatabaseFormat.Jet3Mdb && (type == T_TEXT || type == T_MEMO) && definition.IsCompressedUnicode)
+        return (format != DatabaseFormat.Jet3Mdb && (type == TextType || type == MemoType) && definition.IsCompressedUnicode)
             ? Constants.CompressedUnicodeExtFlagMask
             : (byte)0;
     }
@@ -682,35 +682,35 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
     private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
     [
-        ("Id",          T_LONG,     0, 0, 0,  4,           0x03),
-        ("ParentId",    T_LONG,     1, 0, 4,  4,           0x03),
-        ("Name",        T_TEXT,     2, 0, 0,  textColSize, 0x02),
-        ("Type",        T_INT,      3, 0, 8,  2,           0x03),
-        ("DateCreate",  T_DATETIME, 4, 0, 10, 8,           0x03),
-        ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,           0x03),
-        ("Flags",       T_LONG,     6, 0, 26, 4,           0x03),
-        ("ForeignName", T_TEXT,     7, 1, 0,  textColSize, 0x02),
-        ("Database",    T_TEXT,     8, 2, 0,  textColSize, 0x02),
+        ("Id",          LongIntegerType,     0, 0, 0,  4,           0x03),
+        ("ParentId",    LongIntegerType,     1, 0, 4,  4,           0x03),
+        ("Name",        TextType,     2, 0, 0,  textColSize, 0x02),
+        ("Type",        IntegerType,      3, 0, 8,  2,           0x03),
+        ("DateCreate",  DateTimeType, 4, 0, 10, 8,           0x03),
+        ("DateUpdate",  DateTimeType, 5, 0, 18, 8,           0x03),
+        ("Flags",       LongIntegerType,     6, 0, 26, 4,           0x03),
+        ("ForeignName", TextType,     7, 1, 0,  textColSize, 0x02),
+        ("Database",    TextType,     8, 2, 0,  textColSize, 0x02),
     ];
 
     private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildFullCatalogColumns(int textColSize) =>
     [
-        ("Id",           T_LONG,     0,  0, 0,  4,           0x13),
-        ("ParentId",     T_LONG,     1,  0, 4,  4,           0x13),
-        ("Name",         T_TEXT,     2,  0, 0,  textColSize, 0x12),
-        ("Type",         T_INT,      3,  0, 8,  2,           0x13),
-        ("DateCreate",   T_DATETIME, 4,  0, 10, 8,           0x13),
-        ("DateUpdate",   T_DATETIME, 5,  0, 18, 8,           0x13),
-        ("Owner",        T_BINARY,   6,  1, 0,  textColSize, 0x32),
-        ("Flags",        T_LONG,     7,  0, 26, 4,           0x13),
-        ("Database",     T_MEMO,     8,  2, 0,  0,           0x12),
-        ("Connect",      T_MEMO,     9,  3, 0,  0,           0x12),
-        ("ForeignName",  T_TEXT,     10, 4, 0,  textColSize, 0x12),
-        ("RmtInfoShort", T_BINARY,   11, 5, 0,  textColSize, 0x12),
-        ("RmtInfoLong",  T_OLE,      12, 6, 0,  0,           0x12),
-        ("Lv",           T_OLE,      13, 7, 0,  0,           0x12),
-        ("LvProp",       T_OLE,      14, 8, 0,  0,           0x12),
-        ("LvModule",     T_OLE,      15, 9, 0,  0,           0x12),
-        ("LvExtra",      T_OLE,      16, 10, 0, 0,           0x12),
+        ("Id",           LongIntegerType,     0,  0, 0,  4,           0x13),
+        ("ParentId",     LongIntegerType,     1,  0, 4,  4,           0x13),
+        ("Name",         TextType,     2,  0, 0,  textColSize, 0x12),
+        ("Type",         IntegerType,      3,  0, 8,  2,           0x13),
+        ("DateCreate",   DateTimeType, 4,  0, 10, 8,           0x13),
+        ("DateUpdate",   DateTimeType, 5,  0, 18, 8,           0x13),
+        ("Owner",        BinaryType,   6,  1, 0,  textColSize, 0x32),
+        ("Flags",        LongIntegerType,     7,  0, 26, 4,           0x13),
+        ("Database",     MemoType,     8,  2, 0,  0,           0x12),
+        ("Connect",      MemoType,     9,  3, 0,  0,           0x12),
+        ("ForeignName",  TextType,     10, 4, 0,  textColSize, 0x12),
+        ("RmtInfoShort", BinaryType,   11, 5, 0,  textColSize, 0x12),
+        ("RmtInfoLong",  OleType,      12, 6, 0,  0,           0x12),
+        ("Lv",           OleType,      13, 7, 0,  0,           0x12),
+        ("LvProp",       OleType,      14, 8, 0,  0,           0x12),
+        ("LvModule",     OleType,      15, 9, 0,  0,           0x12),
+        ("LvExtra",      OleType,      16, 10, 0, 0,           0x12),
     ];
 }

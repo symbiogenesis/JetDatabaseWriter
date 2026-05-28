@@ -2224,12 +2224,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (column.IsAttachment)
         {
-            return T_COMPLEX;
+            return ComplexType;
         }
 
         if (column.IsMultiValue)
         {
-            return T_COMPLEX;
+            return ComplexType;
         }
 
         var clrType = column.ClrType;
@@ -2237,39 +2237,39 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         switch (Type.GetTypeCode(clrType))
         {
             case TypeCode.Boolean:
-                return T_BOOL;
+                return BooleanType;
             case TypeCode.Byte:
-                return T_BYTE;
+                return ByteType;
             case TypeCode.Int16:
-                return T_INT;
+                return IntegerType;
             case TypeCode.Int32:
-                return T_LONG;
+                return LongIntegerType;
             case TypeCode.Single:
-                return T_FLOAT;
+                return FloatType;
             case TypeCode.Double:
-                return T_DOUBLE;
+                return DoubleType;
             case TypeCode.DateTime:
-                return T_DATETIME;
+                return DateTimeType;
             case TypeCode.Decimal:
-                return T_NUMERIC;
+                return NumericType;
             case TypeCode.String:
-                return column.MaxLength > 0 && column.MaxLength <= 255 ? T_TEXT : T_MEMO;
+                return column.MaxLength > 0 && column.MaxLength <= 255 ? TextType : MemoType;
             default:
                 if (clrType == typeof(Guid))
                 {
-                    return T_GUID;
+                    return GuidType;
                 }
 
                 if (clrType == typeof(Hyperlink))
                 {
                     // Hyperlink columns are MEMO + the HYPERLINK_FLAG_MASK (0x80) bit
                     // OR'd into the TDEF column-flag byte by BuildTableDefinition.
-                    return T_MEMO;
+                    return MemoType;
                 }
 
                 if (clrType == typeof(byte[]))
                 {
-                    return column.MaxLength > 0 && column.MaxLength <= 255 ? T_BINARY : T_OLE;
+                    return column.MaxLength > 0 && column.MaxLength <= 255 ? BinaryType : OleType;
                 }
 
                 throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
@@ -2278,7 +2278,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal static bool IsVariableType(byte type)
     {
-        return type == T_TEXT || type == T_BINARY || type == T_MEMO || type == T_OLE;
+        return type == TextType || type == BinaryType || type == MemoType || type == OleType;
     }
 
     internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
@@ -2316,19 +2316,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte type = TypeCodeFromDefinition(column);
         switch (type)
         {
-            case T_BOOL:
-            case T_BYTE:
-            case T_INT:
-            case T_LONG:
-            case T_MONEY:
-            case T_FLOAT:
-            case T_DOUBLE:
-            case T_DATETIME:
-            case T_BINARY:
-            case T_TEXT:
-            case T_MEMO:
-            case T_GUID:
-            case T_NUMERIC:
+            case BooleanType:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case BinaryType:
+            case TextType:
+            case MemoType:
+            case GuidType:
+            case NumericType:
                 return;
             default:
                 throw new NotSupportedException(
@@ -2338,7 +2338,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Validates and returns the precision (1..28) declared on a
-    /// <c>T_NUMERIC</c> column definition. Defaults to <c>18</c> when the
+    /// <c>Numeric</c> column definition. Defaults to <c>18</c> when the
     /// caller leaves <see cref="ColumnDefinition.NumericPrecision"/> at its
     /// initial value (matches Access "Number → Decimal" UI default).
     /// </summary>
@@ -2352,7 +2352,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Validates and returns the scale (0..28, &lt;= precision) declared on a
-    /// <c>T_NUMERIC</c> column definition. Defaults to <c>0</c> (Access UI
+    /// <c>Numeric</c> column definition. Defaults to <c>0</c> (Access UI
     /// default). The incremental index path uses this value as the
     /// canonical sort-key scale.
     /// </summary>
@@ -2913,20 +2913,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         ColumnDefinition baseDef;
         switch (column.Type)
         {
-            case T_TEXT:
+            case TextType:
                 int textSize = column.IsCalculated
                     ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
                     : column.Size;
                 int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
-            case T_BINARY:
+            case BinaryType:
                 int binarySize = column.IsCalculated
                     ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
                     : column.Size;
                 baseDef = new ColumnDefinition(column.Name, typeof(byte[]), binarySize > 0 ? binarySize : 255);
                 break;
-            case T_ATTACHMENT:
+            case AttachmentType:
                 // preserve attachment columns across
                 // AddColumnAsync / DropColumnAsync / RenameColumnAsync. The parent
                 // TDEF descriptor round-trips with the ComplexID intact (ColumnInfo.Misc
@@ -2941,7 +2941,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     IsAttachment = true,
                     ComplexId = column.Misc,
                 };
-            case T_COMPLEX:
+            case ComplexType:
                 // Access stores all complex parent descriptors as the generic
                 // 0x12 type; the subtype lives in MSysComplexColumns. This
                 // rewrite path only needs a generic complex marker and the
@@ -2961,8 +2961,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the
         // schema-rewrite path retains NOT NULL / auto-increment metadata that Access
-        // wrote into the original column descriptor. Complex columns (T_ATTACHMENT /
-        // T_COMPLEX) return early above because their Flags byte is the magic 0x07
+        // wrote into the original column descriptor. Complex columns (Attachment /
+        // Complex) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
         bool isAutoIncrement = (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
@@ -2977,15 +2977,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
-            IsHyperlink = column.Type == T_MEMO && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
+            IsHyperlink = column.Type == MemoType && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
             IsCompressedUnicode = column.IsCompressedUnicode,
         };
 
         // Preserve declared precision/scale through the schema-rewrite copy so
         // AddColumn / DropColumn / RenameColumn don't silently reset a NUMERIC
         // column to default 18/0. Access-authored files always populate these
-        // descriptor bytes for T_NUMERIC columns.
-        if (column.Type == T_NUMERIC)
+        // descriptor bytes for Numeric columns.
+        if (column.Type == NumericType)
         {
             def = def with { NumericPrecision = column.NumericPrecision, NumericScale = column.NumericScale };
         }
@@ -3896,7 +3896,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// row at <paramref name="loc"/> on a data page belonging to
     /// <paramref name="tableDef"/>. Returns <see langword="null"/> when the
     /// row layout cannot be parsed OR when any requested column needs
-    /// long-value (T_MEMO, T_OLE) or complex (T_COMPLEX, T_ATTACHMENT)
+    /// long-value (Memo, Ole) or complex (Complex, Attachment)
     /// traversal outside this inline reader; the cascade-seek caller falls back to the snapshot
     /// path in that case. Index-key column types (the focus of this helper)
     /// only include scalar fixed and var-inline kinds — JET indexes cannot
@@ -4082,7 +4082,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (var column in tableDef.Columns)
         {
-            if (column.Type != T_MEMO && column.Type != T_OLE)
+            if (column.Type != MemoType && column.Type != OleType)
             {
                 continue;
             }

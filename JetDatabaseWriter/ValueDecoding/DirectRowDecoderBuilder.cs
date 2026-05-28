@@ -15,8 +15,8 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <see cref="AccessReader.Rows{T}(string, IProgress{long}?, System.Threading.CancellationToken)"/>
 /// fast path. The builder inspects the bound
 /// columns and refuses (returns <see langword="null"/>) when any column
-/// requires the slow path — calculated columns, T_MEMO/T_OLE LVAL chains,
-/// T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, or any property typed as
+/// requires the slow path — calculated columns, Memo/Ole LVAL chains,
+/// Binary, Numeric, Complex/Attachment, or any property typed as
 /// <see cref="Hyperlink"/>.
 /// </summary>
 internal static class DirectRowDecoderBuilder
@@ -237,12 +237,12 @@ internal static class DirectRowDecoderBuilder
         Expression kindExpr,
         Expression dataLenExpr)
     {
-        if (colType == T_BOOL)
+        if (colType == BooleanType)
         {
             return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Bool));
         }
 
-        if (colType == T_TEXT)
+        if (colType == TextType)
         {
             return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Var));
         }
@@ -263,17 +263,17 @@ internal static class DirectRowDecoderBuilder
     {
         return column.Type switch
         {
-            T_BOOL => boolValueExpr,
-            T_BYTE => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadByteAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_INT => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt16LE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_LONG => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt32LE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_MONEY => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadMoneyLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_FLOAT => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadFloatLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_DOUBLE => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDoubleLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_DATETIME => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDateTimeLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_GUID => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_NUMERIC => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
-            T_TEXT => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
+            BooleanType => boolValueExpr,
+            ByteType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadByteAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            IntegerType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt16LE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            LongIntegerType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt32LE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            MoneyType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadMoneyLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            FloatType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadFloatLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            DoubleType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDoubleLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            DateTimeType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDateTimeLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            GuidType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            NumericType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
+            TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{column.Type:X2}."),
         };
     }
@@ -282,17 +282,17 @@ internal static class DirectRowDecoderBuilder
     {
         return colType switch
         {
-            T_BOOL => targetUnderlying == typeof(bool),
-            T_BYTE => targetUnderlying == typeof(byte),
-            T_INT => targetUnderlying == typeof(short),
-            T_LONG => targetUnderlying == typeof(int),
-            T_MONEY => targetUnderlying == typeof(decimal),
-            T_FLOAT => targetUnderlying == typeof(float),
-            T_DOUBLE => targetUnderlying == typeof(double),
-            T_DATETIME => targetUnderlying == typeof(DateTime),
-            T_GUID => targetUnderlying == typeof(Guid),
-            T_NUMERIC => targetUnderlying == typeof(decimal),
-            T_TEXT => targetUnderlying == typeof(string),
+            BooleanType => targetUnderlying == typeof(bool),
+            ByteType => targetUnderlying == typeof(byte),
+            IntegerType => targetUnderlying == typeof(short),
+            LongIntegerType => targetUnderlying == typeof(int),
+            MoneyType => targetUnderlying == typeof(decimal),
+            FloatType => targetUnderlying == typeof(float),
+            DoubleType => targetUnderlying == typeof(double),
+            DateTimeType => targetUnderlying == typeof(DateTime),
+            GuidType => targetUnderlying == typeof(Guid),
+            NumericType => targetUnderlying == typeof(decimal),
+            TextType => targetUnderlying == typeof(string),
             _ => false,
         };
     }

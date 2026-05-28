@@ -61,7 +61,7 @@ internal sealed class ColumnInfo
     /// <summary>
     /// Gets or sets the 4-byte value at descriptor-relative offset 11 (Jet4/ACE)
     /// of the TDEF column descriptor — the <c>misc</c> / <c>misc_ext</c> slot.
-    /// For complex columns (<c>T_ATTACHMENT</c> / <c>T_COMPLEX</c>) this carries
+    /// For complex columns (<c>Attachment</c> / <c>Complex</c>) this carries
     /// the <c>ComplexID</c> that joins the parent column to its
     /// <c>MSysComplexColumns</c> row and (transitively) to the hidden flat child
     /// table. Zero for non-complex columns.
@@ -71,7 +71,7 @@ internal sealed class ColumnInfo
 
     /// <summary>
     /// Gets or sets the declared precision (total significant digits, 1..28)
-    /// for a <c>T_NUMERIC</c> column. Persisted at descriptor-relative offset
+    /// for a <c>Numeric</c> column. Persisted at descriptor-relative offset
     /// 11 (the first byte of <see cref="Misc"/> for Jet4 / ACE column
     /// descriptors). Zero for non-numeric columns.
     /// </summary>
@@ -79,12 +79,12 @@ internal sealed class ColumnInfo
 
     /// <summary>
     /// Gets or sets the declared scale (decimal places, 0..28) for a
-    /// <c>T_NUMERIC</c> column. Persisted at descriptor-relative offset 12
+    /// <c>Numeric</c> column. Persisted at descriptor-relative offset 12
     /// (the second byte of <see cref="Misc"/>). The incremental fast paths
     /// use this value as the canonical index scale, rescaling every cell
     /// value via <see cref="System.MidpointRounding.ToEven"/> rounding
     /// before the encoder runs — matching Access semantics that every
-    /// <c>T_NUMERIC</c> cell sorts at the column's declared scale.
+    /// <c>Numeric</c> cell sorts at the column's declared scale.
     /// </summary>
     public byte NumericScale { get; set; }
 
@@ -99,7 +99,7 @@ internal sealed class ColumnInfo
         get
         {
             // BOOL stores its value in the null mask, never in fixed area.
-            if (Type == T_BOOL && !IsCalculated)
+            if (Type == BooleanType && !IsCalculated)
             {
                 return true;
             }

@@ -315,7 +315,7 @@ public sealed class IndexMaintenanceTests
     public async Task InsertRows_MemoIndex_RebuildsLeafViaSameEncoder(DatabaseFormat format)
     {
         // MEMO columns route through the same General Legacy encoder as TEXT
-        // (T_TEXT = 0x0A, T_MEMO = 0x0C both supported by IndexKeyEncoder).
+        // (Text = 0x0A, Memo = 0x0C both supported by IndexKeyEncoder).
         // Round-trip a memo-keyed index and confirm the bulk rebuild populated
         // the leaf instead of leaving the leaf-page emission placeholder in place.
         await using var stream = await CreateFreshStreamAsync(format);

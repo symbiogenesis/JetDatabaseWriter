@@ -615,7 +615,7 @@ internal static class FormatProbeApplication
             bool hasComplex = HasComplexColumn(bytes, reader.DatabaseFormat);
             if (hasComplex && !c.Name.StartsWith("f_", StringComparison.Ordinal))
             {
-                hits.Add((c.Name, c.TdefPage, "parent table — has T_ATTACHMENT (0x11) or T_COMPLEX (0x12) column", bytes));
+                hits.Add((c.Name, c.TdefPage, "parent table — has Attachment (0x11) or Complex (0x12) column", bytes));
             }
         }
 

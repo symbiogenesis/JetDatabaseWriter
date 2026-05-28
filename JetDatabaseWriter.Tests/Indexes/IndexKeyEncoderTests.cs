@@ -18,14 +18,14 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Null_Ascending_EmitsSingleZeroFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_LONG, value: null, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, value: null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
     [Fact]
     public void Null_Descending_EmitsSingleFFFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_LONG, value: DBNull.Value, ascending: false);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, value: DBNull.Value, ascending: false);
         Assert.Equal(new byte[] { 0xFF }, encoded);
     }
 
@@ -33,14 +33,14 @@ public sealed class IndexKeyEncoderTests
     public void Long_Zero_Ascending_TopByteFlippedToHighBitSet()
     {
         // §5: int32 → BE bytes, top byte XOR 0x80. 0 → 80 00 00 00.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_LONG, 0, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, 0, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x00 }, encoded);
     }
 
     [Fact]
     public void Long_PositiveOne_Ascending()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_LONG, 1, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x01 }, encoded);
     }
 
@@ -48,7 +48,7 @@ public sealed class IndexKeyEncoderTests
     public void Long_NegativeOne_Ascending()
     {
         // -1 in two's complement int32 = FF FF FF FF; top byte XOR 0x80 = 7F.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_LONG, -1, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, -1, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x7F, 0xFF, 0xFF, 0xFF }, encoded);
     }
 
@@ -59,7 +59,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_LONG, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(LongIntegerType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -75,7 +75,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_INT, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(IntegerType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -90,11 +90,11 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Byte_IsUnsignedAndUnflipped()
     {
-        // T_BYTE is unsigned in Access — no sign-bit flip.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BYTE, (byte)0, ascending: true);
+        // Byte is unsigned in Access — no sign-bit flip.
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(Byte, (byte)0, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x00 }, encoded);
 
-        encoded = IndexKeyEncoder.EncodeEntry(T_BYTE, (byte)255, ascending: true);
+        encoded = IndexKeyEncoder.EncodeEntry(Byte, (byte)255, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0xFF }, encoded);
     }
 
@@ -102,7 +102,7 @@ public sealed class IndexKeyEncoderTests
     public void Money_DecimalScaledBy10000_EncodedAsInt64()
     {
         // 1.2345 → scaled = 12345; 8 bytes BE with top byte XOR 0x80.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_MONEY, 1.2345m, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(MoneyType, 1.2345m, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x39 }, encoded);
     }
 
@@ -113,7 +113,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_DOUBLE, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -126,7 +126,7 @@ public sealed class IndexKeyEncoderTests
     public void Float_PositiveZero_FlipsSignBit()
     {
         // +0.0f IEEE = 00 00 00 00 → BE same → flip top → 80 00 00 00.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_FLOAT, 0.0f, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(FloatType, 0.0f, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x00 }, encoded);
     }
 
@@ -159,8 +159,8 @@ public sealed class IndexKeyEncoderTests
         byte[][] desc = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            asc[i] = IndexKeyEncoder.EncodeEntry(T_FLOAT, values[i], ascending: true);
-            desc[i] = IndexKeyEncoder.EncodeEntry(T_FLOAT, values[i], ascending: false);
+            asc[i] = IndexKeyEncoder.EncodeEntry(FloatType, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(FloatType, values[i], ascending: false);
 
             // FLOAT key length: flag(1) + 4 bytes = 5.
             Assert.Equal(5, asc[i].Length);
@@ -225,8 +225,8 @@ public sealed class IndexKeyEncoderTests
         byte[][] desc = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            asc[i] = IndexKeyEncoder.EncodeEntry(T_DOUBLE, values[i], ascending: true);
-            desc[i] = IndexKeyEncoder.EncodeEntry(T_DOUBLE, values[i], ascending: false);
+            asc[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: false);
 
             // DOUBLE key length: flag(1) + 8 bytes = 9.
             Assert.Equal(9, asc[i].Length);
@@ -262,16 +262,16 @@ public sealed class IndexKeyEncoderTests
     {
         var dt = new DateTime(2026, 4, 24);
         double oa = dt.ToOADate();
-        byte[] expected = IndexKeyEncoder.EncodeEntry(T_DOUBLE, oa, ascending: true);
-        byte[] actual = IndexKeyEncoder.EncodeEntry(T_DATETIME, dt, ascending: true);
+        byte[] expected = IndexKeyEncoder.EncodeEntry(Double, oa, ascending: true);
+        byte[] actual = IndexKeyEncoder.EncodeEntry(DateTime, dt, ascending: true);
         Assert.Equal(expected, actual);
     }
 
     [Fact]
     public void Descending_IsOnesComplementOfAscending()
     {
-        byte[] asc = IndexKeyEncoder.EncodeEntry(T_LONG, 12345, ascending: true);
-        byte[] desc = IndexKeyEncoder.EncodeEntry(T_LONG, 12345, ascending: false);
+        byte[] asc = IndexKeyEncoder.EncodeEntry(LongIntegerType, 12345, ascending: true);
+        byte[] desc = IndexKeyEncoder.EncodeEntry(LongIntegerType, 12345, ascending: false);
 
         Assert.Equal(asc.Length, desc.Length);
         for (int i = 0; i < asc.Length; i++)
@@ -287,7 +287,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_LONG, values[i], ascending: false);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(LongIntegerType, values[i], ascending: false);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -298,7 +298,7 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Theory]
-    [InlineData(T_NUMERIC)]
+    [InlineData(NumericType)]
     public void UnsupportedColumnType_Throws(byte columnType)
     {
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
@@ -317,14 +317,14 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_EmptyString_EmitsFlagAndFraming()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, string.Empty, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, string.Empty, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x01, 0x00 }, encoded);
     }
 
     [Fact]
     public void Text_EmptyString_Descending_AppendsUnflippedTrailer()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, string.Empty, ascending: false);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, string.Empty, ascending: false);
         Assert.Equal(new byte[] { 0x80, 0xFE, 0xFF, 0x00 }, encoded);
     }
 
@@ -332,7 +332,7 @@ public sealed class IndexKeyEncoderTests
     public void Text_Digits_UseJackcessInlineCodes()
     {
         // Per Jackcess `index_codes_genleg.txt`: '0'=0x36, '1'=0x38, …, '9'=0x48.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "0123456789", ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, "0123456789", ascending: true);
         Assert.Equal(
             new byte[] { 0x7F, 0x36, 0x38, 0x3A, 0x3C, 0x3E, 0x40, 0x42, 0x44, 0x46, 0x48, 0x01, 0x00 },
             encoded);
@@ -341,8 +341,8 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_UpperAndLowerLetters_AreCaseInsensitive()
     {
-        byte[] upper = IndexKeyEncoder.EncodeEntry(T_TEXT, "ABCXYZ", ascending: true);
-        byte[] lower = IndexKeyEncoder.EncodeEntry(T_TEXT, "abcxyz", ascending: true);
+        byte[] upper = IndexKeyEncoder.EncodeEntry(TextType, "ABCXYZ", ascending: true);
+        byte[] lower = IndexKeyEncoder.EncodeEntry(TextType, "abcxyz", ascending: true);
         Assert.Equal(upper, lower);
 
         // 'A'=0x4A, 'B'=0x4C, 'C'=0x4D, 'X'=0x75, 'Y'=0x76, 'Z'=0x78.
@@ -354,8 +354,8 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_TrailingSpacesAreStripped()
     {
-        byte[] withSpaces = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB   ", ascending: true);
-        byte[] withoutSpaces = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB", ascending: true);
+        byte[] withSpaces = IndexKeyEncoder.EncodeEntry(TextType, "AB   ", ascending: true);
+        byte[] withoutSpaces = IndexKeyEncoder.EncodeEntry(TextType, "AB", ascending: true);
         Assert.Equal(withoutSpaces, withSpaces);
     }
 
@@ -364,8 +364,8 @@ public sealed class IndexKeyEncoderTests
     {
         // VARCHAR(255) → MAX_TEXT_INDEX_CHAR_LENGTH = 127 chars.
         string longInput = new('A', 200);
-        byte[] truncated = IndexKeyEncoder.EncodeEntry(T_TEXT, longInput, ascending: true);
-        byte[] expected = IndexKeyEncoder.EncodeEntry(T_TEXT, new string('A', 127), ascending: true);
+        byte[] truncated = IndexKeyEncoder.EncodeEntry(TextType, longInput, ascending: true);
+        byte[] expected = IndexKeyEncoder.EncodeEntry(TextType, new string('A', 127), ascending: true);
         Assert.Equal(expected, truncated);
     }
 
@@ -378,7 +378,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_TEXT, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(TextType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -396,7 +396,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] desc = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            desc[i] = IndexKeyEncoder.EncodeEntry(T_TEXT, values[i], ascending: false);
+            desc[i] = IndexKeyEncoder.EncodeEntry(TextType, values[i], ascending: false);
         }
 
         for (int i = 1; i < desc.Length; i++)
@@ -421,7 +421,7 @@ public sealed class IndexKeyEncoderTests
     {
         // FlagDescendingNull is a single 0xFF byte. Anything else with a
         // leading 0x80 cannot be confused with it.
-        byte[] descNull = IndexKeyEncoder.EncodeEntry(T_TEXT, value: DBNull.Value, ascending: false);
+        byte[] descNull = IndexKeyEncoder.EncodeEntry(TextType, value: DBNull.Value, ascending: false);
         Assert.Equal(new byte[] { 0xFF }, descNull);
 
         // Cover empty, all-spaces (trim → empty), single char, multi-char,
@@ -431,7 +431,7 @@ public sealed class IndexKeyEncoderTests
         string[] values = [string.Empty, "   ", "A", "ABC", "Hello, World!", new('Z', 50)];
         foreach (string value in values)
         {
-            byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: false);
+            byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, value, ascending: false);
 
             Assert.True(encoded.Length >= 2, $"Descending non-null encoding of '{value}' is too short.");
             Assert.Equal(0x80, encoded[0]);
@@ -444,7 +444,7 @@ public sealed class IndexKeyEncoderTests
     {
         // Pre-full text encoder: punctuation threw. With the full Jackcess port,
         // characters like '!' (S9) encode as a SIMPLE inline byte.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "!", ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, "!", ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x09, 0x01, 0x00 }, encoded);
     }
 
@@ -454,7 +454,7 @@ public sealed class IndexKeyEncoderTests
         // Non-ASCII characters route through INTERNATIONAL / surrogate
         // handlers and no longer throw. Just assert the call succeeds and
         // produces the standard framing.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "café", ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, "café", ascending: true);
         Assert.Equal(0x7F, encoded[0]);
         Assert.Equal(0x00, encoded[^1]);
         Assert.True(encoded.Length > 4, "Encoded entry should contain inline + framing bytes.");
@@ -475,9 +475,9 @@ public sealed class IndexKeyEncoderTests
         const string smpX = "\uD835\uDD4F";
         const string smpY = "\uD835\uDD50"; // U+1D550 CAPITAL Y — different SMP codepoint.
 
-        byte[] keyX = IndexKeyEncoder.EncodeEntry(T_TEXT, smpX, ascending: true);
-        byte[] keyY = IndexKeyEncoder.EncodeEntry(T_TEXT, smpY, ascending: true);
-        byte[] keyAsciiX = IndexKeyEncoder.EncodeEntry(T_TEXT, "X", ascending: true);
+        byte[] keyX = IndexKeyEncoder.EncodeEntry(TextType, smpX, ascending: true);
+        byte[] keyY = IndexKeyEncoder.EncodeEntry(TextType, smpY, ascending: true);
+        byte[] keyAsciiX = IndexKeyEncoder.EncodeEntry(TextType, "X", ascending: true);
 
         // Standard framing: ascending flag + END_EXTRA_TEXT terminator.
         Assert.Equal(0x7F, keyX[0]);
@@ -497,7 +497,7 @@ public sealed class IndexKeyEncoderTests
         // Descending pass must also succeed and flip the payload (start
         // flag is the descending null/non-null marker, terminator is
         // 0x00 unchanged).
-        byte[] keyXDesc = IndexKeyEncoder.EncodeEntry(T_TEXT, smpX, ascending: false);
+        byte[] keyXDesc = IndexKeyEncoder.EncodeEntry(TextType, smpX, ascending: false);
         Assert.NotEqual(keyX, keyXDesc);
         Assert.Equal(0x00, keyXDesc[^1]);
     }
@@ -533,18 +533,18 @@ public sealed class IndexKeyEncoderTests
         // ascending start flag + null terminator framing.
         foreach (string s in new[] { hebrew, arabic, cafeNfc, cafeNfd })
         {
-            byte[] key = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true);
+            byte[] key = IndexKeyEncoder.EncodeEntry(TextType, s, ascending: true);
             Assert.Equal(0x7F, key[0]);
             Assert.Equal(0x00, key[^1]);
             Assert.True(key.Length > 2, $"Encoded key for '{s}' must contain payload, got {key.Length} bytes.");
 
             // Re-encoding the same string is deterministic.
-            Assert.Equal(key, IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true));
+            Assert.Equal(key, IndexKeyEncoder.EncodeEntry(TextType, s, ascending: true));
         }
 
         // Distinct scripts produce distinct keys.
-        byte[] keyHebrew = IndexKeyEncoder.EncodeEntry(T_TEXT, hebrew, ascending: true);
-        byte[] keyArabic = IndexKeyEncoder.EncodeEntry(T_TEXT, arabic, ascending: true);
+        byte[] keyHebrew = IndexKeyEncoder.EncodeEntry(TextType, hebrew, ascending: true);
+        byte[] keyArabic = IndexKeyEncoder.EncodeEntry(TextType, arabic, ascending: true);
         Assert.NotEqual(keyHebrew, keyArabic);
 
         // Pre-composed "é" and decomposed "e + combining-acute" encode to
@@ -552,16 +552,16 @@ public sealed class IndexKeyEncoderTests
         // the international-handler / extra-codes tables. This matches the
         // Jackcess `IndexCodesTest` behaviour and is the property that
         // lets indexed lookups work regardless of normalization form.
-        byte[] keyNfc = IndexKeyEncoder.EncodeEntry(T_TEXT, cafeNfc, ascending: true);
-        byte[] keyNfd = IndexKeyEncoder.EncodeEntry(T_TEXT, cafeNfd, ascending: true);
+        byte[] keyNfc = IndexKeyEncoder.EncodeEntry(TextType, cafeNfc, ascending: true);
+        byte[] keyNfd = IndexKeyEncoder.EncodeEntry(TextType, cafeNfd, ascending: true);
         Assert.Equal(keyNfc, keyNfd);
 
         // Descending pass succeeds for every script and produces a
         // different key from ascending.
         foreach (string s in new[] { hebrew, arabic, cafeNfc, cafeNfd })
         {
-            byte[] asc = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true);
-            byte[] desc = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: false);
+            byte[] asc = IndexKeyEncoder.EncodeEntry(TextType, s, ascending: true);
+            byte[] desc = IndexKeyEncoder.EncodeEntry(TextType, s, ascending: false);
             Assert.NotEqual(asc, desc);
             Assert.Equal(0x00, desc[^1]);
         }
@@ -570,15 +570,15 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_Null_EmitsSingleFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, value: null, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, value: null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
     [Fact]
     public void Memo_RoutesThroughTheSameEncoderAsText()
     {
-        byte[] memo = IndexKeyEncoder.EncodeEntry(T_MEMO, "Hello", ascending: true);
-        byte[] text = IndexKeyEncoder.EncodeEntry(T_TEXT, "Hello", ascending: true);
+        byte[] memo = IndexKeyEncoder.EncodeEntry(MemoType, "Hello", ascending: true);
+        byte[] text = IndexKeyEncoder.EncodeEntry(TextType, "Hello", ascending: true);
         Assert.Equal(text, memo);
     }
 
@@ -587,7 +587,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Guid_Null_EmitsSingleFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, value: null, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, value: null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
@@ -597,7 +597,7 @@ public sealed class IndexKeyEncoderTests
         // GUID display bytes 00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF.
         // Storage layout (Guid.ToByteArray): 33 22 11 00 55 44 77 66 88..FF.
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: true);
 
         Assert.Equal(19, encoded.Length);
         Assert.Equal(0x7F, encoded[0]); // ascending flag
@@ -620,7 +620,7 @@ public sealed class IndexKeyEncoderTests
     public void Guid_Descending_FlipsDataAndFinalLengthButNotIntermediate()
     {
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: false);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: false);
 
         Assert.Equal(19, encoded.Length);
         Assert.Equal(0x80, encoded[0]); // descending flag (NOT 0x80 = ~0x7F via post-flip — emitted directly)
@@ -648,7 +648,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_GUID, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(Guid, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -672,7 +672,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_GUID, values[i], ascending: false);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(Guid, values[i], ascending: false);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -687,14 +687,14 @@ public sealed class IndexKeyEncoderTests
     public void Guid_AcceptsStringInput()
     {
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] fromGuid = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: true);
-        byte[] fromString = IndexKeyEncoder.EncodeEntry(T_GUID, "00112233-4455-6677-8899-AABBCCDDEEFF", ascending: true);
+        byte[] fromGuid = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: true);
+        byte[] fromString = IndexKeyEncoder.EncodeEntry(Guid, "00112233-4455-6677-8899-AABBCCDDEEFF", ascending: true);
         Assert.Equal(fromGuid, fromString);
     }
 
-    // ── T_BINARY (variable raw bytes) ────────────────────────────
+    // ── Binary (variable raw bytes) ────────────────────────────
     //
-    // Same general-binary-entry packing as T_GUID: the data is split into
+    // Same general-binary-entry packing as Guid: the data is split into
     // 8-byte zero-padded segments, each followed by a length byte (0x09 for
     // intermediates, the actual valid count for the final segment). On
     // descending the data bytes and the FINAL length byte flip; intermediate
@@ -708,7 +708,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_Null_EmitsSingleFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, value: null, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, value: null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
@@ -717,7 +717,7 @@ public sealed class IndexKeyEncoderTests
     {
         // Empty binary still emits one final segment so two empty values
         // compare equal and sort below any non-empty value.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryEmpty, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, BinaryEmpty, ascending: true);
         Assert.Equal(
             new byte[] { 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
             encoded);
@@ -726,7 +726,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_ThreeBytes_ZeroPadsToEightAndFinalLengthIsThree()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryThree, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, BinaryThree, ascending: true);
         Assert.Equal(
             new byte[] { 0x7F, 0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
             encoded);
@@ -735,7 +735,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_ExactlyEightBytes_SingleSegmentWithFinalLengthEight()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryEight, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, BinaryEight, ascending: true);
         Assert.Equal(
             new byte[] { 0x7F, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x08 },
             encoded);
@@ -744,7 +744,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_NineBytes_TwoSegmentsWithIntermediateLengthThenFinalOne()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryNine, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, BinaryNine, ascending: true);
         Assert.Equal(
             new byte[]
             {
@@ -760,7 +760,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_Descending_FlipsDataAndFinalLengthButNotIntermediate()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryNine, ascending: false);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BinaryType, BinaryNine, ascending: false);
         Assert.Equal(0x80, encoded[0]); // descending non-null flag
         Assert.Equal(0x09, encoded[9]); // intermediate length stays unflipped
 
@@ -790,7 +790,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_BINARY, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(BinaryType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -815,7 +815,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(T_BINARY, values[i], ascending: false);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(BinaryType, values[i], ascending: false);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -829,10 +829,10 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Binary_RejectsNonByteArrayValue()
     {
-        Assert.Throws<ArgumentException>(() => IndexKeyEncoder.EncodeEntry(T_BINARY, "not bytes", ascending: true));
+        Assert.Throws<ArgumentException>(() => IndexKeyEncoder.EncodeEntry(BinaryType, "not bytes", ascending: true));
     }
 
-    // ── T_NUMERIC (Decimal) ────────────────────────────────────────
+    // ── Numeric (Decimal) ────────────────────────────────────────
 
     [Fact]
     public void Numeric_Null_Ascending_EmitsSingleZeroFlagByte()
@@ -1064,7 +1064,7 @@ public sealed class IndexKeyEncoderTests
     }
 
     /// <summary>
-    /// Isolated sign-byte verification for <c>T_MONEY</c> across all four
+    /// Isolated sign-byte verification for <c>Money</c> across all four
     /// <c>asc/desc × pos/neg</c> outcomes. Money writes the scaled int64
     /// in big-endian order and XORs the top byte with <c>0x80</c>. The flag
     /// byte precedes the 8-byte payload, so <c>encoded[1]</c> carries the
@@ -1084,7 +1084,7 @@ public sealed class IndexKeyEncoderTests
     public void Money_SignByte_IsolatedAcrossDirection(bool ascending, bool negative, int expectedSignByte)
     {
         decimal value = negative ? -1m : 1m;
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_MONEY, value, ascending);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(MoneyType, value, ascending);
 
         // Layout: encoded[0] = entry-flag (0x7F asc / 0x80 desc); encoded[1..8] = 8-byte payload.
         Assert.Equal(9, encoded.Length);
@@ -1093,7 +1093,7 @@ public sealed class IndexKeyEncoderTests
     }
 
     /// <summary>
-    /// Full ascending + descending ordering matrix for <c>T_MONEY</c>,
+    /// Full ascending + descending ordering matrix for <c>Money</c>,
     /// mirroring <see cref="Float_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>
     /// and <see cref="Double_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>.
     /// The fixture sweep covers Money positionally; this test isolates the
@@ -1121,8 +1121,8 @@ public sealed class IndexKeyEncoderTests
         byte[][] desc = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            asc[i] = IndexKeyEncoder.EncodeEntry(T_MONEY, values[i], ascending: true);
-            desc[i] = IndexKeyEncoder.EncodeEntry(T_MONEY, values[i], ascending: false);
+            asc[i] = IndexKeyEncoder.EncodeEntry(MoneyType, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(MoneyType, values[i], ascending: false);
 
             // MONEY key length: flag(1) + 8 bytes = 9.
             Assert.Equal(9, asc[i].Length);
@@ -1161,7 +1161,7 @@ public sealed class IndexKeyEncoderTests
     }
 
     // ──────────────────────────────────────────────────────────────────
-    // T_DATETIMEEXT (0x14) — general-binary-entry wrapping of 42 bytes
+    // DateTimeExtended (0x14) — general-binary-entry wrapping of 42 bytes
     // ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -1174,7 +1174,7 @@ public sealed class IndexKeyEncoderTests
             payload[i] = (byte)(i + 1);
         }
 
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payload, ascending: true);
 
         Assert.Equal(55, encoded.Length);
         Assert.Equal(0x7F, encoded[0]); // flag: ascending non-null
@@ -1212,8 +1212,8 @@ public sealed class IndexKeyEncoderTests
             payload[i] = (byte)(i + 1);
         }
 
-        byte[] asc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: true);
-        byte[] desc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: false);
+        byte[] asc = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payload, ascending: true);
+        byte[] desc = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payload, ascending: false);
 
         Assert.Equal(55, desc.Length);
         Assert.Equal(0x80, desc[0]); // flag: descending non-null
@@ -1243,7 +1243,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void DateTimeExt_Null_EmitsSingleFlagByte()
     {
-        byte[] enc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, null, ascending: true);
+        byte[] enc = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, enc);
     }
 
@@ -1251,7 +1251,7 @@ public sealed class IndexKeyEncoderTests
     public void DateTimeExt_WrongLength_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, new byte[10], ascending: true));
+            IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, new byte[10], ascending: true));
     }
 
     [Fact]
@@ -1263,13 +1263,13 @@ public sealed class IndexKeyEncoderTests
         payloadA[0] = 0x10;
         payloadB[0] = 0x20;
 
-        byte[] encA = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadA, ascending: true);
-        byte[] encB = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadB, ascending: true);
+        byte[] encA = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payloadA, ascending: true);
+        byte[] encB = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payloadB, ascending: true);
 
         Assert.True(CompareLex(encA, encB) < 0, "Ascending lexicographic order violated.");
 
-        byte[] descA = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadA, ascending: false);
-        byte[] descB = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadB, ascending: false);
+        byte[] descA = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payloadA, ascending: false);
+        byte[] descB = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payloadB, ascending: false);
 
         Assert.True(CompareLex(descA, descB) > 0, "Descending lexicographic order violated.");
     }

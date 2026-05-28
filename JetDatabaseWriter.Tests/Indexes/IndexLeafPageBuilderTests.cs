@@ -52,7 +52,7 @@ public sealed class IndexLeafPageBuilderTests
         // §4.3: first entry is implicit (no bit in §4.2 bitmask).
         int pageSize = PageSizeOf(format);
         var layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // T_LONG=7 → 5 bytes
+        byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // LongInteger=7 → 5 bytes
         var entries = new[] { new IndexEntry(key, 0x123456, 9) };
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 100, entries, 0, 0, 0, enablePrefixCompression: false);
@@ -179,7 +179,7 @@ public sealed class IndexLeafPageBuilderTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public void PrefixCompressionEnabled_HoistsSharedPrefix_AndStripsItFromTrailingEntries(DatabaseFormat format)
     {
-        // T_LONG ascending encoding for 1, 2, 3 produces 5-byte keys whose
+        // LongInteger ascending encoding for 1, 2, 3 produces 5-byte keys whose
         // first 4 bytes are identical (0x7F flag + 0x80 sign-flipped MSB +
         // two 0x00 bytes). Compressed entries beyond the first carry only the
         // single trailing differing byte.

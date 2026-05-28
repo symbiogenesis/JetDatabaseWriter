@@ -16,7 +16,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/> +
 /// <see cref="TypedValueParser.ParseValue"/> round-trip the typed reader is
 /// replacing — except where the round-trip is documented as lossy (sub-second
-/// T_DATETIME precision), in which case the typed path is asserted to keep
+/// DateTime precision), in which case the typed path is asserted to keep
 /// the un-truncated value while the round-trip drops it.
 /// </summary>
 public sealed class JetTypeInfoReadFixedTypedTests
@@ -29,7 +29,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Byte_RoundTripsThroughParseValue(byte value)
     {
         byte[] row = [value];
-        AssertParity(row, start: 0, T_BYTE, size: 1, expected: value);
+        AssertParity(row, start: 0, Byte, size: 1, expected: value);
     }
 
     [Theory]
@@ -40,12 +40,12 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[2];
         BinaryPrimitives.WriteInt16LittleEndian(row, value);
-        AssertParity(row, start: 0, T_INT, size: 2, expected: value);
+        AssertParity(row, start: 0, IntegerType, size: 2, expected: value);
     }
 
     /// <summary>
     /// Negative shorts should decode losslessly through both paths.
-    /// This verifies the legacy string formatter reads T_INT as signed
+    /// This verifies the legacy string formatter reads Integer as signed
     /// little-endian rather than unsigned+cast under checked arithmetic.
     /// </summary>
     /// <param name="value">The value.</param>
@@ -57,7 +57,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = new byte[2];
         BinaryPrimitives.WriteInt16LittleEndian(row, value);
 
-        AssertParity(row, start: 0, T_INT, size: 2, expected: value);
+        AssertParity(row, start: 0, IntegerType, size: 2, expected: value);
     }
 
     [Theory]
@@ -70,7 +70,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(row, value);
-        AssertParity(row, start: 0, T_LONG, size: 4, expected: value);
+        AssertParity(row, start: 0, LongIntegerType, size: 4, expected: value);
     }
 
     [Theory]
@@ -82,7 +82,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteSingleLittleEndian(row, value);
-        AssertParity(row, start: 0, T_FLOAT, size: 4, expected: value);
+        AssertParity(row, start: 0, FloatType, size: 4, expected: value);
     }
 
     [Theory]
@@ -94,11 +94,11 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, value);
-        AssertParity(row, start: 0, T_DOUBLE, size: 8, expected: value);
+        AssertParity(row, start: 0, Double, size: 8, expected: value);
     }
 
     /// <summary>
-    /// T_DATETIME values whose seconds line up exactly survive the
+    /// DateTime values whose seconds line up exactly survive the
     /// <c>"yyyy-MM-dd HH:mm:ss"</c> round-trip, so parity with the legacy path
     /// must hold here.
     /// </summary>
@@ -115,7 +115,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, dt.ToOADate());
 
-        AssertParity(row, start: 0, T_DATETIME, size: 8, expected: dt);
+        AssertParity(row, start: 0, DateTime, size: 8, expected: dt);
     }
 
     /// <summary>
@@ -130,20 +130,20 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, dt.ToOADate());
 
-        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, T_DATETIME, size: 8);
+        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, DateTime, size: 8);
         var typedDt = Assert.IsType<DateTime>(typed);
 
         // Round-trip via OADate has its own quantization, but it preserves
         // sub-second information that the "yyyy-MM-dd HH:mm:ss" format strips.
         Assert.NotEqual(0, typedDt.Millisecond);
 
-        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, T_DATETIME, size: 8);
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, DateTime, size: 8);
         var roundTripped = (DateTime)TypedValueParser.ParseValue(formatted, typeof(DateTime));
         Assert.Equal(0, roundTripped.Millisecond);
     }
 
     /// <summary>
-    /// T_MONEY is stored as an OACurrency int64 with implicit scale=4. Verify
+    /// Money is stored as an OACurrency int64 with implicit scale=4. Verify
     /// the typed path returns the same decimal the round-trip parses.
     /// </summary>
     /// <param name="oaCurrency">The oa currency.</param>
@@ -167,7 +167,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         BinaryPrimitives.WriteInt64LittleEndian(row, oaCurrency);
         var expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
 
-        AssertParity(row, start: 0, T_MONEY, size: 8, expected: expected);
+        AssertParity(row, start: 0, MoneyType, size: 8, expected: expected);
     }
 
     [Fact]
@@ -176,11 +176,11 @@ public sealed class JetTypeInfoReadFixedTypedTests
         var expected = Guid.Parse("12345678-9abc-def0-1234-56789abcdef0");
         byte[] row = expected.ToByteArray();
 
-        AssertParity(row, start: 0, T_GUID, size: 16, expected: expected);
+        AssertParity(row, start: 0, Guid, size: 16, expected: expected);
     }
 
     /// <summary>
-    /// Numeric (T_NUMERIC) values inside the .NET decimal range round-trip
+    /// Numeric (Numeric) values inside the .NET decimal range round-trip
     /// through the legacy string path; the typed path must agree.
     /// </summary>
     /// <param name="lo">The lower byte.</param>
@@ -228,10 +228,10 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Fact]
     public void Numeric_StrictMode_BufferTooShort_Throws()
     {
-        byte[] row = new byte[8]; // far less than the 16 bytes T_NUMERIC needs
+        byte[] row = new byte[8]; // far less than the 16 bytes Numeric needs
 
         _ = Assert.Throws<JetLimitationException>(() =>
-            JetTypeInfo.ReadFixedTyped(row, start: 0, T_NUMERIC, size: 17, strictNumeric: true));
+            JetTypeInfo.ReadFixedTyped(row, start: 0, NumericType, size: 17, strictNumeric: true));
     }
 
     [Fact]
@@ -246,8 +246,8 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     [Theory]
-    [InlineData(T_COMPLEX)]
-    [InlineData(T_ATTACHMENT)]
+    [InlineData(ComplexType)]
+    [InlineData(AttachmentType)]
     public void Complex_ReturnsCxSentinelString(byte type)
     {
         byte[] row = new byte[4];
@@ -266,8 +266,8 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     [Theory]
-    [InlineData(T_COMPLEX)]
-    [InlineData(T_ATTACHMENT)]
+    [InlineData(ComplexType)]
+    [InlineData(AttachmentType)]
     public void Complex_TooShort_ReturnsDBNull(byte type)
     {
         byte[] row = new byte[2]; // size < 4
@@ -280,16 +280,16 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Fact]
     public void OutOfRange_ReturnsDBNull()
     {
-        byte[] row = new byte[2]; // T_LONG needs 4 bytes
+        byte[] row = new byte[2]; // LongInteger needs 4 bytes
 
-        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, T_LONG, size: 4);
+        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, LongIntegerType, size: 4);
 
         Assert.Equal(DBNull.Value, result);
     }
 
     private static byte[] BuildNumericRow(uint lo, uint mid, uint hi, bool negative)
     {
-        // Access stores T_NUMERIC cells as [sign][16-byte unsigned magnitude].
+        // Access stores Numeric cells as [sign][16-byte unsigned magnitude].
         // The descriptor supplies scale; each 4-byte magnitude segment is
         // byte-swapped on page, matching Jackcess' fixNumericByteOrder helper.
         byte[] row = new byte[17];
@@ -313,7 +313,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
 
     private static ColumnInfo NumericColumn(byte scale) => new()
     {
-        Type = T_NUMERIC,
+        Type = NumericType,
         Size = 17,
         NumericPrecision = 28,
         NumericScale = scale,

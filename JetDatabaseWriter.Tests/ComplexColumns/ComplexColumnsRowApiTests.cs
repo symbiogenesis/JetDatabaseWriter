@@ -412,7 +412,7 @@ public sealed class ComplexColumnsRowApiTests
 
     /// <summary>
     /// §2.2 gap: multi-value text column with mixed value lengths. Covers
-    /// the <c>T_TEXT</c> element path in the flat child table, including
+    /// the <c>Text</c> element path in the flat child table, including
     /// an empty-string value to exercise the zero-length variable-column
     /// entry.
     /// </summary>

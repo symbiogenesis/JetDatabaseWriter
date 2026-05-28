@@ -368,16 +368,16 @@ internal static class LinkedOdbcLvPropProbe
         ReadOnlySpan<byte> value = entry.Value;
         return entry.DataType switch
         {
-            Constants.ColumnTypes.T_BOOL when value.Length >= 1 => value[0] == 0 ? "false" : "true",
-            Constants.ColumnTypes.T_BYTE when value.Length >= 1 => value[0].ToString(CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_INT when value.Length >= sizeof(short) => BinaryPrimitives.ReadInt16LittleEndian(value).ToString(CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_LONG when value.Length >= sizeof(int) => BinaryPrimitives.ReadInt32LittleEndian(value).ToString(CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_FLOAT when value.Length >= sizeof(float) => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(value)).ToString("G9", CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_DOUBLE when value.Length >= sizeof(double) => BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(value)).ToString("G17", CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_DATETIME when value.Length >= sizeof(double) => FormatDateTime(value),
-            Constants.ColumnTypes.T_TEXT or Constants.ColumnTypes.T_MEMO => DecodePropertyText(entry.Value, format),
-            Constants.ColumnTypes.T_GUID when value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
-            Constants.ColumnTypes.T_BINARY when string.Equals(entry.Name, "GUID", StringComparison.OrdinalIgnoreCase) && value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.BooleanType when value.Length >= 1 => value[0] == 0 ? "false" : "true",
+            Constants.ColumnTypes.ByteType when value.Length >= 1 => value[0].ToString(CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.IntegerType when value.Length >= sizeof(short) => BinaryPrimitives.ReadInt16LittleEndian(value).ToString(CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.LongIntegerType when value.Length >= sizeof(int) => BinaryPrimitives.ReadInt32LittleEndian(value).ToString(CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.FloatType when value.Length >= sizeof(float) => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(value)).ToString("G9", CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.DoubleType when value.Length >= sizeof(double) => BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(value)).ToString("G17", CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.DateTimeType when value.Length >= sizeof(double) => FormatDateTime(value),
+            Constants.ColumnTypes.TextType or Constants.ColumnTypes.MemoType => DecodePropertyText(entry.Value, format),
+            Constants.ColumnTypes.GuidType when value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
+            Constants.ColumnTypes.BinaryType when string.Equals(entry.Name, "GUID", StringComparison.OrdinalIgnoreCase) && value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
             _ when string.Equals(entry.Name, "GUID", StringComparison.OrdinalIgnoreCase) && value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
             _ => ToHex(entry.Value, MaxValuePreviewBytes),
         };

@@ -11,7 +11,7 @@ using Xunit;
 /// Tests verifying that the writer respects the per-column
 /// <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c> (bit 0x01 in the TDEF
 /// column descriptor ExtraFlags byte at offset 16). Writer-created
-/// Jet4/ACE T_TEXT and T_MEMO columns have this bit set and should
+/// Jet4/ACE Text and Memo columns have this bit set and should
 /// emit the compressed form (FF FE + 1 byte/char) for Latin-1 text.
 /// Columns without the flag (e.g. system table columns authored by
 /// DAO/Access) must always emit plain UCS-2 LE.
@@ -26,7 +26,7 @@ public sealed class CompressedUnicodeFlagTests
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// A writer-created T_TEXT column (ExtraFlags bit 0x01 set by
+    /// A writer-created Text column (ExtraFlags bit 0x01 set by
     /// TDefPageBuilder) stores an ASCII-range value in compressed
     /// form — the FF FE marker must appear on disk.
     /// </summary>
@@ -70,7 +70,7 @@ public sealed class CompressedUnicodeFlagTests
     }
 
     /// <summary>
-    /// A writer-created T_MEMO column (ExtraFlags bit 0x01 set)
+    /// A writer-created Memo column (ExtraFlags bit 0x01 set)
     /// compresses inline Latin-1 MEMO values.
     /// </summary>
     [Fact]
@@ -324,7 +324,7 @@ public sealed class CompressedUnicodeFlagTests
     }
 
     /// <summary>
-    /// Writer-created databases set ExtraFlags=0x01 on T_TEXT columns.
+    /// Writer-created databases set ExtraFlags=0x01 on Text columns.
     /// Verify by reading the TDEF column descriptor byte at offset 16
     /// from the raw file bytes.
     /// </summary>
@@ -379,7 +379,7 @@ public sealed class CompressedUnicodeFlagTests
                 int co = colStart + (c * 25);
                 byte colType = disk[co]; // col_type at offset 0
 
-                // T_TEXT = 0x0A
+                // Text = 0x0A
                 if (colType == 0x0A)
                 {
                     byte extraFlags = disk[co + 16];
@@ -389,7 +389,7 @@ public sealed class CompressedUnicodeFlagTests
             }
         }
 
-        Assert.True(foundTextCol, "Should have found at least one T_TEXT column descriptor with ExtraFlags bit 0x01 set.");
+        Assert.True(foundTextCol, "Should have found at least one Text column descriptor with ExtraFlags bit 0x01 set.");
     }
 
     // ═══════════════════════════════════════════════════════════════

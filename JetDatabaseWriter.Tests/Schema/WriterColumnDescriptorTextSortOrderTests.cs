@@ -239,7 +239,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         {
             int desc = colStart + (i * 25);
             byte colType = fileBytes[desc + 0];
-            if (colType != T_TEXT && colType != T_MEMO)
+            if (colType != TextType && colType != MemoType)
             {
                 continue;
             }

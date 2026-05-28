@@ -312,9 +312,9 @@ public sealed class IndexNonTextSingleColumnFixtureTests
 
         if (clr == typeof(decimal))
         {
-            // T_MONEY = 0x05; T_NUMERIC = 0x11 (ACE only). Both surface as
+            // Money = 0x05; Numeric = 0x11 (ACE only). Both surface as
             // decimal in the reader; the encoder tolerates either via the
-            // same fixed-point path. Default to T_MONEY because it's the
+            // same fixed-point path. Default to Money because it's the
             // more common case in the Jackcess fixtures.
             return 0x05;
         }

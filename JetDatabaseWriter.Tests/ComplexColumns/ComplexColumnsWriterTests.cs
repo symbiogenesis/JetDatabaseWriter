@@ -164,7 +164,7 @@ public sealed class ComplexColumnsWriterTests
         Assert.NotNull(tableDef);
         var files = tableDef!.FindColumn("Files");
         Assert.NotNull(files);
-        Assert.Equal(Constants.ColumnTypes.T_COMPLEX, files!.Type);
+        Assert.Equal(Constants.ColumnTypes.ComplexType, files!.Type);
     }
 
     [Fact]

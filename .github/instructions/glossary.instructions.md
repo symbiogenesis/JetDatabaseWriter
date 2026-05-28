@@ -106,25 +106,25 @@ applyTo: "**"
 | **GUID** | Globally Unique Identifier — column type `0x0F`, also called REPID by mdbtools |
 | **BLOB** | Binary Large Object — large binary payload, often stored through OLE/attachment LVAL storage when it exceeds inline limits |
 | **MEMO** | Memo field — column type 0x0C; long text |
-| **BCD** | Binary-Coded Decimal — format for `T_NUMERIC` (0x10) columns |
+| **BCD** | Binary-Coded Decimal — format for `ColumnTypes.NumericType` (0x10) columns |
 | **MDB_*** | mdbtools prefix for Access column type identifiers, such as `MDB_TEXT` and `MDB_NUMERIC` |
-| **T_BOOL** | Type Boolean (0x01) |
-| **T_BYTE** | Type unsigned byte (0x02) |
-| **T_INT** | Type 2-byte signed integer (0x03) |
-| **T_LONG** | Type 4-byte signed integer (0x04) |
-| **T_MONEY** | Type currency value stored as 8-byte integer scaled by 10,000 (0x05) |
-| **T_FLOAT** | Type IEEE-754 single-precision float (0x06) |
-| **T_DOUBLE** | Type IEEE-754 double-precision float (0x07) |
-| **T_DATETIME** | Type OLE Automation date/time (0x08) |
-| **T_BINARY** | Type Binary (0x09) |
-| **T_TEXT** | Type Text (0x0A) |
-| **T_OLE** | Type OLE long-value blob (0x0B) |
-| **T_MEMO** | Type Memo long-value text (0x0C) |
-| **T_GUID** | Type GUID / REPID (0x0F) |
-| **T_NUMERIC** | Type Numeric/BCD (0x10) |
-| **T_ATTACHMENT** | Legacy/private attachment alias (0x11); Access-authored ACCDB files normally use `T_COMPLEX` |
-| **T_COMPLEX** | Type Complex (0x12) — multi-value/attachment |
-| **T_DATETIMEEXT** | Type DateTime Extended (0x14) — Access 2019+ high-precision |
+| **ColumnTypes.BooleanType** | Type Boolean (0x01) |
+| **ColumnTypes.ByteType** | Type unsigned byte (0x02) |
+| **ColumnTypes.IntegerType** | Type 2-byte signed integer (0x03) |
+| **ColumnTypes.LongIntegerType** | Type 4-byte signed integer (0x04) |
+| **ColumnTypes.MoneyType** | Type currency value stored as 8-byte integer scaled by 10,000 (0x05) |
+| **ColumnTypes.FloatType** | Type IEEE-754 single-precision float (0x06) |
+| **ColumnTypes.DoubleType** | Type IEEE-754 double-precision float (0x07) |
+| **ColumnTypes.DateTimeType** | Type OLE Automation date/time (0x08) |
+| **ColumnTypes.BinaryType** | Type Binary (0x09) |
+| **ColumnTypes.TextType** | Type Text (0x0A) |
+| **ColumnTypes.OleType** | Type OLE long-value blob (0x0B) |
+| **ColumnTypes.MemoType** | Type Memo long-value text (0x0C) |
+| **ColumnTypes.GuidType** | Type GUID / REPID (0x0F) |
+| **ColumnTypes.NumericType** | Type Numeric/BCD (0x10) |
+| **ColumnTypes.AttachmentType** | Legacy/private attachment alias (0x11); Access-authored ACCDB files normally use `ColumnTypes.ComplexType` |
+| **ColumnTypes.ComplexType** | Type Complex (0x12) — multi-value/attachment |
+| **ColumnTypes.DateTimeExtendedType** | Type DateTime Extended (0x14) — Access 2019+ high-precision |
 | **OLE Automation date** | Date/time encoded as a floating-point day count used by Access and COM automation |
 
 ## Column Metadata & Properties

@@ -80,55 +80,55 @@ internal sealed class RowEncoder(AccessWriter writer)
     {
         switch (column.Type)
         {
-            case T_BYTE:
+            case ByteType:
                 dest[0] = Convert.ToByte(value, CultureInfo.InvariantCulture);
                 return 1;
 
-            case T_INT:
+            case IntegerType:
                 BinaryPrimitives.WriteInt16LittleEndian(dest, Convert.ToInt16(value, CultureInfo.InvariantCulture));
                 return 2;
 
-            case T_LONG:
+            case LongIntegerType:
                 BinaryPrimitives.WriteInt32LittleEndian(dest, Convert.ToInt32(value, CultureInfo.InvariantCulture));
                 return 4;
 
-            case T_FLOAT:
+            case FloatType:
                 BinaryPrimitives.WriteInt32LittleEndian(
                     dest,
                     BitConverter.SingleToInt32Bits(Convert.ToSingle(value, CultureInfo.InvariantCulture)));
                 return 4;
 
-            case T_DOUBLE:
+            case DoubleType:
                 BinaryPrimitives.WriteInt64LittleEndian(
                     dest,
                     BitConverter.DoubleToInt64Bits(Convert.ToDouble(value, CultureInfo.InvariantCulture)));
                 return 8;
 
-            case T_DATETIME:
+            case DateTimeType:
                 BinaryPrimitives.WriteInt64LittleEndian(
                     dest,
                     BitConverter.DoubleToInt64Bits(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()));
                 return 8;
 
-            case T_MONEY:
+            case MoneyType:
                 BinaryPrimitives.WriteInt64LittleEndian(
                     dest,
                     decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture)));
                 return 8;
 
-            case T_NUMERIC:
+            case NumericType:
                 EncodeNumericValue(column, Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
                 return 17;
 
-            case T_COMPLEX:
-            case T_ATTACHMENT:
+            case ComplexType:
+            case AttachmentType:
                 int complexId = value is ComplexIdRef complexRef
                     ? complexRef.Id
                     : Convert.ToInt32(value, CultureInfo.InvariantCulture);
                 BinaryPrimitives.WriteInt32LittleEndian(dest, complexId);
                 return 4;
 
-            case T_GUID:
+            case GuidType:
                 var g = value is Guid guid
                         ? guid
                         : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
@@ -200,12 +200,12 @@ internal sealed class RowEncoder(AccessWriter writer)
 
     private static byte[]? EncodeCalculatedFixedPayload(ColumnInfo column, object value)
     {
-        if (column.Type == T_BOOL)
+        if (column.Type == BooleanType)
         {
             return [Convert.ToBoolean(value, CultureInfo.InvariantCulture) ? (byte)0xFF : (byte)0x00];
         }
 
-        if (column.Type == T_NUMERIC)
+        if (column.Type == NumericType)
         {
             return EncodeCalculatedNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture));
         }
@@ -295,7 +295,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         {
             var col = tableDef.Columns[i];
             numCols = Math.Max(numCols, col.ColNum + 1);
-            if (col.IsFixed && col.Type != T_BOOL)
+            if (col.IsFixed && col.Type != BooleanType)
             {
                 maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + JetTypeInfo.GetFixedSize(col.Type));
             }
@@ -328,7 +328,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             var column = tableDef.Columns[i];
             object value = values[i] ?? DBNull.Value;
 
-            if (column.Type == T_BOOL && !column.IsCalculated)
+            if (column.Type == BooleanType && !column.IsCalculated)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
@@ -340,7 +340,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
             if (value is DBNull)
             {
-                if (column.IsFixed && (column.Type == T_ATTACHMENT || column.Type == T_COMPLEX))
+                if (column.IsFixed && (column.Type == AttachmentType || column.Type == ComplexType))
                 {
                     fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
                 }
@@ -462,31 +462,31 @@ internal sealed class RowEncoder(AccessWriter writer)
 
         switch (column.Type)
         {
-            case T_TEXT:
+            case TextType:
                 return EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
-            case T_BINARY:
+            case BinaryType:
                 return EncodeBinaryValue(value, column.Size);
-            case T_MEMO:
+            case MemoType:
                 if (value is PreEncodedLongValue preMemo)
                 {
                     return preMemo.HeaderBytes;
                 }
 
                 return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
-            case T_OLE:
+            case OleType:
                 return EncodeOleValue(value);
-            case T_BYTE:
-            case T_INT:
-            case T_LONG:
-            case T_FLOAT:
-            case T_DOUBLE:
-            case T_DATETIME:
-            case T_MONEY:
-            case T_NUMERIC:
-            case T_GUID:
-            case T_COMPLEX:
-            case T_ATTACHMENT:
-                int fixedSize = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case MoneyType:
+            case NumericType:
+            case GuidType:
+            case ComplexType:
+            case AttachmentType:
+                int fixedSize = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                 if (fixedSize <= 0)
                 {
                     return null;
@@ -515,14 +515,14 @@ internal sealed class RowEncoder(AccessWriter writer)
     {
         switch (column.Type)
         {
-            case T_TEXT:
+            case TextType:
                 return CalculatedColumnUtil.Wrap(
                     EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
-            case T_BINARY:
+            case BinaryType:
                 return CalculatedColumnUtil.Wrap(EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
-            case T_MEMO:
+            case MemoType:
                 return EncodeCalculatedMemoValue(value);
-            case T_OLE:
+            case OleType:
                 return EncodeCalculatedOleValue(value);
             default:
                 byte[]? payload = EncodeCalculatedFixedPayload(column, value);

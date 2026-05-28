@@ -49,7 +49,7 @@ public sealed class IndexTailPageAppendTests
     [Fact]
     public async Task CreateTable_IndexOnOleColumn_ThrowsNotSupported()
     {
-        // byte[] maps to T_OLE (0x0B). Microsoft Access does not permit
+        // byte[] maps to Ole (0x0B). Microsoft Access does not permit
         // CREATE INDEX on OLE Object columns; the writer must surface that
         // up-front instead of silently emitting an empty schema-only leaf.
         await using var stream = await CreateFreshAccdbStreamAsync();

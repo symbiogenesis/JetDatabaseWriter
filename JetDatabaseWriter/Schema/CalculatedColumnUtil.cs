@@ -29,8 +29,8 @@ internal static class CalculatedColumnUtil
     /// Returns a fresh byte array containing <paramref name="payload"/> wrapped
     /// in the 23-byte calculated-value envelope. <paramref name="payload"/>
     /// must already be encoded per the column's result type (the caller is
-    /// responsible for that encoding \u2014 e.g. UCS-2 LE for <c>T_TEXT</c>,
-    /// little-endian int32 for <c>T_LONG</c>).
+    /// responsible for that encoding \u2014 e.g. UCS-2 LE for <c>Text</c>,
+    /// little-endian int32 for <c>LongInteger</c>).
     /// </summary>
     /// <param name="payload">The payload.</param>
     public static byte[] Wrap(byte[] payload)
@@ -83,15 +83,15 @@ internal static class CalculatedColumnUtil
     {
         switch (type)
         {
-            case T_BOOL:
+            case BooleanType:
                 return ReadBooleanPayload(payload) ? "True" : "False";
-            case T_NUMERIC:
+            case NumericType:
                 object numeric = ReadNumericPayload(payload, strictNumeric);
                 return numeric is decimal decimalValue
                     ? decimalValue.ToString("G", CultureInfo.InvariantCulture)
                     : string.Empty;
             default:
-                int required = type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(type);
+                int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
                 return required > 0 && payload.Length >= required
                     ? JetTypeInfo.ReadFixedString(payload, 0, type, required, strictNumeric)
                     : string.Empty;
@@ -102,12 +102,12 @@ internal static class CalculatedColumnUtil
     {
         switch (type)
         {
-            case T_BOOL:
+            case BooleanType:
                 return ReadBooleanPayload(payload);
-            case T_NUMERIC:
+            case NumericType:
                 return ReadNumericPayload(payload, strictNumeric);
             default:
-                int required = type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(type);
+                int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
                 return required > 0 && payload.Length >= required
                     ? JetTypeInfo.ReadFixedTyped(payload, 0, type, required, strictNumeric)
                     : DBNull.Value;
@@ -123,7 +123,7 @@ internal static class CalculatedColumnUtil
         {
             if (strict)
             {
-                throw new JetLimitationException($"Calculated T_NUMERIC payload is too short (need at least 4 bytes, have {payload.Length}).");
+                throw new JetLimitationException($"Calculated Numeric payload is too short (need at least 4 bytes, have {payload.Length}).");
             }
 
             return DBNull.Value;
@@ -142,7 +142,7 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"Calculated T_NUMERIC mantissa is {mantissaLen} bytes, which exceeds the .NET decimal limit of 12 bytes.");
+                    $"Calculated Numeric mantissa is {mantissaLen} bytes, which exceeds the .NET decimal limit of 12 bytes.");
             }
 
             return DBNull.Value;
@@ -154,7 +154,7 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"Calculated T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+                    $"Calculated Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
             return DBNull.Value;
@@ -180,7 +180,7 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"Calculated T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})",
+                    $"Calculated Numeric value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})",
                     ex);
             }
 

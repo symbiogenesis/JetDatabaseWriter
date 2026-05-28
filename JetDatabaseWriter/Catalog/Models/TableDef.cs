@@ -35,7 +35,7 @@ internal sealed class TableDef
 
     /// <summary>
     /// Gets a value indicating whether at least one column is a complex/attachment
-    /// column (<c>T_COMPLEX</c> or <c>T_ATTACHMENT</c>). Cached so the typed
+    /// column (<c>Complex</c> or <c>Attachment</c>). Cached so the typed
     /// reader can skip its complex-data prefetch when the table has none.
     /// See <see cref="InitializeColumnMetadata"/>.
     /// </summary>
@@ -43,7 +43,7 @@ internal sealed class TableDef
 
     /// <summary>
     /// Gets a value indicating whether at least one column is flagged as a
-    /// Hyperlink (a <c>T_TEXT</c>/<c>T_MEMO</c> column whose Jet column flags
+    /// Hyperlink (a <c>Text</c>/<c>Memo</c> column whose Jet column flags
     /// have <c>HYPERLINK_FLAG_MASK = 0x80</c> set). Cached so the typed
     /// reader can skip its hyperlink-wrap pass when the table has none.
     /// </summary>
@@ -71,7 +71,7 @@ internal sealed class TableDef
                 hasVar = true;
             }
 
-            if (c.Type == T_COMPLEX || c.Type == T_ATTACHMENT)
+            if (c.Type == ComplexType || c.Type == AttachmentType)
             {
                 hasComplex = true;
             }
@@ -166,16 +166,16 @@ internal sealed class TableDef
 
     /// <summary>
     /// Locates the FK back-reference column on a hidden complex-column flat
-    /// child table: the single <c>T_LONG</c> (type code <c>0x04</c>) column whose
+    /// child table: the single <c>LongInteger</c> (type code <c>0x04</c>) column whose
     /// name starts with <c>"_"</c> per <see href="complex-columns-format-notes.md" /> §2.4,
-    /// falling back to the first <c>T_LONG</c> column when no underscore-prefixed
-    /// candidate exists. Throws when no <c>T_LONG</c> column is present.
+    /// falling back to the first <c>LongInteger</c> column when no underscore-prefixed
+    /// candidate exists. Throws when no <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
     public ColumnInfo FindFlatTableForeignKeyColumn()
     {
-        return Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-            ?? Columns.Find(c => c.Type == T_LONG)
+        return Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+            ?? Columns.Find(c => c.Type == LongIntegerType)
             ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
     }
 }

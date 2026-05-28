@@ -346,9 +346,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// Schema verified against <c>ComplexFields.accdb</c> (see
     /// <see href="docs/format-probe/format-probe-appendix-complex.md" /> and
     /// <see href="docs/design/complex-columns-format-notes.md" /> §2.2): four
-    /// <c>T_LONG</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
+    /// <c>LongInteger</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
     /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
-    /// <c>T_TEXT(510)</c> variable column. The catalog row carries flag
+    /// <c>Text(510)</c> variable column. The catalog row carries flag
     /// <c>0x80000000</c> (system / hidden) so the table is excluded from
     /// <c>GetUserTablesAsync</c>.
     /// </summary>
@@ -775,7 +775,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
 
-        bool isComplexCol = complexCol.Type == T_ATTACHMENT || complexCol.Type == T_COMPLEX;
+        bool isComplexCol = complexCol.Type == AttachmentType || complexCol.Type == ComplexType;
         if (!isComplexCol)
         {
             throw new NotSupportedException(
@@ -865,7 +865,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     private static ComplexColumnKind ClassifyComplexColumnKind(byte parentType, TableDef flatDef)
     {
-        if (parentType == T_ATTACHMENT)
+        if (parentType == AttachmentType)
         {
             return ComplexColumnKind.Attachment;
         }
@@ -1141,7 +1141,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <summary>
     /// Returns one greater than the largest FK value stored in the
     /// flat table, or <c>1</c> when the table is empty. The FK column is the
-    /// single <c>T_LONG</c> column whose name starts with <c>"_"</c> per
+    /// single <c>LongInteger</c> column whose name starts with <c>"_"</c> per
     /// <c>BuildFlatTableSchema</c>.
     /// </summary>
     /// <param name="flatTdefPage">The flat TDEF page.</param>
@@ -1192,7 +1192,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     {
         object[] values = flatDef.CreateNullValueRow();
 
-        // FK back-ref: the single T_LONG column starting with "_".
+        // FK back-ref: the single LongInteger column starting with "_".
         var fkCol = flatDef.FindFlatTableForeignKeyColumn();
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
 
@@ -1275,7 +1275,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var complexCols = new List<ColumnInfo>();
         foreach (var col in parentDef.Columns)
         {
-            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            if (col.Type == AttachmentType || col.Type == ComplexType)
             {
                 complexCols.Add(col);
             }
@@ -1381,8 +1381,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
 
             var flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-            var fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-                ?? flatDef.Columns.Find(c => c.Type == T_LONG);
+            var fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+                ?? flatDef.Columns.Find(c => c.Type == LongIntegerType);
             if (fkCol == null)
             {
                 continue;
@@ -1748,7 +1748,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var complexCols = new List<ColumnInfo>();
         foreach (var col in parentDef.Columns)
         {
-            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            if (col.Type == AttachmentType || col.Type == ComplexType)
             {
                 complexCols.Add(col);
             }

@@ -117,9 +117,9 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                             ? DBNull.Value
                             : tableColumn.Type switch
                             {
-                                T_LONG => CatalogValueReader.ParseInt32OrZero(raw),
-                                T_INT => (short)CatalogValueReader.ParseInt32OrZero(raw),
-                                T_BYTE => (byte)CatalogValueReader.ParseInt32OrZero(raw),
+                                LongIntegerType => CatalogValueReader.ParseInt32OrZero(raw),
+                                IntegerType => (short)CatalogValueReader.ParseInt32OrZero(raw),
+                                ByteType => (byte)CatalogValueReader.ParseInt32OrZero(raw),
                                 _ => raw,
                             };
                     }

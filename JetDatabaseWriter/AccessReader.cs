@@ -520,8 +520,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Try to compile a direct page → T decoder that skips the per-row
         // object?[] buffer and primitive boxing entirely. The builder returns
-        // null when any bound column requires the slow path (T_MEMO/T_OLE
-        // LVAL chain, T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, Hyperlink
+        // null when any bound column requires the slow path (Memo/Ole
+        // LVAL chain, Binary, Numeric, Complex/Attachment, Hyperlink
         // prop).
         var directDecoder = td.HasComplexColumns
             ? null
@@ -543,7 +543,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // tables and narrow DTOs this can eliminate the bulk of the per-row
         // decode + boxing cost. We suppress the projection when the table has
         // complex/attachment columns, because complex resolution needs the
-        // parent-id T_LONG which may not be in the projection set.
+        // parent-id LongInteger which may not be in the projection set.
         bool[]? wantedColumns = td.HasComplexColumns
             ? null
             : RowMapper<T>.GetBoundColumnMask(headers);
@@ -583,7 +583,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         long rowCount = 0;
 
         bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, T_COMPLEX, T_ATTACHMENT));
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
@@ -690,7 +690,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // projection mask is supplied, skip a pass entirely if no wanted
         // column requires it; otherwise run with the table-wide flag.
         bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, T_COMPLEX, T_ATTACHMENT));
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
@@ -902,7 +902,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
-        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == T_COMPLEX || c.Type == T_ATTACHMENT);
+        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == ComplexType || c.Type == AttachmentType);
         if (hasComplex)
         {
             complexSubtypes = await _complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -923,7 +923,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return new ColumnMetadata
             {
                 Name = col.Name,
-                TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
+                TypeName = (col.Type == ComplexType && complexSubtypes.TryGetValue(col.Name, out string? subtype))
                     ? subtype
                     : ResolveTypeName(col),
                 ClrType = JetTypeInfo.ResolveClrType(col),
@@ -950,9 +950,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         var rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return rt is not null && rt.Value.Length >= 1
-            && (rt.DataType == Constants.ColumnTypes.T_BYTE
-                || rt.DataType == Constants.ColumnTypes.T_INT
-                || rt.DataType == Constants.ColumnTypes.T_LONG)
+            && (rt.DataType == Constants.ColumnTypes.ByteType
+                || rt.DataType == Constants.ColumnTypes.IntegerType
+                || rt.DataType == Constants.ColumnTypes.LongIntegerType)
             ? rt.Value[0]
             : (byte)0;
     }
@@ -991,7 +991,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static int GetMetadataDeclaredSize(ColumnInfo col)
     {
-        if (col.IsCalculated && (col.Type == T_TEXT || col.Type == T_BINARY) && col.Size > Constants.CalculatedColumn.ExtraDataLen)
+        if (col.IsCalculated && (col.Type == TextType || col.Type == BinaryType) && col.Size > Constants.CalculatedColumn.ExtraDataLen)
         {
             return col.Size - Constants.CalculatedColumn.ExtraDataLen;
         }
@@ -1302,7 +1302,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             object? value = keyValues[i];
-            perColumn[i] = column.Type == T_NUMERIC
+            perColumn[i] = column.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
                 : IndexKeyEncoder.EncodeEntry(column.Type, value, keyColumn.IsAscending);
             totalLength += perColumn[i].Length;
@@ -1387,7 +1387,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
-    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
+    /// Each column uses its native CLR type (int, DateTimeType, decimal, etc.).
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
@@ -1445,7 +1445,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             dt = new DataTable(tableName);
             foreach (var col in td.Columns)
             {
-                var clrType = preserveComplexReferences && (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
+                var clrType = preserveComplexReferences && (col.Type == ComplexType || col.Type == AttachmentType)
                     ? typeof(object)
                     : JetTypeInfo.ResolveClrType(col);
                 _ = dt.Columns.Add(col.Name, clrType);
@@ -1681,7 +1681,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             bool canUseDirectMap = projectedColumns.Count > 0
-                && projectedColumns.TrueForAll(static projection => projection.Column.Type != T_COMPLEX && projection.Column.Type != T_ATTACHMENT);
+                && projectedColumns.TrueForAll(static projection => projection.Column.Type != ComplexType && projection.Column.Type != AttachmentType);
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {
@@ -1984,9 +1984,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             switch (col.Type)
             {
-                case T_BINARY:
+                case BinaryType:
                     return row.AsSpan(start, len).ToArray();
-                case T_OLE:
+                case OleType:
                     return await _longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -1999,18 +1999,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         switch (col.Type)
         {
-            case T_TEXT:
+            case TextType:
                 return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-            case T_BINARY:
+            case BinaryType:
                 return CalculatedColumnUtil.Unwrap(row.AsSpan(start, len));
-            case T_MEMO:
+            case MemoType:
             {
                 byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
                 byte[] payload = CalculatedColumnUtil.Unwrap(raw);
                 return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
             }
 
-            case T_OLE:
+            case OleType:
             {
                 byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
                 byte[] payload = CalculatedColumnUtil.Unwrap(raw);
@@ -2143,7 +2143,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
-    /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
+    /// Each table's columns use their native CLR types (int, DateTimeType, decimal, etc.).
     /// </summary>
     /// <param name="progress">Optional progress reporter for table read operations.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
@@ -2570,7 +2570,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         foreach (var column in tableDef.Columns)
         {
-            if (column.Type is T_MEMO or T_OLE or T_COMPLEX or T_ATTACHMENT)
+            if (column.Type is MemoType or OleType or ComplexType or AttachmentType)
             {
                 return true;
             }
@@ -3249,26 +3249,26 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             switch (col.Type)
             {
-                case T_TEXT:
+                case TextType:
                     return DecodeTextForFormat(row, start, len);
 
-                case T_BINARY:
+                case BinaryType:
                     return JetTypeInfo.ToHexStringNoSeparator(row.AsSpan(start, len));
 
-                case T_MEMO:
-                case T_OLE:
-                    return await _longValueDecoder.ReadLongValueAsync(row, start, len, col.Type == T_OLE, cancellationToken).ConfigureAwait(false);
+                case MemoType:
+                case OleType:
+                    return await _longValueDecoder.ReadLongValueAsync(row, start, len, col.Type == OleType, cancellationToken).ConfigureAwait(false);
 
-                case T_BYTE:
-                case T_INT:
-                case T_LONG:
-                case T_FLOAT:
-                case T_DOUBLE:
-                case T_DATETIME:
-                case T_MONEY:
-                case T_GUID:
-                case T_COMPLEX:
-                case T_ATTACHMENT:
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case MoneyType:
+                case GuidType:
+                case ComplexType:
+                case AttachmentType:
                     // Delegate fixed-width primitive formatting to the shared
                     // JetTypeInfo.ReadFixedString helper to avoid duplicating
                     // the per-type Invariant-culture formatting block. The
@@ -3277,7 +3277,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     // contain the type's fixed payload) — JetTypeInfo gives
                     // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
                     // since they have no fixed-area size of their own.
-                    int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
+                    int required = col.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                     return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
 
 
@@ -3305,18 +3305,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             switch (col.Type)
             {
-                case T_TEXT:
+                case TextType:
                     return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-                case T_BINARY:
+                case BinaryType:
                     return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-                case T_MEMO:
+                case MemoType:
                 {
                     byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
                     byte[] payload = CalculatedColumnUtil.Unwrap(raw);
                     return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
                 }
 
-                case T_OLE:
+                case OleType:
                 {
                     byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
                     byte[] payload = CalculatedColumnUtil.Unwrap(raw);
@@ -3353,8 +3353,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // directly from the page bytes — no intermediate List<string> + per-
     // column culture-invariant formatting + re-parse round-trip. Fixed-
     // width primitives go through JetTypeInfo.ReadFixedTyped; variable-
-    // width text goes straight to a managed string; T_BINARY is copied as
-    // byte[]; T_MEMO/T_OLE keep their async branch only when the LVAL
+    // width text goes straight to a managed string; Binary is copied as
+    // byte[]; Memo/Ole keep their async branch only when the LVAL
     // chain actually needs to be walked (the inline 0x80 case stays sync).
     //
     // The split is exposed as TryCrackRowSync — callers that know they
@@ -3396,7 +3396,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return new ValueTask<object?[]?>((object?[]?)null);
         }
 
-        // Fast path: no T_MEMO/T_OLE LVAL chain walk needed — return a
+        // Fast path: no Memo/Ole LVAL chain walk needed — return a
         // sync-completed ValueTask so the caller never builds an async
         // state machine for fixed-only / inline-only rows.
         if (!needsLongValue)
@@ -3501,7 +3501,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <see langword="false"/> when the row trailer is malformed or the
     /// schema sanity-check rejects the row (caller should skip).
     /// <paramref name="needsLongValue"/> is set when one or more
-    /// <c>T_MEMO</c>/<c>T_OLE</c> slots require an LVAL-chain walk; those
+    /// <c>Memo</c>/<c>Ole</c> slots require an LVAL-chain walk; those
     /// slots are filled with a <see cref="RowDecodePlan.LongValueRef"/> sentinel that the
     /// async wrapper (<c>CrackRowTypedAsync</c>) replaces.
     /// </summary>
@@ -3575,8 +3575,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // baked in). Callers gate the fast path with
     // RowMapper<T>.TryBuildDirectDecoder which inspects each bound
     // column and returns null when any column requires the slow path
-    // (T_MEMO/T_OLE LVAL chain, T_BINARY, T_NUMERIC, T_COMPLEX/
-    // T_ATTACHMENT, Hyperlink-typed properties).
+    // (Memo/Ole LVAL chain, Binary, Numeric, Complex/
+    // Attachment, Hyperlink-typed properties).
     //
     // The compiled delegate calls back into a small set of internal
     // helpers below for the reader's per-instance state (format,

@@ -13,22 +13,22 @@ public sealed class TypedRowFallbackPolicyTests
     [Fact]
     public void EmptyVariableValue_TextAndMemo_ReturnsEmptyString()
     {
-        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = T_TEXT }));
-        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = T_MEMO }));
+        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = TextType }));
+        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = MemoType }));
     }
 
     [Fact]
     public void EmptyVariableValue_BinaryAndOle_ReturnsEmptyByteArray()
     {
-        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = T_BINARY }));
-        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = T_OLE }));
+        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = BinaryType }));
+        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = OleType }));
     }
 
     [Fact]
     public void FixedVariableSlotTooShort_NonStrict_ReturnsDBNull()
     {
         object value = TypedRowFallbackPolicy.FixedVariableSlotTooShort(
-            new ColumnInfo { Name = "Amount", Type = T_MONEY },
+            new ColumnInfo { Name = "Amount", Type = MoneyType },
             actualLength: 3,
             requiredLength: 8,
             strictParsing: false);
@@ -41,7 +41,7 @@ public sealed class TypedRowFallbackPolicyTests
     {
         var ex = Assert.Throws<InvalidDataException>(() =>
             TypedRowFallbackPolicy.FixedVariableSlotTooShort(
-                new ColumnInfo { Name = "Amount", Type = T_MONEY },
+                new ColumnInfo { Name = "Amount", Type = MoneyType },
                 actualLength: 3,
                 requiredLength: 8,
                 strictParsing: true));
@@ -53,7 +53,7 @@ public sealed class TypedRowFallbackPolicyTests
     public void MalformedVariableValue_NonStrict_ReturnsDBNull()
     {
         object value = TypedRowFallbackPolicy.MalformedVariableValue(
-            new ColumnInfo { Name = "When", Type = T_DATETIME },
+            new ColumnInfo { Name = "When", Type = DateTime },
             new ArgumentException("bad date"),
             strictParsing: false);
 
@@ -66,7 +66,7 @@ public sealed class TypedRowFallbackPolicyTests
         var inner = new ArgumentException("bad date");
         var ex = Assert.Throws<InvalidDataException>(() =>
             TypedRowFallbackPolicy.MalformedVariableValue(
-                new ColumnInfo { Name = "When", Type = T_DATETIME },
+                new ColumnInfo { Name = "When", Type = DateTime },
                 inner,
                 strictParsing: true));
 
@@ -81,7 +81,7 @@ public sealed class TypedRowFallbackPolicyTests
 
         var ex = Assert.Throws<JetLimitationException>(() =>
             TypedRowFallbackPolicy.MalformedVariableValue(
-                new ColumnInfo { Name = "DecimalValue", Type = T_NUMERIC },
+                new ColumnInfo { Name = "DecimalValue", Type = NumericType },
                 limitation,
                 strictParsing: false));
 

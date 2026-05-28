@@ -51,7 +51,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             var col = tableDef.Columns[i];
-            if (col.IsFixed || (col.Type != T_OLE && col.Type != T_MEMO))
+            if (col.IsFixed || (col.Type != OleType && col.Type != MemoType))
             {
                 continue;
             }
@@ -64,7 +64,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
 
             byte[]? data;
             int inlineCap;
-            if (col.Type == T_OLE)
+            if (col.Type == OleType)
             {
                 data = value as byte[];
                 if (data == null)

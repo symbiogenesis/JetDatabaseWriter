@@ -804,13 +804,13 @@ public abstract class AccessBase : IAccessBase
                 ExtraFlags = _format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0,
                 Misc = Ri32(td, o + _colDesc.MiscOff),
 
-                // For T_NUMERIC the misc 4-byte slot reuses bytes 11/12
+                // For Numeric the misc 4-byte slot reuses bytes 11/12
                 // (descriptor-relative) to carry the declared precision and
                 // scale Access shows in Design View. Same byte positions as
                 // the Jackcess `FixedPointColumnDescriptor` parser. Other
                 // column types leave these at 0.
-                NumericPrecision = td[o + _colDesc.TypeOff] == T_NUMERIC ? td[o + _colDesc.MiscOff] : (byte)0,
-                NumericScale = td[o + _colDesc.TypeOff] == T_NUMERIC ? td[o + _colDesc.MiscOff + 1] : (byte)0,
+                NumericPrecision = td[o + _colDesc.TypeOff] == NumericType ? td[o + _colDesc.MiscOff] : (byte)0,
+                NumericScale = td[o + _colDesc.TypeOff] == NumericType ? td[o + _colDesc.MiscOff + 1] : (byte)0,
             });
         }
 
@@ -1318,7 +1318,7 @@ public abstract class AccessBase : IAccessBase
             }
         }
 
-        if (col.Type == T_BOOL && !col.IsCalculated)
+        if (col.Type == BooleanType && !col.IsCalculated)
         {
             return new ColumnSlice(ColumnSliceKind.Bool, 0, 0, nullBit);
         }
@@ -1398,7 +1398,7 @@ public abstract class AccessBase : IAccessBase
 
     /// <summary>
     /// Reads a single column value as a string, supporting bool, fixed-width and inline-var
-    /// (T_TEXT / T_BINARY) columns. Variable-width MEMO / OLE / Complex columns are NOT
+    /// (Text / Binary) columns. Variable-width MEMO / OLE / Complex columns are NOT
     /// followed (they require LVAL chain traversal); those return <see cref="string.Empty"/>
     /// here. Used by writer-side catalog walks that only need scalar metadata columns.
     /// </summary>
@@ -1439,21 +1439,21 @@ public abstract class AccessBase : IAccessBase
 
                 switch (column.Type)
                 {
-                    case T_TEXT:
+                    case TextType:
                         return DecodeTextForFormat(page, rowStart + slice.DataStart, slice.DataLen);
-                    case T_BINARY:
+                    case BinaryType:
                         return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
-                    case T_BYTE:
-                    case T_INT:
-                    case T_LONG:
-                    case T_FLOAT:
-                    case T_DOUBLE:
-                    case T_DATETIME:
-                    case T_MONEY:
-                    case T_GUID:
-                    case T_COMPLEX:
-                    case T_ATTACHMENT:
-                        int required = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                    case ByteType:
+                    case IntegerType:
+                    case LongIntegerType:
+                    case FloatType:
+                    case DoubleType:
+                    case DateTimeType:
+                    case MoneyType:
+                    case GuidType:
+                    case ComplexType:
+                    case AttachmentType:
+                        int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                         return required > 0 && slice.DataLen >= required
                             ? JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, required)
                             : string.Empty;

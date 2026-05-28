@@ -15,8 +15,8 @@ using Xunit;
 ///   • Table <c>Tags</c> — plain text column used as a non-complex control table.
 ///
 /// ── Important ACE format finding ────────────────────────────────────────────
-/// Access 2007+ ACCDB stores Attachment columns as column_type = 0x12 (T_COMPLEX)
-/// in the TDEF column descriptor, NOT as 0x11 (T_ATTACHMENT).
+/// Access 2007+ ACCDB stores Attachment columns as column_type = 0x12 (Complex)
+/// in the TDEF column descriptor, NOT as 0x11 (Attachment).
 /// The specific subtype (Attachment vs. Multi-Value vs. Version History) is
 /// stored in the system table <c>MSysComplexColumns</c>.
 ///
@@ -47,7 +47,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     [Fact]
     public async Task ComplexFields_AttachmentColumn_TypeNameIsAttachment()
     {
-        // Access stores Attachment columns as type 0x12 (T_COMPLEX) in the TDEF.
+        // Access stores Attachment columns as type 0x12 (Complex) in the TDEF.
         // The specific subtype (attachment vs multi-value) is determined by MSysComplexColumns.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         var meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);

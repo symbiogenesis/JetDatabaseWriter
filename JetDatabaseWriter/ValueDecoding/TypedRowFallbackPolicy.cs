@@ -12,8 +12,8 @@ internal static class TypedRowFallbackPolicy
     internal static object EmptyVariableValue(ColumnInfo column)
         => column.Type switch
         {
-            T_TEXT or T_MEMO => string.Empty,
-            T_BINARY or T_OLE => Array.Empty<byte>(),
+            TextType or MemoType => string.Empty,
+            BinaryType or OleType => Array.Empty<byte>(),
             _ => DBNull.Value,
         };
 

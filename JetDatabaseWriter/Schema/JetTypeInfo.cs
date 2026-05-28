@@ -28,26 +28,26 @@ internal static class JetTypeInfo
     /// <param name="type">JET column-type code (see <see cref="Constants.ColumnTypes"/>).</param>
     public static int GetFixedSize(byte type) => type switch
     {
-        T_BYTE => 1,
-        T_INT => 2,
-        T_LONG => 4,
-        T_MONEY => 8,
-        T_FLOAT => 4,
-        T_DOUBLE => 8,
-        T_DATETIME => 8,
-        T_GUID => 16,
-        T_NUMERIC => 17,
+        ByteType => 1,
+        IntegerType => 2,
+        LongIntegerType => 4,
+        MoneyType => 8,
+        FloatType => 4,
+        DoubleType => 8,
+        DateTimeType => 8,
+        GuidType => 16,
+        NumericType => 17,
 
         // Complex/attachment columns store a 4-byte ComplexId in the row's
         // fixed area (the actual payload lives in the hidden child table
         // joined via the ComplexId). Access writes col_len = 4 for both.
-        T_COMPLEX => 4,
-        T_ATTACHMENT => 4,
+        ComplexType => 4,
+        AttachmentType => 4,
 
         // Access 365 "Date/Time Extended" — 42-byte fixed slot. Not yet
         // exercised by the writer, but reported here so the reader's
         // ResolveColumnSlice path can size the slot correctly.
-        T_DATETIMEEXT => 42,
+        DateTimeExtendedType => 42,
 
         _ => 0,
     };
@@ -61,12 +61,12 @@ internal static class JetTypeInfo
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     public static bool IsAlwaysVariableLength(byte type)
-        => type is T_TEXT or T_BINARY or T_MEMO or T_OLE;
+        => type is TextType or BinaryType or MemoType or OleType;
 
     /// <summary>
     /// Returns the CLR type used when projecting a TDEF column descriptor back
-    /// to a public <c>ColumnDefinition</c>. Complex-column codes (<c>T_COMPLEX</c>
-    /// / <c>T_ATTACHMENT</c>) map to <see cref="byte"/>[] — the surface CLR type the
+    /// to a public <c>ColumnDefinition</c>. Complex-column codes (<c>Complex</c>
+    /// / <c>Attachment</c>) map to <see cref="byte"/>[] — the surface CLR type the
     /// reader resolves them to after joining the hidden flat child table — but
     /// callers that need the additional metadata (ComplexId, IsAttachment,
     /// IsMultiValue) must still special-case those codes before reaching this
@@ -75,22 +75,22 @@ internal static class JetTypeInfo
     /// <param name="type">The JET column type or operation type.</param>
     public static Type? GetClrType(byte type) => type switch
     {
-        T_BOOL => typeof(bool),
-        T_BYTE => typeof(byte),
-        T_INT => typeof(short),
-        T_LONG => typeof(int),
-        T_MONEY => typeof(decimal),
-        T_FLOAT => typeof(float),
-        T_DOUBLE => typeof(double),
-        T_DATETIME => typeof(DateTime),
-        T_NUMERIC => typeof(decimal),
-        T_GUID => typeof(Guid),
-        T_TEXT => typeof(string),
-        T_MEMO => typeof(string),
-        T_BINARY => typeof(byte[]),
-        T_OLE => typeof(byte[]),
-        T_ATTACHMENT => typeof(byte[]),
-        T_COMPLEX => typeof(byte[]),
+        BooleanType => typeof(bool),
+        ByteType => typeof(byte),
+        IntegerType => typeof(short),
+        LongIntegerType => typeof(int),
+        MoneyType => typeof(decimal),
+        FloatType => typeof(float),
+        DoubleType => typeof(double),
+        DateTimeType => typeof(DateTime),
+        NumericType => typeof(decimal),
+        GuidType => typeof(Guid),
+        TextType => typeof(string),
+        MemoType => typeof(string),
+        BinaryType => typeof(byte[]),
+        OleType => typeof(byte[]),
+        AttachmentType => typeof(byte[]),
+        ComplexType => typeof(byte[]),
         _ => null,
     };
 
@@ -102,7 +102,7 @@ internal static class JetTypeInfo
     /// </summary>
     /// <param name="col">The column descriptor.</param>
     public static bool IsHyperlinkColumn(ColumnInfo col)
-        => col.Type == T_MEMO && (col.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0;
+        => col.Type == MemoType && (col.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0;
 
     /// <summary>
     /// Returns the CLR projection type for a column, accounting for the
@@ -125,30 +125,30 @@ internal static class JetTypeInfo
 
     /// <summary>
     /// Returns the human-friendly Access display name for a JET column-type code
-    /// (e.g. <c>"Long Integer"</c> for <c>T_LONG</c>). Unknown codes surface as
+    /// (e.g. <c>"Long Integer"</c> for <c>LongInteger</c>). Unknown codes surface as
     /// the hex representation <c>"0xNN"</c>. Mirrors Access's UI labels and the
     /// names exposed by the legacy DAO/ADO type-name properties.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     public static string GetTypeDisplayName(byte type) => type switch
     {
-        T_BOOL => "Yes/No",
-        T_BYTE => "Byte",
-        T_INT => "Integer",
-        T_LONG => "Long Integer",
-        T_MONEY => "Currency",
-        T_FLOAT => "Single",
-        T_DOUBLE => "Double",
-        T_DATETIME => "Date/Time",
-        T_BINARY => "Binary",
-        T_TEXT => "Text",
-        T_OLE => "OLE Object",
-        T_MEMO => "Memo",
-        T_GUID => "GUID",
-        T_NUMERIC => "Decimal",
-        T_ATTACHMENT => "Attachment",
-        T_COMPLEX => "Complex",
-        T_DATETIMEEXT => "Date/Time Extended",
+        BooleanType => "Yes/No",
+        ByteType => "Byte",
+        IntegerType => "Integer",
+        LongIntegerType => "Long Integer",
+        MoneyType => "Currency",
+        FloatType => "Single",
+        DoubleType => "Double",
+        DateTimeType => "Date/Time",
+        BinaryType => "Binary",
+        TextType => "Text",
+        OleType => "OLE Object",
+        MemoType => "Memo",
+        GuidType => "GUID",
+        NumericType => "Decimal",
+        AttachmentType => "Attachment",
+        ComplexType => "Complex",
+        DateTimeExtendedType => "Date/Time Extended",
         _ => $"0x{type:X2}",
     };
 
@@ -156,21 +156,21 @@ internal static class JetTypeInfo
     /// Returns the user-facing <see cref="ColumnSize"/> for a column.
     /// <paramref name="declaredSize"/> is the on-disk descriptor size (the
     /// per-column <c>size</c> field) used for variable-width types like
-    /// <c>T_TEXT</c> (Jet4 stores chars * 2 there) and unknown fixed types.
+    /// <c>Text</c> (Jet4 stores chars * 2 there) and unknown fixed types.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     /// <param name="declaredSize">The declared size.</param>
     public static ColumnSize GetColumnSize(byte type, int declaredSize) => type switch
     {
-        T_BOOL => ColumnSize.FromBits(1),
-        T_BYTE => ColumnSize.FromBytes(1),
-        T_INT => ColumnSize.FromBytes(2),
-        T_LONG or T_FLOAT => ColumnSize.FromBytes(4),
-        T_MONEY or T_DOUBLE or T_DATETIME => ColumnSize.FromBytes(8),
-        T_GUID => ColumnSize.FromBytes(16),
-        T_NUMERIC => ColumnSize.FromBytes(17),
-        T_TEXT => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
-        T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX => ColumnSize.Lval,
+        BooleanType => ColumnSize.FromBits(1),
+        ByteType => ColumnSize.FromBytes(1),
+        IntegerType => ColumnSize.FromBytes(2),
+        LongIntegerType or FloatType => ColumnSize.FromBytes(4),
+        MoneyType or DoubleType or DateTimeType => ColumnSize.FromBytes(8),
+        GuidType => ColumnSize.FromBytes(16),
+        NumericType => ColumnSize.FromBytes(17),
+        TextType => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
+        MemoType or OleType or AttachmentType or ComplexType => ColumnSize.Lval,
         _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
     };
 
@@ -185,7 +185,7 @@ internal static class JetTypeInfo
 
     /// <summary>
     /// Formats a fixed-width JET column value as a culture-invariant string.
-    /// When <paramref name="strictNumeric"/> is <see langword="true"/>, T_NUMERIC values
+    /// When <paramref name="strictNumeric"/> is <see langword="true"/>, Numeric values
     /// that overflow .NET's <see cref="decimal"/> range or carry an out-of-range scale
     /// surface as <see cref="JetLimitationException"/> instead of being silently elided
     /// to the empty string — the contract the typed reader path relies on.
@@ -201,26 +201,26 @@ internal static class JetTypeInfo
         {
             switch (type)
             {
-                case T_BYTE:
+                case ByteType:
                     return row[start].ToString(CultureInfo.InvariantCulture);
-                case T_INT:
+                case IntegerType:
                     return Ri16(row, start).ToString(CultureInfo.InvariantCulture);
-                case T_LONG:
+                case LongIntegerType:
                     return Ri32(row, start).ToString(CultureInfo.InvariantCulture);
-                case T_FLOAT:
+                case FloatType:
                     return ReadSingleLittleEndian(row.Slice(start, 4)).ToString("G", CultureInfo.InvariantCulture);
-                case T_DOUBLE:
+                case DoubleType:
                     return ReadDoubleLittleEndian(row.Slice(start, 8)).ToString("G", CultureInfo.InvariantCulture);
-                case T_DATETIME:
+                case DateTimeType:
                     return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-                case T_MONEY:
+                case MoneyType:
                     return decimal.FromOACurrency(Ri64(row, start)).ToString("F4", CultureInfo.InvariantCulture);
-                case T_GUID:
+                case GuidType:
                     return new Guid(row.Slice(start, 16)).ToString("B");
-                case T_NUMERIC:
+                case NumericType:
                     return ReadNumericString(row, start, scale: 0, strictNumeric);
-                case T_COMPLEX:
-                case T_ATTACHMENT:
+                case ComplexType:
+                case AttachmentType:
                     return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
                 default:
                     return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
@@ -241,7 +241,7 @@ internal static class JetTypeInfo
     }
 
     internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, ColumnInfo column, int size, bool strictNumeric = false)
-        => column.Type == T_NUMERIC
+        => column.Type == NumericType
             ? ReadNumericString(row, start, column.NumericScale, strictNumeric)
             : ReadFixedString(row, start, column.Type, size, strictNumeric);
 
@@ -253,14 +253,14 @@ internal static class JetTypeInfo
     /// string formatting and re-parsing.
     /// <para>
     /// Type mapping mirrors <see cref="GetClrType(byte)"/>:
-    /// <c>T_BYTE → byte</c>, <c>T_INT → short</c>, <c>T_LONG → int</c>,
-    /// <c>T_FLOAT → float</c>, <c>T_DOUBLE → double</c>,
-    /// <c>T_DATETIME → DateTime</c> (un-truncated; <c>ReadFixedString</c>
+    /// <c>Byte → byte</c>, <c>Integer → short</c>, <c>LongInteger → int</c>,
+    /// <c>Float → float</c>, <c>Double → double</c>,
+    /// <c>DateTime → DateTime</c> (un-truncated; <c>ReadFixedString</c>
     /// formats with <c>"yyyy-MM-dd HH:mm:ss"</c> and loses sub-second precision —
     /// the typed path keeps full precision),
-    /// <c>T_MONEY → decimal</c>, <c>T_GUID → Guid</c>,
-    /// <c>T_NUMERIC → decimal</c>,
-    /// <c>T_COMPLEX</c>/<c>T_ATTACHMENT → <see cref="ComplexIdRef"/></c> typed
+    /// <c>Money → decimal</c>, <c>Guid → Guid</c>,
+    /// <c>Numeric → decimal</c>,
+    /// <c>Complex</c>/<c>Attachment → <see cref="ComplexIdRef"/></c> typed
     /// sentinel carrying the row's complex_id directly (the legacy
     /// <c>"__CX:N__"</c> string round-trip used by <c>ReadFixedString</c>
     /// is avoided on the typed hot path), and unknown types fall through to
@@ -271,7 +271,7 @@ internal static class JetTypeInfo
     /// (<see cref="ArgumentException"/>, <see cref="IndexOutOfRangeException"/>,
     /// <see cref="OverflowException"/>) — matching the empty-string-then-DBNull
     /// behaviour of the round-trip path. When <paramref name="strictNumeric"/>
-    /// is <see langword="true"/>, T_NUMERIC values that overflow or carry an
+    /// is <see langword="true"/>, Numeric values that overflow or carry an
     /// out-of-range scale surface as <see cref="JetLimitationException"/>; with
     /// <see langword="false"/> they collapse to <see cref="DBNull.Value"/>.
     /// </para>
@@ -287,30 +287,30 @@ internal static class JetTypeInfo
         {
             switch (type)
             {
-                case T_BYTE:
+                case ByteType:
                     return row[start];
-                case T_INT:
+                case IntegerType:
                     // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
                     // the legacy "(short)Ru16(...)" cast throws OverflowException for
                     // values with the high bit set and ReadFixedString silently maps
                     // those to string.Empty → DBNull. The typed path keeps the value.
                     return Ri16(row, start);
-                case T_LONG:
+                case LongIntegerType:
                     return Ri32(row, start);
-                case T_FLOAT:
+                case FloatType:
                     return ReadSingleLittleEndian(row.Slice(start, 4));
-                case T_DOUBLE:
+                case DoubleType:
                     return ReadDoubleLittleEndian(row.Slice(start, 8));
-                case T_DATETIME:
+                case DateTimeType:
                     return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8)));
-                case T_MONEY:
+                case MoneyType:
                     return decimal.FromOACurrency(Ri64(row, start));
-                case T_GUID:
+                case GuidType:
                     return new Guid(row.Slice(start, 16));
-                case T_NUMERIC:
+                case NumericType:
                     return ReadNumericTyped(row, start, scale: 0, strictNumeric);
-                case T_COMPLEX:
-                case T_ATTACHMENT:
+                case ComplexType:
+                case AttachmentType:
                     return size >= 4
                         ? new ComplexIdRef(Ri32(row, start))
                         : DBNull.Value;
@@ -333,12 +333,12 @@ internal static class JetTypeInfo
     }
 
     internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, ColumnInfo column, int size, bool strictNumeric = false)
-        => column.Type == T_NUMERIC
+        => column.Type == NumericType
             ? ReadNumericTyped(row, start, column.NumericScale, strictNumeric)
             : ReadFixedTyped(row, start, column.Type, size, strictNumeric);
 
     /// <summary>
-    /// Reads a Jet T_NUMERIC value (17-byte slot:
+    /// Reads a Jet Numeric value (17-byte slot:
     /// <c>[sign][16-byte unsigned magnitude]</c>; scale comes from the descriptor). When <paramref name="strict"/>
     /// is <see langword="false"/> (the default, used by lossy diagnostics paths) returns the
     /// empty string for scale > 28, OLE-decimal overflow, or insufficient bytes. When
@@ -387,7 +387,7 @@ internal static class JetTypeInfo
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - start)}).");
+                    $"Numeric slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - start)}).");
             }
 
             return false;
@@ -398,7 +398,7 @@ internal static class JetTypeInfo
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+                    $"Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
             return false;
@@ -419,7 +419,7 @@ internal static class JetTypeInfo
         {
             if (strict)
             {
-                throw new JetLimitationException("T_NUMERIC value exceeds the .NET decimal 96-bit mantissa range.");
+                throw new JetLimitationException("Numeric value exceeds the .NET decimal 96-bit mantissa range.");
             }
 
             return false;
@@ -438,7 +438,7 @@ internal static class JetTypeInfo
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"T_NUMERIC value overflow (scale={scale})", ex);
+                    $"Numeric value overflow (scale={scale})", ex);
             }
 
             return false;
@@ -622,50 +622,50 @@ internal static class JetTypeInfo
     /// <param name="start">The start.</param>
     internal static byte ReadByteAt(byte[] page, int start) => page[start];
 
-    /// <summary>Reads a little-endian Int16 (T_INT) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a little-endian Int16 (Integer) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static short ReadInt16LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2));
 
-    /// <summary>Reads a little-endian Int32 (T_LONG) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a little-endian Int32 (LongInteger) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static int ReadInt32LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4));
 
-    /// <summary>Reads a little-endian Single (T_FLOAT) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a little-endian Single (Float) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static float ReadFloatLE(byte[] page, int start) =>
         ReadSingleLittleEndian(page.AsSpan(start, 4));
 
-    /// <summary>Reads a little-endian Double (T_DOUBLE) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a little-endian Double (Double) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static double ReadDoubleLE(byte[] page, int start) =>
         ReadDoubleLittleEndian(page.AsSpan(start, 8));
 
-    /// <summary>Reads a T_DATETIME (8-byte OLE date) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a DateTime (8-byte OLE date) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static DateTime ReadDateTimeLE(byte[] page, int start) =>
         DateTime.FromOADate(ReadDoubleLittleEndian(page.AsSpan(start, 8)));
 
-    /// <summary>Reads a T_MONEY (8-byte OLE currency) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a Money (8-byte OLE currency) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static decimal ReadMoneyLE(byte[] page, int start) =>
         decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)));
 
-    /// <summary>Reads a T_GUID (16-byte) at <paramref name="start"/>.</summary>
+    /// <summary>Reads a Guid (16-byte) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="start">The start.</param>
     internal static Guid ReadGuidAt(byte[] page, int start) =>
         new(page.AsSpan(start, 16));
 
     /// <summary>
-    /// Reads a T_NUMERIC value at <paramref name="start"/> as a typed
+    /// Reads a Numeric value at <paramref name="start"/> as a typed
     /// <see cref="decimal"/>, skipping the boxing the
     /// <c>ReadFixedTyped</c> path performs. Throws
     /// <see cref="OverflowException"/> / <see cref="ArgumentException"/> on
@@ -683,7 +683,7 @@ internal static class JetTypeInfo
 }
 
 /// <summary>
-/// Typed-row sentinel for <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots emitted
+/// Typed-row sentinel for <c>Complex</c>/<c>Attachment</c> slots emitted
 /// by <c>JetTypeInfo.ReadFixedTyped</c>. Carries the parent row's
 /// complex_id directly so the post-processing pass can resolve attachment
 /// bytes without parsing the legacy <c>"__CX:N__"</c> string format.

@@ -33,7 +33,7 @@ release-quality benchmark results justify reopening a specific area.
   fixed/variable slice decoding to `RowDecodePlan`, fill `object?[]` buffers
   directly, and return a sync-completed `ValueTask` on rows that do not require
   long-value resolution.
-- `T_MEMO` and `T_OLE` slots emit `RowDecodePlan.LongValueRef` during sync
+- `Memo` and `Ole` slots emit `RowDecodePlan.LongValueRef` during sync
   cracking. The async wrapper resolves only the rows and cells that actually
   contain long values.
 - `RowsAsStrings()` intentionally remains on the string compatibility path over
@@ -44,9 +44,9 @@ release-quality benchmark results justify reopening a specific area.
   `Accessor` API remains available for writer-side mapping.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
   for primitive projections. It falls back to the typed crack path for calculated
-  columns, `T_MEMO` / `T_OLE` LVAL columns, `T_BINARY`, `T_COMPLEX` /
-  `T_ATTACHMENT`, hyperlinks, type-mismatched targets, or tables with complex
-  columns. `T_NUMERIC` direct-decodes for decimal targets using `NumericScale`.
+  columns, `Memo` / `Ole` LVAL columns, `Binary`, `Complex` /
+  `Attachment`, hyperlinks, type-mismatched targets, or tables with complex
+  columns. `Numeric` direct-decodes for decimal targets using `NumericScale`.
 - Synthetic benchmark databases are generated under `%TEMP%\JetBench\` by
   `SyntheticDatabases.cs`: `Numeric` has 25K rows / 9 columns, `TextHeavy` has
   25K rows / 6 columns, `Wide` has 10K rows / 40 columns, and `Memos` has 5K

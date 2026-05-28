@@ -12,7 +12,7 @@ using Xunit;
 
 /// <summary>
 /// Exercises the multi-segment binary index key encoder with long payloads
-/// (up to the <c>T_BINARY</c> maximum of 255 bytes). Prior tests in
+/// (up to the <c>Binary</c> maximum of 255 bytes). Prior tests in
 /// <see cref="IndexBinaryKeyTests"/> used payloads of at most 9 bytes (one
 /// overflow segment). This class stresses the encoder with payloads that
 /// produce many 8-byte segments, exercising the repeated intermediate-length
@@ -25,7 +25,7 @@ public sealed class IndexLongBinaryKeyTests
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     /// <summary>
-    /// A 255-byte binary payload (maximum T_BINARY length) round-trips
+    /// A 255-byte binary payload (maximum Binary length) round-trips
     /// through a unique index without corruption.
     /// </summary>
     [Fact]

@@ -109,7 +109,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             (var col, int snapIdx, bool ascending) = descriptor.KeyColumns[0];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
-            return col.Type == T_NUMERIC
+            return col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[0], legacyNumeric)
                 : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
         }
@@ -123,7 +123,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             (var col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
-            perColumn[k] = col.Type == T_NUMERIC
+            perColumn[k] = col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
                 : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
             lengths[k] = perColumn[k].Length;
@@ -168,7 +168,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         // Fast path: read only the key columns directly from data pages via
-        // TryReadColumnValuesTypedAsync. Keep T_NUMERIC indexes on the full-table
+        // TryReadColumnValuesTypedAsync. Keep Numeric indexes on the full-table
         // snapshot path until the byte-for-byte key normalization is validated
         // against the descriptor scale and Jet4/ACE numeric encoding variants.
         bool needsSnapshot = false;
@@ -176,7 +176,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         {
             foreach ((var col, _, _) in desc.KeyColumns)
             {
-                if (col.Type == T_NUMERIC)
+                if (col.Type == NumericType)
                 {
                     needsSnapshot = true;
                     break;
@@ -335,7 +335,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         for (int k = 0; k < descriptor.KeyColumns.Count; k++)
         {
             var kCol = descriptor.KeyColumns[k].Col;
-            scales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
+            scales[k] = kCol.Type == NumericType ? kCol.NumericScale : -1;
         }
 
         return scales;
@@ -400,7 +400,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             for (int k = 0; k < descriptor.KeyColumns.Count; k++)
             {
                 var kCol = descriptor.KeyColumns[k].Col;
-                numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
+                numericTargetScales[k] = kCol.Type == NumericType ? kCol.NumericScale : -1;
             }
 
             var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);

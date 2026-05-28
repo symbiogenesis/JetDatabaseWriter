@@ -258,13 +258,13 @@ internal static class IndexHelpers
                 // Compact & Repair; that fallback masked a programmer error
                 // and disagreed with Access semantics. Reject with a clear
                 // diagnostic so callers correct the index definition.
-                if (column.Type is T_OLE or T_ATTACHMENT or T_COMPLEX)
+                if (column.Type is OleType or AttachmentType or ComplexType)
                 {
                     string typeName = column.Type switch
                     {
-                        T_OLE => "OLE Object",
-                        T_ATTACHMENT => "Attachment",
-                        T_COMPLEX => "Multi-Value (Complex)",
+                        OleType => "OLE Object",
+                        AttachmentType => "Attachment",
+                        ComplexType => "Multi-Value (Complex)",
                         _ => $"0x{column.Type:X2}",
                     };
                     throw new NotSupportedException(
@@ -609,7 +609,7 @@ internal static class IndexHelpers
         bool ascending,
         byte numericScale,
         bool legacyNumeric)
-        => columnType == T_NUMERIC
+        => columnType == NumericType
             ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, numericScale, legacyNumeric)
             : IndexKeyEncoder.EncodeEntry(columnType, value, ascending);
 

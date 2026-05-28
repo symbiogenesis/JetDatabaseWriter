@@ -10,7 +10,7 @@
 
 ## 1. Background
 
-Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row complex reference in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The writer now emits `0x12` for attachment and multi-value parent descriptors; `T_ATTACHMENT = 0x11` in `Constants.cs` is retained only as a legacy/private alias for older reader tolerance.
+Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row complex reference in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The writer now emits `0x12` for attachment and multi-value parent descriptors; `Attachment = 0x11` in `Constants.cs` is retained only as a legacy/private alias for older reader tolerance.
 
 | Kind | Storage in child table |
 |---|---|
@@ -43,11 +43,11 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 | Column (verified) | Type | Meaning |
 |---|---|---|
-| `ColumnName` | `T_TEXT(510)` | Name of the parent column (e.g. `"Attachments"`). |
-| `ComplexID` | `T_LONG` (fixed_off=12) | Per-database ID for this complex column. **Matches the 4-byte value the parent TDEF stores in the column descriptor's `misc`+`misc_ext` slot** (see §2.1). |
-| `ComplexTypeObjectID` | `T_LONG` (fixed_off=0) | `MSysObjects.Id` of the **type-template table** — one of `MSysComplexType_Long`, `MSysComplexType_Text`, `MSysComplexType_Attachment`, etc. The template's schema dictates the kind (attachment vs multi-value of a given inner type). |
-| `ConceptualTableID` | `T_LONG` (fixed_off=8) | Parent table object/TDEF page for the complex-column definition. Schema rewrite preserves this identity when possible by transplanting rebuilt storage onto the original TDEF page; copy/swap fallbacks patch the value to the replacement TDEF page. |
-| `FlatTableID` | `T_LONG` (fixed_off=4) | `MSysObjects.Id` of the hidden child ("flat") table. |
+| `ColumnName` | `Text(510)` | Name of the parent column (e.g. `"Attachments"`). |
+| `ComplexID` | `LongInteger` (fixed_off=12) | Per-database ID for this complex column. **Matches the 4-byte value the parent TDEF stores in the column descriptor's `misc`+`misc_ext` slot** (see §2.1). |
+| `ComplexTypeObjectID` | `LongInteger` (fixed_off=0) | `MSysObjects.Id` of the **type-template table** — one of `MSysComplexType_Long`, `MSysComplexType_Text`, `MSysComplexType_Attachment`, etc. The template's schema dictates the kind (attachment vs multi-value of a given inner type). |
+| `ConceptualTableID` | `LongInteger` (fixed_off=8) | Parent table object/TDEF page for the complex-column definition. Schema rewrite preserves this identity when possible by transplanting rebuilt storage onto the original TDEF page; copy/swap fallbacks patch the value to the replacement TDEF page. |
+| `FlatTableID` | `LongInteger` (fixed_off=4) | `MSysObjects.Id` of the hidden child ("flat") table. |
 
 There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
 
@@ -80,14 +80,14 @@ Per Jackcess [`AttachmentColumnInfoImpl`](https://github.com/jahlborn/jackcess/b
 
 | Flat-table column | Jet type | Notes |
 |---|---|---|
-| (autonumber PK) | `T_LONG`, autoincrement | Required by complex-column protocol. |
-| (FK) | `T_LONG` | Holds the per-row complex reference value from the parent row. |
-| `FileURL` | `T_MEMO` | May be empty/null. |
-| `FileName` | `T_TEXT` (max 255) | Display filename. |
-| `FileType` | `T_TEXT` (max 255) | Lowercase file extension without leading `.` (Jackcess uses lowercase consistently). Drives the COMPRESSED_FORMATS skip-list (§3.2). |
-| `FileFlags` | `T_LONG` | Reserved by Access; Jackcess emits null. |
-| `FileTimeStamp` | `T_DATETIME` | When the file was attached. Jackcess uses the system clock. |
-| `FileData` | `T_OLE` | Wrapper-encoded payload. **NOT raw bytes.** See §3. |
+| (autonumber PK) | `LongInteger`, autoincrement | Required by complex-column protocol. |
+| (FK) | `LongInteger` | Holds the per-row complex reference value from the parent row. |
+| `FileURL` | `Memo` | May be empty/null. |
+| `FileName` | `Text` (max 255) | Display filename. |
+| `FileType` | `Text` (max 255) | Lowercase file extension without leading `.` (Jackcess uses lowercase consistently). Drives the COMPRESSED_FORMATS skip-list (§3.2). |
+| `FileFlags` | `LongInteger` | Reserved by Access; Jackcess emits null. |
+| `FileTimeStamp` | `DateTime` | When the file was attached. Jackcess uses the system clock. |
+| `FileData` | `Ole` | Wrapper-encoded payload. **NOT raw bytes.** See §3. |
 
 If the flat table on disk has columns whose names don't match these exactly, Jackcess assigns by type/order: the LONG column is `FileFlags`; the SHORT_DATE_TIME column is `FileTimeStamp`; the OLE column is `FileData`; the MEMO column is `FileUrl`; the first TEXT column is `FileName`; the second TEXT column is `FileType`. We should write canonical names, but the reader path should be tolerant.
 
@@ -95,8 +95,8 @@ If the flat table on disk has columns whose names don't match these exactly, Jac
 
 | Flat-table column | Jet type | Notes |
 |---|---|---|
-| (autonumber PK) | `T_LONG`, autoincrement | |
-| (FK) | `T_LONG` | |
+| (autonumber PK) | `LongInteger`, autoincrement | |
+| (FK) | `LongInteger` | |
 | `value` | varies | Whatever element type the user declared (text, long, etc.). |
 
 The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only property (see §4.2 C2 row); the inner value column inherits the `ColumnDefinition`'s declared type and length.
@@ -105,10 +105,10 @@ The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only
 
 | Flat-table column | Jet type | Notes |
 |---|---|---|
-| (autonumber PK) | `T_LONG`, autoincrement | |
-| (FK) | `T_LONG` | |
-| `value` | `T_MEMO` | Historical text snapshot. |
-| `version` | `T_DATETIME` | When this snapshot was recorded. |
+| (autonumber PK) | `LongInteger`, autoincrement | |
+| (FK) | `LongInteger` | |
+| `value` | `Memo` | Historical text snapshot. |
+| `version` | `DateTime` | When this snapshot was recorded. |
 
 Only meaningful on memo columns marked "Append Only" in Access. Lowest-priority of the three to support — virtually no users opt into this.
 
@@ -154,7 +154,7 @@ Match case-insensitively against `FileType` (which Jackcess lowercases on store)
 
 ### 4.1 Reader
 
-The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recognition, the `MSysComplexColumns` join (`BuildComplexColumnDataAsync`), and attachment payload decode (raw + deflate; `DecodeAttachmentFileData`). Schema metadata is exposed via `IAccessReader.GetComplexColumnsAsync`; typed item enumeration is exposed via `GetAttachmentsAsync` / `GetMultiValueItemsAsync` (see §4.2 C4).
+The reader (see §1) implements `Attachment` / `Complex` column-type recognition, the `MSysComplexColumns` join (`BuildComplexColumnDataAsync`), and attachment payload decode (raw + deflate; `DecodeAttachmentFileData`). Schema metadata is exposed via `IAccessReader.GetComplexColumnsAsync`; typed item enumeration is exposed via `GetAttachmentsAsync` / `GetMultiValueItemsAsync` (see §4.2 C4).
 
 ### 4.2 Writer
 
@@ -167,8 +167,8 @@ The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recogni
 | **C5** | Cascade flat-table rows on parent delete. | ✅ Shipped. Helper: `CascadeDeleteComplexChildrenAsync`, called from `DeleteRowsAsync` and the W10 `EnforceFkOnPrimaryDeleteAsync` cascade path. Cost: one O(P) flat-table scan per (parent table × complex column). Tests: `ComplexColumnsCascadeDeleteTests`. |
 | **C6** | `DropTableAsync` cascade for hidden flat tables and `MSysComplexColumns` rows. | ✅ Shipped. Helper: `DropComplexChildrenForTableAsync`, called from `DropTableAsync`. Removes `MSysComplexColumns` and `MSysObjects` catalog rows for each child flat table, then returns dropped table data/TDEF/usage/index/LVAL pages to the Access global free list. |
 | **C7** | Per-flat-table indexes Access expects: autoincrement scalar PK column, primary key on the scalar, normal index on the FK back-reference, and (attachment only) a composite secondary index on (FK, FileName). Lifts the C3 "no PK / no autoincrement / no FK back-reference index" caveat. | ✅ Shipped. Helper: `BuildFlatTableSchema` (returns `(ColumnDefinition[], IndexDefinition[])`) wired through `EmitComplexColumnArtifactsAsync` and reused by `AddComplexItemCoreAsync` via `ApplyConstraintsAsync` so the autoincrement scalar PK is seeded per insert. See §4.3. |
-| **C8** | LVAL chain emission for oversized MEMO / OLE / Attachment payloads. Lifts the inline-only `Constants.LongValue.MaxInlineMemoBytes = 1024` and `Constants.LongValue.MaxInlineOleBytes = 256` caps. | ✅ Shipped. Helpers: `LongValueEncoder.PreEncodeLongValuesAsync` plus shared `LongValueDescriptor` / `LongValueStore` descriptor, page-buffer, and chain helpers. Pre-encode pass runs once at the top of `InsertRowDataLocAsync`: any `T_OLE` / `T_MEMO` value whose encoded payload exceeds the inline cap is staged onto freshly-appended Access-style LVAL pages (single-page bitmask `0x40`; chained bitmask `0x00` with one row per page, walked in reverse so each predecessor row carries its successor's `lval_dp` pointer) and the in-row value is replaced with a `PreEncodedLongValue` sentinel that the encoders splice through verbatim. Upper limit is the on-disk 24-bit LVAL length field (`MaxPayloadBytes = 16 MiB - 1`). LVAL pages are emitted as page-type `0x01` with the `LVAL` signature and descriptor token Access uses. See §4.4. |
-| **C9** | Schema evolution on parent tables that already contain complex columns: lift the `NotSupportedException` thrown by `BuildColumnDefinitionFromInfo` so `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` can run against tables with attachment / multi-value columns. | ✅ **Implemented (2026-04-25; DAO compact-hardened 2026-05-20 and 2026-05-23).** `BuildColumnDefinitionFromInfo` now returns `IsAttachment` / `IsMultiValue` ColumnDefinitions with the original `ComplexId` preserved from `ColumnInfo.Misc`. `RewriteTableAsync` preserves the parent rows' per-row complex references and keeps flat children + `MSysComplexColumns` rows attached. When no complex column is dropped or renamed, the temp table is transplanted onto the original TDEF page so `MSysComplexColumns.ConceptualTableID` continues to point at the original parent identity; copy/swap fallbacks patch surviving rows to the replacement TDEF page. Surgical post-rewrite cleanup runs for dropped/renamed complex columns. The rebuilt TDEF re-emits `T_COMPLEX` (`0x12`) with the correct misc field, and `HydrateConstraintsFromTableDef` skips the `Flags` flag-bit interpretation for complex columns (the on-disk Flags = 0x07 is a magic marker, not real `IsNullable` / `IsAutoIncrement` bits). 7 round-trip tests in `ComplexColumnsSchemaEvolutionTests`; DAO compact coverage in `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair` and fresh ACCDB complex storage tests. See §4.5. |
+| **C8** | LVAL chain emission for oversized MEMO / OLE / Attachment payloads. Lifts the inline-only `Constants.LongValue.MaxInlineMemoBytes = 1024` and `Constants.LongValue.MaxInlineOleBytes = 256` caps. | ✅ Shipped. Helpers: `LongValueEncoder.PreEncodeLongValuesAsync` plus shared `LongValueDescriptor` / `LongValueStore` descriptor, page-buffer, and chain helpers. Pre-encode pass runs once at the top of `InsertRowDataLocAsync`: any `Ole` / `Memo` value whose encoded payload exceeds the inline cap is staged onto freshly-appended Access-style LVAL pages (single-page bitmask `0x40`; chained bitmask `0x00` with one row per page, walked in reverse so each predecessor row carries its successor's `lval_dp` pointer) and the in-row value is replaced with a `PreEncodedLongValue` sentinel that the encoders splice through verbatim. Upper limit is the on-disk 24-bit LVAL length field (`MaxPayloadBytes = 16 MiB - 1`). LVAL pages are emitted as page-type `0x01` with the `LVAL` signature and descriptor token Access uses. See §4.4. |
+| **C9** | Schema evolution on parent tables that already contain complex columns: lift the `NotSupportedException` thrown by `BuildColumnDefinitionFromInfo` so `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` can run against tables with attachment / multi-value columns. | ✅ **Implemented (2026-04-25; DAO compact-hardened 2026-05-20 and 2026-05-23).** `BuildColumnDefinitionFromInfo` now returns `IsAttachment` / `IsMultiValue` ColumnDefinitions with the original `ComplexId` preserved from `ColumnInfo.Misc`. `RewriteTableAsync` preserves the parent rows' per-row complex references and keeps flat children + `MSysComplexColumns` rows attached. When no complex column is dropped or renamed, the temp table is transplanted onto the original TDEF page so `MSysComplexColumns.ConceptualTableID` continues to point at the original parent identity; copy/swap fallbacks patch surviving rows to the replacement TDEF page. Surgical post-rewrite cleanup runs for dropped/renamed complex columns. The rebuilt TDEF re-emits `Complex` (`0x12`) with the correct misc field, and `HydrateConstraintsFromTableDef` skips the `Flags` flag-bit interpretation for complex columns (the on-disk Flags = 0x07 is a magic marker, not real `IsNullable` / `IsAutoIncrement` bits). 7 round-trip tests in `ComplexColumnsSchemaEvolutionTests`; DAO compact coverage in `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair` and fresh ACCDB complex storage tests. See §4.5. |
 | **C10** | Scaffold the nine `MSysComplexType_*` template tables (`UnsignedByte`, `Short`, `Long`, `IEEESingle`, `IEEEDouble`, `GUID`, `Decimal`, `Text`, `Attachment`) and populate `MSysComplexColumns.ComplexTypeObjectID` with the matching template id instead of the placeholder `0`. | ✅ **Implemented (2026-04-25).** Helpers on `ComplexColumnManager` create the type templates immediately after `MSysComplexColumns`, and the static `ResolveComplexTypeTemplateName(ColumnDefinition)` lookup is wired into `EmitComplexColumnArtifactsAsync`. ACE only (Jet3 / Jet4 `.mdb` skip the templates because complex columns are an Access 2007+ feature). Each template carries `MSysObjects.Flags = 0x80030000` (system + the `0x30000` marker Access uses for type-template tables) so they are excluded from `ListTablesAsync`. 6 round-trip tests in `ComplexColumnsWriterTests`. See §4.6. |
 
 ### 4.3 C7 flat-table schema
@@ -188,7 +188,7 @@ C7 caveats:
 
 ### 4.4 C8 LVAL chain emission
 
-Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes. The pre-encode pass `LongValueEncoder.PreEncodeLongValuesAsync` runs at the top of `InsertRowDataLocAsync` and only fires for `T_OLE` / `T_MEMO` columns whose encoded payload exceeds the in-row inline cap (`Constants.LongValue.MaxInlineOleBytes = 256`, `Constants.LongValue.MaxInlineMemoBytes = 1024`). Smaller values keep the existing inline path (`WrapInlineLongValue`, bitmask `0x80`) unchanged.
+Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes. The pre-encode pass `LongValueEncoder.PreEncodeLongValuesAsync` runs at the top of `InsertRowDataLocAsync` and only fires for `Ole` / `Memo` columns whose encoded payload exceeds the in-row inline cap (`Constants.LongValue.MaxInlineOleBytes = 256`, `Constants.LongValue.MaxInlineMemoBytes = 1024`). Smaller values keep the existing inline path (`WrapInlineLongValue`, bitmask `0x80`) unchanged.
 
 12-byte LVAL header layout (matches `LongValueDescriptor` and `AccessReader.ReadLongValueAsync`):
 
@@ -237,10 +237,10 @@ Phase C9 lifts the `NotSupportedException` previously thrown by `BuildColumnDefi
 
 How surviving complex columns ride through `RewriteTableAsync`:
 
-1. **TDEF descriptor reconstruction.** `BuildColumnDefinitionFromInfo` now returns a `ColumnDefinition` flagged with `IsAttachment` / `IsMultiValue` and the original `ComplexId` recovered from `ColumnInfo.Misc`. The default-projection and rename-column projection forward `IsAttachment` / `IsMultiValue` / `MultiValueElementType` / `ComplexId` so the rebuilt TDEF re-emits `T_COMPLEX` (Flags = 0x07) with the correct misc field.
+1. **TDEF descriptor reconstruction.** `BuildColumnDefinitionFromInfo` now returns a `ColumnDefinition` flagged with `IsAttachment` / `IsMultiValue` and the original `ComplexId` recovered from `ColumnInfo.Misc`. The default-projection and rename-column projection forward `IsAttachment` / `IsMultiValue` / `MultiValueElementType` / `ComplexId` so the rebuilt TDEF re-emits `Complex` (Flags = 0x07) with the correct misc field.
 2. **Allocation skip.** `PrepareComplexColumnAllocationsAsync` only allocates fresh `ComplexId` values for columns whose `ComplexId == 0`; preserved columns bypass it entirely, so no new flat child table is emitted.
 3. **Preserve or patch parent identity.** When surviving complex columns are present and none are dropped or renamed, the temp table is transplanted onto the original TDEF page. That keeps `MSysComplexColumns.ConceptualTableID` stable for DAO CompactDatabase. When a complex column drop/rename requires the older copy/swap path, the original-table drop routes through `DropTableCoreAsync(tableName, dropComplexChildren: false, ct)` so flat children + surviving `MSysComplexColumns` rows are not cascaded away, then their `ConceptualTableID` values are patched to the replacement TDEF page.
-4. **Constraint-registry hydration.** `HydrateConstraintsFromTableDef` now skips the `Flags` flag-bit interpretation for `T_COMPLEX` columns. The on-disk Flags = 0x07 is a magic marker (per mdbtools docs) — interpreting bit 0x04 as `FLAG_AUTO_LONG` would mark a `byte[]` column as auto-increment and fail the `IsIntegralType` check during the temp-table `RegisterConstraints` pass.
+4. **Constraint-registry hydration.** `HydrateConstraintsFromTableDef` now skips the `Flags` flag-bit interpretation for `Complex` columns. The on-disk Flags = 0x07 is a magic marker (per mdbtools docs) — interpreting bit 0x04 as `FLAG_AUTO_LONG` would mark a `byte[]` column as auto-increment and fail the `IsIntegralType` check during the temp-table `RegisterConstraints` pass.
 5. **Catalog repair after rebuild.** The transplant path replaces the original catalog row in place and removes only the temporary table catalog/ACE rows. The copy/swap path rewrites surviving `MSysComplexColumns.ConceptualTableID` values to the new parent TDEF page, and old parent ACE/catalog rows are removed without rebuilding Access-authored system indexes wholesale.
 
 Surgical post-rewrite cleanup runs from the rewrite path itself:

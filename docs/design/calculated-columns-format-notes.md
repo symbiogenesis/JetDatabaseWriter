@@ -66,16 +66,16 @@ inside the LVAL payload are wrapped.
 The descriptor `col_type` controls how the wrapped value is placed in the row,
 but the `ResultType` LvProp controls how the wrapped payload is decoded. Access
 can store boolean calculated columns with an integer descriptor type while
-declaring `ResultType = T_BOOL`, so readers must honour `ResultType` for the
+declaring `ResultType = Boolean`, so readers must honour `ResultType` for the
 payload.
 
 Two result types have Access-specific payload encodings inside the wrapper:
 
-- `T_BOOL`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans
+- `Boolean`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans
   are not stored in the row null mask.
-- `T_NUMERIC`: 16 bytes: a 2-byte payload-length prefix, scale byte, sign byte
+- `Numeric`: 16 bytes: a 2-byte payload-length prefix, scale byte, sign byte
   (`0x80` for negative), then the 96-bit decimal mantissa in Access's calculated
-  numeric byte order. This is not the normal 17-byte `T_NUMERIC` fixed slot.
+  numeric byte order. This is not the normal 17-byte `Numeric` fixed slot.
 
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).

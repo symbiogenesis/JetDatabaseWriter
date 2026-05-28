@@ -164,7 +164,7 @@ public sealed class IndexBTreeBuilderTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public void Build_LeavesEmitPrefixCompression_WhenEntriesShareLeadingBytes(DatabaseFormat format)
     {
-        // Encoded T_LONG keys all share the leading 0x7F flag + 0x80 sign-flipped
+        // Encoded LongInteger keys all share the leading 0x7F flag + 0x80 sign-flipped
         // high bytes (values 1..3 → bytes [0x7F 0x80 0x00 0x00 0x01..0x03]).
         // Common byte prefix is 4 bytes.
         int pageSize = PageSizeOf(format);
