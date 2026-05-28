@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.Indexes.Collation;
 
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;

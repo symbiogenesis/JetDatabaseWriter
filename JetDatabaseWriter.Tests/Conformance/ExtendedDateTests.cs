@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.Conformance;
 
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;

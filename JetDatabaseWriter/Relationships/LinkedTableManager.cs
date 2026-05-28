@@ -10,7 +10,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
-using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;

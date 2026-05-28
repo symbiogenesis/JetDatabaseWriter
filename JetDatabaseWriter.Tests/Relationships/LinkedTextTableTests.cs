@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>

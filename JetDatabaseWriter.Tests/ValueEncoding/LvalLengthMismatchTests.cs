@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
-using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;

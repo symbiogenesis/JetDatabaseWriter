@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
-using System.Data;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;

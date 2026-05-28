@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;

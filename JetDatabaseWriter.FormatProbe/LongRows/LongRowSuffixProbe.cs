@@ -24,7 +24,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;

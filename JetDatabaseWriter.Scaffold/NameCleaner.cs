@@ -1,7 +1,4 @@
 namespace JetDatabaseWriter.Scaffold;
-
-using System;
-
 /// <summary>
 /// Converts Access table/column names into valid C# identifiers.
 /// </summary>

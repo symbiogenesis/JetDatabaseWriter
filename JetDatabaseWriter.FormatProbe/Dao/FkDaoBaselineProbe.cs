@@ -7,7 +7,6 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;

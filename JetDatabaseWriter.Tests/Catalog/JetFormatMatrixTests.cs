@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
 using System;
-using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;

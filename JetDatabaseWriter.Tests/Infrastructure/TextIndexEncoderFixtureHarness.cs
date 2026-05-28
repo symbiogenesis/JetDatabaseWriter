@@ -7,8 +7,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>

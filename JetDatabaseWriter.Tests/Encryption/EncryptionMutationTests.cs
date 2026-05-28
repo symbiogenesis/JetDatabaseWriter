@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Encryption;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;

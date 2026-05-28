@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using Xunit;
 

@@ -1,14 +1,12 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
-using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 

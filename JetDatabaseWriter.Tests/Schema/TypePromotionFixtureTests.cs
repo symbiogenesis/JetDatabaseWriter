@@ -1,9 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
-using System.Collections.Generic;
-using System.Data;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
