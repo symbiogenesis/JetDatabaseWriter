@@ -138,13 +138,13 @@ internal static class EncryptionManager
 
         // Codepage lives at hdr[0x3C..0x3D]; in the descrambled copy that is at
         // offset 0x3C - 0x18 = 0x24.
-        const int CodePageOffsetInCopy = 0x3C - 0x18;
-        if (copy.Length < CodePageOffsetInCopy + 2)
+        const int codePageOffsetInCopy = 0x3C - 0x18;
+        if (copy.Length < codePageOffsetInCopy + 2)
         {
             return 0;
         }
 
-        return Ru16(copy, CodePageOffsetInCopy);
+        return Ru16(copy, codePageOffsetInCopy);
     }
 
     /// <summary>

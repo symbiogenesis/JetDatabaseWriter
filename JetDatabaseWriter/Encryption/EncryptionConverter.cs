@@ -448,14 +448,14 @@ internal static class EncryptionConverter
         // be corrupted on read-back. Decoding stops at the first NUL char, so
         // the password (UTF-16LE) plus its NUL terminator must fit in
         // bytes 0..31 — i.e. at most 15 characters.
-        const int MaxPasswordLength = 15;
-        if (password.Length > MaxPasswordLength)
+        const int maxPasswordLength = 15;
+        if (password.Length > maxPasswordLength)
         {
             throw new JetLimitationException(
-                $"Password is too long for this database format: {password.Length} characters (maximum {MaxPasswordLength}). " +
+                $"Password is too long for this database format: {password.Length} characters (maximum {maxPasswordLength}). " +
                 "Jet4 RC4, ACCDB legacy ';pwd=', and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
                 "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
-                $"{MaxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
+                $"{maxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
                 "AccessEncryptionFormat.AccdbAgileCfb for longer passwords.");
         }
 

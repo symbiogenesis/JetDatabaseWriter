@@ -514,9 +514,9 @@ internal static class OfficeCryptoAgile
         //   H_(i+1) = SHA512(uint32_le(i) || H_i)
         //   H_final = SHA512(H_spinCount || blockKey)
         //   key     = H_final truncated, or padded with 0x36 to keyByteCount.
-        const int HashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
-        byte[] h = new byte[HashBytes];
-        byte[] scratchHash = new byte[HashBytes];
+        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        byte[] h = new byte[hashBytes];
+        byte[] scratchHash = new byte[hashBytes];
 
         try
         {
@@ -764,9 +764,9 @@ internal static class OfficeCryptoAgile
     private static (byte[] VerifierInput, byte[] VerifierHash, byte[] KeyValue, byte[] HmacKey, byte[] HmacValue)
         DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt)
     {
-        const int HashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
-        byte[] h = new byte[HashBytes];
-        byte[] scratchHash = new byte[HashBytes];
+        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        byte[] h = new byte[hashBytes];
+        byte[] scratchHash = new byte[hashBytes];
 
         try
         {

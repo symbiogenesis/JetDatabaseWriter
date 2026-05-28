@@ -925,7 +925,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         List<IndexEntry> removeEntries,
         CancellationToken cancellationToken)
     {
-        const int MaxLeafGroupCount = 64;
+        const int maxLeafGroupCount = 64;
 
         if (addEntries.Count == 0 && removeEntries.Count == 0)
         {
@@ -938,7 +938,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             firstDp,
             addEntries,
             removeEntries,
-            MaxLeafGroupCount,
+            maxLeafGroupCount,
             cancellationToken).ConfigureAwait(false);
         if (groups is null)
         {

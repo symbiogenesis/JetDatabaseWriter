@@ -220,9 +220,9 @@ internal static class OfficeCryptoStandard
         {
             _ = Encoding.Unicode.GetBytes(password, passwordBytes);
 
-            const int HashBytes = OfficeCryptoPrimitives.Sha1HashBytes;
-            byte[] h = new byte[HashBytes];
-            byte[] scratchHash = new byte[HashBytes];
+            const int hashBytes = OfficeCryptoPrimitives.Sha1HashBytes;
+            byte[] h = new byte[hashBytes];
+            byte[] scratchHash = new byte[hashBytes];
 
             try
             {
@@ -232,7 +232,7 @@ internal static class OfficeCryptoStandard
                 OfficeCryptoPrimitives.HashSha1(initial, h);
 
                 // Step 2: For i = 0 to spinCount-1: H = SHA1(LE32(i) || H)
-                byte[] iterBuf = new byte[4 + HashBytes]; // 4-byte iterator + 20-byte hash
+                byte[] iterBuf = new byte[4 + hashBytes]; // 4-byte iterator + 20-byte hash
                 for (int i = 0; i < spinCount; i++)
                 {
                     Wi32(iterBuf, 0, i);
@@ -251,7 +251,7 @@ internal static class OfficeCryptoStandard
 
                 // Step 4: Derive key of required length.
                 // cbHash = 20 (SHA-1), cbRequiredKeyLength = keyByteCount
-                if (keyByteCount <= HashBytes)
+                if (keyByteCount <= hashBytes)
                 {
                     // Truncate to required length.
                     byte[] truncatedKey = new byte[keyByteCount];
@@ -263,18 +263,18 @@ internal static class OfficeCryptoStandard
                 byte[] derivedBuf = new byte[64];
                 for (int i = 0; i < 64; i++)
                 {
-                    derivedBuf[i] = (byte)(i < HashBytes ? (h[i] ^ 0x36) : 0x36);
+                    derivedBuf[i] = (byte)(i < hashBytes ? (h[i] ^ 0x36) : 0x36);
                 }
 
-                byte[] x1 = new byte[HashBytes];
+                byte[] x1 = new byte[hashBytes];
                 OfficeCryptoPrimitives.HashSha1(derivedBuf, x1);
 
                 for (int i = 0; i < 64; i++)
                 {
-                    derivedBuf[i] = (byte)(i < HashBytes ? (h[i] ^ 0x5C) : 0x5C);
+                    derivedBuf[i] = (byte)(i < hashBytes ? (h[i] ^ 0x5C) : 0x5C);
                 }
 
-                byte[] x2 = new byte[HashBytes];
+                byte[] x2 = new byte[hashBytes];
                 OfficeCryptoPrimitives.HashSha1(derivedBuf, x2);
 
                 byte[] x3 = new byte[x1.Length + x2.Length];

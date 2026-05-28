@@ -2416,10 +2416,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static bool TryExtractEmbeddedOlePackagePayload(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength)
     {
-        const ushort OlePackageSignature = 0x1C15;
-        const int OleVersion = 0x0501;
-        const ushort OlePackageStreamSignature = 0x0002;
-        const int EmbeddedFilePackageType = 0x030000;
+        const ushort olePackageSignature = 0x1C15;
+        const int oleVersion = 0x0501;
+        const ushort olePackageStreamSignature = 0x0002;
+        const int embeddedFilePackageType = 0x030000;
 
         payloadStart = 0;
         payloadLength = 0;
@@ -2431,7 +2431,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         int valueEnd = Math.Min(start + len, buffer.Length);
         ReadOnlySpan<byte> value = buffer.AsSpan(start, valueEnd - start);
-        if (value.Length < 24 || Ru16(value, 0) != OlePackageSignature)
+        if (value.Length < 24 || Ru16(value, 0) != olePackageSignature)
         {
             return false;
         }
@@ -2443,7 +2443,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int oleHeaderOffset = headerSize;
-        if (Ri32(value, oleHeaderOffset) != OleVersion)
+        if (Ri32(value, oleHeaderOffset) != oleVersion)
         {
             return false;
         }
@@ -2468,7 +2468,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
-        if (dataBlock.Length < 2 || Ru16(dataBlock, 0) != OlePackageStreamSignature)
+        if (dataBlock.Length < 2 || Ru16(dataBlock, 0) != olePackageStreamSignature)
         {
             return false;
         }
@@ -2483,7 +2483,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         int packageType = Ri32(dataBlock, cursor);
         cursor += 4;
-        if (packageType != EmbeddedFilePackageType)
+        if (packageType != embeddedFilePackageType)
         {
             return false;
         }
@@ -3754,13 +3754,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return null;
             }
 
-            const string Prefix = "data:application/octet-stream;base64,";
-            if (!value.StartsWith(Prefix, StringComparison.Ordinal))
+            const string prefix = "data:application/octet-stream;base64,";
+            if (!value.StartsWith(prefix, StringComparison.Ordinal))
             {
                 return null;
             }
 
-            return BinaryStringParser.TryDecodeBase64(value.AsSpan(Prefix.Length), out byte[] bytes) ? bytes : null;
+            return BinaryStringParser.TryDecodeBase64(value.AsSpan(prefix.Length), out byte[] bytes) ? bytes : null;
         }
     }
 
