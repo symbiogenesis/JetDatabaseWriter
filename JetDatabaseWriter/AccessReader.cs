@@ -3356,6 +3356,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // width text goes straight to a managed string; Binary is copied as
     // byte[]; Memo/Ole keep their async branch only when the LVAL
     // chain actually needs to be walked (the inline 0x80 case stays sync).
+    // RowDecodePlan carries the optional projection mask: unwanted columns
+    // are left as null, while the row layout is still parsed once so variable
+    // offsets remain valid for every wanted column.
     //
     // The split is exposed as TryCrackRowSync — callers that know they
     // are on the fully-sync hot path (e.g. fixed-only / inline-only
@@ -3366,26 +3369,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // complex-attachment resolution and Hyperlink wrapping are applied as
     // post-processing passes (ResolveComplexColumns / WrapHyperlinkColumns)
     // gated by the per-table HasComplexColumns / HasHyperlinkColumns flags.
-
-    private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
-        => CrackRowTypedAsync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns: null, strictParsing), cancellationToken);
-
-    /// <summary>
-    /// Projection-aware overload of <c>CrackRowTypedAsync</c>.
-    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
-    /// columns whose mask entry is <see langword="true"/> are decoded; the rest are
-    /// left as <see langword="null"/> (the compiled <c>RowMapper&lt;T&gt;</c> mapper
-    /// already skips <see langword="null"/>/<see cref="DBNull"/> slots, so unbound
-    /// columns simply produce no work).
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    /// <param name="rowSize">The row size.</param>
-    /// <param name="td">The table-definition buffer.</param>
-    /// <param name="wantedColumns">The wanted columns.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
-    private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, CancellationToken cancellationToken)
-        => CrackRowTypedAsync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing), cancellationToken);
 
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, CancellationToken cancellationToken)
     {
@@ -3508,31 +3491,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="page">The page bytes.</param>
     /// <param name="rowStart">The row start.</param>
     /// <param name="rowSize">The row size.</param>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="decodePlan">The decode plan.</param>
     /// <param name="row">The row values or row bytes.</param>
     /// <param name="needsLongValue">The needs long value.</param>
-    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, out object?[]? row, out bool needsLongValue)
-        => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns: null, strictParsing), out row, out needsLongValue);
-
-    /// <summary>
-    /// Projection-aware overload of <c>TryCrackRowSync</c>.
-    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
-    /// columns whose mask entry is <see langword="true"/> are decoded; unwanted slots
-    /// are left at their default (<see langword="null"/>). The row layout is still
-    /// fully parsed (<c>TryParseRowLayout</c> walks the trailer once for the whole
-    /// row), and <c>ResolveColumnSlice</c> is independent per column — skipping
-    /// decode of one var column does not affect the offsets of any later column.
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    /// <param name="rowSize">The row size.</param>
-    /// <param name="td">The table-definition buffer.</param>
-    /// <param name="wantedColumns">The wanted columns.</param>
-    /// <param name="row">The row values or row bytes.</param>
-    /// <param name="needsLongValue">The needs long value.</param>
-    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
-        => TryCrackRowSync(page, rowStart, rowSize, RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing), out row, out needsLongValue);
-
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, out object?[]? row, out bool needsLongValue)
     {
         var result = new object?[decodePlan.ColumnCount];

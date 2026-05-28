@@ -3498,24 +3498,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    /// <summary>
-    /// Builds a minimal, empty JET database as a byte array.
-    /// The bootstrap image contains three pages (page size varies by format):
-    /// page 0 (header), page 1 (global usage map), and page 2 (MSysObjects TDEF).
-    /// <see cref="CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, CancellationToken)"/>
-    /// and its stream overload add full-catalog ACCDB system tables after opening
-    /// this minimal image.
-    /// </summary>
-    /// <param name="format">Target on-disk format.</param>
-    /// <param name="fullCatalogSchema">
-    /// When <see langword="true"/>, page 2 is bootstrapped with the real Access
-    /// 17-column <c>MSysObjects</c> schema (matches files written by Microsoft
-    /// Access across all Jet/ACE versions). When <see langword="false"/>, the
-    /// historical 9-column slim schema is written instead.
-    /// </param>
-    private static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
-        => TDefPageBuilder.BuildEmptyDatabase(format, fullCatalogSchema);
-
     internal async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
         _ = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);

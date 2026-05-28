@@ -429,6 +429,20 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         return (1 + contIdx, 8 + contOff);
     }
 
+    /// <summary>
+    /// Builds a minimal, empty JET database as a byte array.
+    /// The bootstrap image contains three pages (page size varies by format):
+    /// page 0 (header), page 1 (global usage map), and page 2 (MSysObjects TDEF).
+    /// The <see cref="AccessWriter.CreateDatabaseAsync"/> overloads add
+    /// full-catalog ACCDB system tables after opening this minimal image.
+    /// </summary>
+    /// <param name="format">Target on-disk format.</param>
+    /// <param name="fullCatalogSchema">
+    /// When <see langword="true"/>, page 2 is bootstrapped with the real Access
+    /// 17-column <c>MSysObjects</c> schema (matches files written by Microsoft
+    /// Access across all Jet/ACE versions). When <see langword="false"/>, the
+    /// historical 9-column slim schema is written instead.
+    /// </param>
     internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
         int pgSz = AccessBase.GetPageSize(format);
