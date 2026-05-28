@@ -785,9 +785,24 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine("|---|---|---:|:---:|:---:|:---:|---|---|");
         foreach (var v in verdicts)
         {
-            string idx = v.HasIndexes is null ? "—" : (v.HasIndexes.Value ? "**yes**" : "no");
-            string idxCols = v.HasIndexColumns is null ? "—" : (v.HasIndexColumns.Value ? "**yes**" : "no");
-            string rel = v.HasRelationships is null ? "—" : (v.HasRelationships.Value ? "yes" : "no");
+            string idx = v.HasIndexes switch
+            {
+                null => "—",
+                true => "**yes**",
+                false => "no",
+            };
+            string idxCols = v.HasIndexColumns switch
+            {
+                null => "—",
+                true => "**yes**",
+                false => "no",
+            };
+            string rel = v.HasRelationships switch
+            {
+                null => "—",
+                true => "yes",
+                false => "no",
+            };
             string anyIdx = v.AnyIndexNamed is null ? string.Empty : $"`{Md(v.AnyIndexNamed)}`";
             string note = v.Error is null ? string.Empty : $"open failed: {Md(v.Error)}";
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `{Md(v.RelPath)}` | {v.Format} | {v.CatalogRows} | {idx} | {idxCols} | {rel} | {anyIdx} | {note} |");
@@ -1155,7 +1170,14 @@ internal static class FormatProbeApplication
             }
 
             byte pt = page[0];
-            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"##### Resolved page {leafPage} (`page_type = 0x{pt:X2}` — {(pt == 0x04 ? "leaf" : pt == 0x03 ? "intermediate" : pt == 0x01 ? "data (tiny-table fallback)" : "?")})");
+            string pageTypeName = pt switch
+            {
+                0x04 => "leaf",
+                0x03 => "intermediate",
+                0x01 => "data (tiny-table fallback)",
+                _ => "?",
+            };
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"##### Resolved page {leafPage} (`page_type = 0x{pt:X2}` — {pageTypeName})");
             _ = sb.AppendLine();
             _ = sb.AppendLine("- §4.1 header decode:");
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"  - byte 0 page_type:    0x{page[0]:X2}");

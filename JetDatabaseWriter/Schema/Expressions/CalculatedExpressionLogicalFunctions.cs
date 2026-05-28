@@ -157,7 +157,12 @@ internal static class CalculatedExpressionLogicalFunctions
     private static object EvaluateNz(CalculatedFunctionInvocation function)
     {
         object nzValue = function.Arg(0);
-        return IsNull(nzValue) ? (function.Count > 1 ? function.Arg(1) : string.Empty) : nzValue;
+        if (!IsNull(nzValue))
+        {
+            return nzValue;
+        }
+
+        return function.Count > 1 ? function.Arg(1) : string.Empty;
     }
 
     private static bool AccessLike(string text, string pattern)

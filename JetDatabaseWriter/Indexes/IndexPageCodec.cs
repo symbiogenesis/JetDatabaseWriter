@@ -553,11 +553,19 @@ internal static class IndexPageCodec
         int length = Math.Min(searchKey.Length, canonicalLength);
         for (int offset = 0; offset < length; offset++)
         {
-            byte entryByte = isFirstEntry || prefixLength == 0
-                ? page[entryStart + offset]
-                : offset < prefixLength
-                    ? page[prefixStart + offset]
-                    : page[entryStart + offset - prefixLength];
+            byte entryByte;
+            if (isFirstEntry || prefixLength == 0)
+            {
+                entryByte = page[entryStart + offset];
+            }
+            else if (offset < prefixLength)
+            {
+                entryByte = page[prefixStart + offset];
+            }
+            else
+            {
+                entryByte = page[entryStart + offset - prefixLength];
+            }
 
             int difference = searchKey[offset] - entryByte;
             if (difference != 0)

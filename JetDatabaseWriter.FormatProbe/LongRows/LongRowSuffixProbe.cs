@@ -6332,13 +6332,25 @@ internal static class LongRowSuffixProbe
 
                 for (int bitIndex = 0; bitIndex < 8; bitIndex++)
                 {
-                    crc = reflected
-                        ? (crc & 1) != 0
-                            ? (ushort)((crc >> 1) ^ polynomial)
-                            : (ushort)(crc >> 1)
-                        : (crc & 0x8000) != 0
-                            ? (ushort)((crc << 1) ^ polynomial)
-                            : (ushort)(crc << 1);
+                    if (reflected)
+                    {
+                        if ((crc & 1) != 0)
+                        {
+                            crc = (ushort)((crc >> 1) ^ polynomial);
+                        }
+                        else
+                        {
+                            crc = (ushort)(crc >> 1);
+                        }
+                    }
+                    else if ((crc & 0x8000) != 0)
+                    {
+                        crc = (ushort)((crc << 1) ^ polynomial);
+                    }
+                    else
+                    {
+                        crc = (ushort)(crc << 1);
+                    }
                 }
 
                 table[tableIndex] = crc;

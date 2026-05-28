@@ -162,10 +162,24 @@ internal static class RoundTripBisect
             }
 
             (int code, string err) = RunDaoCompact(hostProbe.HostPath, srcPath, dstPath);
-            string verdict = code == 0 ? "✅ OK"
-                : err.Contains("MSysDb", StringComparison.Ordinal) ? "❌ MSysDb"
-                : err.Contains("Object invalid", StringComparison.Ordinal) ? "❌ ObjInvalid"
-                : $"❌ exit={code}";
+            string verdict;
+            if (code == 0)
+            {
+                verdict = "✅ OK";
+            }
+            else if (err.Contains("MSysDb", StringComparison.Ordinal))
+            {
+                verdict = "❌ MSysDb";
+            }
+            else if (err.Contains("Object invalid", StringComparison.Ordinal))
+            {
+                verdict = "❌ ObjInvalid";
+            }
+            else
+            {
+                verdict = $"❌ exit={code}";
+            }
+
             Console.WriteLine($"[bisect] {name}: {verdict}");
             if (code != 0)
             {

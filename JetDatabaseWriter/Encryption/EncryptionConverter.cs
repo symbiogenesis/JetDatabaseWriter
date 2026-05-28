@@ -514,9 +514,12 @@ internal static class EncryptionConverter
     internal static DatabaseFormat DetectFormat(byte[] header)
     {
         byte ver = header[0x14];
-        return ver >= 2 ? DatabaseFormat.AceAccdb
-             : ver >= 1 ? DatabaseFormat.Jet4Mdb
-             : DatabaseFormat.Jet3Mdb;
+        return ver switch
+        {
+            >= 2 => DatabaseFormat.AceAccdb,
+            >= 1 => DatabaseFormat.Jet4Mdb,
+            _ => DatabaseFormat.Jet3Mdb,
+        };
     }
 
     private static AccessEncryptionFormat DetectFlatFormat(byte[] header, DatabaseFormat fmt)

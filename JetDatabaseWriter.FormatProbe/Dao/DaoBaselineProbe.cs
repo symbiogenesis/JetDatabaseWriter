@@ -1015,6 +1015,14 @@ internal static class DaoBaselineProbe
         //   0x3B (59) = free_space_pages (4)0x3F (63) = index_def_block start (12 × num_real_idx)
         var wHdr = ParseTDefHeader(wt);
         var dHdr = ParseTDefHeader(dt);
+        byte wAutoNumberFlag = wt[0x18];
+        byte dAutoNumberFlag = dt[0x18];
+        string h25Verdict = (wAutoNumberFlag, dAutoNumberFlag) switch
+        {
+            (0x01, 0x01) => "✅ PASS",
+            var (writerFlag, daoFlag) when writerFlag != daoFlag => "❌ FAIL",
+            _ => "⚠️ INFO",
+        };
 
         var rows = new List<HypothesisRow>
         {
@@ -1025,10 +1033,10 @@ internal static class DaoBaselineProbe
             new HypothesisRow(
             "H25",
             "TDEF[0x18] autonum_flag == 0x01",
-            wt[0x18] == 0x01 && dt[0x18] == 0x01 ? "✅ PASS" : (wt[0x18] != dt[0x18] ? "❌ FAIL" : "⚠️ INFO"),
-            $"0x{wt[0x18]:X2}",
-            $"0x{dt[0x18]:X2}",
-            wt[0x18] == dt[0x18] ? "matches DAO" : "diverges from DAO"),
+            h25Verdict,
+            $"0x{wAutoNumberFlag:X2}",
+            $"0x{dAutoNumberFlag:X2}",
+            wAutoNumberFlag == dAutoNumberFlag ? "matches DAO" : "diverges from DAO"),
 
             // ── H27: every non-FK logical-idx descriptor's RelIdxNum (bytes [13..16]) == 0xFFFFFFFF
             CheckLogIdxRelIdxNum(wt, wHdr, dt, dHdr),
@@ -1052,10 +1060,16 @@ internal static class DaoBaselineProbe
         // ── H41: TDEF[0x1C..0x1F] (next_complex_auto_number on ACCDB) == 0
         uint wNext = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(0x1C, 4));
         uint dNext = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(0x1C, 4));
+        string h41Verdict = (wNext, dNext) switch
+        {
+            (0, 0) => "✅ PASS",
+            var (writerNext, daoNext) when writerNext == daoNext => "⚠️ INFO",
+            _ => "❌ FAIL",
+        };
         rows.Add(new HypothesisRow(
             "H41",
             "TDEF[0x1C..0x1F] next_complex_auto_number == 0",
-            wNext == 0 && dNext == 0 ? "✅ PASS" : (wNext == dNext ? "⚠️ INFO" : "❌ FAIL"),
+            h41Verdict,
             $"0x{wNext:X8}",
             $"0x{dNext:X8}",
             wNext == dNext ? "matches DAO" : "diverges from DAO"));
@@ -1295,7 +1309,13 @@ internal static class DaoBaselineProbe
             }
         }
 
-        string verdict = wOk == dOk && wOk ? "✅ PASS" : (wOk == dOk ? "⚠️ INFO" : "❌ FAIL");
+        string verdict = (wOk, dOk) switch
+        {
+            (true, true) => "✅ PASS",
+            (false, false) => "⚠️ INFO",
+            _ => "❌ FAIL",
+        };
+
         return new HypothesisRow(
             "H28",
             "logical-idx bytes [24..27] putInt(0) preserved",
@@ -1450,7 +1470,13 @@ internal static class DaoBaselineProbe
             }
         }
 
-        string verdict = wBad == 0 ? (dBad == 0 ? "✅ PASS" : "⚠️ INFO") : "❌ FAIL";
+        string verdict = (wBad == 0, dBad == 0) switch
+        {
+            (true, true) => "✅ PASS",
+            (true, false) => "⚠️ INFO",
+            _ => "❌ FAIL",
+        };
+
         return new HypothesisRow(
             "H38",
             "real-idx [42..45] (unknown putInt) == 0",
@@ -1507,7 +1533,13 @@ internal static class DaoBaselineProbe
             }
         }
 
-        string verdict = wOk && dOk ? "✅ PASS" : (wOk != dOk ? "❌ FAIL" : "⚠️ INFO");
+        string verdict = (wOk, dOk) switch
+        {
+            (true, true) => "✅ PASS",
+            (false, false) => "⚠️ INFO",
+            _ => "❌ FAIL",
+        };
+
         return new HypothesisRow(
             "H42",
             "logical-idx name length-prefix is byte count (even)",
@@ -1526,7 +1558,13 @@ internal static class DaoBaselineProbe
 
         bool wOk = wOwned != 0 && wFree != 0;
         bool dOk = dOwned != 0 && dFree != 0;
-        string verdict = wOk && dOk ? "✅ PASS" : (wOk == dOk ? "⚠️ INFO" : "❌ FAIL");
+        string verdict = (wOk, dOk) switch
+        {
+            (true, true) => "✅ PASS",
+            (false, false) => "⚠️ INFO",
+            _ => "❌ FAIL",
+        };
+
         return new HypothesisRow(
             "H44",
             "TDEF owned_pages[0x37] / free_space_pages[0x3B] non-zero",
@@ -1619,7 +1657,12 @@ internal static class DaoBaselineProbe
         {
             bool wMatch = wBack == wTdefPage;
             bool dMatch = dBack == dTdefPage;
-            h45Verdict = wMatch == dMatch ? (wMatch ? "✅ PASS" : "⚠️ INFO") : "❌ FAIL";
+            h45Verdict = (wMatch, dMatch) switch
+            {
+                (true, true) => "✅ PASS",
+                (false, false) => "⚠️ INFO",
+                _ => "❌ FAIL",
+            };
             h45Notes = h45Verdict == "✅ PASS" ? "writer back-pointer matches own TDEF" : "writer/DAO back-pointer semantics diverge";
         }
 

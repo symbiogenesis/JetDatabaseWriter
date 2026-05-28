@@ -235,9 +235,20 @@ public sealed class IndexRebalanceBorrowPathTests
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
-                string zone = i < deletePerSide ? "low"
-                    : i >= rowCount - deletePerSide ? "high"
-                    : "mid";
+                string zone;
+                if (i < deletePerSide)
+                {
+                    zone = "low";
+                }
+                else if (i >= rowCount - deletePerSide)
+                {
+                    zone = "high";
+                }
+                else
+                {
+                    zone = "mid";
+                }
+
                 rows[i] = [i, zone];
             }
 

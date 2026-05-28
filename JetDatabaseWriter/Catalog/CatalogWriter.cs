@@ -267,9 +267,12 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             cancellationToken).ConfigureAwait(false);
 
     private static int GetLinkedTableFlags(short objectType, string? connectString) =>
-        objectType == Constants.SystemObjects.LinkedOdbcType
-            ? Constants.SystemObjects.LinkedOdbcFlags
-            : IsTextLinkedTable(objectType, connectString) ? Constants.SystemObjects.LinkedTextTableFlags : Constants.SystemObjects.LinkedTableFlags;
+        objectType switch
+        {
+            Constants.SystemObjects.LinkedOdbcType => Constants.SystemObjects.LinkedOdbcFlags,
+            _ when IsTextLinkedTable(objectType, connectString) => Constants.SystemObjects.LinkedTextTableFlags,
+            _ => Constants.SystemObjects.LinkedTableFlags,
+        };
 
     private static bool IsTextLinkedTable(short objectType, string? connectString) =>
         objectType == Constants.SystemObjects.LinkedTableType && !string.IsNullOrEmpty(connectString);
@@ -324,9 +327,20 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         {
             object[] row = acesDef.CreateNullValueRow();
             acesDef.SetValueByName(row, "ObjectId", objectId);
-            int acm = i == 0 && useRestrictedOwnerAcm
-                ? Constants.Aces.RelationshipOwnerAcm
-                : useRelationshipGroupAcm ? Constants.Aces.RelationshipGroupAcm : Constants.Aces.DefaultAcm;
+            int acm;
+            if (i == 0 && useRestrictedOwnerAcm)
+            {
+                acm = Constants.Aces.RelationshipOwnerAcm;
+            }
+            else if (useRelationshipGroupAcm)
+            {
+                acm = Constants.Aces.RelationshipGroupAcm;
+            }
+            else
+            {
+                acm = Constants.Aces.DefaultAcm;
+            }
+
             acesDef.SetValueByName(row, "ACM", acm);
             acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sids[i]);

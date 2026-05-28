@@ -77,15 +77,21 @@ internal sealed class LongValueDecoder(AccessReader reader)
             case Constants.LongValue.SinglePageStorageMode:
                 var memoLoc = await LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, descriptor.Length);
-                return !memoLoc.Failed && memoSize > 0
-                    ? DecodeLongValue(memoLoc.Page, memoLoc.Start, memoSize, isOle)
-                    : (isOle ? "(OLE)" : "(memo on LVAL page)");
+                if (!memoLoc.Failed && memoSize > 0)
+                {
+                    return DecodeLongValue(memoLoc.Page, memoLoc.Start, memoSize, isOle);
+                }
+
+                return isOle ? "(OLE)" : "(memo on LVAL page)";
 
             default:
                 var chain = await ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
-                return chain.Data != null
-                    ? DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle)
-                    : (isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})");
+                if (chain.Data != null)
+                {
+                    return DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle);
+                }
+
+                return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
         }
     }
 
