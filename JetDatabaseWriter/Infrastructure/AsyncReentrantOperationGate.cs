@@ -121,9 +121,6 @@ internal sealed class AsyncReentrantOperationGate
 
     internal readonly struct Lease(AsyncReentrantOperationGate owner, bool isRoot) : IDisposable
     {
-        private readonly AsyncReentrantOperationGate _owner = owner;
-        private readonly bool _isRoot = isRoot;
-
-        public void Dispose() => _owner.ReleaseOperation(_isRoot);
+        public void Dispose() => owner.ReleaseOperation(isRoot);
     }
 }
