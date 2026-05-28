@@ -147,14 +147,16 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            bool isOdbc = objType == Constants.SystemObjects.LinkedOdbcType;
             string connectStr = CatalogValueReader.GetStringOrEmpty(row, idxConnect);
             string foreignName = CatalogValueReader.GetStringOrEmpty(row, idxForeignName);
-            bool isText = !isOdbc && !string.IsNullOrEmpty(connectStr);
             string sourcePath = CatalogValueReader.GetStringOrEmpty(row, idxDatabase);
-            var kind = isOdbc
-                ? LinkedTableKind.Odbc
-                : isText ? LinkedTableKind.Text : LinkedTableKind.Access;
+            LinkedTableKind kind = objType switch
+            {
+                Constants.SystemObjects.LinkedOdbcType => LinkedTableKind.Odbc,
+                Constants.SystemObjects.LinkedTableType when !string.IsNullOrEmpty(connectStr) => LinkedTableKind.Text,
+                Constants.SystemObjects.LinkedTableType => LinkedTableKind.Access,
+                _ => throw new InvalidDataException($"Unsupported linked-table object type: {objType}."),
+            };
 
             if (result.Count >= MaxLinkedTableMetadataRows)
             {
@@ -166,8 +168,8 @@ internal static class LinkedTableManager
             {
                 Name = nameStr,
                 Kind = kind,
-                SourceObjectName = isText ? DecodeTextForeignName(foreignName) : foreignName,
-                SourcePath = isOdbc || string.IsNullOrEmpty(sourcePath) ? null : sourcePath,
+                SourceObjectName = kind == LinkedTableKind.Text ? DecodeTextForeignName(foreignName) : foreignName,
+                SourcePath = kind == LinkedTableKind.Odbc || string.IsNullOrEmpty(sourcePath) ? null : sourcePath,
                 ConnectString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
             });
         }
