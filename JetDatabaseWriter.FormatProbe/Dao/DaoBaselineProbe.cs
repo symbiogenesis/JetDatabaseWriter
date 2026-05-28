@@ -545,29 +545,29 @@ internal static class DaoBaselineProbe
         public required long PageCount { get; init; }
 
         /// <summary>
-        /// pages in shared range that differ.
+        /// Gets pages in shared range that differ.
         /// </summary>
         public required List<long> PagesDifferingFromBaseline { get; init; }
 
         /// <summary>
-        /// pages with index &gt;= baseline count.
+        /// Gets pages with index &gt;= baseline count.
         /// </summary>
         public required List<long> PagesAddedBeyondBaseline { get; init; }
 
         /// <summary>
-        /// for the union of the above.
+        /// Gets for the union of the above.
         /// </summary>
         public required Dictionary<long, byte> PageTypes { get; init; }
 
         /// <summary>
-        /// same key set as PageTypes.
+        /// Gets same key set as PageTypes.
         /// </summary>
         public required Dictionary<long, byte[]> PageBytes { get; init; }
 
         public required CatalogEntry? RtCustomers { get; init; }
 
         /// <summary>
-        /// empty if not found.
+        /// Gets empty if not found.
         /// </summary>
         public required byte[] RtTdefBytes { get; init; }
 

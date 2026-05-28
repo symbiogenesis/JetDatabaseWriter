@@ -27,7 +27,7 @@ internal sealed class ColumnConstraint
     public byte CalculatedResultType { get; set; }
 
     /// <summary>
-    /// Lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
+    /// Gets or sets lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
     /// </summary>
     public long? NextAutoValue { get; set; }
 

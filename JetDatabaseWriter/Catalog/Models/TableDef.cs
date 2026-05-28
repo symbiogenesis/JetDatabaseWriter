@@ -12,12 +12,12 @@ internal sealed class TableDef
     public List<ColumnInfo> Columns { get; set; } = [];
 
     /// <summary>
-    /// num_rows from TDEF page offset 16.
+    /// Gets or sets num_rows from TDEF page offset 16.
     /// </summary>
     public long RowCount { get; set; }
 
     /// <summary>
-    /// <c>true</c> if ColNum sequence has gaps.
+    /// <c>Gets or sets a value indicating whether true</c> if ColNum sequence has gaps.
     /// </summary>
     public bool HasDeletedColumns { get; set; }
 

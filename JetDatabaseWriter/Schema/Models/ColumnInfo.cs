@@ -7,22 +7,22 @@ internal sealed class ColumnInfo
     public byte Type { get; set; }
 
     /// <summary>
-    /// col_num: absolute column number (includes deleted cols).
+    /// Gets or sets col_num: absolute column number (includes deleted cols).
     /// </summary>
     public int ColNum { get; set; }
 
     /// <summary>
-    /// offset_V: 0-based index in var_table.
+    /// Gets or sets offset_V: 0-based index in var_table.
     /// </summary>
     public int VarIdx { get; set; }
 
     /// <summary>
-    /// offset_F: byte offset within the fixed area.
+    /// Gets or sets offset_F: byte offset within the fixed area.
     /// </summary>
     public int FixedOff { get; set; }
 
     /// <summary>
-    /// col_len (0 for MEMO/OLE/variable).
+    /// Gets or sets col_len (0 for MEMO/OLE/variable).
     /// </summary>
     public int Size { get; set; }
 
@@ -101,8 +101,8 @@ internal sealed class ColumnInfo
     public byte NumericScale { get; set; }
 
     /// <summary>
-    /// The FLAG_FIXED bit (0x01) in the TDEF column descriptor determines whether
-    /// a column's data is stored in the fixed or variable area of the row.
+    /// Gets a value indicating whether a column's data is stored in the fixed or variable
+    /// area of the row. (representing the FLAG_FIXED bit (0x01) in the TDEF column descriptor)
     /// For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
     /// but Access system tables (e.g. complex-field flat tables) may store these
     /// types in the variable area with FLAG_FIXED cleared.

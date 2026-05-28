@@ -308,7 +308,7 @@ internal static class IndexBTreeBuilder
         public long ChildPage { get; } = childPage;
 
         /// <summary>
-        /// key + (3B page + 1B row) + 4B child.
+        /// Gets key + (3B page + 1B row) + 4B child.
         /// </summary>
         public int OnDiskSize => Summary.Key.Length + 4 + 4;
     }
