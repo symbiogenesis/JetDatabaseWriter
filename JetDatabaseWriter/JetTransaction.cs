@@ -31,11 +31,11 @@ using JetDatabaseWriter.Pages;
 /// </remarks>
 public sealed class JetTransaction : IAsyncDisposable
 {
-    private readonly AccessWriter _writer;
+    private readonly AccessWriter writer;
 
     internal JetTransaction(AccessWriter writer, PageJournal journal)
     {
-        _writer = writer;
+        this.writer = writer;
         Journal = journal;
     }
 
@@ -60,7 +60,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous commit.</returns>
     public ValueTask CommitAsync(CancellationToken cancellationToken = default)
-        => _writer.CommitTransactionAsync(this, cancellationToken);
+        => writer.CommitTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Discards the journal without touching the database file. Safe to call
@@ -70,7 +70,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous rollback.</returns>
     public ValueTask RollbackAsync(CancellationToken cancellationToken = default)
-        => _writer.RollbackTransactionAsync(this, cancellationToken);
+        => writer.RollbackTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Rolls back the transaction if it has not been committed. Equivalent to

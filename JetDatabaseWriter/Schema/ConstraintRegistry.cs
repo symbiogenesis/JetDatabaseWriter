@@ -32,7 +32,7 @@ internal sealed class ConstraintRegistry(
     Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot,
     Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null)
 {
-    private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
+    private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -87,25 +87,25 @@ internal sealed class ConstraintRegistry(
 
         if (anyConstraint)
         {
-            _constraints[tableName] = list;
+            constraints[tableName] = list;
         }
         else
         {
-            _constraints.Remove(tableName);
+            constraints.Remove(tableName);
         }
     }
 
     public void Unregister(string tableName)
     {
-        _constraints.Remove(tableName);
+        constraints.Remove(tableName);
     }
 
     public void Rename(string oldName, string newName)
     {
-        if (_constraints.TryGetValue(oldName, out var list))
+        if (constraints.TryGetValue(oldName, out var list))
         {
-            _constraints.Remove(oldName);
-            _constraints[newName] = list;
+            constraints.Remove(oldName);
+            constraints[newName] = list;
         }
     }
 
@@ -117,7 +117,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="constraints">The constraints.</param>
     public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints)
     {
-        return _constraints.TryGetValue(tableName, out constraints);
+        return this.constraints.TryGetValue(tableName, out constraints);
     }
 
     /// <summary>
@@ -340,7 +340,7 @@ internal sealed class ConstraintRegistry(
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
-        if (_constraints.TryGetValue(tableName, out var list) && list != null)
+        if (constraints.TryGetValue(tableName, out var list) && list != null)
         {
             return list;
         }
@@ -413,7 +413,7 @@ internal sealed class ConstraintRegistry(
         // so subsequent inserts on the same table skip both HydrateFromTableDef and the
         // (potentially expensive) readLvPropForTable LvProp scan. Without this negative
         // caching, every row in a multi-row InsertRowsAsync re-reads MSysObjects.LvProp.
-        _constraints[tableName] = list;
+        constraints[tableName] = list;
 
         return list;
     }

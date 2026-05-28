@@ -46,14 +46,14 @@ internal sealed class JetByteRangeLock
     private const int ErrorLockViolation = 33;
     private const int ErrorIoPending = 997;
 
-    private readonly SafeFileHandle? _handle;
-    private readonly int _lockTimeoutMs;
+    private readonly SafeFileHandle? handle;
+    private readonly int lockTimeoutMs;
 
     private JetByteRangeLock(SafeFileHandle? handle, bool enabled, int lockTimeoutMs)
     {
-        _handle = handle;
+        this.handle = handle;
         IsEnabled = enabled;
-        _lockTimeoutMs = lockTimeoutMs;
+        this.lockTimeoutMs = lockTimeoutMs;
     }
 
     /// <summary>
@@ -208,7 +208,7 @@ internal sealed class JetByteRangeLock
                 return;
             }
         }
-        while (stopwatch.ElapsedMilliseconds < _lockTimeoutMs);
+        while (stopwatch.ElapsedMilliseconds < lockTimeoutMs);
 
         ThrowTimeout(offset, length);
     }
@@ -229,7 +229,7 @@ internal sealed class JetByteRangeLock
                 return;
             }
         }
-        while (stopwatch.ElapsedMilliseconds < _lockTimeoutMs);
+        while (stopwatch.ElapsedMilliseconds < lockTimeoutMs);
 
         ThrowTimeout(offset, length);
     }
@@ -246,7 +246,7 @@ internal sealed class JetByteRangeLock
         uint lengthLow = unchecked((uint)(length & 0xFFFFFFFFL));
         uint lengthHigh = unchecked((uint)(length >> 32));
 
-        bool ok = LockFile(_handle!, offsetLow, offsetHigh, lengthLow, lengthHigh);
+        bool ok = LockFile(handle!, offsetLow, offsetHigh, lengthLow, lengthHigh);
         if (ok)
         {
             return true;
@@ -264,7 +264,7 @@ internal sealed class JetByteRangeLock
 
     private void Release(long offset, long length)
     {
-        if (!IsEnabled || _handle is null || _handle.IsInvalid || _handle.IsClosed)
+        if (!IsEnabled || handle is null || handle.IsInvalid || handle.IsClosed)
         {
             return;
         }
@@ -281,28 +281,28 @@ internal sealed class JetByteRangeLock
 
         // Release failures are not actionable from a finally block; the handle
         // will release any outstanding locks when it is closed.
-        _ = UnlockFile(_handle, offsetLow, offsetHigh, lengthLow, lengthHigh);
+        _ = UnlockFile(handle, offsetLow, offsetHigh, lengthLow, lengthHigh);
     }
 
     private void ThrowTimeout(long offset, long length)
     {
         long pageNumber = length > 0 ? offset / length : -1;
         throw new IOException(
-            $"Timed out after {_lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
+            $"Timed out after {lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
     }
 
     private sealed class ReleaseToken(JetByteRangeLock owner, long offset, long length) : IDisposable
     {
-        private bool _released;
+        private bool released;
 
         public void Dispose()
         {
-            if (_released)
+            if (released)
             {
                 return;
             }
 
-            _released = true;
+            released = true;
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {

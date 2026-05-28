@@ -46,7 +46,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             return reusableStart;
         }
 
-        byte[] blankPage = new byte[writer._pgSz];
+        byte[] blankPage = new byte[writer.pgSz];
         long firstAppendedPage = -1;
         for (int offset = 0; offset < pageCount; offset++)
         {
@@ -146,12 +146,12 @@ internal sealed class PageAllocator(AccessWriter writer)
             return 0;
         }
 
-        long newLength = newTotalPages * writer._pgSz;
+        long newLength = newTotalPages * writer.pgSz;
         await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            writer._stream.SetLength(newLength);
-            await writer._stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            writer.stream.SetLength(newLength);
+            await writer.stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -180,7 +180,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
     }
 
-    private long LogicalPageCount => writer.ActiveJournal?.NextAppendPageNumber ?? writer._stream.Length / writer._pgSz;
+    private long LogicalPageCount => writer.ActiveJournal?.NextAppendPageNumber ?? writer.stream.Length / writer.pgSz;
 
     private static long FindContiguousRun(List<long> freePages, int pageCount)
     {
@@ -231,7 +231,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer.dataPage, writer.pgSz, out var rowBound))
             {
                 return [];
             }
@@ -240,7 +240,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
                 globalPage,
                 rowBound,
-                writer._pgSz,
+                writer.pgSz,
                 LogicalPageCount,
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
@@ -294,7 +294,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer.dataPage, writer.pgSz, out var rowBound))
             {
                 return false;
             }
@@ -317,10 +317,10 @@ internal sealed class PageAllocator(AccessWriter writer)
         byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, writer._dataPage, writer._pgSz, out var rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, writer.dataPage, writer.pgSz, out var rowBound))
             {
                 InitializeGlobalUsageMapPage(globalPage);
-                rowBound = new AccessBase.RowBound(0, writer._pgSz - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
+                rowBound = new AccessBase.RowBound(0, writer.pgSz - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
             }
 
             byte mapType = globalPage[rowBound.RowStart];
@@ -360,7 +360,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             globalPage,
             rowStart,
             rowSize,
-            writer._pgSz,
+            writer.pgSz,
             LogicalPageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
@@ -377,7 +377,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask<bool> TryGetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, CancellationToken cancellationToken)
     {
-        int pointerIndex = UsageMap.ReferencePointerIndex(writer._pgSz, pageNumber);
+        int pointerIndex = UsageMap.ReferencePointerIndex(writer.pgSz, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -399,7 +399,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 return false;
             }
 
-            return UsageMap.TryGetReferencePageState(mapPage, writer._pgSz, pageNumber, out bool isFree) && isFree;
+            return UsageMap.TryGetReferencePageState(mapPage, writer.pgSz, pageNumber, out bool isFree) && isFree;
         }
         finally
         {
@@ -409,7 +409,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask SetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, bool free, CancellationToken cancellationToken)
     {
-        int pointerIndex = UsageMap.ReferencePointerIndex(writer._pgSz, pageNumber);
+        int pointerIndex = UsageMap.ReferencePointerIndex(writer.pgSz, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -427,7 +427,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 return;
             }
 
-            mapPage = new byte[writer._pgSz];
+            mapPage = new byte[writer.pgSz];
             mapPage[0] = Constants.PageTypes.UsageMap;
             mapPageNumber = checked((int)await writer.AppendPageAsync(mapPage, cancellationToken).ConfigureAwait(false));
             Wi32(globalPage, pointerOffset, mapPageNumber);
@@ -439,14 +439,14 @@ internal sealed class PageAllocator(AccessWriter writer)
             returnMapPage = true;
             if (mapPage[0] != Constants.PageTypes.UsageMap)
             {
-                Array.Clear(mapPage, 0, writer._pgSz);
+                Array.Clear(mapPage, 0, writer.pgSz);
                 mapPage[0] = Constants.PageTypes.UsageMap;
             }
         }
 
         try
         {
-            if (UsageMap.TrySetReferencePageState(mapPage, writer._pgSz, pageNumber, free))
+            if (UsageMap.TrySetReferencePageState(mapPage, writer.pgSz, pageNumber, free))
             {
                 await writer.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
             }
@@ -474,12 +474,12 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private bool IsGlobalUsageMapPage(byte[] page)
     {
-        if (page.Length < writer._pgSz || page[0] != Constants.PageTypes.Data || page[1] != 0x01)
+        if (page.Length < writer.pgSz || page[0] != Constants.PageTypes.Data || page[1] != 0x01)
         {
             return false;
         }
 
-        if (!UsageMap.TryGetFirstRowBound(page, writer._dataPage, writer._pgSz, out var rowBound))
+        if (!UsageMap.TryGetFirstRowBound(page, writer.dataPage, writer.pgSz, out var rowBound))
         {
             return false;
         }
@@ -490,18 +490,18 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private void InitializeGlobalUsageMapPage(byte[] page)
     {
-        Array.Clear(page, 0, writer._pgSz);
+        Array.Clear(page, 0, writer.pgSz);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = writer._pgSz - Constants.UsageMap.RowSize;
+        int rowStart = writer.pgSz - Constants.UsageMap.RowSize;
         int row1Start = rowStart - Constants.UsageMap.RowSize;
-        int slotTableEnd = writer._dataPage.RowsStart + 4;
+        int slotTableEnd = writer.dataPage.RowsStart + 4;
         int freeSpace = row1Start - slotTableEnd;
         Wu16(page, 2, freeSpace);
-        Wi32(page, writer._dataPage.TDefOff, 1);
-        Wu16(page, writer._dataPage.NumRows, 2);
-        Wu16(page, writer._dataPage.RowsStart, rowStart);
-        Wu16(page, writer._dataPage.RowsStart + 2, row1Start);
+        Wi32(page, writer.dataPage.TDefOff, 1);
+        Wu16(page, writer.dataPage.NumRows, 2);
+        Wu16(page, writer.dataPage.RowsStart, rowStart);
+        Wu16(page, writer.dataPage.RowsStart + 2, row1Start);
         page[rowStart] = Constants.UsageMap.InlineMapType;
         Wi32(page, rowStart + 1, 0);
         page[row1Start] = Constants.UsageMap.InlineMapType;
@@ -514,7 +514,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         bool returnPage;
         if (secure)
         {
-            page = new byte[writer._pgSz];
+            page = new byte[writer.pgSz];
             returnPage = false;
         }
         else
@@ -527,7 +527,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         {
             page[0] = Constants.PageTypes.Freed;
             page[1] = 0x01;
-            Wu16(page, 2, Math.Max(0, writer._pgSz - 16));
+            Wu16(page, 2, Math.Max(0, writer.pgSz - 16));
             await writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally

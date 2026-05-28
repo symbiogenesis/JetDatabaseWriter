@@ -26,10 +26,10 @@ using JetDatabaseWriter.Infrastructure;
 /// </remarks>
 internal sealed class PageJournal
 {
-    private readonly SortedDictionary<long, byte[]> _pages = [];
-    private readonly int _pageSize;
-    private readonly int _maxPages;
-    private long _appendedCount;
+    private readonly SortedDictionary<long, byte[]> pages = [];
+    private readonly int pageSize;
+    private readonly int maxPages;
+    private long appendedCount;
 
     public PageJournal(long baseFileLengthBytes, int pageSize, int maxPages)
     {
@@ -37,21 +37,21 @@ internal sealed class PageJournal
         Guard.Positive(maxPages, nameof(maxPages));
 
         BaseFileLengthBytes = baseFileLengthBytes;
-        _pageSize = pageSize;
-        _maxPages = maxPages;
+        this.pageSize = pageSize;
+        this.maxPages = maxPages;
     }
 
     /// <summary>Gets the file length captured when the transaction began.</summary>
     public long BaseFileLengthBytes { get; }
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
-    public int Count => _pages.Count;
+    public int Count => pages.Count;
 
     /// <summary>
     /// Gets the page number that the next <see cref="Append"/> call will assign,
     /// computed as <c>(BaseFileLengthBytes / pageSize) + appendedCount</c>.
     /// </summary>
-    public long NextAppendPageNumber => (BaseFileLengthBytes / _pageSize) + _appendedCount;
+    public long NextAppendPageNumber => (BaseFileLengthBytes / pageSize) + appendedCount;
 
     /// <summary>
     /// Buffers a write to <paramref name="pageNumber"/>. The supplied bytes are
@@ -65,28 +65,28 @@ internal sealed class PageJournal
     /// <exception cref="ArgumentException">Thrown when <paramref name="page"/> does not match the journal page size.</exception>
     public void Write(long pageNumber, ReadOnlySpan<byte> page)
     {
-        if (page.Length != _pageSize)
+        if (page.Length != pageSize)
         {
             throw new ArgumentException("Page length mismatch.", nameof(page));
         }
 
-        if (_pages.TryGetValue(pageNumber, out byte[]? existing))
+        if (pages.TryGetValue(pageNumber, out byte[]? existing))
         {
             page.CopyTo(existing);
             return;
         }
 
-        if (_pages.Count >= _maxPages)
+        if (pages.Count >= maxPages)
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
-                _maxPages));
+                maxPages));
         }
 
-        var copy = new byte[_pageSize];
+        var copy = new byte[pageSize];
         page.CopyTo(copy);
-        _pages.Add(pageNumber, copy);
+        pages.Add(pageNumber, copy);
     }
 
     /// <summary>
@@ -102,16 +102,16 @@ internal sealed class PageJournal
         long pageNumber = NextAppendPageNumber;
 
         // Pre-check budget so we don't increment _appendedCount on failure.
-        if (!_pages.ContainsKey(pageNumber) && _pages.Count >= _maxPages)
+        if (!pages.ContainsKey(pageNumber) && pages.Count >= maxPages)
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
-                _maxPages));
+                maxPages));
         }
 
         Write(pageNumber, page);
-        _appendedCount++;
+        appendedCount++;
         return pageNumber;
     }
 
@@ -121,12 +121,12 @@ internal sealed class PageJournal
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
     public byte[]? TryGet(long pageNumber)
-        => _pages.TryGetValue(pageNumber, out byte[]? p) ? p : null;
+        => pages.TryGetValue(pageNumber, out byte[]? p) ? p : null;
 
     /// <summary>
     /// Enumerates every (pageNumber, pageBytes) pair in ascending page-number
     /// order. The enumeration is stable so the commit replay extends the file
     /// monotonically rather than seeking back and forth.
     /// </summary>
-    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => _pages;
+    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => pages;
 }

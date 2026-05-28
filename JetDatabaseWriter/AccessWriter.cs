@@ -58,49 +58,49 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// schemas almost never exceed depth 3.
     /// </summary>
     internal const int CascadeMaxDepth = 64;
-    private readonly LockFileCoordinator _lockFileCoordinator;
+    private readonly LockFileCoordinator lockFileCoordinator;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
-    private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
+    private readonly ReaderWriterLockSlim stateLock = new(LockRecursionPolicy.NoRecursion);
 
     // Office Crypto re-encryption context. When non-null, the underlying _stream is an
     // in-memory MemoryStream containing the *decrypted* inner ACCDB; on
     // DisposeAsync the bytes are re-encrypted with the original Office Crypto format
     // and written back to _outerEncryptedStream (which holds the original CFB).
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via RewrapAndCloseOuterEncryptedStreamAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
-    private readonly Stream? _outerEncryptedStream;
-    private readonly bool _outerEncryptedLeaveOpen;
-    private readonly AccessEncryptionFormat _outerEncryptedFormat;
-    private readonly bool _isAgileEncryptedRewrap;
+    private readonly Stream? outerEncryptedStream;
+    private readonly bool outerEncryptedLeaveOpen;
+    private readonly AccessEncryptionFormat outerEncryptedFormat;
+    private readonly bool isAgileEncryptedRewrap;
 
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
     /// incremental fast paths, and the catalog-index splice.</summary>
-    private readonly IndexMaintainer _indexMaintainer;
-    private readonly HashSet<long> _ownedMapWritableTdefs = [];
+    private readonly IndexMaintainer indexMaintainer;
+    private readonly HashSet<long> ownedMapWritableTdefs = [];
 
     /// <summary>Owns TDEF emission and empty-database bootstrap builders.
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
-    private readonly TDefPageBuilder _tdefPageBuilder;
+    private readonly TDefPageBuilder tdefPageBuilder;
 
     /// <summary>Owns LVAL chain encoding: pre-encode oversized MEMO/OLE/Attachment payloads.</summary>
-    private readonly LongValueEncoder _longValueEncoder;
+    private readonly LongValueEncoder longValueEncoder;
 
     /// <summary>Owns pre-write unique-index violation checks.</summary>
-    private readonly UniqueIndexChecker _uniqueIndexChecker;
+    private readonly UniqueIndexChecker uniqueIndexChecker;
 
     /// <summary>Owns transaction lifecycle: begin, commit, rollback, auto-commit wrapping.</summary>
-    private readonly TransactionLifecycle _transactionLifecycle;
+    private readonly TransactionLifecycle transactionLifecycle;
 
     /// <summary>Owns catalog (MSysObjects) write operations: insert, rename, ACE rows.</summary>
-    private readonly CatalogWriter _catalogWriter;
+    private readonly CatalogWriter catalogWriter;
 
     /// <summary>Encodes value arrays into on-disk row byte layouts.</summary>
-    private readonly RowEncoder _rowEncoder;
+    private readonly RowEncoder rowEncoder;
 
     /// <summary>Owns data-page allocation and row insertion mechanics.</summary>
-    private readonly DataPageInserter _dataPageInserter;
+    private readonly DataPageInserter dataPageInserter;
 
     /// <summary>Owns the global page free-list allocator and maintenance operations.</summary>
-    private readonly PageAllocator _pageAllocator;
+    private readonly PageAllocator pageAllocator;
 
     /// <summary>Gets the foreign-key / relationship subsystem. Relationship
     /// lifecycle and TDEF mutation are coordinated there, while catalog rows
@@ -140,10 +140,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal JetTransaction? ActiveTransaction { get; set; }
 
     /// <summary>Gets the cooperative JET byte-range lock helper.</summary>
-    internal JetByteRangeLock ByteRangeLock => _byteRangeLock;
+    internal JetByteRangeLock ByteRangeLock => byteRangeLock;
 
-    private long _cachedInsertTDefPage = -1;
-    private long _cachedInsertPageNumber = -1;
+    private long cachedInsertTDefPage = -1;
+    private long cachedInsertPageNumber = -1;
 
     private AccessWriter(
         string path,
@@ -157,22 +157,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         : base(stream, header, path, leaveOpen)
     {
         Options = options;
-        _lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
-        _outerEncryptedStream = outerEncryptedStream;
-        _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
-        _outerEncryptedFormat = outerEncryptedFormat;
-        _isAgileEncryptedRewrap = outerEncryptedFormat != AccessEncryptionFormat.None;
-        _pageAllocator = new PageAllocator(this);
-        _indexMaintainer = new IndexMaintainer(this, _pageAllocator);
-        Relationships = new RelationshipManager(this, _indexMaintainer, _pageAllocator);
-        ComplexColumns = new ComplexColumnManager(this, _indexMaintainer, _pageAllocator);
-        _tdefPageBuilder = new TDefPageBuilder(this);
-        _longValueEncoder = new LongValueEncoder(this, _pageAllocator);
-        _uniqueIndexChecker = new UniqueIndexChecker(this);
-        _transactionLifecycle = new TransactionLifecycle(this);
-        _catalogWriter = new CatalogWriter(this, _indexMaintainer);
-        _rowEncoder = new RowEncoder(this);
-        _dataPageInserter = new DataPageInserter(this, _pageAllocator);
+        lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
+        this.outerEncryptedStream = outerEncryptedStream;
+        this.outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
+        this.outerEncryptedFormat = outerEncryptedFormat;
+        isAgileEncryptedRewrap = outerEncryptedFormat != AccessEncryptionFormat.None;
+        pageAllocator = new PageAllocator(this);
+        indexMaintainer = new IndexMaintainer(this, pageAllocator);
+        Relationships = new RelationshipManager(this, indexMaintainer, pageAllocator);
+        ComplexColumns = new ComplexColumnManager(this, indexMaintainer, pageAllocator);
+        tdefPageBuilder = new TDefPageBuilder(this);
+        longValueEncoder = new LongValueEncoder(this, pageAllocator);
+        uniqueIndexChecker = new UniqueIndexChecker(this);
+        transactionLifecycle = new TransactionLifecycle(this);
+        catalogWriter = new CatalogWriter(this, indexMaintainer);
+        rowEncoder = new RowEncoder(this);
+        dataPageInserter = new DataPageInserter(this, pageAllocator);
         Constraints = new ConstraintRegistry(
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
             async (tableName, ct) =>
@@ -195,23 +195,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // are written in place — the existing PrepareEncryptedPageForWrite
         // pipeline re-encrypts every page we flush.
         bool isLegacyAesCfb =
-            EncryptionManager.IsCompoundFileEncrypted(header) && !_isAgileEncryptedRewrap;
+            EncryptionManager.IsCompoundFileEncrypted(header) && !isAgileEncryptedRewrap;
 
         // Populate page-encryption keys for in-place re-encryption of writes
         // (Jet3 XOR is already configured by AccessBase; this resolves the
         // Jet4 RC4 database key and / or the legacy AES-128 page key when
         // applicable).
-        (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
-            EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, options.Password);
+        (pageKeys.Rc4DbKey, pageKeys.AesPageKey) =
+            EncryptionManager.ResolveReaderPageKeys(header, format, isLegacyAesCfb, options.Password);
 
-        _lockFileCoordinator.Acquire();
+        lockFileCoordinator.Acquire();
         try
         {
-            _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
         }
         catch
         {
-            _lockFileCoordinator.Dispose();
+            lockFileCoordinator.Dispose();
             throw;
         }
     }
@@ -495,7 +495,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         var columns = BuildFullCatalogColumnDefinitions();
-        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, _format);
+        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, base.format);
         var indexes = new IndexDefinition[]
         {
             new("Id", "Id") { IsPrimaryKey = true },
@@ -509,26 +509,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new InvalidDataException("Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
         }
 
-        tdefPages[0][_tdef.NumCols - 5] = 0x53;
-        var layout = IndexLeafPageBuilder.GetLayout(_format);
+        tdefPages[0][tdef.NumCols - 5] = 0x53;
+        var layout = IndexLeafPageBuilder.GetLayout(base.format);
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
         {
             byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
                 layout,
-                _pgSz,
+                pgSz,
                 parentTdefPage: 2,
                 entries: [],
                 prevPage: 0,
                 nextPage: 0,
                 tailPage: 0,
                 enablePrefixCompression: false);
-            long leafPageNumber = await _pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+            long leafPageNumber = await pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
             leafPageNumbers[i] = leafPageNumber;
             WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
 
-        long usageMapPageNumber = await _dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        long usageMapPageNumber = await dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         await UpdateTableIndexUsageMapRowsAsync(
             usageMapPageNumber,
             ToSinglePageGroups(leafPageNumbers),
@@ -537,7 +537,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
         {
             int usedPagesOffset = usedPagesLogicalOffsets[i];
-            tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
+            tdefPages[usedPagesOffset / pgSz][usedPagesOffset % pgSz] = checked((byte)(i + 2));
             WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
         }
 
@@ -550,7 +550,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
         => format == DatabaseFormat.AceAccdb && fullCatalogSchema
-            ? _pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
+            ? pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
             : new ValueTask<long>(0L);
 
     private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
@@ -601,7 +601,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool emitLvProp = true,
         bool markSystemTableTdef = true)
     {
-        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, _format);
+        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, format);
         var resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (reservedTdefPageNumber > 0 && tdefPages.Length != 1)
@@ -611,7 +611,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (markSystemTableTdef && (catalogFlags & Constants.SystemObjects.SystemTableMask) != 0)
         {
-            tdefPages[0][_tdef.NumCols - 5] = 0x53;
+            tdefPages[0][tdef.NumCols - 5] = 0x53;
         }
 
         // Reserve all TDEF pages first (sequential page numbers). The first
@@ -622,7 +622,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
         long tdefPageNumber = reservedTdefPageNumber > 0
             ? reservedTdefPageNumber
-            : await _pageAllocator.ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
+            : await pageAllocator.ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
 
         // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
         for (int p = 0; p < tdefPages.Length - 1; p++)
@@ -647,21 +647,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
-            var layout = IndexLeafPageBuilder.GetLayout(_format);
+            var layout = IndexLeafPageBuilder.GetLayout(format);
             leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int i = 0; i < resolvedIndexes.Count; i++)
             {
                 byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
                     layout,
-                    _pgSz,
+                    pgSz,
                     tdefPageNumber,
                     [],
                     prevPage: 0,
                     nextPage: 0,
                     tailPage: 0,
                     enablePrefixCompression: false);
-                long leafPageNumber = await _pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+                long leafPageNumber = await pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[i] = leafPageNumber;
                 WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
             }
@@ -680,9 +680,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // including ones without an autonumber column). See
         // docs/design/round-trip-test-failures.md and
         // docs/design/round-trip-openrecordset-hypothesis.md (H25).
-        if (_format != DatabaseFormat.Jet3Mdb)
+        if (format != DatabaseFormat.Jet3Mdb)
         {
-            long usageMapPageNumber = await _dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+            long usageMapPageNumber = await dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
 
             if (leafPageNumbers is not null)
             {
@@ -694,7 +694,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
                 {
                     int usedPagesOffset = usedPagesLogicalOffsets[i];
-                    tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
+                    tdefPages[usedPagesOffset / pgSz][usedPagesOffset % pgSz] = checked((byte)(i + 2));
                     WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
                 }
             }
@@ -718,7 +718,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        byte[]? lvProp = emitLvProp ? JetExpressionConverter.BuildLvPropBlob(columns, _format) : null;
+        byte[]? lvProp = emitLvProp ? JetExpressionConverter.BuildLvPropBlob(columns, format) : null;
         await InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
 
         // DAO Compact & Repair requires every user table to have ACE
@@ -726,7 +726,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // security-descriptor pass aborts with err 3011 "MSysDb".
         if ((catalogFlags & Constants.SystemObjects.SystemTableMask) == 0)
         {
-            await _catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
+            await catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
         Constraints.Register(tableName, columns);
@@ -748,7 +748,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposedOrCancelled(cancellationToken);
-        return _pageAllocator.ScrubFreePagesAsync(cancellationToken);
+        return pageAllocator.ScrubFreePagesAsync(cancellationToken);
     }
 
     /// <summary>
@@ -761,7 +761,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposedOrCancelled(cancellationToken);
-        return _pageAllocator.ShrinkDatabaseAsync(cancellationToken);
+        return pageAllocator.ShrinkDatabaseAsync(cancellationToken);
     }
 
     private async ValueTask DropTableEntryAsync(string tableName, CancellationToken cancellationToken)
@@ -1040,7 +1040,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             // Pre-write unique-index enforcement.
-            await _uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
+            await uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
 
             foreach (object[] row in pendingRows)
             {
@@ -1064,7 +1064,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             if (inserted > 0)
             {
-                bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+                bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                     entry.TDefPage,
                     tableDef,
                     batchHintRows,
@@ -1072,7 +1072,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     cancellationToken).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                    await indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
                 await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
@@ -1153,7 +1153,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             // Pre-write unique-index enforcement.
-            await _uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
+            await uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
 
             foreach (object[] mappedRow in pendingRows)
             {
@@ -1177,7 +1177,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             if (inserted > 0)
             {
-                bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+                bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                     entry.TDefPage,
                     tableDef,
                     batchHintRows,
@@ -1185,7 +1185,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     cancellationToken).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                    await indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
                 await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
@@ -1331,7 +1331,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // substituted at their original indices.
         if (pendingNewRows.Count > 0)
         {
-            await _uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
+            await uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
         }
 
         int updated = 0;
@@ -1350,7 +1350,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (updated > 0)
         {
-            bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 entry.TDefPage,
                 tableDef,
                 updateInsertedHints,
@@ -1358,7 +1358,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1456,7 +1456,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (deleted > 0)
         {
             await AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-            bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 entry.TDefPage,
                 tableDef,
                 insertedRows: null,
@@ -1464,7 +1464,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1491,7 +1491,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+        await catalogWriter.InsertLinkedTableCatalogEntryAsync(
             linkedTableName,
             sourceDatabasePath,
             foreignTableName,
@@ -1608,9 +1608,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
         }
 
-        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, _format);
+        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, format);
 
-        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+        await catalogWriter.InsertLinkedTableCatalogEntryAsync(
             linkedTableName,
             sourceDatabasePath: null,
             foreignName: foreignTableName,
@@ -1633,13 +1633,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
         }
 
-        uint expectedMagic = _format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
+        uint expectedMagic = format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
         if (copy.Length < sizeof(uint) || Ru32(copy, 0) != expectedMagic)
         {
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
         }
 
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(copy, _format);
+        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(copy, format);
         if (block is null || block.Targets.Count == 0)
         {
             throw new ArgumentException("Cached schema LvProp must contain at least one property target.", paramName);
@@ -1673,7 +1673,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(connectString, nameof(connectString));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+        await catalogWriter.InsertLinkedTableCatalogEntryAsync(
             linkedTableName,
             sourceDirectoryPath,
             foreignFileName,
@@ -1858,7 +1858,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </exception>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     public ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
-        => _transactionLifecycle.BeginTransactionAsync(cancellationToken);
+        => transactionLifecycle.BeginTransactionAsync(cancellationToken);
 
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
@@ -1870,7 +1870,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-        => _transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
+        => transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
@@ -1878,7 +1878,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
-        => _transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
+        => transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Commits the supplied <paramref name="transaction"/>: detaches the
@@ -1889,7 +1889,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
-        => _transactionLifecycle.CommitTransactionAsync(transaction, cancellationToken);
+        => transactionLifecycle.CommitTransactionAsync(transaction, cancellationToken);
 
     /// <summary>
     /// Rolls back the supplied <paramref name="transaction"/>: discards the
@@ -1898,13 +1898,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
-        => _transactionLifecycle.RollbackTransactionAsync(transaction, cancellationToken);
+        => transactionLifecycle.RollbackTransactionAsync(transaction, cancellationToken);
 
     /// <inheritdoc/>
     [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is passed as the final step to LockFileCoordinator.DisposeAfterAsync.")]
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        if (disposed)
         {
             return;
         }
@@ -1913,7 +1913,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // and unconditionally releases the .ldb / .laccdb slot last.
         // Lock-file release runs after the agile re-wrap so the lock-file
         // accurately reflects "database still in use" while we re-encrypt.
-        await _lockFileCoordinator.DisposeAfterAsync(
+        await lockFileCoordinator.DisposeAfterAsync(
             DisposeActiveTransactionAsync,
             RewrapAndCloseOuterEncryptedStreamAsync,
             DisposeStateLockAsync,
@@ -1946,7 +1946,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
         // the user's outer encrypted stream/file ends up with all writes.
-        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || Options.Password.IsEmpty)
+        if (!isAgileEncryptedRewrap || outerEncryptedStream is null || Options.Password.IsEmpty)
         {
             return;
         }
@@ -1957,44 +1957,44 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
         finally
         {
-            if (!_outerEncryptedLeaveOpen)
+            if (!outerEncryptedLeaveOpen)
             {
-                await _outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
+                await outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
 
     private ValueTask DisposeStateLockAsync()
     {
-        _stateLock.Dispose();
+        stateLock.Dispose();
         return default;
     }
 
     /// <summary>
     /// Re-encrypts the in-memory decrypted ACCDB (held by <c>_stream</c>) using
     /// freshly-generated Office Crypto parameters and writes the resulting CFB
-    /// document back to <see cref="_outerEncryptedStream"/>. Called from
+    /// document back to <see cref="outerEncryptedStream"/>. Called from
     /// <see cref="DisposeAsync"/> when the writer was opened on an Office Crypto
     /// .accdb file.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when the encrypted writer does not have the required in-memory backing stream.</exception>
     private async ValueTask RewrapAgileOnDisposeAsync()
     {
-        var memory = _stream as MemoryStream
+        var memory = stream as MemoryStream
             ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
 
         byte[] inner = memory.ToArray();
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) = _outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
+        (byte[] encryptionInfo, byte[] encryptedPackage) = outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
             ? OfficeCryptoStandard.Encrypt(inner, Options.Password.Span)
             : OfficeCryptoAgile.Encrypt(inner, Options.Password.Span);
 
         byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
 
-        _ = _outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
-        await _outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
-        _outerEncryptedStream.SetLength(cfb.Length);
-        await _outerEncryptedStream.FlushAsync().ConfigureAwait(false);
+        _ = outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
+        await outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
+        outerEncryptedStream.SetLength(cfb.Length);
+        await outerEncryptedStream.FlushAsync().ConfigureAwait(false);
     }
 
     private static object[] NormalizePublicRow(object?[] values, string paramName)
@@ -2050,7 +2050,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // MaintainIndexesAsync still runs as defense-in-depth.
         try
         {
-            await _uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, [values], cancellationToken).ConfigureAwait(false);
+            await uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, [values], cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -2079,7 +2079,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // fast path: try in-place leaf splice for the inserted
             // row before falling back to a full snapshot+rebuild.
             List<(RowLocation Loc, object[] Row)> hintInserts = [(loc, values)];
-            bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 tdefPage,
                 tableDef,
                 hintInserts,
@@ -2087,7 +2087,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
 
             await UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, [values], cancellationToken).ConfigureAwait(false);
@@ -2405,14 +2405,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         };
 
         AccessReader reader;
-        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
+        if (!string.IsNullOrEmpty(path) && !isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            _stream.Position = 0;
-            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            stream.Position = 0;
+            reader = await AccessReader.OpenUncachedAsync(stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)
@@ -2441,14 +2441,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         };
 
         AccessReader reader;
-        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
+        if (!string.IsNullOrEmpty(path) && !isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            _stream.Position = 0;
-            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            stream.Position = 0;
+            reader = await AccessReader.OpenUncachedAsync(stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)
@@ -2478,14 +2478,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         };
 
         AccessReader reader;
-        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
+        if (!string.IsNullOrEmpty(path) && !isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            _stream.Position = 0;
-            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            stream.Position = 0;
+            reader = await AccessReader.OpenUncachedAsync(stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)
@@ -2559,10 +2559,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken);
+        => catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken);
 
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
+        => catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
 
     internal ValueTask InsertCatalogObjectAsync(
         int objectId,
@@ -2573,16 +2573,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[]? owner,
         byte[]? lvProp,
         CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertCatalogObjectAsync(objectId, parentId, objectName, objectType, catalogFlags, owner, lvProp, cancellationToken);
+        => catalogWriter.InsertCatalogObjectAsync(objectId, parentId, objectName, objectType, catalogFlags, owner, lvProp, cancellationToken);
 
     internal ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertRelationshipCatalogEntryAsync(relationshipName, cancellationToken);
+        => catalogWriter.InsertRelationshipCatalogEntryAsync(relationshipName, cancellationToken);
 
     internal ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertAceRowsForRelationshipAsync(objectId, cancellationToken);
+        => catalogWriter.InsertAceRowsForRelationshipAsync(objectId, cancellationToken);
 
     internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken = default)
-        => _catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken);
+        => catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken);
 
     private async ValueTask RewriteTableAsync(
         string tableName,
@@ -2628,13 +2628,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format)
+                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format)
+                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)
                         ?? baseDef.ValidationRuleExpression,
-                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format)
+                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format)
                         ?? baseDef.ValidationText,
-                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, _format)
+                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, format)
                         ?? baseDef.Description,
                 };
             }
@@ -2686,7 +2686,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // so we don't pay the rebuild cost per row.
         if (projectedIndexes.Count > 0 && snapshot.Rows.Count > 0)
         {
-            await _indexMaintainer.MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
+            await indexMaintainer.MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
         }
 
         // Drop the original table, then rename the temp catalog entry to take its place.
@@ -2731,7 +2731,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, _format);
+        byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, format);
         if (newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0)
         {
             await TransplantTempTableToOriginalAsync(
@@ -2745,7 +2745,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         await DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
-        await _catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
+        await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
 
         foreach (var survivor in newComplexById.Values)
         {
@@ -2794,13 +2794,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await ReplaceCatalogEntryAsync(tableName, originalTdefPage, lvProp, cancellationToken).ConfigureAwait(false);
         await DeleteCatalogRowsForTDefPageAsync(tempName, tempTdefPage, cancellationToken).ConfigureAwait(false);
         await DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
-        await _pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        await pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();
     }
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = _stream.Length / _pgSz;
+        long totalPages = stream.Length / pgSz;
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2808,14 +2808,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, _dataPage.TDefOff) == fromTdefPage;
+                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, dataPage.TDefOff) == fromTdefPage;
                 bool patchIndexPage = page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf && Ri32(page, 4) == fromTdefPage;
                 if (!patchDataPage && !patchIndexPage)
                 {
                     continue;
                 }
 
-                int ownerOffset = patchDataPage ? _dataPage.TDefOff : 4;
+                int ownerOffset = patchDataPage ? dataPage.TDefOff : 4;
                 Wi32(page, ownerOffset, checked((int)toTdefPage));
                 await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             }
@@ -2869,7 +2869,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
         }
 
-        await _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPage, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
+        await catalogWriter.InsertCatalogEntryAsync(tableName, tdefPage, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask DeleteCatalogRowsForTDefPageAsync(string tableName, long tdefPage, CancellationToken cancellationToken)
@@ -2917,7 +2917,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 int textSize = column.IsCalculated
                     ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
                     : column.Size;
-                int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
+                int charLen = format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:
@@ -3003,7 +3003,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             def = def with
             {
                 IsCalculated = true,
-                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, _format),
+                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format),
                 CalculatedResultType = resultType,
                 IsCompressedUnicode = false,
             };
@@ -3025,7 +3025,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableDef">The table def.</param>
     /// <param name="indexes">The indexes.</param>
     internal (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
-        => _tdefPageBuilder.BuildTDefPageWithIndexOffsets(tableDef, indexes);
+        => tdefPageBuilder.BuildTDefPageWithIndexOffsets(tableDef, indexes);
 
     /// <summary>
     /// Builds a (possibly multi-page) TDEF chain and also returns, for each
@@ -3047,7 +3047,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableDef">The table def.</param>
     /// <param name="indexes">The indexes.</param>
     internal (byte[][] Pages, int[] FirstDpLogicalOffsets, int[] UsedPagesLogicalOffsets) BuildTDefPagesWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
-        => _tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, indexes);
+        => tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, indexes);
 
     /// <summary>
     /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF
@@ -3062,7 +3062,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         for (int i = 0; i < 4; i++)
         {
-            (int pageIdx, int pageOff) = _tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
+            (int pageIdx, int pageOff) = tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
             pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
         }
     }
@@ -3071,7 +3071,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         for (int i = 0; i < 3; i++)
         {
-            (int pageIdx, int pageOff) = _tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
+            (int pageIdx, int pageOff) = tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
             pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
         }
     }
@@ -3084,16 +3084,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
-        byte[] page = new byte[_pgSz];
+        byte[] page = new byte[pgSz];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
         int rowCount = indexPageGroups.Count + 2;
-        int rowStart = _pgSz;
+        int rowStart = pgSz;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, _dataPage.RowsStart + (rowIndex * 2), rowStart);
+            Wu16(page, dataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
             {
@@ -3103,25 +3103,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
         }
 
-        Wi32(page, _dataPage.TDefOff, 0);
-        Wu16(page, _dataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (_dataPage.RowsStart + (rowCount * 2));
+        Wi32(page, dataPage.TDefOff, 0);
+        Wu16(page, dataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (dataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
 
-        return await _pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+        return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
 
-        int existingRowCount = Ru16(page, _dataPage.NumRows);
+        int existingRowCount = Ru16(page, dataPage.NumRows);
         int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
-        int rowStart = _pgSz;
+        int rowStart = pgSz;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, _dataPage.RowsStart + (rowIndex * 2), rowStart);
+            Wu16(page, dataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
             {
@@ -3137,9 +3137,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
         }
 
-        Wi32(page, _dataPage.TDefOff, 0);
-        Wu16(page, _dataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (_dataPage.RowsStart + (rowCount * 2));
+        Wi32(page, dataPage.TDefOff, 0);
+        Wu16(page, dataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (dataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
         await WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
     }
@@ -3286,7 +3286,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var longValueRoots = new List<LongValueDescriptor>();
 
         var tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        long totalPages = _stream.Length / _pgSz;
+        long totalPages = stream.Length / pgSz;
         if (tableDef is not null)
         {
             for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
@@ -3295,7 +3295,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != tdefPage)
+                    if (page[0] != Constants.PageTypes.Data || Ri32(page, dataPage.TDefOff) != tdefPage)
                     {
                         continue;
                     }
@@ -3341,7 +3341,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        if (firstTdefPage is not null && _format != DatabaseFormat.Jet3Mdb)
+        if (firstTdefPage is not null && format != DatabaseFormat.Jet3Mdb)
         {
             int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, Constants.TableDefinition.OwnedPagesPageOffset);
             if (usageMapPage > 0)
@@ -3360,14 +3360,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             if (pageNumber > 2)
             {
-                await _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                await pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
     private async ValueTask CollectIndexPagesFromUsageMapAsync(long usageMapPageNumber, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
     {
-        long totalPages = _stream.Length / _pgSz;
+        long totalPages = stream.Length / pgSz;
         if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
         {
             return;
@@ -3392,7 +3392,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 if (!await UsageMap.TryEnumeratePagesAsync(
                     page,
                     rowBound,
-                    _pgSz,
+                    pgSz,
                     totalPages,
                     minimumPageNumber: 3,
                     strict: false,
@@ -3443,7 +3443,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        long total = _stream.Length / _pgSz;
+        long total = stream.Length / pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3451,7 +3451,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, dataPage.TDefOff) != acesTdefPage)
                 {
                     continue;
                 }
@@ -3571,7 +3571,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         try
         {
-            bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 tdefPage,
                 tableDef,
                 insertedRows,
@@ -3597,9 +3597,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
         string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
-        if (!string.IsNullOrWhiteSpace(_indexMaintainer.LastIncrementalBail))
+        if (!string.IsNullOrWhiteSpace(indexMaintainer.LastIncrementalBail))
         {
-            message += $" Bail: {_indexMaintainer.LastIncrementalBail}.";
+            message += $" Bail: {indexMaintainer.LastIncrementalBail}.";
         }
 
         return inner is null ? new InvalidOperationException(message) : new InvalidOperationException(message, inner);
@@ -3624,8 +3624,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return false;
             }
 
-            int numCols = Ru16(page, _tdef.NumCols);
-            int numRealIdx = Ri32(page, _tdef.NumRealIdx);
+            int numCols = Ru16(page, tdef.NumCols);
+            int numRealIdx = Ri32(page, tdef.NumRealIdx);
             if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
             {
                 return false;
@@ -3637,10 +3637,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return false;
             }
 
-            long totalPages = _stream.Length / _pgSz;
+            long totalPages = stream.Length / pgSz;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
-                if (!_indexLayout.TryReadRealIdxSlot(page, realIdxDescStart, ri, out var slot))
+                if (!indexLayout.TryReadRealIdxSlot(page, realIdxDescStart, ri, out var slot))
                 {
                     return false;
                 }
@@ -3685,17 +3685,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // before serializing the row. The pre-encode pass appends LVAL pages to
         // the file and rewrites the matching slot in `values` with a
         // PreEncodedLongValue sentinel carrying the finished 12-byte header.
-        values = await _longValueEncoder.PreEncodeLongValuesAsync(tdefPage, tableDef, values, cancellationToken).ConfigureAwait(false);
+        values = await longValueEncoder.PreEncodeLongValuesAsync(tdefPage, tableDef, values, cancellationToken).ConfigureAwait(false);
 
-        byte[] rowBytes = _rowEncoder.SerializeRow(tableDef, values);
-        var target = await _dataPageInserter.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
+        byte[] rowBytes = rowEncoder.SerializeRow(tableDef, values);
+        var target = await dataPageInserter.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
         int rowIndex;
         int rowStart;
         try
         {
-            rowIndex = Ru16(target.Page, _dataPage.NumRows);
-            rowStart = _dataPageInserter.GetFirstRowStart(target.Page, rowIndex) - rowBytes.Length;
-            await _dataPageInserter.WriteRowToPageAsync(target.PageNumber, target.Page, rowBytes, cancellationToken).ConfigureAwait(false);
+            rowIndex = Ru16(target.Page, dataPage.NumRows);
+            rowStart = dataPageInserter.GetFirstRowStart(target.Page, rowIndex) - rowBytes.Length;
+            await dataPageInserter.WriteRowToPageAsync(target.PageNumber, target.Page, rowBytes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -3711,7 +3711,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     internal ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, CancellationToken cancellationToken = default)
-        => _longValueEncoder.ForceEncodeMemoAsLvalAsync(text, compress, cancellationToken);
+        => longValueEncoder.ForceEncodeMemoAsLvalAsync(text, compress, cancellationToken);
 
     internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
     {
@@ -3738,15 +3738,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-test-failures.md.
-            int numRealIdx = Ri32(page, _tdef.NumRealIdx);
+            int numRealIdx = Ri32(page, tdef.NumRealIdx);
             if (numRealIdx > 0 && numRealIdx <= Constants.TableDefinition.MaxIndexes)
             {
-                int slotEnd = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+                int slotEnd = tdef.BlockEnd + (numRealIdx * tdef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
                 {
                     for (int i = 0; i < numRealIdx; i++)
                     {
-                        int countOff = _tdef.BlockEnd + (i * _tdef.RealIdxEntrySz) + 4;
+                        int countOff = tdef.BlockEnd + (i * tdef.RealIdxEntrySz) + 4;
                         uint cur = Ru32(page, countOff);
                         long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
                         Wi32(page, countOff, unchecked((int)(uint)next));
@@ -3781,7 +3781,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
     {
         var dataPages = new List<long>();
-        long totalPages = _stream.Length / _pgSz;
+        long totalPages = stream.Length / pgSz;
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3789,7 +3789,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] == Constants.PageTypes.Data && Ri32(page, _dataPage.TDefOff) == tdefPage)
+                if (page[0] == Constants.PageTypes.Data && Ri32(page, dataPage.TDefOff) == tdefPage)
                 {
                     dataPages.Add(pageNumber);
                 }
@@ -3807,7 +3807,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (long pageNumber in dataPages)
         {
-            await WritePageAsync(pageNumber, _dataPageInserter.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
+            await WritePageAsync(pageNumber, dataPageInserter.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         }
 
         if (dataPages.Count > 0)
@@ -3823,17 +3823,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         await AdjustTDefRowCountAsync(tdefPage, rows.Count - tableDef.RowCount, cancellationToken).ConfigureAwait(false);
         tableDef.RowCount = rows.Count;
-        await _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        await indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
     {
-        _stateLock.EnterReadLock();
+        stateLock.EnterReadLock();
         try
         {
-            if (_cachedInsertTDefPage == tdefPage && _cachedInsertPageNumber >= 3)
+            if (cachedInsertTDefPage == tdefPage && cachedInsertPageNumber >= 3)
             {
-                pageNumber = _cachedInsertPageNumber;
+                pageNumber = cachedInsertPageNumber;
                 return true;
             }
 
@@ -3842,31 +3842,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
         finally
         {
-            _stateLock.ExitReadLock();
+            stateLock.ExitReadLock();
         }
     }
 
     internal void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
     {
-        _stateLock.EnterWriteLock();
+        stateLock.EnterWriteLock();
         try
         {
-            _cachedInsertTDefPage = tdefPage;
-            _cachedInsertPageNumber = pageNumber;
+            cachedInsertTDefPage = tdefPage;
+            cachedInsertPageNumber = pageNumber;
         }
         finally
         {
-            _stateLock.ExitWriteLock();
+            stateLock.ExitWriteLock();
         }
     }
 
     internal ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
-        => _catalogWriter.GetCatalogRowsAsync(msys, cancellationToken);
+        => catalogWriter.GetCatalogRowsAsync(msys, cancellationToken);
 
     internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         var result = new List<RowLocation>();
-        long total = _stream.Length / _pgSz;
+        long total = stream.Length / pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3878,7 +3878,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            if (Ri32(page, _dataPage.TDefOff) != tdefPage)
+            if (Ri32(page, dataPage.TDefOff) != tdefPage)
             {
                 ReturnPage(page);
                 continue;
@@ -3934,11 +3934,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    private bool IsOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Contains(tdefPageNumber);
+    private bool IsOwnedMapWritableTdef(long tdefPageNumber) => ownedMapWritableTdefs.Contains(tdefPageNumber);
 
     internal async ValueTask<bool> CanMaintainOwnedMapAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
-        if (_format == DatabaseFormat.Jet3Mdb || tdefPageNumber <= 0)
+        if (format == DatabaseFormat.Jet3Mdb || tdefPageNumber <= 0)
         {
             return false;
         }
@@ -3979,7 +3979,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return false;
     }
 
-    private void RegisterOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Add(tdefPageNumber);
+    private void RegisterOwnedMapWritableTdef(long tdefPageNumber) => ownedMapWritableTdefs.Add(tdefPageNumber);
 
     internal async ValueTask RequireMsysObjectsIndexMaintenanceAsync(
         TableDef msys,
@@ -3988,7 +3988,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string operation,
         CancellationToken cancellationToken)
     {
-        bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
+        bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
             2,
             msys,
             insertedRows,
@@ -4004,7 +4004,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
         }
 
-        await _indexMaintainer.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await indexMaintainer.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
     }
 
     internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
@@ -4020,7 +4020,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
-        int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
+        int offsetPos = dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
         if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
         {
@@ -4108,7 +4108,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     private async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
-        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, ReadNextLongValueDpAsync, _pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, ReadNextLongValueDpAsync, pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
 
     private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
     {

@@ -11,26 +11,26 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 
 internal sealed class RowDecodePlan
 {
-    private readonly List<ColumnInfo> _columns;
-    private readonly bool[]? _wantedColumns;
-    private readonly int[]? _columnOrdinals;
-    private readonly bool _strictParsing;
-    private readonly bool _hasDeletedColumns;
-    private readonly bool _hasVarColumns;
+    private readonly List<ColumnInfo> columns;
+    private readonly bool[]? wantedColumns;
+    private readonly int[]? columnOrdinals;
+    private readonly bool strictParsing;
+    private readonly bool hasDeletedColumns;
+    private readonly bool hasVarColumns;
 
     private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing)
     {
         Guard.NotNull(tableDef, nameof(tableDef));
 
-        _columns = tableDef.Columns;
-        _wantedColumns = wantedColumns;
-        _columnOrdinals = columnOrdinals;
-        _strictParsing = strictParsing;
-        _hasDeletedColumns = tableDef.HasDeletedColumns;
-        _hasVarColumns = tableDef.HasVarColumns;
+        columns = tableDef.Columns;
+        this.wantedColumns = wantedColumns;
+        this.columnOrdinals = columnOrdinals;
+        this.strictParsing = strictParsing;
+        hasDeletedColumns = tableDef.HasDeletedColumns;
+        hasVarColumns = tableDef.HasVarColumns;
     }
 
-    internal int ColumnCount => _columns.Count;
+    internal int ColumnCount => columns.Count;
 
     internal static RowDecodePlan CreateTyped(TableDef tableDef, bool[]? wantedColumns, bool strictParsing)
         => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing);
@@ -153,15 +153,15 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        for (int columnIndex = 0; columnIndex < _columns.Count; columnIndex++)
+        for (int columnIndex = 0; columnIndex < columns.Count; columnIndex++)
         {
-            if (_wantedColumns != null && !_wantedColumns[columnIndex])
+            if (wantedColumns != null && !wantedColumns[columnIndex])
             {
                 buffer[columnIndex] = null;
                 continue;
             }
 
-            var column = _columns[columnIndex];
+            var column = columns[columnIndex];
             var slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
             buffer[columnIndex] = DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
@@ -171,7 +171,7 @@ internal sealed class RowDecodePlan
 
     internal bool TryDecodePartialColumns(AccessBase source, byte[] page, int rowStart, int rowSize, object?[] result)
     {
-        if (_columnOrdinals == null || result.Length < _columnOrdinals.Length)
+        if (columnOrdinals == null || result.Length < columnOrdinals.Length)
         {
             throw new InvalidOperationException("Partial row decoding requires a partial-column plan and a result buffer large enough for every ordinal.");
         }
@@ -181,15 +181,15 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        for (int resultIndex = 0; resultIndex < _columnOrdinals.Length; resultIndex++)
+        for (int resultIndex = 0; resultIndex < columnOrdinals.Length; resultIndex++)
         {
-            int columnOrdinal = _columnOrdinals[resultIndex];
-            if (columnOrdinal < 0 || columnOrdinal >= _columns.Count)
+            int columnOrdinal = columnOrdinals[resultIndex];
+            if (columnOrdinal < 0 || columnOrdinal >= columns.Count)
             {
                 return false;
             }
 
-            var column = _columns[columnOrdinal];
+            var column = columns[columnOrdinal];
             var slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
             switch (slice.Kind)
             {
@@ -240,7 +240,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        bool effectiveHasVarColumns = _hasVarColumns || (_hasDeletedColumns && rawNumCols > _columns.Count);
+        bool effectiveHasVarColumns = hasVarColumns || (hasDeletedColumns && rawNumCols > columns.Count);
         return source.TryParseRowLayoutForDecodePlan(page, rowStart, rowSize, effectiveHasVarColumns, out layout);
     }
 
@@ -263,7 +263,7 @@ internal sealed class RowDecodePlan
                 return DBNull.Value;
 
             case AccessBase.ColumnSliceKind.Fixed:
-                return JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, _strictParsing);
+                return JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, strictParsing);
 
             case AccessBase.ColumnSliceKind.Var:
                 return DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue);
@@ -318,8 +318,8 @@ internal sealed class RowDecodePlan
                 case AttachmentType:
                     int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                     return length >= required
-                        ? JetTypeInfo.ReadFixedTyped(page, start, column, required, _strictParsing)
-                        : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, _strictParsing);
+                        ? JetTypeInfo.ReadFixedTyped(page, start, column, required, strictParsing)
+                        : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, strictParsing);
 
                 default:
                     return DBNull.Value;
@@ -331,15 +331,15 @@ internal sealed class RowDecodePlan
         }
         catch (ArgumentException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
         catch (IndexOutOfRangeException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
         catch (OverflowException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
     }
 
@@ -368,7 +368,7 @@ internal sealed class RowDecodePlan
                     return CalculatedColumnUtil.ReadPayloadTyped(
                         CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
                         JetTypeInfo.ResolveValueType(column),
-                        _strictParsing);
+                        strictParsing);
             }
         }
         catch (JetLimitationException)
@@ -377,15 +377,15 @@ internal sealed class RowDecodePlan
         }
         catch (ArgumentException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
         catch (IndexOutOfRangeException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
         catch (OverflowException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, _strictParsing);
+            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, strictParsing);
         }
     }
 

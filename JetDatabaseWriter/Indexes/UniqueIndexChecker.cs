@@ -43,9 +43,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             AccessBase.ReturnPage(tdefPageBytes);
         }
 
-        int numCols = Ru16(tdefBuffer, writer._tdef.NumCols);
-        int numIdx = Ri32(tdefBuffer, writer._tdef.NumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, writer._tdef.NumRealIdx);
+        int numCols = Ru16(tdefBuffer, writer.tdef.NumCols);
+        int numIdx = Ri32(tdefBuffer, writer.tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, writer.tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0
             || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx > Constants.TableDefinition.MaxIndexes)
@@ -53,8 +53,8 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return result;
         }
 
-        int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer._colDesc.Size);
+        int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * writer.colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (writer.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
@@ -64,11 +64,11 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         int realIdxDescStart = namePos;
-        var anchors = writer._indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        var anchors = writer.indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         var logIdxNames = writer.Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         var catalog = IndexCatalogReader.ReadResolved(
-            tdefBuffer, writer._indexLayout, anchors, tableDef.Columns, logIdxNames);
+            tdefBuffer, writer.indexLayout, anchors, tableDef.Columns, logIdxNames);
 
         foreach ((int realIdxNum, var slot) in catalog.RealIdxByNum)
         {
@@ -100,7 +100,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         object[] row,
         int[] numericTargetScales)
     {
-        bool legacyNumeric = writer._format == Enums.DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = writer.format == Enums.DatabaseFormat.Jet4Mdb;
         int keyCount = descriptor.KeyColumns.Count;
 
         // Single-column fast path: avoid the per-column array + copy.

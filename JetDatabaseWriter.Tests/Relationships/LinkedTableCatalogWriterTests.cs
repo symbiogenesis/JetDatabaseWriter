@@ -846,11 +846,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer.tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer.tdef.NumRealIdx);
 
-            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer._colDesc.Size);
+            int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer.colDesc.Size);
             for (int i = 0; i < numCols; i++)
             {
                 int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
@@ -858,7 +858,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
 
             int realIdxDescStart = namePos;
-            var layout = writer._indexLayout;
+            var layout = writer.indexLayout;
             int intermediateRoots = 0;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
@@ -896,12 +896,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer.tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer.tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected MSysObjects to declare at least one real index.");
 
-            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer._colDesc.Size);
+            int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer.colDesc.Size);
             for (int i = 0; i < numCols; i++)
             {
                 int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
@@ -909,7 +909,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
 
             int realIdxDescStart = namePos;
-            var layout = writer._indexLayout;
+            var layout = writer.indexLayout;
             int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
             int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");

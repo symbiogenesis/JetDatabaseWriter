@@ -52,15 +52,15 @@ internal sealed class LockFileSlotWriter : IDisposable
     private static readonly ConcurrentDictionary<string, int> ActiveLockFiles
         = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly string _ownerType;
-    private FileStream? _stream;
-    private bool _disposed;
+    private readonly string ownerType;
+    private FileStream? stream;
+    private bool disposed;
 
     private LockFileSlotWriter(string lockPath, string ownerType, FileStream stream, long slotOffset)
     {
         LockFilePath = lockPath;
-        _ownerType = ownerType;
-        _stream = stream;
+        this.ownerType = ownerType;
+        this.stream = stream;
         SlotOffset = slotOffset;
         ActiveLockFiles.AddOrUpdate(lockPath, 1, static (_, count) => count + 1);
     }
@@ -87,7 +87,7 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// </summary>
     ~LockFileSlotWriter()
     {
-        if (_disposed || Environment.HasShutdownStarted || AppDomain.CurrentDomain.IsFinalizingForUnload())
+        if (disposed || Environment.HasShutdownStarted || AppDomain.CurrentDomain.IsFinalizingForUnload())
         {
             return;
         }
@@ -114,11 +114,11 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// </summary>
     private void FinalizerCleanup()
     {
-        _disposed = true;
+        disposed = true;
         DecrementActiveCount(LockFilePath);
 
-        var stream = _stream;
-        _stream = null;
+        var stream = this.stream;
+        this.stream = null;
         if (stream != null)
         {
             try
@@ -246,17 +246,17 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        if (disposed)
         {
             return;
         }
 
-        _disposed = true;
+        disposed = true;
         GC.SuppressFinalize(this);
         DecrementActiveCount(LockFilePath);
 
-        var stream = _stream;
-        _stream = null;
+        var stream = this.stream;
+        this.stream = null;
 
         bool fileLooksEmpty = false;
 
@@ -276,11 +276,11 @@ internal sealed class LockFileSlotWriter : IDisposable
             }
             catch (IOException ex)
             {
-                System.Diagnostics.Trace.WriteLine($"[{_ownerType}] Best-effort lock-file slot zero suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+                System.Diagnostics.Trace.WriteLine($"[{ownerType}] Best-effort lock-file slot zero suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
             }
             catch (UnauthorizedAccessException ex)
             {
-                System.Diagnostics.Trace.WriteLine($"[{_ownerType}] Best-effort lock-file slot zero suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+                System.Diagnostics.Trace.WriteLine($"[{ownerType}] Best-effort lock-file slot zero suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
             }
             catch (ObjectDisposedException)
             {
@@ -307,11 +307,11 @@ internal sealed class LockFileSlotWriter : IDisposable
         }
         catch (IOException ex)
         {
-            System.Diagnostics.Trace.WriteLine($"[{_ownerType}] Best-effort lock-file delete suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+            System.Diagnostics.Trace.WriteLine($"[{ownerType}] Best-effort lock-file delete suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
         }
         catch (UnauthorizedAccessException ex)
         {
-            System.Diagnostics.Trace.WriteLine($"[{_ownerType}] Best-effort lock-file delete suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+            System.Diagnostics.Trace.WriteLine($"[{ownerType}] Best-effort lock-file delete suppression: '{LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
         }
     }
 

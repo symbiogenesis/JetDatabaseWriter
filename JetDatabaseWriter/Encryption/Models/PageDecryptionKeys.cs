@@ -15,9 +15,9 @@ using System.Security.Cryptography;
 /// </summary>
 internal sealed class PageDecryptionKeys : IDisposable
 {
-    private Aes? _aes;
-    private ICryptoTransform? _aesEncryptor;
-    private ICryptoTransform? _aesDecryptor;
+    private Aes? aes;
+    private ICryptoTransform? aesEncryptor;
+    private ICryptoTransform? aesDecryptor;
 
     /// <summary>Gets or sets the Jet3 XOR mask, non-null when Jet3 page encryption is active.</summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
@@ -42,14 +42,14 @@ internal sealed class PageDecryptionKeys : IDisposable
     internal ICryptoTransform GetAesDecryptor()
     {
         EnsureAesTransforms();
-        return _aesDecryptor!;
+        return aesDecryptor!;
     }
 
     /// <summary>Returns the cached AES encryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
     internal ICryptoTransform GetAesEncryptor()
     {
         EnsureAesTransforms();
-        return _aesEncryptor!;
+        return aesEncryptor!;
     }
 
     /// <inheritdoc/>
@@ -57,7 +57,7 @@ internal sealed class PageDecryptionKeys : IDisposable
 
     private void EnsureAesTransforms()
     {
-        if (_aes != null)
+        if (aes != null)
         {
             return;
         }
@@ -68,23 +68,23 @@ internal sealed class PageDecryptionKeys : IDisposable
         }
 
 #pragma warning disable CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
-        _aes = Aes.Create();
-        _aes.Key = AesPageKey;
-        _aes.Mode = CipherMode.ECB;
-        _aes.Padding = PaddingMode.None;
+        aes = Aes.Create();
+        aes.Key = AesPageKey;
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
 #pragma warning restore CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
 
-        _aesEncryptor = _aes.CreateEncryptor();
-        _aesDecryptor = _aes.CreateDecryptor();
+        aesEncryptor = aes.CreateEncryptor();
+        aesDecryptor = aes.CreateDecryptor();
     }
 
     private void DisposeAesTransforms()
     {
-        _aesEncryptor?.Dispose();
-        _aesDecryptor?.Dispose();
-        _aes?.Dispose();
-        _aesEncryptor = null;
-        _aesDecryptor = null;
-        _aes = null;
+        aesEncryptor?.Dispose();
+        aesDecryptor?.Dispose();
+        aes?.Dispose();
+        aesEncryptor = null;
+        aesDecryptor = null;
+        aes = null;
     }
 }

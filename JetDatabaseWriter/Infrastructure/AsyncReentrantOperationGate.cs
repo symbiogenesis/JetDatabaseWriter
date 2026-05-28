@@ -15,63 +15,63 @@ internal sealed class AsyncReentrantOperationGate
     private const int StateDisposing = 1;
     private const int StateDisposed = 2;
 
-    private readonly AsyncLocal<int> _operationDepth = new();
+    private readonly AsyncLocal<int> operationDepth = new();
 #if NET8_0_OR_GREATER
-    private readonly Lock _stateLock = new();
+    private readonly Lock stateLock = new();
 #else
-    private readonly object _stateLock = new();
+    private readonly object stateLock = new();
 #endif
 
-    private readonly TaskCompletionSource<object?> _disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private TaskCompletionSource<object?>? _operationsDrained;
-    private int _activeOperations;
-    private int _state;
+    private readonly TaskCompletionSource<object?> disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<object?>? operationsDrained;
+    private int activeOperations;
+    private int state;
 
-    public Task DisposeCompleted => _disposeCompleted.Task;
+    public Task DisposeCompleted => disposeCompleted.Task;
 
     public Lease Enter(object owner)
     {
-        int depth = _operationDepth.Value;
+        int depth = operationDepth.Value;
         if (depth > 0)
         {
-            _operationDepth.Value = depth + 1;
+            operationDepth.Value = depth + 1;
             return new Lease(this, isRoot: false);
         }
 
-        if (Volatile.Read(ref _state) != StateOpen)
+        if (Volatile.Read(ref state) != StateOpen)
         {
             throw new ObjectDisposedException(owner?.GetType().FullName);
         }
 
-        _ = Interlocked.Increment(ref _activeOperations);
+        _ = Interlocked.Increment(ref activeOperations);
 
-        if (Volatile.Read(ref _state) != StateOpen)
+        if (Volatile.Read(ref state) != StateOpen)
         {
             ReleaseActiveOperation();
             throw new ObjectDisposedException(owner?.GetType().FullName);
         }
 
-        _operationDepth.Value = 1;
+        operationDepth.Value = 1;
         return new Lease(this, isRoot: true);
     }
 
     public bool TryBeginDispose(out Task waitForOperations)
     {
-        if (Interlocked.CompareExchange(ref _state, StateDisposing, StateOpen) != StateOpen)
+        if (Interlocked.CompareExchange(ref state, StateDisposing, StateOpen) != StateOpen)
         {
-            waitForOperations = _disposeCompleted.Task;
+            waitForOperations = disposeCompleted.Task;
             return false;
         }
 
-        lock (_stateLock)
+        lock (stateLock)
         {
-            _operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (Volatile.Read(ref _activeOperations) == 0)
+            operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (Volatile.Read(ref activeOperations) == 0)
             {
-                _operationsDrained.TrySetResult(null);
+                operationsDrained.TrySetResult(null);
             }
 
-            waitForOperations = _operationsDrained.Task;
+            waitForOperations = operationsDrained.Task;
             return true;
         }
     }
@@ -80,20 +80,20 @@ internal sealed class AsyncReentrantOperationGate
     {
         if (error == null)
         {
-            _disposeCompleted.TrySetResult(null);
+            disposeCompleted.TrySetResult(null);
         }
         else
         {
-            _disposeCompleted.TrySetException(error);
+            disposeCompleted.TrySetException(error);
         }
 
-        Volatile.Write(ref _state, StateDisposed);
+        Volatile.Write(ref state, StateDisposed);
     }
 
     private void ReleaseOperation(bool isRoot)
     {
-        int depth = _operationDepth.Value;
-        _operationDepth.Value = depth > 0 ? depth - 1 : 0;
+        int depth = operationDepth.Value;
+        operationDepth.Value = depth > 0 ? depth - 1 : 0;
 
         if (!isRoot)
         {
@@ -105,15 +105,15 @@ internal sealed class AsyncReentrantOperationGate
 
     private void ReleaseActiveOperation()
     {
-        if (Interlocked.Decrement(ref _activeOperations) != 0)
+        if (Interlocked.Decrement(ref activeOperations) != 0)
         {
             return;
         }
 
         TaskCompletionSource<object?>? drained;
-        lock (_stateLock)
+        lock (stateLock)
         {
-            drained = _operationsDrained;
+            drained = operationsDrained;
         }
 
         drained?.TrySetResult(null);

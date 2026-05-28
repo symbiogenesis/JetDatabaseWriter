@@ -21,7 +21,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, TPayload Payload)>();
         var cursor = new IndexCursor(
             (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
-            writer._pgSz);
+            writer.pgSz);
 
         foreach ((object?[] oldPrimaryKey, var payload) in requests)
         {
@@ -70,7 +70,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
             byte[] page = await writer.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer._dataPage.TDefOff) != childEntry.TDefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.dataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return null;
                 }

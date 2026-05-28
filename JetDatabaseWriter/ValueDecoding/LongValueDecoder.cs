@@ -55,10 +55,10 @@ internal sealed class LongValueDecoder(AccessReader reader)
     }
 
     private LongValueStore.LvalRowLocation ParseLvalRowLocation(uint lvalDp, byte[] page)
-        => LongValueStore.LocateRow(lvalDp, page, reader._dataPage, reader._pgSz, reader.GetLiveRowBoundsCached(LongValueStore.PageNumber(lvalDp), page));
+        => LongValueStore.LocateRow(lvalDp, page, reader.dataPage, reader.pgSz, reader.GetLiveRowBoundsCached(LongValueStore.PageNumber(lvalDp), page));
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader._pgSz, LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader.pgSz, LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {

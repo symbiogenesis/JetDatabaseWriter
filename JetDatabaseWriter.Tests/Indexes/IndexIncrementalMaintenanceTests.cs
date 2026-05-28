@@ -415,12 +415,12 @@ public sealed class IndexIncrementalMaintenanceTests
         byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer.tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer.tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected the test fixture to declare at least one real index.");
 
-            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer._colDesc.Size);
+            int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer.colDesc.Size);
             for (int i = 0; i < numCols; i++)
             {
                 int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
@@ -428,7 +428,7 @@ public sealed class IndexIncrementalMaintenanceTests
             }
 
             int realIdxDescStart = namePos;
-            var layout = writer._indexLayout;
+            var layout = writer.indexLayout;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
                 bool decoded = layout.TryReadRealIdxSlotWithKeyColumns(

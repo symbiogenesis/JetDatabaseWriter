@@ -19,37 +19,37 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
 {
     private const int Sentinel = 0;
 
-    private readonly int _capacity;
-    private readonly Dictionary<TKey, int> _map;
-    private readonly Node[] _nodes;
-    private readonly Action<TValue>? _onEvict;
-    private readonly ReaderWriterLockSlim _lock = new();
-    private int _nextSlot = 1; // 0 is reserved for sentinel
-    private long _hits;
-    private long _misses;
+    private readonly int capacity;
+    private readonly Dictionary<TKey, int> map;
+    private readonly Node[] nodes;
+    private readonly Action<TValue>? onEvict;
+    private readonly ReaderWriterLockSlim rwLock = new();
+    private int nextSlot = 1; // 0 is reserved for sentinel
+    private long hits;
+    private long misses;
 
     public LruCache(int capacity, Action<TValue>? onEvict = null)
     {
-        _capacity = capacity;
-        _onEvict = onEvict;
-        _map = new Dictionary<TKey, int>(capacity);
-        _nodes = new Node[capacity + 1]; // +1 for sentinel
-        _nodes[Sentinel].Next = Sentinel;
-        _nodes[Sentinel].Prev = Sentinel;
+        this.capacity = capacity;
+        this.onEvict = onEvict;
+        map = new Dictionary<TKey, int>(capacity);
+        nodes = new Node[capacity + 1]; // +1 for sentinel
+        nodes[Sentinel].Next = Sentinel;
+        nodes[Sentinel].Prev = Sentinel;
     }
 
     public int Count
     {
         get
         {
-            _lock.EnterReadLock();
+            rwLock.EnterReadLock();
             try
             {
-                return _map.Count;
+                return map.Count;
             }
             finally
             {
-                _lock.ExitReadLock();
+                rwLock.ExitReadLock();
             }
         }
     }
@@ -59,14 +59,14 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         get
         {
-            _lock.EnterReadLock();
+            rwLock.EnterReadLock();
             try
             {
-                return _hits;
+                return hits;
             }
             finally
             {
-                _lock.ExitReadLock();
+                rwLock.ExitReadLock();
             }
         }
     }
@@ -76,128 +76,128 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         get
         {
-            _lock.EnterReadLock();
+            rwLock.EnterReadLock();
             try
             {
-                return _misses;
+                return misses;
             }
             finally
             {
-                _lock.ExitReadLock();
+                rwLock.ExitReadLock();
             }
         }
     }
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        _lock.EnterWriteLock();
+        rwLock.EnterWriteLock();
         try
         {
-            if (_map.TryGetValue(key, out int idx))
+            if (map.TryGetValue(key, out int idx))
             {
-                if (_nodes[Sentinel].Next != idx)
+                if (nodes[Sentinel].Next != idx)
                 {
                     MoveToFront(idx);
                 }
 
-                value = _nodes[idx].Value;
-                _hits++;
+                value = nodes[idx].Value;
+                hits++;
                 return true;
             }
 
             value = default!;
-            _misses++;
+            misses++;
             return false;
         }
         finally
         {
-            _lock.ExitWriteLock();
+            rwLock.ExitWriteLock();
         }
     }
 
     public void Add(TKey key, TValue value)
     {
-        _lock.EnterWriteLock();
+        rwLock.EnterWriteLock();
         try
         {
-            if (_map.TryGetValue(key, out int existingIdx))
+            if (map.TryGetValue(key, out int existingIdx))
             {
-                if (_nodes[Sentinel].Next != existingIdx)
+                if (nodes[Sentinel].Next != existingIdx)
                 {
                     MoveToFront(existingIdx);
                 }
 
-                _nodes[existingIdx].Value = value;
+                nodes[existingIdx].Value = value;
                 return;
             }
 
             int nodeIdx;
-            if (_map.Count >= _capacity)
+            if (map.Count >= capacity)
             {
                 // Evict LRU entry and reuse its slot in-place (zero allocation).
-                nodeIdx = _nodes[Sentinel].Prev;
+                nodeIdx = nodes[Sentinel].Prev;
                 Detach(nodeIdx);
-                ref var evicted = ref _nodes[nodeIdx];
-                _map.Remove(evicted.Key);
+                ref var evicted = ref nodes[nodeIdx];
+                map.Remove(evicted.Key);
                 var evictedValue = evicted.Value;
 
                 // Clear references so reused slot doesn't temporarily root the old key/value.
                 evicted.Key = default!;
                 evicted.Value = default!;
-                _onEvict?.Invoke(evictedValue);
+                onEvict?.Invoke(evictedValue);
             }
             else
             {
-                nodeIdx = _nextSlot++;
+                nodeIdx = nextSlot++;
             }
 
-            _nodes[nodeIdx].Key = key;
-            _nodes[nodeIdx].Value = value;
+            nodes[nodeIdx].Key = key;
+            nodes[nodeIdx].Value = value;
             Prepend(nodeIdx);
-            _map[key] = nodeIdx;
+            map[key] = nodeIdx;
         }
         finally
         {
-            _lock.ExitWriteLock();
+            rwLock.ExitWriteLock();
         }
     }
 
     public void Clear()
     {
-        _lock.EnterWriteLock();
+        rwLock.EnterWriteLock();
         try
         {
-            if (_onEvict != null)
+            if (onEvict != null)
             {
-                foreach (var kvp in _map)
+                foreach (var kvp in map)
                 {
-                    _onEvict(_nodes[kvp.Value].Value);
+                    onEvict(nodes[kvp.Value].Value);
                 }
             }
 
             // Null out references so the backing array doesn't keep keys/values alive.
             if (RuntimeHelpers.IsReferenceOrContainsReferences<Node>())
             {
-                Array.Clear(_nodes, 0, _nextSlot);
+                Array.Clear(nodes, 0, nextSlot);
             }
 
-            _map.Clear();
-            _nodes[Sentinel].Next = Sentinel;
-            _nodes[Sentinel].Prev = Sentinel;
-            _nextSlot = 1;
+            map.Clear();
+            nodes[Sentinel].Next = Sentinel;
+            nodes[Sentinel].Prev = Sentinel;
+            nextSlot = 1;
         }
         finally
         {
-            _lock.ExitWriteLock();
+            rwLock.ExitWriteLock();
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Detach(int idx)
     {
-        ref var node = ref _nodes[idx];
-        _nodes[node.Prev].Next = node.Next;
-        _nodes[node.Next].Prev = node.Prev;
+        ref var node = ref nodes[idx];
+        nodes[node.Prev].Next = node.Next;
+        nodes[node.Next].Prev = node.Prev;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -210,12 +210,12 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Prepend(int idx)
     {
-        ref var node = ref _nodes[idx];
-        int oldHead = _nodes[Sentinel].Next;
+        ref var node = ref nodes[idx];
+        int oldHead = nodes[Sentinel].Next;
         node.Next = oldHead;
         node.Prev = Sentinel;
-        _nodes[oldHead].Prev = idx;
-        _nodes[Sentinel].Next = idx;
+        nodes[oldHead].Prev = idx;
+        nodes[Sentinel].Next = idx;
     }
 
     private struct Node
@@ -228,6 +228,6 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
 
     public void Dispose()
     {
-        _lock.Dispose();
+        rwLock.Dispose();
     }
 }

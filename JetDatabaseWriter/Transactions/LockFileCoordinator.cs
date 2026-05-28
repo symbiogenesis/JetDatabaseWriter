@@ -26,7 +26,7 @@ using JetDatabaseWriter.Infrastructure;
 /// <param name="settings">Lock-file behaviour switches and identity strings. See <see cref="LockFileSettings"/>.</param>
 internal sealed class LockFileCoordinator(string databasePath, string ownerTypeName, LockFileSettings settings) : IDisposable
 {
-    private LockFileSlotWriter? _slot;
+    private LockFileSlotWriter? slot;
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessReaderOptions"/>.</summary>
     /// <param name="databasePath">The database path.</param>
@@ -87,12 +87,12 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// </summary>
     public void Acquire()
     {
-        if (!IsEnabled || _slot is not null)
+        if (!IsEnabled || slot is not null)
         {
             return;
         }
 
-        _slot = LockFileSlotWriter.Open(
+        slot = LockFileSlotWriter.Open(
             databasePath,
             ownerTypeName,
             respectExisting: settings.RespectExisting,
@@ -182,8 +182,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// <inheritdoc/>
     public void Dispose()
     {
-        _slot?.Dispose();
-        _slot = null;
+        slot?.Dispose();
+        slot = null;
     }
 }
 

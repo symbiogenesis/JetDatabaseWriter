@@ -145,7 +145,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
 
-        int pgSz = writer._pgSz;
+        int pgSz = writer.pgSz;
         uint lvalToken = lvalTokenOverride ?? LongValueStore.ComputeToken(data);
 
         // One row per LVAL page. Access-authored Jet4/ACE LVAL pages use a

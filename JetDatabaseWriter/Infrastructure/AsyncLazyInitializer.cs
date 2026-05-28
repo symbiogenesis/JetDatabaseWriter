@@ -18,42 +18,42 @@ using System.Threading.Tasks;
 internal sealed class AsyncLazyInitializer<T>(Func<CancellationToken, ValueTask<T>> factory) : IDisposable
     where T : class
 {
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private volatile T? _value;
+    private readonly SemaphoreSlim gate = new(1, 1);
+    private volatile T? value;
 
     /// <summary>Returns the cached value, building it under a single-writer gate on first call.</summary>
     /// <param name="cancellationToken">A token used to cancel the asynchronous build.</param>
     public async ValueTask<T> GetAsync(CancellationToken cancellationToken)
     {
-        var cached = _value;
+        var cached = value;
         if (cached != null)
         {
             return cached;
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            cached = _value;
+            cached = value;
             if (cached != null)
             {
                 return cached;
             }
 
             cached = await factory(cancellationToken).ConfigureAwait(false);
-            _value = cached;
+            value = cached;
             return cached;
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 
     /// <summary>Drops the cached value and releases the underlying gate.</summary>
     public void Dispose()
     {
-        _value = null;
-        _gate.Dispose();
+        value = null;
+        gate.Dispose();
     }
 }

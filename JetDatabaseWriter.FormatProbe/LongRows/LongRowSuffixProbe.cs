@@ -6661,7 +6661,7 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            long owner = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(reader._dataPage.TDefOff, 4));
+            long owner = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(reader.dataPage.TDefOff, 4));
             if (owner != tdefPage)
             {
                 continue;
@@ -6669,7 +6669,7 @@ internal static class LongRowSuffixProbe
 
             foreach (var location in reader.EnumerateLiveRowLocations(pageNumber, page))
             {
-                if (location.RowSize >= reader._rowSz.NumCols)
+                if (location.RowSize >= reader.rowSz.NumCols)
                 {
                     result.Add(location);
                 }

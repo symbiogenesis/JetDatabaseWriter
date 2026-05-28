@@ -2,8 +2,8 @@ namespace JetDatabaseWriter.DelimitedText;
 
 internal readonly record struct DelimitedTextRecord
 {
-    private readonly DelimitedTextReader? _reader;
-    private readonly int _version;
+    private readonly DelimitedTextReader? reader;
+    private readonly int version;
 
     internal DelimitedTextRecord(
         DelimitedTextReader reader,
@@ -13,15 +13,15 @@ internal readonly record struct DelimitedTextRecord
         int lineNumberToExclusive,
         int version)
     {
-        _reader = reader;
+        this.reader = reader;
         FieldCount = fieldCount;
         RowIndex = rowIndex;
         LineNumberFrom = lineNumberFrom;
         LineNumberToExclusive = lineNumberToExclusive;
-        _version = version;
+        this.version = version;
     }
 
-    internal string[] Fields => _reader?.MaterializeFields(FieldCount, _version) ?? [];
+    internal string[] Fields => reader?.MaterializeFields(FieldCount, version) ?? [];
 
     internal int FieldCount { get; }
 

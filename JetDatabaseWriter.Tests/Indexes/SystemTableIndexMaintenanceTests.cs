@@ -124,12 +124,12 @@ public sealed class SystemTableIndexMaintenanceTests
         byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer.tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer.tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, $"Expected TDEF page {tdefPage} to declare at least one real index.");
 
-            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer._colDesc.Size);
+            int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer.colDesc.Size);
             for (int i = 0; i < numCols; i++)
             {
                 int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
@@ -137,8 +137,8 @@ public sealed class SystemTableIndexMaintenanceTests
             }
 
             int realIdxDescStart = namePos;
-            int physStart = writer._indexLayout.RealIdxPhysOffset(realIdxDescStart, 0);
-            int firstDp = Ri32(tdef, writer._indexLayout.FirstDpAbsoluteOffset(physStart));
+            int physStart = writer.indexLayout.RealIdxPhysOffset(realIdxDescStart, 0);
+            int firstDp = Ri32(tdef, writer.indexLayout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, $"Expected TDEF page {tdefPage} first real-index root page to be allocated.");
 
             byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
