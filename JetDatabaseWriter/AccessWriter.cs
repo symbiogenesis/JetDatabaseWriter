@@ -1877,6 +1877,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
     /// </summary>
+    /// <typeparam name="TResult">The result type produced by <paramref name="work"/>.</typeparam>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
@@ -2969,11 +2970,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool isAutoIncrement = (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
-        bool isNullable = isAutoIncrement
-            ? false
-            : requiredFromLvProp is bool req
+        bool isNullable = !isAutoIncrement && (requiredFromLvProp is bool req
                 ? !req
-                : (column.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
+                : (column.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0);
 
         var def = baseDef with
         {

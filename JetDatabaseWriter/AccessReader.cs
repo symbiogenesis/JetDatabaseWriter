@@ -566,6 +566,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// buffer before the next iteration overwrites it, so no caller ever
     /// observes the pooled array.
     /// </summary>
+    /// <typeparam name="T">The mapped row type yielded by the enumerator.</typeparam>
     /// <param name="tableName">The table name.</param>
     /// <param name="entry">The entry.</param>
     /// <param name="td">The table-definition buffer.</param>
@@ -746,6 +747,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// when every bound column is directly decodable; otherwise the
     /// projection-aware fallback path runs.
     /// </summary>
+    /// <typeparam name="T">The row type decoded directly from page bytes.</typeparam>
     /// <param name="entry">The entry.</param>
     /// <param name="td">The table-definition buffer.</param>
     /// <param name="directDecoder">The direct decoder.</param>

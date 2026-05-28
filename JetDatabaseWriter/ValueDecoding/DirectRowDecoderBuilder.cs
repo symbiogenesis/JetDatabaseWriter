@@ -51,6 +51,7 @@ internal static class DirectRowDecoderBuilder
     /// <paramref name="headers"/>/<paramref name="columns"/>, or returns
     /// <see langword="null"/> when any bound column requires the slow path.
     /// </summary>
+    /// <typeparam name="T">The target row type for the generated direct decoder.</typeparam>
     /// <param name="headers">The headers.</param>
     /// <param name="columns">The columns.</param>
     /// <param name="clrTypes">The clr types.</param>
@@ -304,6 +305,7 @@ internal static class DirectRowDecoderBuilder
 /// bypassing the per-row <c>object?[]</c> buffer and the box/unbox round-trip
 /// that the projection-aware path still pays.
 /// </summary>
+/// <typeparam name="T">The target row type decoded into by the delegate.</typeparam>
 /// <param name="reader">The reader.</param>
 /// <param name="page">The page bytes.</param>
 /// <param name="rowStart">The row start.</param>

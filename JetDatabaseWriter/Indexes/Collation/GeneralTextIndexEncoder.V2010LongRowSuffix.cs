@@ -263,14 +263,9 @@ internal static partial class GeneralTextIndexEncoder
         var remainderTable = ascending
             ? TryGetAscendingRemainderTable(fullEntry)
             : TryGetDescendingRemainderTable(fullEntry);
-        if (remainderTable is not null)
-        {
-            return remainderTable;
-        }
-
-        return IsPlainV2010DaoContext(text, previousBoundaryChar, boundaryChar)
+        return remainderTable ?? (IsPlainV2010DaoContext(text, previousBoundaryChar, boundaryChar)
             ? ascending ? AscendingPlainSuffixTable : DescendingPlainSuffixTable
-            : null;
+            : null);
     }
 
     private static V2010LongRowSuffixTable? TryGetAscendingRemainderTable(byte[] fullEntry)

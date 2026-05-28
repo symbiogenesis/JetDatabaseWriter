@@ -99,6 +99,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
     /// </summary>
+    /// <typeparam name="TResult">The result type produced by <paramref name="work"/>.</typeparam>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)

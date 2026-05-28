@@ -327,6 +327,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     /// thread. Use in tests instead of Progress&lt;T&gt; to avoid thread-pool dispatch races
     /// when asserting the collected values immediately after iteration.
     /// </summary>
+    /// <typeparam name="T">The progress value type reported by the helper.</typeparam>
     /// <param name="action">The action.</param>
     private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
     {

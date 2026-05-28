@@ -15,6 +15,7 @@ internal static class Guard
     /// <see langword="null"/>. Forwards to <c>ArgumentNullException.ThrowIfNull</c> on
     /// .NET 6+ for JIT-friendlier codegen and falls back to a manual check on older targets.
     /// </summary>
+    /// <typeparam name="T">The reference type being validated.</typeparam>
     /// <param name="value">The value.</param>
     /// <param name="paramName">The param name.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="value"/> is <see langword="null"/>.</exception>
@@ -51,6 +52,7 @@ internal static class Guard
     /// whose message is deterministically derived from <paramref name="paramName"/>
     /// and the bounds.
     /// </summary>
+    /// <typeparam name="T">The comparable type of the value and bounds.</typeparam>
     /// <param name="value">The value.</param>
     /// <param name="min">The minimum allowed value.</param>
     /// <param name="max">The maximum allowed value.</param>

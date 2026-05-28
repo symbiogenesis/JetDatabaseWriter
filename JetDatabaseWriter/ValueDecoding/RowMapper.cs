@@ -15,6 +15,7 @@ using JetDatabaseWriter.Models;
 /// Column-to-property matching is case-insensitive. Unmatched properties are left at their default value.
 /// Uses compiled expression trees for high-performance property access.
 /// </summary>
+/// <typeparam name="T">The row type whose public properties are bound to column headers.</typeparam>
 internal static class RowMapper<T>
     where T : new()
 {
