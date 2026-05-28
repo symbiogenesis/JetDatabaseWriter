@@ -349,7 +349,7 @@ internal static class OfficeCryptoStandard
 
         // Pad cipher length to AES block boundary if needed (shouldn't happen
         // with well-formed files, but be defensive).
-        int paddedLen = ((cipherLen + 15) / 16) * 16;
+        int paddedLen = (cipherLen + 15) / 16 * 16;
         byte[] cipherBlock = new byte[paddedLen];
         Buffer.BlockCopy(encryptedPackage, 8, cipherBlock, 0, cipherLen);
 
@@ -369,7 +369,7 @@ internal static class OfficeCryptoStandard
     private static byte[] EncryptPackage(byte[] plaintext, byte[] key)
     {
         // Pad plaintext to AES block boundary.
-        int paddedLen = ((plaintext.Length + 15) / 16) * 16;
+        int paddedLen = (plaintext.Length + 15) / 16 * 16;
         byte[] padded = new byte[paddedLen];
         Buffer.BlockCopy(plaintext, 0, padded, 0, plaintext.Length);
 

@@ -189,7 +189,7 @@ internal static class CalculatedColumnUtil
     }
 
     private static int AlignToFour(int value)
-        => value <= 0 ? 0 : ((value + 3) / 4) * 4;
+        => value <= 0 ? 0 : (value + 3) / 4 * 4;
 
     private static void FixCalculatedNumericByteOrder(byte[] bytes)
     {

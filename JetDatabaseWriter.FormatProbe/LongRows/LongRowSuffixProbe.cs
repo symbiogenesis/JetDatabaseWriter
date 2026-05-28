@@ -4622,7 +4622,7 @@ internal static class LongRowSuffixProbe
             uint hash = 5381u;
             foreach (byte value in bytes)
             {
-                hash = ((hash << 5) + hash) + value;
+                hash = (hash << 5) + hash + value;
             }
 
             return hash;

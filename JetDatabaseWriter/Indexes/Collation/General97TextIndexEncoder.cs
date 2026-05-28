@@ -210,7 +210,7 @@ internal static class General97TextIndexEncoder
 
     private static short[] LoadMappings(string resourceName, char firstChar, char lastChar)
     {
-        int numMappings = (lastChar - firstChar) + 1;
+        int numMappings = lastChar - firstChar + 1;
         var values = new short[numMappings];
 
         var asm = typeof(General97TextIndexEncoder).Assembly;

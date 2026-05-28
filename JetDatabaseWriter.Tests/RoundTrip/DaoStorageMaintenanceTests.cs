@@ -826,7 +826,7 @@ public sealed class DaoStorageMaintenanceTests
     }
 
     private static decimal BuildAdvancedAmount(int id) =>
-        ((id * 3713m) / 100m) - 5000m;
+        (id * 3713m / 100m) - 5000m;
 
     private static byte[] BuildAdvancedBinaryKey(int id)
     {

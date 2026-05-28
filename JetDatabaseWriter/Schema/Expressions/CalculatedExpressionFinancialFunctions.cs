@@ -96,7 +96,7 @@ internal static class CalculatedExpressionFinancialFunctions
             return cost - salvage;
         }
 
-        double firstPeriod = (factor * cost) / life;
+        double firstPeriod = factor * cost / life;
         if (period <= 1d)
         {
             return Math.Min(firstPeriod, cost - salvage);
@@ -113,7 +113,7 @@ internal static class CalculatedExpressionFinancialFunctions
         double salvage = ToDouble(function.Arg(1));
         double life = ToDouble(function.Arg(2));
         double period = ToDouble(function.Arg(3));
-        return ((cost - salvage) * (life - period + 1d) * 2d) / (life * (life + 1d));
+        return (cost - salvage) * (life - period + 1d) * 2d / (life * (life + 1d));
     }
 
     private static double FinancialRate(CalculatedFunctionInvocation function)
@@ -161,7 +161,7 @@ internal static class CalculatedExpressionFinancialFunctions
 
         double paymentFactor = paymentType == 1 ? rate + 1d : 1d;
         double compound = Math.Pow(rate + 1d, periods);
-        return (((1d - compound) * paymentFactor * payment) / rate) - (presentValue * compound);
+        return ((1d - compound) * paymentFactor * payment / rate) - (presentValue * compound);
     }
 
     private static double CalculatePresentValue(double rate, double periods, double payment, double futureValue, int paymentType)
@@ -173,7 +173,7 @@ internal static class CalculatedExpressionFinancialFunctions
 
         double paymentFactor = paymentType == 1 ? rate + 1d : 1d;
         double compound = Math.Pow(rate + 1d, periods);
-        return ((((1d - compound) / rate) * paymentFactor * payment) - futureValue) / compound;
+        return (((1d - compound) / rate * paymentFactor * payment) - futureValue) / compound;
     }
 
     private static double CalculatePayment(double rate, double periods, double presentValue, double futureValue, int paymentType)

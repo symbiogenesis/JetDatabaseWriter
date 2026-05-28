@@ -20,7 +20,7 @@ internal static class UsageMap
         => (int)(pageNumber / PagesPerReferenceMapPage(pageSize));
 
     internal static int AlignInlineBasePage(long pageNumber)
-        => checked((int)((pageNumber / 8) * 8));
+        => checked((int)(pageNumber / 8 * 8));
 
     internal static bool TryReadPointer(byte[] page, int offset, out Pointer pointer)
     {

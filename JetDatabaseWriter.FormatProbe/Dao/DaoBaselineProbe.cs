@@ -1743,7 +1743,7 @@ internal static class DaoBaselineProbe
                 _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- First 32 differing offsets: {string.Join(", ", diffs.Take(32).Select(o => $"0x{o:X4}"))}{(diffs.Count > 32 ? ", …" : string.Empty)}");
 
                 // Compute a contiguous window covering the first ~256 bytes of differences.
-                int windowStart = Math.Max(0, (diffs[0] / 16) * 16);
+                int windowStart = Math.Max(0, diffs[0] / 16 * 16);
                 int windowEnd = Math.Min(common, windowStart + 256);
                 _ = sb.AppendLine();
                 EmitDiffHex(sb, $"page {p}: baseline (left) vs dao (right)", basBytes, daoBytes, windowStart, windowEnd);

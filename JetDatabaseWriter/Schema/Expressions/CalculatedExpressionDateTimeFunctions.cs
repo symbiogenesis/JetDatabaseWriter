@@ -112,12 +112,12 @@ internal static class CalculatedExpressionDateTimeFunctions
     private static int Weekday(DateTime dateTime, int firstDay)
     {
         int sundayBased = ((int)dateTime.DayOfWeek) + 1;
-        return (((sundayBased - 1) - (firstDay - 1) + 7) % 7) + 1;
+        return ((sundayBased - 1 - (firstDay - 1) + 7) % 7) + 1;
     }
 
     private static string WeekdayName(int weekday, bool abbreviate, int firstDay)
     {
-        int sundayBased = ((firstDay - 1) + (weekday - 1)) % 7;
+        int sundayBased = (firstDay - 1 + (weekday - 1)) % 7;
         string[] names = abbreviate
             ? CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames
             : CultureInfo.InvariantCulture.DateTimeFormat.DayNames;
