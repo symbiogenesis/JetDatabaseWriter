@@ -232,10 +232,13 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
 
     private struct Node
     {
-        public TKey Key;
-        public TValue Value;
-        public int Prev;
-        public int Next;
+        public TKey Key { get; set; }
+
+        public TValue Value { get; set; }
+
+        public int Prev { get; set; }
+
+        public int Next { get; set; }
     }
 
     public void Dispose()
