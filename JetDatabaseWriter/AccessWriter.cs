@@ -3083,7 +3083,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
     /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
     /// </summary>
-    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is
+    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     /// <returns>The page number of the newly allocated usage-map page.</returns>
     internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
