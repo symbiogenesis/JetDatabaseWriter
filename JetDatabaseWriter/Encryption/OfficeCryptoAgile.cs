@@ -582,9 +582,8 @@ internal static class OfficeCryptoAgile
         byte[] result = new byte[decryptedSize];
         int writeOffset = 0;
         int readOffset = 8;
-        int segmentIndex = 0;
 
-        while (writeOffset < decryptedSize)
+        for (int segmentIndex = 0; writeOffset < decryptedSize; segmentIndex++)
         {
             int remaining = (int)decryptedSize - writeOffset;
             int segmentLen = Math.Min(Constants.AgileEncryption.SegmentSize, remaining);
@@ -604,7 +603,6 @@ internal static class OfficeCryptoAgile
 
             readOffset += paddedLen;
             writeOffset += segmentLen;
-            segmentIndex++;
         }
 
         return result;
