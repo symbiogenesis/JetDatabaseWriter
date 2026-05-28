@@ -49,7 +49,11 @@ public sealed class AccessRoundTripTests
     private const string SingleParent = "RT_Customers";
 
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
-    private static readonly object _relationshipRoundTripSync = new();
+#if NET8_0_OR_GREATER
+    private readonly Lock _relationshipRoundTripSync = new();
+#else
+    private readonly object _relationshipRoundTripSync = new();
+#endif
     private static Task<RelationshipRoundTripResult>? _relationshipRoundTripTask;
 
     [Fact(

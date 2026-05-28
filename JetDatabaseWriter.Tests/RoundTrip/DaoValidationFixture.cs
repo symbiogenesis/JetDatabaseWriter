@@ -64,7 +64,11 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan StressCompactTimeout = TimeSpan.FromMinutes(3);
 
+#if NET8_0_OR_GREATER
+    private readonly Lock _sync = new();
+#else
     private readonly object _sync = new();
+#endif
     private readonly List<AccessRoundTripSession> _sessions = [];
     private Task<ComplexCompactResult>? _complexCompactResultTask;
     private Task<CoreValidationResult>? _coreResultTask;

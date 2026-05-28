@@ -72,7 +72,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly AsyncReentrantOperationGate _operationGate = new();
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeReaderResourcesAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
+#if NET8_0_OR_GREATER
+    private readonly Lock _ownedDataPagesCacheLock = new();
+#else
     private readonly object _ownedDataPagesCacheLock = new();
+#endif
     private readonly Dictionary<long, long[]> _ownedDataPagesByTdef = [];
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;

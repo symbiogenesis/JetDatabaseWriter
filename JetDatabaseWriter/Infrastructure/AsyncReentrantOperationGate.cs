@@ -16,7 +16,12 @@ internal sealed class AsyncReentrantOperationGate
     private const int StateDisposed = 2;
 
     private readonly AsyncLocal<int> _operationDepth = new();
+#if NET8_0_OR_GREATER
+    private readonly Lock _stateLock = new();
+#else
     private readonly object _stateLock = new();
+#endif
+
     private readonly TaskCompletionSource<object?> _disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource<object?>? _operationsDrained;
     private int _activeOperations;
