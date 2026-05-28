@@ -287,7 +287,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             attachments.Count,
             attachment?.FileName ?? string.Empty,
             attachment?.FileData.Length ?? -1,
-            attachment is not null && attachment.FileData.SequenceEqual(expectedPayload),
+            attachment?.FileData.SequenceEqual(expectedPayload) == true,
             tagValues);
     }
 

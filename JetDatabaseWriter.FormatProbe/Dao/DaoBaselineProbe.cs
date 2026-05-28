@@ -643,7 +643,7 @@ internal static class DaoBaselineProbe
             var rt = catalog.FirstOrDefault(c => string.Equals(c.Name, "RT_Customers", StringComparison.Ordinal));
 
             byte[] tdefBytes = Array.Empty<byte>();
-            if (rt is not null && rt.TdefPage > 0)
+            if (rt?.TdefPage > 0)
             {
                 tdefBytes = (await r.GetRawTDefBytesAsync(rt.TdefPage, default)) ?? Array.Empty<byte>();
             }

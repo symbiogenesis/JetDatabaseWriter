@@ -951,7 +951,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static byte ResolveCalculatedResultType(ColumnPropertyTarget? target)
     {
         var rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
-        return rt is not null && rt.Value.Length >= 1
+        return rt?.Value.Length >= 1
             && (rt.DataType == Constants.ColumnTypes.ByteType
                 || rt.DataType == Constants.ColumnTypes.IntegerType
                 || rt.DataType == Constants.ColumnTypes.LongIntegerType)
@@ -3083,7 +3083,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (entry != null)
         {
             var td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            if (td != null && td.Columns.Count > 0)
+            if (td?.Columns.Count > 0)
             {
                 await HydrateCalculatedResultTypesAsync(entry.TDefPage, td, cancellationToken).ConfigureAwait(false);
                 return (entry, td);
@@ -3099,7 +3099,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (sysPage > 0)
         {
             var sysTd = await ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
-            if (sysTd != null && sysTd.Columns.Count > 0)
+            if (sysTd?.Columns.Count > 0)
             {
                 await HydrateCalculatedResultTypesAsync(sysPage, sysTd, cancellationToken).ConfigureAwait(false);
                 return (new CatalogEntry(tableName, sysPage), sysTd);

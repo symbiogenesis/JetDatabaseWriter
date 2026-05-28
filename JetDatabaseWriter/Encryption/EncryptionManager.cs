@@ -89,7 +89,7 @@ internal static class EncryptionManager
     /// <summary>Returns true when the file begins with the OLE2 Compound File Binary magic bytes.</summary>
     /// <param name="header">The header.</param>
     public static bool IsCompoundFileEncrypted(byte[] header) =>
-        header != null && header.Length >= 4 &&
+        header?.Length >= 4 &&
         header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0;
 
     /// <summary>
@@ -706,10 +706,7 @@ internal static class EncryptionManager
         }
         finally
         {
-            if (lockSlot != null)
-            {
-                lockSlot.Dispose();
-            }
+            lockSlot?.Dispose();
         }
     }
 

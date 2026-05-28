@@ -23,7 +23,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="page">The page bytes.</param>
     public static bool IsLeaf(byte[] page)
-        => page != null && page.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeLeaf;
+        => page?.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeLeaf;
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
@@ -31,7 +31,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="page">The page bytes.</param>
     public static bool IsIntermediate(byte[] page)
-        => page != null && page.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
+        => page?.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
 
     /// <summary>
     /// Returns the page number recorded in the <c>next_page</c> sibling field.

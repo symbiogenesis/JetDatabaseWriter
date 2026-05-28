@@ -335,7 +335,7 @@ internal sealed class ConstraintRegistry(
         }
 
         var resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
-        return resultType is not null && resultType.Value.Length > 0 ? resultType.Value[0] : col.Type;
+        return resultType?.Value.Length > 0 ? resultType.Value[0] : col.Type;
     }
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)

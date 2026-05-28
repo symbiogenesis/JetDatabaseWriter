@@ -49,7 +49,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 }
 
                 if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
-                    attachBytes != null && attachBytes.Length > 0)
+                    attachBytes?.Length > 0)
                 {
                     typedRow[i] = attachBytes;
                     continue;
@@ -284,7 +284,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             }
 
             var colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
-            if (colData != null && colData.Count > 0)
+            if (colData?.Count > 0)
             {
                 result ??= [];
                 result[i] = colData;

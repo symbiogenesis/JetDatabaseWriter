@@ -265,7 +265,7 @@ public sealed class AccessRoundTripTests
         }
 
         var rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
-        if (rel is not null && rel.Columns.Contains("szRelationship"))
+        if (rel?.Columns.Contains("szRelationship") == true)
         {
             int n = 0;
             foreach (DataRow row in rel.Rows)

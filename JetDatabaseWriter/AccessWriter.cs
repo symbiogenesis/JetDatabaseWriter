@@ -2997,7 +2997,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             var target = properties?.FindTarget(column.Name);
             byte resultType = column.Type;
             var resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
-            if (resultTypeEntry is not null && resultTypeEntry.Value.Length >= 1)
+            if (resultTypeEntry?.Value.Length >= 1)
             {
                 resultType = resultTypeEntry.Value[0];
             }

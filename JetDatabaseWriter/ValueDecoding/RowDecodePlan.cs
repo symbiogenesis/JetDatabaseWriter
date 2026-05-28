@@ -155,7 +155,7 @@ internal sealed class RowDecodePlan
 
         for (int columnIndex = 0; columnIndex < columns.Count; columnIndex++)
         {
-            if (wantedColumns != null && !wantedColumns[columnIndex])
+            if (wantedColumns?[columnIndex] == false)
             {
                 buffer[columnIndex] = null;
                 continue;
