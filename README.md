@@ -761,6 +761,9 @@ The items below are either **not yet implemented** or are important behavioral c
 ### SQL and ODBC
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead.
 
+### Date/Time Extended
+- **Access 2019+ Date/Time Extended columns are recognized but not decoded to a high-precision CLR date/time type.** The reader reports the Access type name (`Date/Time Extended`) and sizes the 42-byte fixed slot correctly, but row values currently project through the fallback `string` path rather than `DateTime`, `DateTimeOffset`, or another dedicated representation. Writer schema creation and schema-rewrite paths do not author this type yet.
+
 ---
 
 ## How It Works
