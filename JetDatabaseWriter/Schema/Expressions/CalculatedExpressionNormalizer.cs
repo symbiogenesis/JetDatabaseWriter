@@ -398,7 +398,7 @@ internal static class CalculatedExpressionNormalizer
             var arguments = new List<string>();
             if (Peek().Kind != TokenKind.CloseParen)
             {
-                do
+                while (true)
                 {
                     arguments.Add(ParseExpression(0));
                     ValidateFunctionArgumentCount(name, arguments.Count);
@@ -409,7 +409,6 @@ internal static class CalculatedExpressionNormalizer
 
                     Read();
                 }
-                while (true);
             }
 
             Expect(TokenKind.CloseParen, ")");
@@ -487,7 +486,7 @@ internal static class CalculatedExpressionNormalizer
             var values = new List<string> { left };
             if (Peek().Kind != TokenKind.CloseParen)
             {
-                do
+                while (true)
                 {
                     values.Add(ParseExpression(0));
                     if (Peek().Kind != TokenKind.Comma)
@@ -497,7 +496,6 @@ internal static class CalculatedExpressionNormalizer
 
                     Read();
                 }
-                while (true);
             }
 
             Expect(TokenKind.CloseParen, ")");
