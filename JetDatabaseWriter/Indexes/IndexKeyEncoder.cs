@@ -704,6 +704,6 @@ internal static class IndexKeyEncoder
     {
         ByteType or IntegerType or LongIntegerType or MoneyType or FloatType or DoubleType
             or DateTimeType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
-        _ => false,
+        BooleanType or OleType or AttachmentType or ComplexType or DateTimeExtendedType or _ => false,
     };
 }
