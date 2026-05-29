@@ -379,7 +379,7 @@ internal static class LinkedOdbcLvPropProbe
             ColumnType.GuidType when value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
             ColumnType.BinaryType when string.Equals(entry.Name, "GUID", StringComparison.OrdinalIgnoreCase) && value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
             _ when string.Equals(entry.Name, "GUID", StringComparison.OrdinalIgnoreCase) && value.Length == 16 => new Guid(entry.Value).ToString("D", CultureInfo.InvariantCulture),
-            _ => ToHex(entry.Value, MaxValuePreviewBytes),
+            ColumnType.MoneyType or ColumnType.OleType or ColumnType.NumericType or ColumnType.AttachmentType or ColumnType.ComplexType or ColumnType.DateTimeExtendedType or _ => ToHex(entry.Value, MaxValuePreviewBytes),
         };
     }
 
