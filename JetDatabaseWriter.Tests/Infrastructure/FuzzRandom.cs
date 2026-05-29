@@ -108,7 +108,7 @@ internal sealed class FuzzRandom : Random
     public object? RandomValue(Type type) => type switch
     {
         _ when type == typeof(int) => this.Next(),
-        _ when type == typeof(long) => (long)this.Next() << 32 | (long)this.Next(),
+        _ when type == typeof(long) => ((long)this.Next() << 32) | (long)this.Next(),
         _ when type == typeof(short) => (short)this.Next(short.MinValue, short.MaxValue),
         _ when type == typeof(byte) => (byte)this.Next(byte.MinValue, byte.MaxValue),
         _ when type == typeof(bool) => this.NextDouble() < 0.5,

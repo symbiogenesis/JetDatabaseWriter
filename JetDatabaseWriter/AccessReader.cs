@@ -2253,7 +2253,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (TryExtractEmbeddedOlePackagePayload(b, start, len, out int payloadStart, out int payloadLength))
         {
             return TryCreateOleDataUriFromKnownMagic(b, payloadStart, payloadLength)
-                ?? "data:application/octet-stream;base64," + Convert.ToBase64String(b, payloadStart, payloadLength);
+                ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(b, payloadStart, payloadLength));
         }
 
         return TryCreateOleDataUriFromKnownMagic(b, start, len);

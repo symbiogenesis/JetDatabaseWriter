@@ -164,7 +164,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
         if (isOle)
         {
             return AccessReader.TryDecodeOleObject(buffer, offset, length)
-                ?? "data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length);
+                ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length));
         }
 
         return reader.DecodeTextForFormat(buffer, offset, length);
