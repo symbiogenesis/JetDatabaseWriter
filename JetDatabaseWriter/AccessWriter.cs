@@ -176,7 +176,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         rowEncoder = new RowEncoder(this);
         dataPageInserter = new DataPageInserter(this, pageAllocator);
         Constraints = new ConstraintRegistry(
-            async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
+            ReadTableSnapshotAsync,
             async (tableName, ct) =>
             {
                 CatalogEntry? entry = await GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
