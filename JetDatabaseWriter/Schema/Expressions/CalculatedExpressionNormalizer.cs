@@ -72,9 +72,9 @@ internal static class CalculatedExpressionNormalizer
                 }
 
                 string dateLiteral = trimmed.Substring(i + 1, end - i - 1).Replace("\"", "\"\"", StringComparison.Ordinal);
-                builder.Append("DATEVALUE(\"");
-                builder.Append(dateLiteral);
-                builder.Append("\")");
+                builder.Append("DATEVALUE(\"")
+                    .Append(dateLiteral)
+                    .Append("\")");
                 i = end;
             }
             else
