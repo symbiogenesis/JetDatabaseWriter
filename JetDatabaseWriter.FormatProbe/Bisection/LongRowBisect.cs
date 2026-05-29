@@ -30,8 +30,8 @@ internal static class LongRowBisect
     public static async Task<int> RunAsync(string fixturesDir, string outFile)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# Long-row chunk-boundary bisection");
-        sb.AppendLine();
+        sb.AppendLine("# Long-row chunk-boundary bisection")
+            .AppendLine();
 
         // Build inline-only encoders over the existing per-codepoint tables.
         InlineEncoder genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
@@ -47,8 +47,8 @@ internal static class LongRowBisect
 
         foreach ((string Path, byte[] Sep, InlineEncoder Encoder) t in tasks)
         {
-            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})");
-            sb.AppendLine();
+            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})")
+                .AppendLine();
             await BisectAsync(t.Path, t.Sep, t.Encoder, sb);
             sb.AppendLine();
         }
@@ -133,8 +133,8 @@ internal static class LongRowBisect
             }
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Long rows: {longRows.Count}; long leaves: {allKeys.Count(k => k.Length > 50)}");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Long rows: {longRows.Count}; long leaves: {allKeys.Count(k => k.Length > 50)}")
+            .AppendLine();
 
         foreach ((int rowIdx, string? val) in longRows)
         {
@@ -189,8 +189,8 @@ internal static class LongRowBisect
             if (matchedLeaf < 0 || leafBytes is null)
             {
                 // Maybe descending: also try complemented forms
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  no chunk-1 match found in {allKeys.Count} leaves (asc={asc}). Skipping.");
-                sb.AppendLine();
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  no chunk-1 match found in {allKeys.Count} leaves (asc={asc}). Skipping.")
+                    .AppendLine();
                 continue;
             }
 
@@ -242,8 +242,8 @@ internal static class LongRowBisect
 
             if (bestK2Start.HasValue)
             {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: K2_start={bestK2Start} K2_end={bestK2End}  (drops {bestK2Start - matchedK} chars between chunks)");
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 byte-length: {bestChunk2Length}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: K2_start={bestK2Start} K2_end={bestK2End}  (drops {bestK2Start - matchedK} chars between chunks)")
+                    .AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 byte-length: {bestChunk2Length}");
             }
             else
             {

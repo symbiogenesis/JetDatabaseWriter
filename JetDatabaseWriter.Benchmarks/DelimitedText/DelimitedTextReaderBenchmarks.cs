@@ -113,10 +113,10 @@ public class DelimitedTextReaderBenchmarks
                     builder.Append(',');
                 }
 
-                builder.Append('R');
-                builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture));
-                builder.Append('C');
-                builder.Append(columnIndex.ToString(CultureInfo.InvariantCulture));
+                builder.Append('R')
+                    .Append(rowIndex.ToString(CultureInfo.InvariantCulture))
+                    .Append('C')
+                    .Append(columnIndex.ToString(CultureInfo.InvariantCulture));
             }
 
             builder.Append('\n');
@@ -130,13 +130,13 @@ public class DelimitedTextReaderBenchmarks
         var builder = new StringBuilder(RowCount * 96);
         for (int rowIndex = 0; rowIndex < RowCount; rowIndex++)
         {
-            builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture));
-            builder.Append(",\"first line ");
-            builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture));
-            builder.Append("\r\nsecond line with \"\"quote\"\" and comma,\",");
-            builder.Append("tail,");
-            builder.Append((rowIndex % 17).ToString(CultureInfo.InvariantCulture));
-            builder.Append(",done\r\n");
+            builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture))
+                .Append(",\"first line ")
+                .Append(rowIndex.ToString(CultureInfo.InvariantCulture))
+                .Append("\r\nsecond line with \"\"quote\"\" and comma,\",")
+                .Append("tail,")
+                .Append((rowIndex % 17).ToString(CultureInfo.InvariantCulture))
+                .Append(",done\r\n");
         }
 
         return builder.ToString();

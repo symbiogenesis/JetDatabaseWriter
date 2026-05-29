@@ -145,8 +145,8 @@ internal static class LongRowSuffixProbe
     {
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row suffix CRC-16 sweep", "long-row-crc-sweep");
-        sb.AppendLine("This mode enumerates the full CRC-16 search space with table-driven CRCs. The 2026-05-26 local Debug run took about 14 seconds.");
-        sb.AppendLine();
+        sb.AppendLine("This mode enumerates the full CRC-16 search space with table-driven CRCs. The 2026-05-26 local Debug run took about 14 seconds.")
+            .AppendLine();
 
         await DumpV2010CrcFullSweepAsync(GetV2010Fixture(fixturesDir), sb, CancellationToken.None);
         await WriteOutputAsync(outFile, sb);
@@ -157,9 +157,9 @@ internal static class LongRowSuffixProbe
     {
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row corpus scan", "long-row-corpus");
-        sb.AppendLine("Scans every Jackcess V2010 fixture for single-column index leaf keys exactly 510 bytes long.");
-        sb.AppendLine("For Text/Memo and Binary columns, the probe re-encodes table values and reports V2010 long-row prefix/suffix parity with Access.");
-        sb.AppendLine();
+        sb.AppendLine("Scans every Jackcess V2010 fixture for single-column index leaf keys exactly 510 bytes long.")
+            .AppendLine("For Text/Memo and Binary columns, the probe re-encodes table values and reports V2010 long-row prefix/suffix parity with Access.")
+            .AppendLine();
         int summaryInsertOffset = sb.Length;
 
         string v2010Dir = Path.Combine(fixturesDir, "Jackcess", "V2010");
@@ -186,8 +186,8 @@ internal static class LongRowSuffixProbe
     {
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row DAO lab scan", "long-row-dao-lab");
-        sb.AppendLine("Copies the V2010 index-code fixture, asks DAO/ACE to append generated long strings to the existing long-row stress tables, then scans the result for 510-byte keys.");
-        sb.AppendLine();
+        sb.AppendLine("Copies the V2010 index-code fixture, asks DAO/ACE to append generated long strings to the existing long-row stress tables, then scans the result for 510-byte keys.")
+            .AppendLine();
 
         string baseFixture = GetV2010Fixture(fixturesDir);
         if (!File.Exists(baseFixture))
@@ -216,13 +216,13 @@ internal static class LongRowSuffixProbe
             scriptPath,
             TimeSpan.FromMinutes(15));
 
-        sb.AppendLine("## DAO authoring");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- PowerShell host: `{hostProbe.HostPath}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Lab database: `{labPath}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Script: `{scriptPath}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Requested rows per table: {DaoLabRowCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Exit code: {exitCode}");
+        sb.AppendLine("## DAO authoring")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- PowerShell host: `{hostProbe.HostPath}`")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Lab database: `{labPath}`")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Script: `{scriptPath}`")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Requested rows per table: {DaoLabRowCount}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Exit code: {exitCode}");
         if (!string.IsNullOrWhiteSpace(stdout))
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"- stdout: `{EscapeMarkdown(stdout.Trim())}`");
@@ -255,8 +255,8 @@ internal static class LongRowSuffixProbe
     {
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row DAO suffix table export", "long-row-dao-tables");
-        sb.AppendLine("Reads the most recent DAO-authored long-row lab database and emits compact contribution tables for the production encoder.");
-        sb.AppendLine();
+        sb.AppendLine("Reads the most recent DAO-authored long-row lab database and emits compact contribution tables for the production encoder.")
+            .AppendLine();
 
         string? labPath = FindLatestDaoLabDatabase(probeDir);
         if (labPath is null)
@@ -266,8 +266,8 @@ internal static class LongRowSuffixProbe
             return 1;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Lab database: `{labPath}`");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Lab database: `{labPath}`")
+            .AppendLine();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             labPath,
@@ -310,10 +310,10 @@ internal static class LongRowSuffixProbe
 
     private static void AppendDaoSuffixTableExport(StringBuilder sb, SuffixPatternTable table)
     {
-        sb.AppendLine(CultureInfo.InvariantCulture, $"## {table.TableName}");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"## {table.TableName}")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}")
+            .AppendLine();
 
         foreach ((string contextName, int matrixStart, int doubleSpaceContext) in new[]
         {
@@ -432,33 +432,33 @@ internal static class LongRowSuffixProbe
         List<SuffixPatternRow> doubleSpaceRows = GetDoubleSpaceRows(table, doubleSpaceContext);
         int doubleSpaceMismatches = doubleSpaceRows.Count(row => row.AccessSuffix != row.EncoderSuffix);
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"### {contextName}");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- matrix seeds: {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- present rows: {present.Count(value => value)}/{present.Length}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal fit: {normalMatches}/{normalTotal}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- boundary-space fit: {shiftedMatches}/{shiftedTotal}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- production encoder matrix mismatches: {matrixMismatches}/{matrixRows.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {contextName}")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- matrix seeds: {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- present rows: {present.Count(value => value)}/{present.Length}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- normal fit: {normalMatches}/{normalTotal}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- boundary-space fit: {shiftedMatches}/{shiftedTotal}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- production encoder matrix mismatches: {matrixMismatches}/{matrixRows.Count}");
         if (doubleSpaceContext >= 0)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"- production encoder double-space mismatches: {doubleSpaceMismatches}/{doubleSpaceRows.Count}");
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- base suffix: `{baseValue:X4}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- shifted `SP` suffix present: {shiftedPresent[spaceIndex]}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- triple-space suffix: `{FormatNullableHex(tripleSpaceSuffix)}`");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- base suffix: `{baseValue:X4}`")
+            .AppendLine(CultureInfo.InvariantCulture, $"- shifted `SP` suffix present: {shiftedPresent[spaceIndex]}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- triple-space suffix: `{FormatNullableHex(tripleSpaceSuffix)}`")
+            .AppendLine();
         AppendDaoRemainderSummary(sb, matrixRows, matrixStart);
-        sb.AppendLine();
-        sb.AppendLine("```csharp");
+        sb.AppendLine()
+            .AppendLine("```csharp");
         string prefix = table.Ascending ? "Ascending" : "Descending";
-        sb.AppendLine(CultureInfo.InvariantCulture, $"// {prefix} {contextName}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Base = 0x{baseValue:X4}, TripleSpace = {FormatNullableCSharpHex(tripleSpaceSuffix)}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"// {prefix} {contextName}")
+            .AppendLine(CultureInfo.InvariantCulture, $"Base = 0x{baseValue:X4}, TripleSpace = {FormatNullableCSharpHex(tripleSpaceSuffix)}");
         AppendCSharpUShortArray(sb, "Row", rowContributions);
         AppendCSharpUShortArray(sb, "Column", columnContributions);
         AppendCSharpUShortArray(sb, "BoundarySpace", shiftedSuffixes);
-        sb.AppendLine("```");
-        sb.AppendLine();
+        sb.AppendLine("```")
+            .AppendLine();
     }
 
     private static ushort? TryGetDoubleSpaceSuffix(
@@ -493,10 +493,10 @@ internal static class LongRowSuffixProbe
 
     private static void AppendDaoRemainderSummary(StringBuilder sb, List<SuffixPatternRow> rows, int matrixStart)
     {
-        sb.AppendLine("Full-entry remainder signatures after byte 510:");
-        sb.AppendLine();
-        sb.AppendLine("| Full length | Remainder | Rows | Examples | First suffixes |");
-        sb.AppendLine("|---:|---|---:|---|---|");
+        sb.AppendLine("Full-entry remainder signatures after byte 510:")
+            .AppendLine()
+            .AppendLine("| Full length | Remainder | Rows | Examples | First suffixes |")
+            .AppendLine("|---:|---|---:|---|---|");
 
         foreach (IGrouping<string, SuffixPatternRow>? group in rows
             .GroupBy(row => string.Concat(
@@ -520,9 +520,9 @@ internal static class LongRowSuffixProbe
         for (int offset = 0; offset < values.Length; offset += 13)
         {
             ushort[] row = values.Skip(offset).Take(13).ToArray();
-            sb.Append("    ");
-            sb.Append(string.Join(", ", row.Select(value => string.Create(CultureInfo.InvariantCulture, $"0x{value:X4}"))));
-            sb.AppendLine(offset + row.Length < values.Length ? "," : string.Empty);
+            sb.Append("    ")
+                .AppendJoin(", ", row.Select(value => string.Create(CultureInfo.InvariantCulture, $"0x{value:X4}")))
+                .AppendLine(offset + row.Length < values.Length ? "," : string.Empty);
         }
 
         sb.AppendLine("]; ");
@@ -545,10 +545,10 @@ internal static class LongRowSuffixProbe
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        sb.AppendLine("## DAO lab suffix pattern summary");
-        sb.AppendLine();
-        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, row12-template char[253]/char[254], trailing-space char[252]/char[253], row10/row11-template char[253]/char[254], and double-trailing-space char[252] sweeps over the DAO lab alphabet plus a small row10/row11/row12 template sample set.");
-        sb.AppendLine();
+        sb.AppendLine("## DAO lab suffix pattern summary")
+            .AppendLine()
+            .AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, row12-template char[253]/char[254], trailing-space char[252]/char[253], row10/row11-template char[253]/char[254], and double-trailing-space char[252] sweeps over the DAO lab alphabet plus a small row10/row11/row12 template sample set.")
+            .AppendLine();
 
         foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
         {
@@ -652,12 +652,12 @@ internal static class LongRowSuffixProbe
 
     private static void AppendSyntheticGroupSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        sb.AppendLine(CultureInfo.InvariantCulture, $"### {table.TableName}.DataIndex synthetic groups");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}");
-        sb.AppendLine();
-        sb.AppendLine("| Group | Seed range | Count | Access suffixes | Encoder suffixes | Full lengths | First examples | Last examples |");
-        sb.AppendLine("|---:|---|---:|---:|---:|---|---|---|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {table.TableName}.DataIndex synthetic groups")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}")
+            .AppendLine()
+            .AppendLine("| Group | Seed range | Count | Access suffixes | Encoder suffixes | Full lengths | First examples | Last examples |")
+            .AppendLine("|---:|---|---:|---:|---:|---|---|---|");
 
         for (int group = 0; group < 4; group++)
         {
@@ -694,10 +694,10 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            sb.AppendLine(CultureInfo.InvariantCulture, $"Seed detail for group {group} ({minSeed}-{maxSeed}):");
-            sb.AppendLine();
-            sb.AppendLine("| Seed | Access suffix | Encoder suffix | Prefix | Data ptr | Leaf entry | pref_len | raw len | raw start | Full tail |");
-            sb.AppendLine("|---:|:---:|:---:|:---:|---:|---|---:|---:|---:|---|");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Seed detail for group {group} ({minSeed}-{maxSeed}):")
+                .AppendLine()
+                .AppendLine("| Seed | Access suffix | Encoder suffix | Prefix | Data ptr | Leaf entry | pref_len | raw len | raw start | Full tail |")
+                .AppendLine("|---:|:---:|:---:|:---:|---:|---|---:|---:|---:|---|");
             foreach (SuffixPatternRow row in rows)
             {
                 sb.AppendLine(
@@ -731,10 +731,10 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Template sample summary for seeds {DaoLabTemplateSampleStart}-{DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount - 1}:");
-        sb.AppendLine();
-        sb.AppendLine("| Seed | Template | Variant | Access suffix | Encoder suffix | Full tail |");
-        sb.AppendLine("|---:|---|---|:---:|:---:|---|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Template sample summary for seeds {DaoLabTemplateSampleStart}-{DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount - 1}:")
+            .AppendLine()
+            .AppendLine("| Seed | Template | Variant | Access suffix | Encoder suffix | Full tail |")
+            .AppendLine("|---:|---|---|:---:|:---:|---|");
         foreach (SuffixPatternRow row in rows)
         {
             int sample = row.Seed!.Value - DaoLabTemplateSampleStart;
@@ -768,12 +768,12 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Double-trailing-space sweep summary for seeds {DaoLabDoubleSpaceSweepStart}-{DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount - 1}:");
-        sb.AppendLine();
-        sb.AppendLine("For each context, varies char[252] while forcing char[253] and char[254] to spaces. This targets the all-space corner left by the pair matrices.");
-        sb.AppendLine();
-        sb.AppendLine("| Context | Rows | Access suffixes | Encoder suffixes | First examples | Last examples |");
-        sb.AppendLine("|---|---:|---:|---:|---|---|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Double-trailing-space sweep summary for seeds {DaoLabDoubleSpaceSweepStart}-{DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount - 1}:")
+            .AppendLine()
+            .AppendLine("For each context, varies char[252] while forcing char[253] and char[254] to spaces. This targets the all-space corner left by the pair matrices.")
+            .AppendLine()
+            .AppendLine("| Context | Rows | Access suffixes | Encoder suffixes | First examples | Last examples |")
+            .AppendLine("|---|---:|---:|---:|---|---|");
 
         for (int contextIndex = 0; contextIndex < DaoLabDoubleSpaceSweepContextCount; contextIndex++)
         {
@@ -867,12 +867,12 @@ internal static class LongRowSuffixProbe
 
         int sharedPrefixRows = sharedPrefixGroups.Sum(rows => rows.Length);
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix order check for {table.TableName}.DataIndex:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- shared first-508-byte groups: {sharedPrefixGroups.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows in shared-prefix groups: {sharedPrefixRows}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- groups where Access suffix is non-monotonic by full-key order: {nonMonotonicGroups}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- groups where leaf order differs from full-key order: {orderMismatchGroups}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix order check for {table.TableName}.DataIndex:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- shared first-508-byte groups: {sharedPrefixGroups.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- rows in shared-prefix groups: {sharedPrefixRows}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- groups where Access suffix is non-monotonic by full-key order: {nonMonotonicGroups}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- groups where leaf order differs from full-key order: {orderMismatchGroups}");
 
         if (examples.Count == 0)
         {
@@ -880,9 +880,9 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine();
-        sb.AppendLine("| Rows | Full-key order | Leaf order |");
-        sb.AppendLine("|---:|---|---|");
+        sb.AppendLine()
+            .AppendLine("| Rows | Full-key order | Leaf order |")
+            .AppendLine("|---:|---|---|");
         foreach ((SuffixPatternRow[]? fullOrder, SuffixPatternRow[]? leafOrder) in examples)
         {
             sb.AppendLine(
@@ -908,18 +908,18 @@ internal static class LongRowSuffixProbe
         int encoderDistinct = rows.Select(row => row.EncoderSuffix).Distinct().Count();
         int accessCollisionBuckets = rows.GroupBy(row => row.AccessSuffix).Count(group => group.Count() > 1);
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"{title} summary for seeds {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows: {rows.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Access suffixes: {accessDistinct}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- encoder suffixes: {encoderDistinct}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Access suffix collision buckets: {accessCollisionBuckets}");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"{title} summary for seeds {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- rows: {rows.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Access suffixes: {accessDistinct}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- encoder suffixes: {encoderDistinct}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Access suffix collision buckets: {accessCollisionBuckets}")
+            .AppendLine();
         AppendPairMatrixDistribution(sb, rows, matrixStart);
         AppendPairMatrixModelSummary(sb, table, rows, matrixStart, includeCrc16);
 
-        sb.AppendLine("| Pair | Access suffix | Encoder suffix | Full tail |");
-        sb.AppendLine("|---|:---:|:---:|---|");
+        sb.AppendLine("| Pair | Access suffix | Encoder suffix | Full tail |")
+            .AppendLine("|---|:---:|:---:|---|");
 
         foreach (SuffixPatternRow row in rows.Take(8).Concat(rows.Skip(Math.Max(0, rows.Count - 8))))
         {
@@ -936,10 +936,10 @@ internal static class LongRowSuffixProbe
 
     private static void AppendPairMatrixDistribution(StringBuilder sb, List<SuffixPatternRow> rows, int matrixStart)
     {
-        sb.AppendLine("Access suffix distribution:");
-        sb.AppendLine();
-        sb.AppendLine("| Access suffix | Rows | First pairs | First seeds |");
-        sb.AppendLine("|:---:|---:|---|---|");
+        sb.AppendLine("Access suffix distribution:")
+            .AppendLine()
+            .AppendLine("| Access suffix | Rows | First pairs | First seeds |")
+            .AppendLine("|:---:|---:|---|---|");
         foreach (IGrouping<ushort, SuffixPatternRow>? group in rows
             .GroupBy(row => row.AccessSuffix)
             .OrderByDescending(group => group.Count())
@@ -1094,13 +1094,13 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Pair matrix model checks:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR row/column decomposition: {xorMatches}/{total}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR split by second char: non-space {xorNonSecondSpaceMatches}/{xorNonSecondSpaceTotal}, space {xorSecondSpaceMatches}/{xorSecondSpaceTotal}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Add row/column decomposition: {addMatches}/{total}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- High-byte XOR/add decomposition: {highXorMatches}/{total}, {highAddMatches}/{total}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Low-byte XOR/add decomposition: {lowXorMatches}/{total}, {lowAddMatches}/{total}");
+        sb.AppendLine("Pair matrix model checks:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- XOR row/column decomposition: {xorMatches}/{total}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- XOR split by second char: non-space {xorNonSecondSpaceMatches}/{xorNonSecondSpaceTotal}, space {xorSecondSpaceMatches}/{xorSecondSpaceTotal}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Add row/column decomposition: {addMatches}/{total}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- High-byte XOR/add decomposition: {highXorMatches}/{total}, {highAddMatches}/{total}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Low-byte XOR/add decomposition: {lowXorMatches}/{total}, {lowAddMatches}/{total}");
 
         if (includeCrc16)
         {
@@ -1115,11 +1115,11 @@ internal static class LongRowSuffixProbe
 
         AppendPairMatrixAffineBitSummary(sb, table, rows, matrixStart);
         AppendPairMatrixXorFailureSummary(sb, xorFailures);
-        sb.AppendLine();
-        sb.AppendLine("Pair contribution examples (`H(x,a) ^ H(a,a)` and `H(a,x) ^ H(a,a)`):");
-        sb.AppendLine();
-        sb.AppendLine("| Char | Row contribution | Column contribution | Row suffix | Column suffix |");
-        sb.AppendLine("|---|:---:|:---:|:---:|:---:|");
+        sb.AppendLine()
+            .AppendLine("Pair contribution examples (`H(x,a) ^ H(a,a)` and `H(a,x) ^ H(a,a)`):")
+            .AppendLine()
+            .AppendLine("| Char | Row contribution | Column contribution | Row suffix | Column suffix |")
+            .AppendLine("|---|:---:|:---:|:---:|:---:|");
         foreach (int index in Enumerable.Range(0, Math.Min(16, size)).Concat(Enumerable.Range(Math.Max(16, size - 8), Math.Min(8, size - Math.Max(16, size - 8)))))
         {
             int rowOffset = (index * size) + baseIndex;
@@ -1147,11 +1147,11 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine();
-        sb.AppendLine("XOR failure breakdown by second char:");
-        sb.AppendLine();
-        sb.AppendLine("| Second char | Failures | First chars | Full tails | Trimmed tails |");
-        sb.AppendLine("|---|---:|---|---|---|");
+        sb.AppendLine()
+            .AppendLine("XOR failure breakdown by second char:")
+            .AppendLine()
+            .AppendLine("| Second char | Failures | First chars | Full tails | Trimmed tails |")
+            .AppendLine("|---|---:|---|---|---|");
         foreach (IGrouping<char, PairMatrixXorFailure>? group in failures
             .GroupBy(failure => failure.SecondChar)
             .OrderByDescending(group => group.Count())
@@ -1175,11 +1175,11 @@ internal static class LongRowSuffixProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"| `{FormatMatrixChar(group.Key)}` | {group.Count()} | {firstChars} | {fullTails} | {trimmedTails} |");
         }
 
-        sb.AppendLine();
-        sb.AppendLine("Sample XOR failures:");
-        sb.AppendLine();
-        sb.AppendLine("| Pair | Actual | Predicted | Residual | Row | full[508..512] | trimmed[508..512] |");
-        sb.AppendLine("|---|:---:|:---:|:---:|---|---|---|");
+        sb.AppendLine()
+            .AppendLine("Sample XOR failures:")
+            .AppendLine()
+            .AppendLine("| Pair | Actual | Predicted | Residual | Row | full[508..512] | trimmed[508..512] |")
+            .AppendLine("|---|:---:|:---:|:---:|---|---|---|");
         foreach (PairMatrixXorFailure failure in failures.Take(12))
         {
             ushort residual = (ushort)(failure.Actual ^ failure.Predicted);
@@ -1316,14 +1316,14 @@ internal static class LongRowSuffixProbe
         int shiftedRowsPresent = Enumerable.Range(0, size).Count(first => normalPresent[(first * size) + spaceIndex]);
         int trailingRowsPresent = trailingPresent.Count(present => present);
 
-        sb.AppendLine("Boundary-space shift model:");
-        sb.AppendLine();
-        sb.AppendLine("Trains on the plain pair matrix and the trailing-space matrix. The model treats a non-space byte at the 255-character boundary as a normal two-axis XOR table; when the boundary char is a space, it shifts the column role left to the previous indexed character and ignores the earlier row axis.");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal non-space two-axis fit: {normalMatches}/{normalTotal}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal second-space rows predicted by shifted model: {shiftedMatches}/{shiftedTotal} (present rows {shiftedRowsPresent}/{size})");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- trailing-space matrix predicted by shifted model: {trailingMatches}/{trailingTotal} (present rows {trailingRowsPresent}/{size * size})");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- shifted deltas equal normal column deltas where both observed: {sharedContributionMatches}/{sharedContributionTotal}");
+        sb.AppendLine("Boundary-space shift model:")
+            .AppendLine()
+            .AppendLine("Trains on the plain pair matrix and the trailing-space matrix. The model treats a non-space byte at the 255-character boundary as a normal two-axis XOR table; when the boundary char is a space, it shifts the column role left to the previous indexed character and ignores the earlier row axis.")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- normal non-space two-axis fit: {normalMatches}/{normalTotal}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- normal second-space rows predicted by shifted model: {shiftedMatches}/{shiftedTotal} (present rows {shiftedRowsPresent}/{size})")
+            .AppendLine(CultureInfo.InvariantCulture, $"- trailing-space matrix predicted by shifted model: {trailingMatches}/{trailingTotal} (present rows {trailingRowsPresent}/{size * size})")
+            .AppendLine(CultureInfo.InvariantCulture, $"- shifted deltas equal normal column deltas where both observed: {sharedContributionMatches}/{sharedContributionTotal}");
         if (hasColumnContribution[spaceIndex] && hasTrailingContribution[spaceIndex])
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"- observed space column delta: normal `{columnContributions[spaceIndex]:X4}`, shifted `{trailingContributions[spaceIndex]:X4}`");
@@ -1578,8 +1578,8 @@ internal static class LongRowSuffixProbe
         }
 
         string coefficientText = string.Join(" ", coefficients.Select(coefficient => coefficient.ToString("X7", CultureInfo.InvariantCulture)));
-        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label} scored on all rows: {exact}/{evaluated}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label} coefficients: `{coefficientText}`");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label} scored on all rows: {exact}/{evaluated}")
+            .AppendLine(CultureInfo.InvariantCulture, $"  - {label} coefficients: `{coefficientText}`");
     }
 
     private static void AppendSecondSpaceAffineScore(
@@ -1802,10 +1802,10 @@ internal static class LongRowSuffixProbe
 
         int conflictingGroups = duplicateGroups.Count(group => group.Select(row => row.AccessSuffix).Distinct().Count() > 1);
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Exact duplicate value check for {table.TableName}.DataIndex:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- duplicate text groups: {duplicateGroups.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- duplicate groups with multiple Access suffixes: {conflictingGroups}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Exact duplicate value check for {table.TableName}.DataIndex:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- duplicate text groups: {duplicateGroups.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- duplicate groups with multiple Access suffixes: {conflictingGroups}");
 
         if (duplicateGroups.Count == 0)
         {
@@ -1813,9 +1813,9 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine();
-        sb.AppendLine("| Rows | Access suffixes | Seeds | Data ptrs |");
-        sb.AppendLine("|---:|---|---|---|");
+        sb.AppendLine()
+            .AppendLine("| Rows | Access suffixes | Seeds | Data ptrs |")
+            .AppendLine("|---:|---|---|---|");
         foreach (IGrouping<string, SuffixPatternRow>? group in duplicateGroups.Take(8))
         {
             SuffixPatternRow[] rows = group.OrderBy(row => row.Position).ToArray();
@@ -1853,12 +1853,12 @@ internal static class LongRowSuffixProbe
             .Select(row => new SuffixCandidateContext(row, table.Ascending))
             .ToArray();
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix candidate score for {table.TableName}.DataIndex:");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix candidate score for {table.TableName}.DataIndex:")
+            .AppendLine();
         if (contexts.Length == 0)
         {
-            sb.AppendLine("- no text rows available for candidate scoring");
-            sb.AppendLine();
+            sb.AppendLine("- no text rows available for candidate scoring")
+                .AppendLine();
             return;
         }
 
@@ -1876,11 +1876,11 @@ internal static class LongRowSuffixProbe
             .Take(16)
             .ToList();
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows scored: {contexts.Length}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- candidates tested: {rules.Count}");
-        sb.AppendLine();
-        sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
-        sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows scored: {contexts.Length}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- candidates tested: {rules.Count}")
+            .AppendLine()
+            .AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |")
+            .AppendLine("|---|---:|---:|:---:|---:|:---:|");
         foreach (CandidateScore score in scores)
         {
             sb.AppendLine(
@@ -1925,17 +1925,17 @@ internal static class LongRowSuffixProbe
             .Take(12)
             .ToList();
 
-        sb.AppendLine("Auxiliary stream signatures:");
-        sb.AppendLine();
+        sb.AppendLine("Auxiliary stream signatures:")
+            .AppendLine();
         if (groups.Count == 0)
         {
-            sb.AppendLine("- no auxiliary streams in scored rows");
-            sb.AppendLine();
+            sb.AppendLine("- no auxiliary streams in scored rows")
+                .AppendLine();
             return;
         }
 
-        sb.AppendLine("| Rows | Access suffixes | First rows | Signature |");
-        sb.AppendLine("|---:|---|---|---|");
+        sb.AppendLine("| Rows | Access suffixes | First rows | Signature |")
+            .AppendLine("|---:|---|---|---|");
         foreach (var group in groups)
         {
             string suffixes = string.Join(" ", group.Select(item => item.Context.Row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
@@ -1984,22 +1984,22 @@ internal static class LongRowSuffixProbe
             .Take(12)
             .ToList();
 
-        sb.AppendLine("Truncation phase signatures:");
-        sb.AppendLine();
+        sb.AppendLine("Truncation phase signatures:")
+            .AppendLine();
         if (groups.Count == 0)
         {
-            sb.AppendLine("- no phase groups");
-            sb.AppendLine();
+            sb.AppendLine("- no phase groups")
+                .AppendLine();
             return;
         }
 
         int conflictingGroups = allGroups.Count(group => group.Suffixes.Length > 1);
         int conflictingRows = allGroups.Where(group => group.Suffixes.Length > 1).Sum(group => group.Rows.Length);
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- phase groups: {allGroups.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- phase groups with multiple Access suffixes: {conflictingGroups} ({conflictingRows} rows)");
-        sb.AppendLine();
-        sb.AppendLine("| Rows | Access suffixes | Phase | Boundary | Window | Aux signature | First rows |");
-        sb.AppendLine("|---:|---|---|---|---|---|---|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- phase groups: {allGroups.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- phase groups with multiple Access suffixes: {conflictingGroups} ({conflictingRows} rows)")
+            .AppendLine()
+            .AppendLine("| Rows | Access suffixes | Phase | Boundary | Window | Aux signature | First rows |")
+            .AppendLine("|---:|---|---|---|---|---|---|");
         foreach (var group in groups)
         {
             string suffixes = string.Join(" ", group.Suffixes.Select(value => $"`{value:X4}`"));
@@ -2046,8 +2046,8 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Truncation local-window sweep:");
-        sb.AppendLine();
+        sb.AppendLine("Truncation local-window sweep:")
+            .AppendLine();
         foreach (WindowSweepResult result in candidates
             .GroupBy(result => result.IncludeAux)
             .Select(group => group
@@ -2063,9 +2063,9 @@ internal static class LongRowSuffixProbe
                 $"- best {(result.IncludeAux ? "with" : "without")} aux: start {result.Start}, length {result.Length}, conflicts {result.ConflictingGroups} groups / {result.ConflictingRows} rows");
         }
 
-        sb.AppendLine();
-        sb.AppendLine("| Start | Length | Aux | Groups | Conflicting groups | Conflicting rows |");
-        sb.AppendLine("|---:|---:|:---:|---:|---:|---:|");
+        sb.AppendLine()
+            .AppendLine("| Start | Length | Aux | Groups | Conflicting groups | Conflicting rows |")
+            .AppendLine("|---:|---:|:---:|---:|---:|---:|");
         foreach (WindowSweepResult result in candidates
             .OrderBy(result => result.ConflictingRows)
             .ThenBy(result => result.ConflictingGroups)
@@ -2188,10 +2188,10 @@ internal static class LongRowSuffixProbe
             .Take(12)
             .ToList();
 
-        sb.AppendLine("LCMap sort-key offset sweep:");
-        sb.AppendLine();
-        sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
-        sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
+        sb.AppendLine("LCMap sort-key offset sweep:")
+            .AppendLine()
+            .AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |")
+            .AppendLine("|---|---:|---:|:---:|---:|:---:|");
         foreach (CandidateScore score in best)
         {
             sb.AppendLine(
@@ -2254,12 +2254,12 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Wide affine tail models for {table.TableName}.DataIndex:");
-        sb.AppendLine();
-        sb.AppendLine("Trains on DAO-generated rows only; scores all rows, including the original fixture rows.");
-        sb.AppendLine();
-        sb.AppendLine("| Feature | Fit | Synthetic score | Original score | All score | Variables |");
-        sb.AppendLine("|---|:---:|---:|---:|---:|---:|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Wide affine tail models for {table.TableName}.DataIndex:")
+            .AppendLine()
+            .AppendLine("Trains on DAO-generated rows only; scores all rows, including the original fixture rows.")
+            .AppendLine()
+            .AppendLine("| Feature | Fit | Synthetic score | Original score | All score | Variables |")
+            .AppendLine("|---|:---:|---:|---:|---:|---:|");
         AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 0, includeLength: true);
         AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 508, includeLength: false);
         AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 508, includeLength: true);
@@ -2450,12 +2450,12 @@ internal static class LongRowSuffixProbe
     {
         Encoding cp1252 = Cp1252Encoding;
 
-        sb.AppendLine("Rolling polynomial solver:");
-        sb.AppendLine();
-        sb.AppendLine("Tests `h = h * multiplier + byte (mod 65536)` with every odd multiplier, solving the seed from the first row and requiring an exact match on all rows.");
-        sb.AppendLine();
-        sb.AppendLine("| Input | Matches | First hits |");
-        sb.AppendLine("|---|---:|---|");
+        sb.AppendLine("Rolling polynomial solver:")
+            .AppendLine()
+            .AppendLine("Tests `h = h * multiplier + byte (mod 65536)` with every odd multiplier, solving the seed from the first row and requiring an exact match on all rows.")
+            .AppendLine()
+            .AppendLine("| Input | Matches | First hits |")
+            .AppendLine("|---|---:|---|");
 
         foreach (int inputIndex in RollingInputIndexes)
         {
@@ -2516,17 +2516,17 @@ internal static class LongRowSuffixProbe
 
     private static void AppendCrcDerivedInitSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        sb.AppendLine("CRC-16 derived-init solver (sliding window):");
-        sb.AppendLine();
-        sb.AppendLine("For each (polynomial, mode, start-offset), solves the constant from the shortest non-empty row, filters against the next two shortest rows, then verifies against all remaining rows.");
-        sb.AppendLine("Tests tail slices full[508+k..] for k=0..12, plus full[0..] and full[1..].");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Slices whose three-row rejection seed exceeds {CrcDerivedInitSolverMaxSeedBytes} bytes are skipped here; use `long-row-crc-sweep` for exhaustive heavy CRC windows.");
-        sb.AppendLine();
+        sb.AppendLine("CRC-16 derived-init solver (sliding window):")
+            .AppendLine()
+            .AppendLine("For each (polynomial, mode, start-offset), solves the constant from the shortest non-empty row, filters against the next two shortest rows, then verifies against all remaining rows.")
+            .AppendLine("Tests tail slices full[508+k..] for k=0..12, plus full[0..] and full[1..].")
+            .AppendLine(CultureInfo.InvariantCulture, $"Slices whose three-row rejection seed exceeds {CrcDerivedInitSolverMaxSeedBytes} bytes are skipped here; use `long-row-crc-sweep` for exhaustive heavy CRC windows.")
+            .AppendLine();
 
         if (contexts.Length < 3)
         {
-            sb.AppendLine("- insufficient rows for solver (need >= 3)");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient rows for solver (need >= 3)")
+                .AppendLine();
             return;
         }
 
@@ -2558,8 +2558,8 @@ internal static class LongRowSuffixProbe
         sliceDefs.Add(("text[255..]-utf16le", context => EncodeTextTailOrEmpty(context.Row.Text, 255, Encoding.Unicode)));
         sliceDefs.Add(("text[255..]-cp1252", context => EncodeTextTailOrEmpty(context.Row.Text, 255, Cp1252Encoding)));
 
-        sb.AppendLine("| Slice | Hits | Details |");
-        sb.AppendLine("|---|---:|---|");
+        sb.AppendLine("| Slice | Hits | Details |")
+            .AppendLine("|---|---:|---|");
 
         foreach ((string label, Func<SuffixCandidateContext, byte[]>? extract) in sliceDefs)
         {
@@ -2670,16 +2670,16 @@ internal static class LongRowSuffixProbe
     /// <param name="contexts">The contexts.</param>
     private static void AppendCrc32DerivedInitSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        sb.AppendLine("CRC-32 derived-init solver (standard polys, 16-bit projection):");
-        sb.AppendLine();
-        sb.AppendLine("For each (CRC-32 polynomial, refIn, refOut, half), solves the XOR constant from row[0] then verifies all other rows.");
-        sb.AppendLine("Tests Ethernet/Castagnoli/Koopman/Q/D/Aixm/JAMCRC/MPEG-2 polys across structural slices.");
-        sb.AppendLine();
+        sb.AppendLine("CRC-32 derived-init solver (standard polys, 16-bit projection):")
+            .AppendLine()
+            .AppendLine("For each (CRC-32 polynomial, refIn, refOut, half), solves the XOR constant from row[0] then verifies all other rows.")
+            .AppendLine("Tests Ethernet/Castagnoli/Koopman/Q/D/Aixm/JAMCRC/MPEG-2 polys across structural slices.")
+            .AppendLine();
 
         if (contexts.Length < 3)
         {
-            sb.AppendLine("- insufficient rows for solver (need >= 3)");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient rows for solver (need >= 3)")
+                .AppendLine();
             return;
         }
 
@@ -2712,8 +2712,8 @@ internal static class LongRowSuffixProbe
             ("text[255..]-cp1252",   context => EncodeTextTailOrEmpty(context.Row.Text, 255, Cp1252Encoding)),
         };
 
-        sb.AppendLine("| Slice | Hits | Details |");
-        sb.AppendLine("|---|---:|---|");
+        sb.AppendLine("| Slice | Hits | Details |")
+            .AppendLine("|---|---:|---|");
 
         foreach ((string sliceLabel, Func<SuffixCandidateContext, byte[]>? extract) in sliceDefs)
         {
@@ -2850,12 +2850,12 @@ internal static class LongRowSuffixProbe
         const int WindowLength = 9;
         const int MaxRowsPerGroupForPairs = 256; // O(n^2) pair enumeration cap.
 
-        sb.AppendLine("Per-position XOR contribution-table extractor (9-byte window at positions 503–511):");
-        sb.AppendLine();
-        sb.AppendLine("Groups rows by aux signature. Within each group, enumerates row pairs (capped at 256 rows per group, ~32k pairs)");
-        sb.AppendLine("that differ in exactly ONE byte of the 9-byte window (positions 503–511), giving direct linear constraint `T[pos][bA] XOR T[pos][bB] = dSuffix`.");
-        sb.AppendLine("Contradictions (same (pos, byte-pair) producing different deltas) are direct evidence of nonlinearity at that position.");
-        sb.AppendLine();
+        sb.AppendLine("Per-position XOR contribution-table extractor (9-byte window at positions 503–511):")
+            .AppendLine()
+            .AppendLine("Groups rows by aux signature. Within each group, enumerates row pairs (capped at 256 rows per group, ~32k pairs)")
+            .AppendLine("that differ in exactly ONE byte of the 9-byte window (positions 503–511), giving direct linear constraint `T[pos][bA] XOR T[pos][bB] = dSuffix`.")
+            .AppendLine("Contradictions (same (pos, byte-pair) producing different deltas) are direct evidence of nonlinearity at that position.")
+            .AppendLine();
 
         Encoding cp1252 = Cp1252Encoding;
         var rows = contexts
@@ -2877,8 +2877,8 @@ internal static class LongRowSuffixProbe
 
         if (rows.Length == 0)
         {
-            sb.AppendLine("- no aux-signature groups with >= 2 rows");
-            sb.AppendLine();
+            sb.AppendLine("- no aux-signature groups with >= 2 rows")
+                .AppendLine();
             return;
         }
 
@@ -2954,15 +2954,15 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- aux-signature groups (>=2 rows): {rows.Length}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- row pairs examined (within groups, capped): {totalPairsExamined}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- single-position-diff constraints collected: {singlePosPairs}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- distinct (position, byte-pair) keys: {observations.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- CONTRADICTORY keys (same input → different delta): {contradictoryKeys}");
-        sb.AppendLine();
-        sb.AppendLine("Per-position coverage and contradictions:");
-        sb.AppendLine("| Position | Byte index | Distinct byte-pairs | Distinct deltas observed | Contradictory pairs |");
-        sb.AppendLine("|---:|---:|---:|---:|---:|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- aux-signature groups (>=2 rows): {rows.Length}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- row pairs examined (within groups, capped): {totalPairsExamined}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- single-position-diff constraints collected: {singlePosPairs}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- distinct (position, byte-pair) keys: {observations.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- CONTRADICTORY keys (same input → different delta): {contradictoryKeys}")
+            .AppendLine()
+            .AppendLine("Per-position coverage and contradictions:")
+            .AppendLine("| Position | Byte index | Distinct byte-pairs | Distinct deltas observed | Contradictory pairs |")
+            .AppendLine("|---:|---:|---:|---:|---:|");
         for (int i = 0; i < WindowLength; i++)
         {
             sb.AppendLine(
@@ -2973,9 +2973,9 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         if (contradictoryKeys > 0)
         {
-            sb.AppendLine("Sample contradictions (first 20, sorted by position):");
-            sb.AppendLine("| Pos | ByteLo | ByteHi | Observed deltas |");
-            sb.AppendLine("|---:|:---:|:---:|---|");
+            sb.AppendLine("Sample contradictions (first 20, sorted by position):")
+                .AppendLine("| Pos | ByteLo | ByteHi | Observed deltas |")
+                .AppendLine("|---:|:---:|:---:|---|");
             foreach (KeyValuePair<(int Position, byte ByteLo, byte ByteHi), HashSet<ushort>> kv in observations
                 .Where(o => o.Value.Count > 1)
                 .OrderBy(o => o.Key.Position)
@@ -2992,9 +2992,9 @@ internal static class LongRowSuffixProbe
         }
         else if (observations.Count > 0)
         {
-            sb.AppendLine("NO contradictions detected: suffix appears to be a LINEAR function of the 9-byte window (positions 503–511) within each aux-signature group.");
-            sb.AppendLine("Per-position XOR contribution tables can be reconstructed directly.");
-            sb.AppendLine();
+            sb.AppendLine("NO contradictions detected: suffix appears to be a LINEAR function of the 9-byte window (positions 503–511) within each aux-signature group.")
+                .AppendLine("Per-position XOR contribution tables can be reconstructed directly.")
+                .AppendLine();
         }
     }
 
@@ -3006,16 +3006,16 @@ internal static class LongRowSuffixProbe
     /// <param name="contexts">The contexts.</param>
     private static void AppendRotlFoldSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        sb.AppendLine("Rotate-fold solver (rotl16 + add/XOR, byte-at-a-time):");
-        sb.AppendLine();
-        sb.AppendLine("Tests `h = rotl16(h, k) + byte` and `h = rotl16(h, k) XOR byte` for each byte in full[508..end].");
-        sb.AppendLine("Sweeps k=0..15, init=0..65535. Also tests `h = rotl16(h XOR byte, k)` and `h = rotl16(h + byte, k)` variants.");
-        sb.AppendLine();
+        sb.AppendLine("Rotate-fold solver (rotl16 + add/XOR, byte-at-a-time):")
+            .AppendLine()
+            .AppendLine("Tests `h = rotl16(h, k) + byte` and `h = rotl16(h, k) XOR byte` for each byte in full[508..end].")
+            .AppendLine("Sweeps k=0..15, init=0..65535. Also tests `h = rotl16(h XOR byte, k)` and `h = rotl16(h + byte, k)` variants.")
+            .AppendLine();
 
         if (contexts.Length < 3)
         {
-            sb.AppendLine("- insufficient rows");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient rows")
+                .AppendLine();
             return;
         }
 
@@ -3027,13 +3027,13 @@ internal static class LongRowSuffixProbe
 
         if (constraints.Length < 3)
         {
-            sb.AppendLine("- insufficient non-empty slices");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient non-empty slices")
+                .AppendLine();
             return;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows tested: {constraints.Length}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- input lengths: {constraints.Min(c => c.Input.Length)}-{constraints.Max(c => c.Input.Length)} bytes");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows tested: {constraints.Length}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- input lengths: {constraints.Min(c => c.Input.Length)}-{constraints.Max(c => c.Input.Length)} bytes");
 
         // Pre-compute targets for quick comparison.
         ushort target0 = constraints[0].Target;
@@ -3168,13 +3168,13 @@ internal static class LongRowSuffixProbe
     /// <param name="contexts">The contexts.</param>
     private static void AppendBitContributionMatrixSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        sb.AppendLine("Bit contribution matrix and XOR residual analysis:");
-        sb.AppendLine();
+        sb.AppendLine("Bit contribution matrix and XOR residual analysis:")
+            .AppendLine();
 
         if (contexts.Length < 3)
         {
-            sb.AppendLine("- insufficient rows");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient rows")
+                .AppendLine();
             return;
         }
 
@@ -3186,8 +3186,8 @@ internal static class LongRowSuffixProbe
 
         if (inputs.Length < 3)
         {
-            sb.AppendLine("- insufficient 5+ byte inputs");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient 5+ byte inputs")
+                .AppendLine();
             return;
         }
 
@@ -3211,8 +3211,8 @@ internal static class LongRowSuffixProbe
 
         if (baseRow < 0)
         {
-            sb.AppendLine("- base row (02 0E 02 01 00) not found");
-            sb.AppendLine();
+            sb.AppendLine("- base row (02 0E 02 01 00) not found")
+                .AppendLine();
             return;
         }
 
@@ -3277,13 +3277,13 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos0-only distinct values: {pos0Only.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos1-only distinct values: {pos1Only.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos2-only distinct values: {pos2Only.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos0+pos1 change rows: {pos01Change.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos1+pos2 change rows: {pos12Change.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- total varying rows: {pos012Change.Count}");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos0-only distinct values: {pos0Only.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- pos1-only distinct values: {pos1Only.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- pos2-only distinct values: {pos2Only.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- pos0+pos1 change rows: {pos01Change.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- pos1+pos2 change rows: {pos12Change.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- total varying rows: {pos012Change.Count}")
+            .AppendLine();
 
         // Build XOR contribution tables.
         // Contribution of value v at position p = suffix(v@p, base@others) XOR baseSuffix.
@@ -3306,14 +3306,14 @@ internal static class LongRowSuffixProbe
         }
 
         // Display contribution tables.
-        sb.AppendLine("Per-position XOR contribution tables (value → delta from base):");
-        sb.AppendLine();
-        sb.AppendLine("| Position | Values | Sample entries |");
-        sb.AppendLine("|---|---:|---|");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[0] (full[508]) | {contrib0.Count} | {FormatContribSamples(contrib0)} |");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[1] (full[509]) | {contrib1.Count} | {FormatContribSamples(contrib1)} |");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[2] (full[510]) | {contrib2.Count} | {FormatContribSamples(contrib2)} |");
-        sb.AppendLine();
+        sb.AppendLine("Per-position XOR contribution tables (value → delta from base):")
+            .AppendLine()
+            .AppendLine("| Position | Values | Sample entries |")
+            .AppendLine("|---|---:|---|")
+            .AppendLine(CultureInfo.InvariantCulture, $"| pos[0] (full[508]) | {contrib0.Count} | {FormatContribSamples(contrib0)} |")
+            .AppendLine(CultureInfo.InvariantCulture, $"| pos[1] (full[509]) | {contrib1.Count} | {FormatContribSamples(contrib1)} |")
+            .AppendLine(CultureInfo.InvariantCulture, $"| pos[2] (full[510]) | {contrib2.Count} | {FormatContribSamples(contrib2)} |")
+            .AppendLine();
 
         // XOR decomposition residual analysis.
         // For each row with multiple positions changed, predict using XOR of individual contributions.
@@ -3347,18 +3347,18 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("XOR decomposition residual analysis:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {xorPass}, fail: {xorFail}, total: {xorPass + xorFail}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- distinct residuals: {residuals.Count}");
-        sb.AppendLine();
+        sb.AppendLine("XOR decomposition residual analysis:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {xorPass}, fail: {xorFail}, total: {xorPass + xorFail}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- distinct residuals: {residuals.Count}")
+            .AppendLine();
 
         if (residuals.Count > 0)
         {
-            sb.AppendLine("Residual distribution:");
-            sb.AppendLine();
-            sb.AppendLine("| Residual | Count | Binary | Trailing zeros |");
-            sb.AppendLine("|:---:|---:|---|---:|");
+            sb.AppendLine("Residual distribution:")
+                .AppendLine()
+                .AppendLine("| Residual | Count | Binary | Trailing zeros |")
+                .AppendLine("|:---:|---:|---|---:|");
             foreach ((ushort residual, int count) in residuals.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key).Take(20))
             {
                 int tz = BitOperations.TrailingZeroCount(residual);
@@ -3373,19 +3373,19 @@ internal static class LongRowSuffixProbe
             bool allHighBits = residuals.Keys.All(r => (r & 0x00FF) == 0);
             int maxPopCount = residuals.Keys.Max(r => BitOperations.PopCount(r));
             int minPopCount = residuals.Keys.Min(r => BitOperations.PopCount(r));
-            sb.AppendLine(CultureInfo.InvariantCulture, $"- all single-bit (power of 2): {allPow2}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"- all in low byte: {allLowBits}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"- all in high byte: {allHighBits}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"- popcount range: {minPopCount}-{maxPopCount}");
-            sb.AppendLine();
 
             // Check if residuals match carry patterns from (A+B) vs (A XOR B).
             // For addition: a+b = (a XOR b) XOR carry_chain.
             // Carry residual at bit k means a carry propagated from bit k-1.
-            sb.AppendLine("Failing entries (first 20):");
-            sb.AppendLine();
-            sb.AppendLine("| Input [pos0,pos1,pos2] | Actual | Predicted | Residual |");
-            sb.AppendLine("|---|:---:|:---:|:---:|");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- all single-bit (power of 2): {allPow2}")
+                .AppendLine(CultureInfo.InvariantCulture, $"- all in low byte: {allLowBits}")
+                .AppendLine(CultureInfo.InvariantCulture, $"- all in high byte: {allHighBits}")
+                .AppendLine(CultureInfo.InvariantCulture, $"- popcount range: {minPopCount}-{maxPopCount}")
+                .AppendLine()
+                .AppendLine("Failing entries (first 20):")
+                .AppendLine()
+                .AppendLine("| Input [pos0,pos1,pos2] | Actual | Predicted | Residual |")
+                .AppendLine("|---|:---:|:---:|:---:|");
             foreach (string example in failExamples)
             {
                 // Parse the example string back (it's already formatted).
@@ -3435,10 +3435,10 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Addition-based separable model (suffix = T0[b0] + T1[b1] + T2[b2] + C mod 65536):");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {addPass}, fail: {addFail}, total: {addPass + addFail}");
-        sb.AppendLine();
+        sb.AppendLine("Addition-based separable model (suffix = T0[b0] + T1[b1] + T2[b2] + C mod 65536):")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {addPass}, fail: {addFail}, total: {addPass + addFail}")
+            .AppendLine();
 
         // Test hybrid: suffix = T0[b0] XOR (T1[b1] + T2[b2]).
         // Derive: T0[x] = suffix(x, base1, base2) XOR baseSuffix (from pos0-only).
@@ -3543,9 +3543,9 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Hybrid model A: suffix = T0[b0] XOR (T1[b1] + T2[b2]):");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorAddPass}, fail: {hybridXorAddFail}, total: {hybridXorAddPass + hybridXorAddFail}");
+        sb.AppendLine("Hybrid model A: suffix = T0[b0] XOR (T1[b1] + T2[b2]):")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorAddPass}, fail: {hybridXorAddFail}, total: {hybridXorAddPass + hybridXorAddFail}");
         if (hybridFailExamples.Count > 0)
         {
             sb.AppendLine();
@@ -3596,9 +3596,9 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Hybrid model B: suffix = (T0[b0] + T1[b1]) XOR T2[b2] XOR C:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridAddXorPass}, fail: {hybridAddXorFail}, total: {hybridAddXorPass + hybridAddXorFail}");
+        sb.AppendLine("Hybrid model B: suffix = (T0[b0] + T1[b1]) XOR T2[b2] XOR C:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridAddXorPass}, fail: {hybridAddXorFail}, total: {hybridAddXorPass + hybridAddXorFail}");
         if (hybridBFailExamples.Count > 0)
         {
             sb.AppendLine();
@@ -3642,10 +3642,10 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Hybrid model C: suffix = (T0[b0] XOR T1[b1]) + T2[b2] + C:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorPlusPass}, fail: {hybridXorPlusFail}, total: {hybridXorPlusPass + hybridXorPlusFail}");
-        sb.AppendLine();
+        sb.AppendLine("Hybrid model C: suffix = (T0[b0] XOR T1[b1]) + T2[b2] + C:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorPlusPass}, fail: {hybridXorPlusFail}, total: {hybridXorPlusPass + hybridXorPlusFail}")
+            .AppendLine();
 
         // Test all 6 orderings of 2-op hybrid: {+, ^} applied in 2 positions.
         // Already tested: A = XOR(+), B = (+)XOR, C = (XOR)+.
@@ -3679,10 +3679,10 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine("Hybrid model D: suffix = T0[b0] + (T1[b1] XOR T2[b2]) + C:");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridDPass}, fail: {hybridDFail}, total: {hybridDPass + hybridDFail}");
-        sb.AppendLine();
+        sb.AppendLine("Hybrid model D: suffix = T0[b0] + (T1[b1] XOR T2[b2]) + C:")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridDPass}, fail: {hybridDFail}, total: {hybridDPass + hybridDFail}")
+            .AppendLine();
     }
 
     private static string FormatContribSamples(Dictionary<byte, ushort> contrib) => string.Join(" ", contrib
@@ -3700,11 +3700,11 @@ internal static class LongRowSuffixProbe
     /// <param name="matrixStart">The matrix start.</param>
     private static void AppendGf2CrossMultiplicationSolverSummary(StringBuilder sb, SuffixPatternTable table, int matrixStart)
     {
-        sb.AppendLine("GF(2^16) cross-multiplication solver:");
-        sb.AppendLine();
-        sb.AppendLine("Tests whether pair matrix deltas are consistent with `suffix = XOR(W[b_i] * alpha^i)` in GF(2^16) mod P.");
-        sb.AppendLine("Derives constraints on P from cross-products of row/column contributions.");
-        sb.AppendLine();
+        sb.AppendLine("GF(2^16) cross-multiplication solver:")
+            .AppendLine()
+            .AppendLine("Tests whether pair matrix deltas are consistent with `suffix = XOR(W[b_i] * alpha^i)` in GF(2^16) mod P.")
+            .AppendLine("Derives constraints on P from cross-products of row/column contributions.")
+            .AppendLine();
 
         const int size = DaoLabAlphabetLength;
         var suffixes = new ushort[size * size];
@@ -3732,8 +3732,8 @@ internal static class LongRowSuffixProbe
         int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
         if (baseIndex < 0 || !present[(baseIndex * size) + baseIndex])
         {
-            sb.AppendLine("- base entry 'a,a' not present; skipping.");
-            sb.AppendLine();
+            sb.AppendLine("- base entry 'a,a' not present; skipping.")
+                .AppendLine();
             return;
         }
 
@@ -3765,13 +3765,13 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- non-zero row contributions: {rowContribs.Count}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- non-zero column contributions: {colContribs.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- non-zero row contributions: {rowContribs.Count}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- non-zero column contributions: {colContribs.Count}");
 
         if (rowContribs.Count < 2 || colContribs.Count < 2)
         {
-            sb.AppendLine("- insufficient non-zero contributions for cross-multiplication.");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient non-zero contributions for cross-multiplication.")
+                .AppendLine();
             return;
         }
 
@@ -3788,8 +3788,8 @@ internal static class LongRowSuffixProbe
 
         if (sharedChars.Count < 2)
         {
-            sb.AppendLine("- insufficient shared chars for cross-multiplication constraints.");
-            sb.AppendLine();
+            sb.AppendLine("- insufficient shared chars for cross-multiplication constraints.")
+                .AppendLine();
             return;
         }
 
@@ -3831,8 +3831,8 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- cross-multiplication constraints generated: {constraintCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- GCD polynomial (hex): 0x{gcdPoly:X8} (degree {Gf2PolyDegree(gcdPoly)})");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- cross-multiplication constraints generated: {constraintCount}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- GCD polynomial (hex): 0x{gcdPoly:X8} (degree {Gf2PolyDegree(gcdPoly)})");
         foreach (string detail in constraintDetails)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"  - {detail}");
@@ -5097,12 +5097,12 @@ internal static class LongRowSuffixProbe
     {
         _ = layout;
         _ = pageSize;
-        sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}.DataIndex raw leaf compression");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- first_dp: {index.FirstDp}");
-        sb.AppendLine();
-        sb.AppendLine("| Leaf page | pref_len | payload end | entries | 510-byte decoded entries | First long raw key len | First long raw key tail | First long decoded suffix |");
-        sb.AppendLine("|---:|---:|---:|---:|---:|---:|---|:---:|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}.DataIndex raw leaf compression")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- first_dp: {index.FirstDp}")
+            .AppendLine()
+            .AppendLine("| Leaf page | pref_len | payload end | entries | 510-byte decoded entries | First long raw key len | First long raw key tail | First long decoded suffix |")
+            .AppendLine("|---:|---:|---:|---:|---:|---:|---|:---:|");
 
         foreach (RawLeafPageSummary page in pages)
         {
@@ -5223,12 +5223,12 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(fixturePath)}");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Long indexes: {fixtureLongIndexes}; long keys: {fixtureLongKeys}");
-        sb.AppendLine();
-        sb.Append(fixtureReport);
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(fixturePath)}")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"Long indexes: {fixtureLongIndexes}; long keys: {fixtureLongKeys}")
+            .AppendLine()
+            .Append(fixtureReport)
+            .AppendLine();
     }
 
     private static async Task<CorpusIndexScanResult> CompareLongRowIndexAsync(
@@ -5380,14 +5380,14 @@ internal static class LongRowSuffixProbe
         int onDiskLongCount,
         CorpusIndexScanResult scan)
     {
-        sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}.{index.Name}");
-        sb.AppendLine();
-        sb.AppendLine(
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}.{index.Name}")
+            .AppendLine()
+            .AppendLine(
             CultureInfo.InvariantCulture,
-            $"- column: `{keyColumn.Name}` ({columnMeta.TypeName}, CLR `{columnMeta.ClrType.Name}`), ascending={keyColumn.IsAscending}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- on-disk 510-byte keys: {onDiskLongCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- encoded 510-byte keys: {scan.EncodedLongCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- first-508-byte prefix matches: {scan.PrefixMatchCount}");
+            $"- column: `{keyColumn.Name}` ({columnMeta.TypeName}, CLR `{columnMeta.ClrType.Name}`), ascending={keyColumn.IsAscending}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- on-disk 510-byte keys: {onDiskLongCount}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- encoded 510-byte keys: {scan.EncodedLongCount}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- first-508-byte prefix matches: {scan.PrefixMatchCount}");
 
         if (scan.Examples.Count == 0)
         {
@@ -5395,9 +5395,9 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        sb.AppendLine();
-        sb.AppendLine("| Position | Data ptr | Row | Prefix match | Access suffix | Encoder suffix | Encoded len | Full len | Full tail | Value |");
-        sb.AppendLine("|---:|---:|---|:---:|:---:|:---:|---:|---:|---|---|");
+        sb.AppendLine()
+            .AppendLine("| Position | Data ptr | Row | Prefix match | Access suffix | Encoder suffix | Encoded len | Full len | Full tail | Value |")
+            .AppendLine("|---:|---:|---|:---:|:---:|:---:|---:|---:|---|---|");
         foreach (CorpusSuffixExample example in scan.Examples)
         {
             string fullLength = example.FullLength?.ToString(CultureInfo.InvariantCulture) ?? "-";
@@ -5415,17 +5415,17 @@ internal static class LongRowSuffixProbe
     private static string BuildCorpusSummary(CorpusScanTotals totals)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("## Summary");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Fixtures scanned: {totals.FixturesScanned}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Indexes with 510-byte keys: {totals.IndexesWithLongKeys}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- On-disk 510-byte keys: {totals.LongKeysOnDisk}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Text/Memo 510-byte keys: {totals.TextLongKeysOnDisk}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Binary 510-byte keys: {totals.BinaryLongKeysOnDisk}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Other 510-byte keys: {totals.OtherLongKeysOnDisk}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Encoded 510-byte keys: {totals.LongKeysEncoded}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- First-508-byte prefix matches: {totals.PrefixMatches}");
-        sb.AppendLine();
+        sb.AppendLine("## Summary")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"- Fixtures scanned: {totals.FixturesScanned}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Indexes with 510-byte keys: {totals.IndexesWithLongKeys}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- On-disk 510-byte keys: {totals.LongKeysOnDisk}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Text/Memo 510-byte keys: {totals.TextLongKeysOnDisk}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Binary 510-byte keys: {totals.BinaryLongKeysOnDisk}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Other 510-byte keys: {totals.OtherLongKeysOnDisk}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- Encoded 510-byte keys: {totals.LongKeysEncoded}")
+            .AppendLine(CultureInfo.InvariantCulture, $"- First-508-byte prefix matches: {totals.PrefixMatches}")
+            .AppendLine();
         return sb.ToString();
     }
 
@@ -5837,10 +5837,10 @@ internal static class LongRowSuffixProbe
             (4, 3),
         };
 
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Fixture: `{fixturePath}`");
-        sb.AppendLine();
-        sb.AppendLine("## Constraint rows");
-        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Fixture: `{fixturePath}`")
+            .AppendLine()
+            .AppendLine("## Constraint rows")
+            .AppendLine();
 
         foreach ((int rowIndex, int leafIndex) in rowToLeaf)
         {
@@ -5856,14 +5856,14 @@ internal static class LongRowSuffixProbe
 
         AppendInputCandidateSummary(rowData, sb);
 
-        sb.AppendLine();
-        sb.AppendLine("## Char-by-char inline analysis around position 508");
-        sb.AppendLine();
+        sb.AppendLine()
+            .AppendLine("## Char-by-char inline analysis around position 508")
+            .AppendLine();
 
         foreach (RowData row in rowData)
         {
-            sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{row.RowIndex}] expected=0x{row.ExpectedSuffix:X4}");
-            sb.AppendLine();
+            sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{row.RowIndex}] expected=0x{row.ExpectedSuffix:X4}")
+                .AppendLine();
 
             int inlinePosition = 1;
             int lastCharBefore508 = -1;
@@ -5929,8 +5929,8 @@ internal static class LongRowSuffixProbe
             if (inlineOnly.Count >= GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010)
             {
                 ushort tail = (ushort)((inlineOnly[508] << 8) | inlineOnly[509]);
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  tail[508..509]=0x{tail:X4} match={tail == row.ExpectedSuffix}");
-                sb.AppendLine(
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  tail[508..509]=0x{tail:X4} match={tail == row.ExpectedSuffix}")
+                    .AppendLine(
                     CultureInfo.InvariantCulture,
                     $"  hex[506..509]={Convert.ToHexString(inlineOnly.GetRange(506, 4).ToArray())}");
             }
@@ -5963,8 +5963,8 @@ internal static class LongRowSuffixProbe
             (4, 3),
         };
 
-        sb.AppendLine("## Constraint set");
-        sb.AppendLine();
+        sb.AppendLine("## Constraint set")
+            .AppendLine();
 
         foreach ((int rowIndex, int ascLeafIndex) in rowToLeaf)
         {
@@ -5999,12 +5999,12 @@ internal static class LongRowSuffixProbe
         }
 
         int candidateCount = constraints[0].Inputs.Length;
-        sb.AppendLine();
-        sb.AppendLine(
+        sb.AppendLine()
+            .AppendLine(
             CultureInfo.InvariantCulture,
-            $"Sweep: {candidateCount} input candidates x 65536 polys x 16 modes = {candidateCount * 65536 * 16:N0} combos per constraint");
-        sb.AppendLine("Filter: a (poly, mode, inputIdx) survives only if it satisfies all constraints simultaneously.");
-        sb.AppendLine();
+            $"Sweep: {candidateCount} input candidates x 65536 polys x 16 modes = {candidateCount * 65536 * 16:N0} combos per constraint")
+            .AppendLine("Filter: a (poly, mode, inputIdx) survives only if it satisfies all constraints simultaneously.")
+            .AppendLine();
 
         var hits = new List<CrcSweepHit>();
         ConstraintSet firstConstraint = constraints[0];
@@ -6086,17 +6086,17 @@ internal static class LongRowSuffixProbe
                 $"HIT poly=0x{hit.Polynomial:X4} init=0x{hit.Init:X4} xorOut=0x{hit.XorOut:X4} refIn={hit.RefIn} refOut={hit.RefOut} inputIdx={hit.InputIndex} input={InputCandidateNames[hit.InputIndex]}");
         }
 
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Total hits: {hits.Count}");
+        sb.AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"Total hits: {hits.Count}");
     }
 
     private static void AppendInputCandidateSummary(List<RowData> rowData, StringBuilder sb)
     {
         Encoding cp1252 = Cp1252Encoding;
 
-        sb.AppendLine();
-        sb.AppendLine("## Input candidate lengths");
-        sb.AppendLine();
+        sb.AppendLine()
+            .AppendLine("## Input candidate lengths")
+            .AppendLine();
 
         foreach (RowData row in rowData)
         {
@@ -6883,13 +6883,11 @@ internal static class LongRowSuffixProbe
         => Path.Combine(fixturesDir, "Jackcess", "V2010", "testIndexCodesV2010.accdb");
 
     private static void AppendHeader(StringBuilder sb, string title, string mode)
-    {
-        sb.AppendLine(CultureInfo.InvariantCulture, $"# {title}");
-        sb.AppendLine();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Generated by: `dotnet run --project JetDatabaseWriter.FormatProbe -- {mode}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Generated at: {DateTimeOffset.UtcNow:u}");
-        sb.AppendLine();
-    }
+        => sb.AppendLine(CultureInfo.InvariantCulture, $"# {title}")
+            .AppendLine()
+            .AppendLine(CultureInfo.InvariantCulture, $"Generated by: `dotnet run --project JetDatabaseWriter.FormatProbe -- {mode}`")
+            .AppendLine(CultureInfo.InvariantCulture, $"Generated at: {DateTimeOffset.UtcNow:u}")
+            .AppendLine();
 
     private static async Task WriteOutputAsync(string outFile, StringBuilder sb)
     {

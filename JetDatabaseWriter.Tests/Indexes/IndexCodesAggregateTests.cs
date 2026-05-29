@@ -180,11 +180,11 @@ public sealed class IndexCodesAggregateTests
     private static string BuildReport(string fixturePath, List<IndexReport> report)
     {
         var sb = new StringBuilder();
-        sb.Append(CultureInfo.InvariantCulture, $"Encoder/leaf aggregate report for '{fixturePath}':\n");
-        sb.Append(CultureInfo.InvariantCulture, $"  indexes scanned: {report.Count}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"  fully matched: {report.Count(r => r.Mismatched == 0 && r.OnDiskCount == r.EncodedCount)}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"  with byte mismatches: {report.Count(r => r.Mismatched > 0)}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"  with count mismatch: {report.Count(r => r.OnDiskCount != r.EncodedCount)}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"Encoder/leaf aggregate report for '{fixturePath}':\n")
+            .Append(CultureInfo.InvariantCulture, $"  indexes scanned: {report.Count}\n")
+            .Append(CultureInfo.InvariantCulture, $"  fully matched: {report.Count(r => r.Mismatched == 0 && r.OnDiskCount == r.EncodedCount)}\n")
+            .Append(CultureInfo.InvariantCulture, $"  with byte mismatches: {report.Count(r => r.Mismatched > 0)}\n")
+            .Append(CultureInfo.InvariantCulture, $"  with count mismatch: {report.Count(r => r.OnDiskCount != r.EncodedCount)}\n");
         foreach (IndexReport? r in report.OrderByDescending(x => x.Mismatched).ThenBy(x => x.Table, StringComparer.Ordinal))
         {
             string maxLen = r.ColumnMaxLength?.ToString(CultureInfo.InvariantCulture) ?? "-";

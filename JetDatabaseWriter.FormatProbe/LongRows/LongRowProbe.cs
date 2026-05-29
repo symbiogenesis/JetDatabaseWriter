@@ -28,10 +28,10 @@ internal static class LongRowProbe
     public static async Task<int> RunAsync(string fixturesDir, string outFile)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# Long-row index leaf-entry dump");
-        sb.AppendLine();
-        sb.AppendLine("Tables: `Table11` (asc) and `Table11_desc` (desc) — single Memo column `data`.");
-        sb.AppendLine();
+        sb.AppendLine("# Long-row index leaf-entry dump")
+            .AppendLine()
+            .AppendLine("Tables: `Table11` (asc) and `Table11_desc` (desc) — single Memo column `data`.")
+            .AppendLine();
 
         string[] fixtures =
         [
@@ -43,8 +43,8 @@ internal static class LongRowProbe
 
         foreach (string path in fixtures)
         {
-            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(path)}");
-            sb.AppendLine();
+            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(path)}")
+                .AppendLine();
             await DumpAsync(path, sb, CancellationToken.None);
             sb.AppendLine();
         }
@@ -76,8 +76,8 @@ internal static class LongRowProbe
                 continue;
             }
 
-            sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}");
-            sb.AppendLine();
+            sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}")
+                .AppendLine();
 
             List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
             int dataOrdinal = FindColumnOrdinal(columns, "data");
@@ -98,13 +98,15 @@ internal static class LongRowProbe
                 bool asc = idx.Columns[0].IsAscending;
                 sb.AppendLine(CultureInfo.InvariantCulture, $"- index `{idx.Name}` ascending={asc} firstDp={idx.FirstDp}");
                 List<byte[]> keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
-                sb.AppendLine(CultureInfo.InvariantCulture, $"- leaf entries: {keys.Count}");
-                sb.AppendLine();
+                sb.AppendLine(CultureInfo.InvariantCulture, $"- leaf entries: {keys.Count}")
+                    .AppendLine()
+                    .AppendLine("Row values (length, first 60 chars):");
+
 
                 // Sort source values the same way the leaves are sorted (unsigned bytes).
                 // We can't sort by encoded key (the encoder is what we're trying to validate).
                 // Just print all rows and all leaves; the human cross-references them.
-                sb.AppendLine("Row values (length, first 60 chars):");
+
                 for (int i = 0; i < rowValues.Count; i++)
                 {
                     string? v = rowValues[i];
@@ -112,8 +114,8 @@ internal static class LongRowProbe
                     sb.AppendLine(CultureInfo.InvariantCulture, $"  row[{i}] len={v?.Length ?? -1}  {display}");
                 }
 
-                sb.AppendLine();
-                sb.AppendLine("Leaf entries (hex; trailing 4 bytes = page:3 + row:1 pointer):");
+                sb.AppendLine()
+                    .AppendLine("Leaf entries (hex; trailing 4 bytes = page:3 + row:1 pointer):");
                 for (int i = 0; i < keys.Count; i++)
                 {
                     byte[] k = keys[i];

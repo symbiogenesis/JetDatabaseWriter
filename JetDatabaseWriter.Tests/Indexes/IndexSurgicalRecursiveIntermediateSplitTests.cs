@@ -221,8 +221,8 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // 255-byte deterministic key: prefix + 8-digit number + 246 chars
         // of derived padding. Lexicographic order tracks n.
         var sb = new StringBuilder(255);
-        sb.Append(prefix);
-        sb.Append(n.ToString("D8", System.Globalization.CultureInfo.InvariantCulture));
+        sb.Append(prefix)
+            .Append(n.ToString("D8", System.Globalization.CultureInfo.InvariantCulture));
         for (int i = 0; i < 246; i++)
         {
             sb.Append((char)('A' + ((n + i) % 26)));

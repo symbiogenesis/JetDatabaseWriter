@@ -139,16 +139,16 @@ public class LinkedTextReadBenchmarks
 
         for (int rowIndex = 0; rowIndex < RowCount; rowIndex++)
         {
-            builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture));
-            builder.Append(",Customer");
-            builder.Append((rowIndex % 100).ToString(CultureInfo.InvariantCulture));
-            builder.Append(",Status");
-            builder.Append((rowIndex % 5).ToString(CultureInfo.InvariantCulture));
-            builder.Append(",\"note with comma, and \"\"quote\"\" ");
-            builder.Append((rowIndex % 17).ToString(CultureInfo.InvariantCulture));
-            builder.Append("\",");
-            builder.Append((rowIndex % 1_000).ToString(CultureInfo.InvariantCulture));
-            builder.Append("\r\n");
+            builder.Append(rowIndex.ToString(CultureInfo.InvariantCulture))
+                .Append(",Customer")
+                .Append((rowIndex % 100).ToString(CultureInfo.InvariantCulture))
+                .Append(",Status")
+                .Append((rowIndex % 5).ToString(CultureInfo.InvariantCulture))
+                .Append(",\"note with comma, and \"\"quote\"\" ")
+                .Append((rowIndex % 17).ToString(CultureInfo.InvariantCulture))
+                .Append("\",")
+                .Append((rowIndex % 1_000).ToString(CultureInfo.InvariantCulture))
+                .Append("\r\n");
         }
 
         return builder.ToString();
