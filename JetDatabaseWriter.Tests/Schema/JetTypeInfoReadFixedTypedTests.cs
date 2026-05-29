@@ -29,7 +29,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Byte_RoundTripsThroughParseValue(byte value)
     {
         byte[] row = [value];
-        AssertParity(row, start: 0, Byte, size: 1, expected: value);
+        AssertParity(row, start: 0, ByteType, size: 1, expected: value);
     }
 
     [Theory]
@@ -94,7 +94,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, value);
-        AssertParity(row, start: 0, Double, size: 8, expected: value);
+        AssertParity(row, start: 0, DoubleType, size: 8, expected: value);
     }
 
     /// <summary>
@@ -115,7 +115,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, dt.ToOADate());
 
-        AssertParity(row, start: 0, DateTime, size: 8, expected: dt);
+        AssertParity(row, start: 0, DateTimeType, size: 8, expected: dt);
     }
 
     /// <summary>
@@ -130,14 +130,14 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, dt.ToOADate());
 
-        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, DateTime, size: 8);
+        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, DateTimeType, size: 8);
         DateTime typedDt = Assert.IsType<DateTime>(typed);
 
         // Round-trip via OADate has its own quantization, but it preserves
         // sub-second information that the "yyyy-MM-dd HH:mm:ss" format strips.
         Assert.NotEqual(0, typedDt.Millisecond);
 
-        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, DateTime, size: 8);
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, DateTimeType, size: 8);
         var roundTripped = (DateTime)TypedValueParser.ParseValue(formatted, typeof(DateTime));
         Assert.Equal(0, roundTripped.Millisecond);
     }
@@ -176,7 +176,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         var expected = Guid.Parse("12345678-9abc-def0-1234-56789abcdef0");
         byte[] row = expected.ToByteArray();
 
-        AssertParity(row, start: 0, Guid, size: 16, expected: expected);
+        AssertParity(row, start: 0, GuidType, size: 16, expected: expected);
     }
 
     /// <summary>

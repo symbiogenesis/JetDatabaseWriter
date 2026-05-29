@@ -53,7 +53,7 @@ public sealed class TypedRowFallbackPolicyTests
     public void MalformedVariableValue_NonStrict_ReturnsDBNull()
     {
         object value = TypedRowFallbackPolicy.MalformedVariableValue(
-            new ColumnInfo { Name = "When", Type = DateTime },
+            new ColumnInfo { Name = "When", Type = DateTimeType },
             new ArgumentException("bad date"),
             strictParsing: false);
 
@@ -66,7 +66,7 @@ public sealed class TypedRowFallbackPolicyTests
         var inner = new ArgumentException("bad date");
         InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
             TypedRowFallbackPolicy.MalformedVariableValue(
-                new ColumnInfo { Name = "When", Type = DateTime },
+                new ColumnInfo { Name = "When", Type = DateTimeType },
                 inner,
                 strictParsing: true));
 

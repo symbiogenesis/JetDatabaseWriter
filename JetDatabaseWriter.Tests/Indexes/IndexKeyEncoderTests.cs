@@ -91,10 +91,10 @@ public sealed class IndexKeyEncoderTests
     public void Byte_IsUnsignedAndUnflipped()
     {
         // Byte is unsigned in Access — no sign-bit flip.
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(Byte, (byte)0, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(ByteType, (byte)0, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x00 }, encoded);
 
-        encoded = IndexKeyEncoder.EncodeEntry(Byte, (byte)255, ascending: true);
+        encoded = IndexKeyEncoder.EncodeEntry(ByteType, (byte)255, ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0xFF }, encoded);
     }
 
@@ -113,7 +113,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(DoubleType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -225,8 +225,8 @@ public sealed class IndexKeyEncoderTests
         byte[][] desc = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            asc[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: true);
-            desc[i] = IndexKeyEncoder.EncodeEntry(Double, values[i], ascending: false);
+            asc[i] = IndexKeyEncoder.EncodeEntry(DoubleType, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(DoubleType, values[i], ascending: false);
 
             // DOUBLE key length: flag(1) + 8 bytes = 9.
             Assert.Equal(9, asc[i].Length);
@@ -262,8 +262,8 @@ public sealed class IndexKeyEncoderTests
     {
         var dt = new DateTime(2026, 4, 24);
         double oa = dt.ToOADate();
-        byte[] expected = IndexKeyEncoder.EncodeEntry(Double, oa, ascending: true);
-        byte[] actual = IndexKeyEncoder.EncodeEntry(DateTime, dt, ascending: true);
+        byte[] expected = IndexKeyEncoder.EncodeEntry(DoubleType, oa, ascending: true);
+        byte[] actual = IndexKeyEncoder.EncodeEntry(DateTimeType, dt, ascending: true);
         Assert.Equal(expected, actual);
     }
 
@@ -584,7 +584,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Guid_Null_EmitsSingleFlagByte()
     {
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, value: null, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(GuidType, value: null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
@@ -594,7 +594,7 @@ public sealed class IndexKeyEncoderTests
         // GUID display bytes 00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF.
         // Storage layout (Guid.ToByteArray): 33 22 11 00 55 44 77 66 88..FF.
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: true);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(GuidType, g, ascending: true);
 
         Assert.Equal(19, encoded.Length);
         Assert.Equal(0x7F, encoded[0]); // ascending flag
@@ -617,7 +617,7 @@ public sealed class IndexKeyEncoderTests
     public void Guid_Descending_FlipsDataAndFinalLengthButNotIntermediate()
     {
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] encoded = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: false);
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(GuidType, g, ascending: false);
 
         Assert.Equal(19, encoded.Length);
         Assert.Equal(0x80, encoded[0]); // descending flag (NOT 0x80 = ~0x7F via post-flip — emitted directly)
@@ -645,7 +645,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(Guid, values[i], ascending: true);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(GuidType, values[i], ascending: true);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -669,7 +669,7 @@ public sealed class IndexKeyEncoderTests
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(Guid, values[i], ascending: false);
+            encoded[i] = IndexKeyEncoder.EncodeEntry(GuidType, values[i], ascending: false);
         }
 
         for (int i = 1; i < encoded.Length; i++)
@@ -684,8 +684,8 @@ public sealed class IndexKeyEncoderTests
     public void Guid_AcceptsStringInput()
     {
         var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
-        byte[] fromGuid = IndexKeyEncoder.EncodeEntry(Guid, g, ascending: true);
-        byte[] fromString = IndexKeyEncoder.EncodeEntry(Guid, "00112233-4455-6677-8899-AABBCCDDEEFF", ascending: true);
+        byte[] fromGuid = IndexKeyEncoder.EncodeEntry(GuidType, g, ascending: true);
+        byte[] fromString = IndexKeyEncoder.EncodeEntry(GuidType, "00112233-4455-6677-8899-AABBCCDDEEFF", ascending: true);
         Assert.Equal(fromGuid, fromString);
     }
 
