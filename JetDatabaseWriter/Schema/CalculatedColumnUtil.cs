@@ -164,9 +164,9 @@ internal static class CalculatedColumnUtil
         FixCalculatedNumericByteOrder(mantissa);
 
         Span<byte> padded = stackalloc byte[12];
-        mantissa.CopyTo(padded.Slice(12 - mantissa.Length));
+        mantissa.CopyTo(padded[(12 - mantissa.Length)..]);
 
-        uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(0, 4));
+        uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded[..4]);
         uint mid = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(4, 4));
         uint lo = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(8, 4));
         bool negative = payload[3] != 0;

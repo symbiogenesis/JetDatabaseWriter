@@ -1243,7 +1243,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return string.Empty;
         }
 
-        return fileName.Substring(dot + 1).ToLowerInvariant();
+        return fileName[(dot + 1)..].ToLowerInvariant();
     }
 
     // ── Cascade-on-delete for complex (Attachment / MultiValue) columns ──

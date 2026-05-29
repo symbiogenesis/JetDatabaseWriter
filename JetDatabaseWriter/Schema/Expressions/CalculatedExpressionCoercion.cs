@@ -119,7 +119,7 @@ internal static class CalculatedExpressionCoercion
     internal static string NormalizeFunctionName(string name)
     {
         string upperName = name.ToUpperInvariant();
-        return upperName.EndsWith('$') ? upperName.Substring(0, upperName.Length - 1) : upperName;
+        return upperName.EndsWith('$') ? upperName[..^1] : upperName;
     }
 
     internal static bool TryGetBuiltinConstant(string name, out object value)

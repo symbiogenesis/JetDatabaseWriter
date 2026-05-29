@@ -64,7 +64,7 @@ internal static partial class CalculatedExpressionTextFunctions
     private static string Left(string text, int count)
     {
         count = Math.Clamp(count, 0, text.Length);
-        return text.Substring(0, count);
+        return text[..count];
     }
 
     private static string Right(string text, int count)
@@ -138,11 +138,11 @@ internal static partial class CalculatedExpressionTextFunctions
         StringComparison comparison = function.Count > 5 ? CompareOptions(function.Arg(5)) : StringComparison.OrdinalIgnoreCase;
         if (start > text.Length || search.Length == 0 || count == 0)
         {
-            return start > text.Length ? string.Empty : text.Substring(start - 1);
+            return start > text.Length ? string.Empty : text[(start - 1)..];
         }
 
-        string prefix = text.Substring(0, start - 1);
-        string tail = text.Substring(start - 1);
+        string prefix = text[..(start - 1)];
+        string tail = text[(start - 1)..];
         var builder = new StringBuilder(Math.Min(MaxGeneratedTextLength, prefix.Length + tail.Length));
         AppendGeneratedText(builder, prefix);
         int replacements = 0;

@@ -519,7 +519,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     private static string MakeTableName(string prefix) =>
-        $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
+        $"{prefix}_{Guid.NewGuid():N}"[..Math.Min(18, prefix.Length + 11)];
 
     private static async ValueTask CreateWideTDefTableAsync(
         AccessWriter writer,

@@ -33,7 +33,7 @@ internal static class StreamReadExtensions
         int totalRead = 0;
         while (totalRead < minimumBytes)
         {
-            int bytesRead = await stream.ReadAsync(buffer.Slice(totalRead), cancellationToken).ConfigureAwait(false);
+            int bytesRead = await stream.ReadAsync(buffer[totalRead..], cancellationToken).ConfigureAwait(false);
             if (bytesRead == 0)
             {
                 if (throwOnEndOfStream)

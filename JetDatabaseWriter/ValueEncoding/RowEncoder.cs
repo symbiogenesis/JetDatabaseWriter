@@ -269,7 +269,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         payload[3] = negative ? (byte)0x80 : (byte)0x00;
 
         mantissa.Slice(8, 4).CopyTo(payload.AsSpan(4, 4));
-        mantissa.Slice(0, 4).CopyTo(payload.AsSpan(8, 4));
+        mantissa[..4].CopyTo(payload.AsSpan(8, 4));
         mantissa.Slice(4, 4).CopyTo(payload.AsSpan(12, 4));
         return payload;
     }

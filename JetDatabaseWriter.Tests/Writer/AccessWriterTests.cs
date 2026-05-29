@@ -383,7 +383,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_NewTable_AppearsInListTables(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -409,7 +409,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_NewTable_HasCorrectColumnCount(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -435,7 +435,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_NewTable_StartsEmpty(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -470,7 +470,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_NewTable_RowsEnumerationYieldsNothing(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -567,7 +567,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_ThenInsert_DataIsReadable(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -599,7 +599,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task DropTable_ExistingTable_RemovesFromListTables(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
 
         // Round-trip: create → verify → drop → verify
         var columns = new List<ColumnDefinition>
@@ -636,7 +636,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         List<string> originalTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
         var columns = new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
@@ -701,7 +701,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_WithVariousTypes_ColumnsHaveCorrectClrTypes(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TypeTest_{Guid.NewGuid():N}".Substring(0, 20);
+        string newTableName = $"TypeTest_{Guid.NewGuid():N}"[..20];
 
         var columns = new List<ColumnDefinition>
         {
@@ -736,7 +736,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRow_WithVariousTypes_ValuesRoundtrip(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string newTableName = $"TypeRT_{Guid.NewGuid():N}".Substring(0, 18);
+        string newTableName = $"TypeRT_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -800,7 +800,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"DtEpoch_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"DtEpoch_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -869,7 +869,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"NumBnd_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"NumBnd_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -914,7 +914,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"GenIns_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"GenIns_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -940,7 +940,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRowGeneric_DataIsReadableBack(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"GenRT_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"GenRT_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -983,7 +983,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRowsGeneric_ReturnsCorrectInsertCount(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"GenBulk_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"GenBulk_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1005,7 +1005,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRowsGeneric_IncreasesRowCount(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"GenCnt_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"GenCnt_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1033,7 +1033,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRowsGeneric_DataIsReadableBack(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"GenRB_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"GenRB_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1134,7 +1134,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task InsertRow_WrongColumnCount_ThrowsArgumentException(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"ColCnt_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"ColCnt_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1160,7 +1160,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Memo_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Memo_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1208,7 +1208,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"MemoNul_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"MemoNul_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1259,7 +1259,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"MemoOv_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"MemoOv_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1296,7 +1296,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"OleOv_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"OleOv_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1330,7 +1330,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             {
                 byte[] raw => raw,
                 string s when s.StartsWith("data:application/octet-stream;base64,", StringComparison.Ordinal)
-                    => Convert.FromBase64String(s.Substring("data:application/octet-stream;base64,".Length)),
+                    => Convert.FromBase64String(s["data:application/octet-stream;base64,".Length..]),
                 _ => throw new InvalidOperationException($"Unexpected OLE cell shape: {cell.GetType().FullName}"),
             };
             Assert.Equal(oversized, roundTripped);
@@ -1347,7 +1347,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"OleGen_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"OleGen_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1388,7 +1388,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"OleLim_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"OleLim_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1421,7 +1421,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_DuplicateName_ThrowsInvalidOperationException(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Dup_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Dup_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1440,7 +1440,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task DeleteRows_DoesNotCorruptRemainingRows(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"DelChk_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"DelChk_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1481,7 +1481,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task UpdateRows_PreservesNonUpdatedColumns(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"UpdPrv_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"UpdPrv_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1524,7 +1524,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_GuidColumn_RoundtripsCorrectly(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Guid_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Guid_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1555,7 +1555,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_ByteArrayColumn_RoundtripsCorrectly(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Blob_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Blob_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1586,7 +1586,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_InsertMany_AllRowsReadable(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Multi_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Multi_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {
@@ -1674,7 +1674,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task DropTable_ThenRecreate_Succeeds(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = $"Recr_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"Recr_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>
         {

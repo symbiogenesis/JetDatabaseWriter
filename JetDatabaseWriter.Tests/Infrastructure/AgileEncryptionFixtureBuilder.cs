@@ -397,7 +397,7 @@ internal static class AgileEncryptionFixtureBuilder
         // every entry; we then overwrite only the slots actually in use.
         Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4.SectorSize);
         fatSpan.Fill(0xFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(fatSectorIndex * 4, 4), Constants.CompoundFile.FatSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan[..4], Constants.CompoundFile.FatSect);
         BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(dirSectorIndex * 4, 4), Constants.CompoundFile.EndOfChain);
 
         WriteFatChain(fatSpan, eiStartSector, eiSectors);

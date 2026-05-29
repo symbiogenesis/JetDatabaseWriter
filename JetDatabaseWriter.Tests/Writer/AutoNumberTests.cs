@@ -43,7 +43,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             return;
         }
 
-        string tableName = $"AI_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"AI_{Guid.NewGuid():N}"[..18];
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
@@ -91,7 +91,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             return;
         }
 
-        string tableName = $"AIF_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"AIF_{Guid.NewGuid():N}"[..18];
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
@@ -123,7 +123,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             return;
         }
 
-        string tableName = $"AID_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"AID_{Guid.NewGuid():N}"[..18];
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
@@ -171,7 +171,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             return;
         }
 
-        string tableName = $"AIE_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"AIE_{Guid.NewGuid():N}"[..18];
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
@@ -219,7 +219,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             return;
         }
 
-        string tableName = $"AIU_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"AIU_{Guid.NewGuid():N}"[..18];
 
         await using AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
 

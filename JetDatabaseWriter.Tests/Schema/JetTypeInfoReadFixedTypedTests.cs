@@ -296,7 +296,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         row[0] = negative ? (byte)0x80 : (byte)0x00;
 
         Span<byte> magnitudeLe = stackalloc byte[16];
-        BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(0, 4), lo);
+        BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe[..4], lo);
         BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(4, 4), mid);
         BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(8, 4), hi);
 

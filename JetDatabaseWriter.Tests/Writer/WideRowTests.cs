@@ -205,7 +205,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
             new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        string tableName = $"NM{columnCount}_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"NM{columnCount}_{Guid.NewGuid():N}"[..18];
 
         var columns = new List<ColumnDefinition>(columnCount);
         for (int i = 0; i < columnCount; i++)

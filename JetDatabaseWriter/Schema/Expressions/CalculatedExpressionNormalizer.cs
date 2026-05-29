@@ -15,7 +15,7 @@ internal static class CalculatedExpressionNormalizer
         string trimmed = expression.Trim();
         if (trimmed.StartsWith('='))
         {
-            trimmed = trimmed.Substring(1).TrimStart();
+            trimmed = trimmed[1..].TrimStart();
         }
 
         var builder = new StringBuilder(trimmed.Length + 16);
@@ -165,7 +165,7 @@ internal static class CalculatedExpressionNormalizer
                         charIndex++;
                     }
 
-                    result.Add(new Token(TokenKind.Value, expression.Substring(start, charIndex - start)));
+                    result.Add(new Token(TokenKind.Value, expression[start..charIndex]));
                     continue;
                 }
 
@@ -183,7 +183,7 @@ internal static class CalculatedExpressionNormalizer
                         charIndex++;
                     }
 
-                    string text = expression.Substring(start, charIndex - start);
+                    string text = expression[start..charIndex];
                     result.Add(new Token(WordOperators.ContainsKey(text) ? TokenKind.Word : TokenKind.Identifier, text));
                     continue;
                 }
@@ -204,7 +204,7 @@ internal static class CalculatedExpressionNormalizer
                         charIndex++;
                     }
 
-                    result.Add(new Token(TokenKind.Value, expression.Substring(start, charIndex - start)));
+                    result.Add(new Token(TokenKind.Value, expression[start..charIndex]));
                     continue;
                 }
 
@@ -391,7 +391,7 @@ internal static class CalculatedExpressionNormalizer
         {
             if (name.EndsWith('$'))
             {
-                name = name.Substring(0, name.Length - 1);
+                name = name[..^1];
             }
 
             this.Expect(TokenKind.OpenParen, "(");

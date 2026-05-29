@@ -2521,7 +2521,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        int terminator = value.Slice(offset).IndexOf((byte)0x00);
+        int terminator = value[offset..].IndexOf((byte)0x00);
         if (terminator < 0)
         {
             return false;

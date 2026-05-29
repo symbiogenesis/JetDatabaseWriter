@@ -418,22 +418,22 @@ public sealed class CompoundFileReaderTests
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);          // v3
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);          // 2^9 = 512
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);          // 2^6 = 64
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 110);        // NumFatSectors > 109
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);          // FirstDirSector
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 0);          // MiniStreamCutoff = 0 (all regular FAT)
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), 0xFFFFFFFE); // FirstMiniFat = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), 0);          // NumMiniFatSectors
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 3);          // FirstDifatSector = sector 3
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 1);          // NumDifatSectors = 1
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), 2);          // DIFAT[0] = sector 2
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);          // v3
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1C..], 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);          // 2^9 = 512
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);          // 2^6 = 64
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 110);        // NumFatSectors > 109
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);          // FirstDirSector
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 0);          // MiniStreamCutoff = 0 (all regular FAT)
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], 0xFFFFFFFE); // FirstMiniFat = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], 0);          // NumMiniFatSectors
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 3);          // FirstDifatSector = sector 3
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 1);          // NumDifatSectors = 1
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], 2);          // DIFAT[0] = sector 2
         for (int i = 1; i < 109; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
@@ -488,14 +488,14 @@ public sealed class CompoundFileReaderTests
         e.Clear();
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
         nameBytes.CopyTo(e);
-        BinaryPrimitives.WriteUInt16LittleEndian(e.Slice(0x40), (ushort)(nameBytes.Length + 2));
+        BinaryPrimitives.WriteUInt16LittleEndian(e[0x40..], (ushort)(nameBytes.Length + 2));
         e[0x42] = objectType;
         e[0x43] = 0x01;
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44), 0xFFFFFFFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48), 0xFFFFFFFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C), child);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x74), startSector);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x78), sizeLow);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x44..], 0xFFFFFFFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x48..], 0xFFFFFFFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x4C..], child);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x74..], startSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x78..], sizeLow);
     }
 
     // ── CVE-2019-0560 analog: OLE info disclosure via sector padding ──
@@ -528,22 +528,22 @@ public sealed class CompoundFileReaderTests
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);          // 2^9 = 512
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);          // 2^6 = 64
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);          // NumFatSectors = 1
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);          // FirstDirSector = 0
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 0);          // MiniStreamCutoff = 0 (all regular FAT)
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), 0xFFFFFFFE); // FirstMiniFat = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), 0);          // NumMiniFatSectors
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE); // FirstDifatSector = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);          // NumDifatSectors = 0
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), 2);          // DIFAT[0] = sector 2 (FAT)
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1C..], 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);          // 2^9 = 512
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);          // 2^6 = 64
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 1);          // NumFatSectors = 1
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);          // FirstDirSector = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 0);          // MiniStreamCutoff = 0 (all regular FAT)
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], 0xFFFFFFFE); // FirstMiniFat = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], 0);          // NumMiniFatSectors
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 0xFFFFFFFE); // FirstDifatSector = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 0);          // NumDifatSectors = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], 2);          // DIFAT[0] = sector 2 (FAT)
         for (int i = 1; i < 109; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
@@ -614,22 +614,22 @@ public sealed class CompoundFileReaderTests
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);          // NumFatSectors
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);          // FirstDirSector
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 0);          // MiniStreamCutoff = 0
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), 0xFFFFFFFE); // FirstMiniFat = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE); // FirstDifatSector = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), 3);          // DIFAT[0] = sector 3 (FAT)
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1C..], 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 1);          // NumFatSectors
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);          // FirstDirSector
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 0);          // MiniStreamCutoff = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], 0xFFFFFFFE); // FirstMiniFat = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 0xFFFFFFFE); // FirstDifatSector = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], 3);          // DIFAT[0] = sector 3 (FAT)
         for (int i = 1; i < 109; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
@@ -774,22 +774,22 @@ public sealed class CompoundFileReaderTests
         // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, Ss);
         Constants.CompoundFile.Signature.CopyTo(h);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 4096);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), (uint)firstMiniFatSector);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), miniFatSectors);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), (uint)fatSector);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1C..], 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 4096);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], (uint)firstMiniFatSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], miniFatSectors);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 0xFFFFFFFE);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], (uint)fatSector);
         for (int i = 1; i < 109; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
@@ -918,22 +918,22 @@ public sealed class CompoundFileReaderTests
         e.Clear();
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
         nameBytes.CopyTo(e);
-        BinaryPrimitives.WriteUInt16LittleEndian(e.Slice(0x40), (ushort)(nameBytes.Length + 2));
+        BinaryPrimitives.WriteUInt16LittleEndian(e[0x40..], (ushort)(nameBytes.Length + 2));
         e[0x42] = objectType;
         e[0x43] = 0x01; // color = black
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44), left);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48), right);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C), child);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x74), startSector);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x78), sizeLow);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x44..], left);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x48..], right);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x4C..], child);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x74..], startSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x78..], sizeLow);
     }
 
     private static void WriteDirEntryUnused(byte[] file, int offset)
     {
         Span<byte> e = file.AsSpan(offset, 128);
         e.Clear();
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44), 0xFFFFFFFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48), 0xFFFFFFFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C), 0xFFFFFFFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x44..], 0xFFFFFFFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x48..], 0xFFFFFFFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(e[0x4C..], 0xFFFFFFFF);
     }
 }

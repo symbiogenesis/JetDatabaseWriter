@@ -416,7 +416,7 @@ public sealed class DataRemanenceTests
         Assert.True(sortedIndex >= 0);
 
         int targetEnd = sortedIndex + 1 < starts.Count ? starts[sortedIndex + 1] : pageSize;
-        byte[] rowBytes = page.Slice(targetStart, targetEnd - targetStart).ToArray();
+        byte[] rowBytes = page[targetStart..targetEnd].ToArray();
 
         return new RowSnapshot(
             pageNumber,

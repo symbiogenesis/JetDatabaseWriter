@@ -964,7 +964,7 @@ internal static class EncryptionManager
         }
 #pragma warning restore CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
 
-        hash.Slice(0, 4).CopyTo(destination);
+        hash[..4].CopyTo(destination);
     }
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
@@ -1039,7 +1039,7 @@ internal static class EncryptionManager
 
         string raw = Encoding.Unicode.GetString(decoded);
         int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
-        return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
+        return nullIdx >= 0 ? raw[..nullIdx] : raw;
     }
 
     /// <summary>
@@ -1061,9 +1061,9 @@ internal static class EncryptionManager
         {
             int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
             Span<byte> hash = stackalloc byte[32];
-            OfficeCryptoPrimitives.HashSha256(utf8.Slice(0, utf8Len), hash);
+            OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
 
-            byte[] key = hash.Slice(0, 16).ToArray(); // AES-128
+            byte[] key = hash[..16].ToArray(); // AES-128
             CryptographicOperations.ZeroMemory(hash);
             return key;
         }

@@ -95,6 +95,6 @@ internal static class OfficeCryptoPrimitives
             return false;
         }
 
-        return CryptographicOperations.FixedTimeEquals(left.Slice(0, length), right.Slice(0, length));
+        return CryptographicOperations.FixedTimeEquals(left[..length], right[..length]);
     }
 }

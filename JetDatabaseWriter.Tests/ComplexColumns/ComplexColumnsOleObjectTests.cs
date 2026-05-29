@@ -254,7 +254,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         await ms.WriteAsync(sourceBytes, TestContext.Current.CancellationToken);
         ms.Position = 0;
 
-        string tableName = $"OleRT_{Guid.NewGuid():N}".Substring(0, 18);
+        string tableName = $"OleRT_{Guid.NewGuid():N}"[..18];
         var columns = new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
@@ -331,7 +331,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             {
                 try
                 {
-                    return Convert.FromBase64String(value.Substring(comma + 1));
+                    return Convert.FromBase64String(value[(comma + 1)..]);
                 }
                 catch (FormatException)
                 {

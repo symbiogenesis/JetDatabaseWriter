@@ -2653,7 +2653,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ? projectIndexes(existingIndexes, newDefs)
             : IndexHelpers.DefaultIndexProjection(existingIndexes, newDefs);
 
-        string tempName = $"~tmp_{Guid.NewGuid():N}".Substring(0, 18);
+        string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
         CatalogEntry tempEntry = await this.GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);

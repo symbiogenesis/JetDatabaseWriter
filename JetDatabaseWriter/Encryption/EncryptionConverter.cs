@@ -465,12 +465,12 @@ internal static class EncryptionConverter
         {
             int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);
             Span<byte> hash = stackalloc byte[32];
-            OfficeCryptoPrimitives.HashSha256(utf8.Slice(0, utf8Len), hash);
+            OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
 
-            CryptographicOperations.ZeroMemory(utf8.Slice(0, utf8Len));
+            CryptographicOperations.ZeroMemory(utf8[..utf8Len]);
 
             byte[] key = new byte[16];
-            hash.Slice(0, 16).CopyTo(key);
+            hash[..16].CopyTo(key);
             CryptographicOperations.ZeroMemory(hash);
             return key;
         }

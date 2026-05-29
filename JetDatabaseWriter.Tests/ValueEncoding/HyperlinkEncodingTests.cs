@@ -78,7 +78,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Writer_TypedHyperlinkColumn_SetsFlagAndRoundTripsValue()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
 
         var link = new Hyperlink("Docs", "https://example.com/docs", "intro", "Hover tip");
 
@@ -113,7 +113,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Writer_IsHyperlinkOnStringColumn_ProducesSameOnDiskShape()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -167,7 +167,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Reader_PocoMapping_BindsHyperlinkAndStringPropertiesBothWays()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
         var link = new Hyperlink("Site", "https://example.com", "x", "y");
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -196,7 +196,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Reader_RowsAsStrings_ReturnsRawEncodedFormForHyperlinkColumn()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
         var link = new Hyperlink("Site", "https://example.com", "x");
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -228,7 +228,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Writer_HyperlinkAllFourPartsAtLargeLength_RoundTrips()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
 
         // 1024 chars per part stays well under any single-part Access limit
         // and produces a UCS-2 payload (~8 KB) that comfortably exceeds the
@@ -273,7 +273,7 @@ public sealed class HyperlinkEncodingTests
     public async Task Writer_HyperlinkWithEmbeddedHashInEveryPart_RoundTrips()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
 
         var link = new Hyperlink(
             displayText: "Title # with hash",
@@ -311,7 +311,7 @@ public sealed class HyperlinkEncodingTests
     public async Task SchemaEvolution_AddRenameColumn_PreservesHyperlinkFlag()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+        string tableName = $"HL_{Guid.NewGuid():N}"[..16];
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {

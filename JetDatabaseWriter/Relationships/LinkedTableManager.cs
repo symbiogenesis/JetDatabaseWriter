@@ -579,8 +579,8 @@ internal static class LinkedTableManager
                     continue;
                 }
 
-                string key = part.Substring(0, separator).Trim();
-                string value = part.Substring(separator + 1).Trim();
+                string key = part[..separator].Trim();
+                string value = part[(separator + 1)..].Trim();
                 if (key.Equals("HDR", StringComparison.OrdinalIgnoreCase))
                 {
                     hasHeaderRow = value.Equals("YES", StringComparison.OrdinalIgnoreCase)
@@ -641,12 +641,12 @@ internal static class LinkedTableManager
             }
             else if (ch == ';' && parenthesisDepth == 0)
             {
-                yield return connectString.Substring(start, i - start);
+                yield return connectString[start..i];
                 start = i + 1;
             }
         }
 
-        yield return connectString.Substring(start);
+        yield return connectString[start..];
     }
 
     private static async ValueTask<string[]> ReadLinkedTextColumnNamesAsync(

@@ -1737,7 +1737,7 @@ internal static class FormatProbeApplication
             return 0;
         }
 
-        byte b0 = Convert.ToByte(compact.Substring(0, 2), 16);
+        byte b0 = Convert.ToByte(compact[..2], 16);
         byte b1 = Convert.ToByte(compact.Substring(2, 2), 16);
         byte b2 = Convert.ToByte(compact.Substring(4, 2), 16);
         byte b3 = Convert.ToByte(compact.Substring(6, 2), 16);
