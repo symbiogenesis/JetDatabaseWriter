@@ -646,7 +646,7 @@ internal static class LongRowSuffixProbe
         }
 
         int seed = labNumber - seedBase;
-        return seed is >= 0 && seed < DaoLabRowCount ? seed : null;
+        return seed is >= 0 and < DaoLabRowCount ? seed : null;
     }
 
     private static void AppendSyntheticGroupSummary(StringBuilder sb, SuffixPatternTable table)
@@ -3853,7 +3853,7 @@ internal static class LongRowSuffixProbe
         }
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"- degree-16 factor candidates: {candidatePolynomials.Count}");
-        if (candidatePolynomials.Count > 0 && candidatePolynomials.Count <= 16)
+        if (candidatePolynomials.Count is > 0 and <= 16)
         {
             foreach (ushort p in candidatePolynomials)
             {
@@ -5887,7 +5887,7 @@ internal static class LongRowSuffixProbe
                     lastCharBefore508 = charIndex;
                 }
 
-                if (charIndex >= 250 && charIndex <= 260)
+                if (charIndex is >= 250 and <= 260)
                 {
                     sb.AppendLine(
                         CultureInfo.InvariantCulture,

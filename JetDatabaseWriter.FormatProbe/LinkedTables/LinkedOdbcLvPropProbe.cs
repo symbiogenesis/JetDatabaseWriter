@@ -114,7 +114,7 @@ internal static class LinkedOdbcLvPropProbe
         foreach (DataRow row in catalog.Rows)
         {
             int type = ToInt32(GetValue(row, "Type"));
-            if (type != Constants.SystemObjects.LinkedOdbcType && type != Constants.SystemObjects.LinkedTableType)
+            if (type is not Constants.SystemObjects.LinkedOdbcType and not Constants.SystemObjects.LinkedTableType)
             {
                 continue;
             }
@@ -466,7 +466,7 @@ internal static class LinkedOdbcLvPropProbe
     }
 
     private static bool IsPrintableReportCharacter(char character) =>
-        character >= ' ' && character <= '~';
+        character is >= ' ' and <= '~';
 
     private static string BlobState(byte[]? bytes) =>
         bytes is null || bytes.Length == 0
@@ -507,7 +507,7 @@ internal static class LinkedOdbcLvPropProbe
             {
                 _ = sb.Append("\\0");
             }
-            else if (character < ' ' && character != '\t')
+            else if (character is < ' ' and not '\t')
             {
                 _ = sb.Append(CultureInfo.InvariantCulture, $"\\u{(int)character:X4}");
             }

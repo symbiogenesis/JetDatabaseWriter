@@ -385,7 +385,7 @@ internal static class FormatProbeApplication
         Console.WriteLine($"owned-pages usage-map: row={ownedRow} page={ownedPage}");
         Console.WriteLine($"free-space usage-map: row={freeRow} page={freePage}");
 
-        if (ownedPage > 0 && ownedPage < 100000)
+        if (ownedPage is > 0 and < 100000)
         {
             byte[] usageMap = await rdr.ReadPageAsync(ownedPage);
             Console.WriteLine($"usage-map page {ownedPage}: tag={usageMap[0]:X2}{usageMap[1]:X2} numRows={BitConverter.ToUInt16(usageMap, 12)}");
@@ -957,7 +957,7 @@ internal static class FormatProbeApplication
         for (int i = 0; i < numCols; i++)
         {
             byte t = td[colStart + (i * 25)];
-            if (t == 0x11 || t == 0x12)
+            if (t is 0x11 or 0x12)
             {
                 return true;
             }
@@ -1440,7 +1440,7 @@ internal static class FormatProbeApplication
                 }
 
                 byte type = bytes[o + 0];
-                if (type == 0x11 || type == 0x12)
+                if (type is 0x11 or 0x12)
                 {
                     string id = jet4 ? Hex(bytes, o + 11, 4) : Hex(bytes, o + 9, 4);
                     complexCols.Add((i, colNames[i], type, id));

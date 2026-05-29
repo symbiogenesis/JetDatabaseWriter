@@ -74,12 +74,12 @@ internal static class CompoundFileReader
         ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.SectorShift, 2));
         ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MiniSectorShift, 2));
 
-        if (sectorShift != 9 && sectorShift != 12)
+        if (sectorShift is not 9 and not 12)
         {
             throw new InvalidDataException($"Unsupported CFB sector shift: {sectorShift}.");
         }
 
-        if (majorVersion != 3 && majorVersion != 4)
+        if (majorVersion is not 3 and not 4)
         {
             throw new InvalidDataException($"Unsupported CFB major version: {majorVersion}.");
         }
@@ -257,7 +257,7 @@ internal static class CompoundFileReader
 
             ReadOnlySpan<byte> entry = directory.AsSpan(off, Constants.CompoundFile.DirEntrySize);
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(0x40, 2));
-            if (nameLen == 0 || nameLen > 64)
+            if (nameLen is 0 or > 64)
             {
                 continue;
             }
@@ -420,8 +420,8 @@ internal static class CompoundFileReader
         int safety = 0;
         int limit = fat.Length + 16;
         uint cur = startSector;
-        while (cur != Constants.CompoundFile.EndOfChain
-            && cur != Constants.CompoundFile.FreeSect)
+        while (cur is not Constants.CompoundFile.EndOfChain
+            and not Constants.CompoundFile.FreeSect)
         {
             if (cur >= fat.Length)
             {

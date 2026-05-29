@@ -439,7 +439,7 @@ internal static class EncryptionManager
             //   0x01 = Office97 password only (no page encryption)
             //   0x02 = RC4 page encryption
             //   0x03 = RC4 + password
-            if (encFlag >= 0x01 && encFlag <= 0x03)
+            if (encFlag is >= 0x01 and <= 0x03)
             {
                 if (password.IsEmpty)
                 {

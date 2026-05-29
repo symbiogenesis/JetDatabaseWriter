@@ -30,7 +30,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         for (int i = 0; i < limit; i++)
         {
             ColumnInfo col = columns[i];
-            if (col.Type != ComplexType && col.Type != AttachmentType)
+            if (col.Type is not ComplexType and not AttachmentType)
             {
                 continue;
             }
@@ -82,7 +82,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         int numCols = Ru16(td, reader.TDef.NumCols);
         int numRealIdx = Ri32(td, reader.TDef.NumRealIdx);
-        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
+        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
@@ -99,7 +99,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             }
 
             byte type = td[offset + reader.ColumnDescriptor.TypeOff];
-            if (type != ComplexType && type != AttachmentType)
+            if (type is not ComplexType and not AttachmentType)
             {
                 continue;
             }
@@ -280,7 +280,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo col = columns[i];
-            if (col.Type != ComplexType && col.Type != AttachmentType)
+            if (col.Type is not ComplexType and not AttachmentType)
             {
                 continue;
             }

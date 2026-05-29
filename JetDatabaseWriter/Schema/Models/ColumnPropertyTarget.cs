@@ -47,8 +47,8 @@ internal sealed record ColumnPropertyTarget(
             return null;
         }
 
-        if (entry.DataType != Constants.ColumnTypes.TextType &&
-            entry.DataType != Constants.ColumnTypes.MemoType)
+        if (entry.DataType is not Constants.ColumnTypes.TextType and
+            not Constants.ColumnTypes.MemoType)
         {
             return null;
         }

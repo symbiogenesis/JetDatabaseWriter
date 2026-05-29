@@ -138,7 +138,7 @@ internal static class OfficeCryptoStandard
         int algIdHash = Ri32(hdr, 12);
         int keyBits = Ri32(hdr, 16);
 
-        if (algId != AlgIdAes128 && algId != AlgIdAes192 && algId != AlgIdAes256)
+        if (algId is not AlgIdAes128 and not AlgIdAes192 and not AlgIdAes256)
         {
             throw new NotSupportedException(
                 $"Standard encryption AlgID 0x{algId:X4} is not supported (only AES-128/192/256).");
@@ -338,7 +338,7 @@ internal static class OfficeCryptoStandard
         }
 
         long decryptedSize = Ri64(encryptedPackage, 0);
-        if (decryptedSize < 0 || decryptedSize > int.MaxValue)
+        if (decryptedSize is < 0 or > int.MaxValue)
         {
             throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }

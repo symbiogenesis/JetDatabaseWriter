@@ -921,7 +921,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
-        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == ComplexType || c.Type == AttachmentType);
+        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type is ComplexType or AttachmentType);
         if (hasComplex)
         {
             complexSubtypes = await this.complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1177,12 +1177,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int numRealIdx = Ri32(td, this.TDef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
-        if (numIdx <= 0 || numIdx > Constants.TableDefinition.MaxIndexes)
+        if (numIdx is <= 0 or > Constants.TableDefinition.MaxIndexes)
         {
             return [];
         }
 
-        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
+        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
@@ -1693,7 +1693,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             bool canUseDirectMap = projectedColumns.Count > 0
-                && projectedColumns.TrueForAll(static projection => projection.Column.Type != ComplexType && projection.Column.Type != AttachmentType);
+                && projectedColumns.TrueForAll(static projection => projection.Column.Type is not ComplexType and not AttachmentType);
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {

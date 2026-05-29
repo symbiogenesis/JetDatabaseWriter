@@ -388,7 +388,7 @@ internal sealed class LockFileSlotWriter : IDisposable
 
             // ASCII subset only — match Access's behaviour for slot text and avoid
             // pulling in OEM code-page resolution.
-            field[i] = (c >= 0x20 && c < 0x7F) ? (byte)c : (byte)'?';
+            field[i] = (c is >= (char)0x20 and < (char)0x7F) ? (byte)c : (byte)'?';
         }
 
         // Zero-pad the rest (already zero from the array initialiser, but be explicit

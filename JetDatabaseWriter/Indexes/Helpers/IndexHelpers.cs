@@ -345,7 +345,7 @@ internal static class IndexHelpers
 
         foreach (IndexMetadata idx in existing)
         {
-            if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
+            if (idx.Kind is not IndexKind.Normal and not IndexKind.PrimaryKey)
             {
                 continue;
             }
@@ -423,7 +423,7 @@ internal static class IndexHelpers
             }
 
             object? v = row[idx];
-            if (v == null || v is DBNull)
+            if (v is null or DBNull)
             {
                 return null;
             }
@@ -463,7 +463,7 @@ internal static class IndexHelpers
                     decimal d = c.ToDecimal(CultureInfo.InvariantCulture);
                     sb.Append('N').Append(':').Append(d.ToString(CultureInfo.InvariantCulture));
                 }
-                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
+                catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
                 {
                     sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
                 }
@@ -529,7 +529,7 @@ internal static class IndexHelpers
                 total += pieces[i].Length;
             }
         }
-        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
         {
             return null;
         }
@@ -588,7 +588,7 @@ internal static class IndexHelpers
                 total += pieces[i].Length;
             }
         }
-        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
         {
             return null;
         }

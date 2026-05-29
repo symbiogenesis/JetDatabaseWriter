@@ -335,7 +335,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
 
     private static int RelationshipCatalogInt32(object? value)
     {
-        if (value == null || value is DBNull)
+        if (value is null or DBNull)
         {
             return 0;
         }
@@ -344,7 +344,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
         {
             return Convert.ToInt32(value, CultureInfo.InvariantCulture);
         }
-        catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
         {
             return 0;
         }

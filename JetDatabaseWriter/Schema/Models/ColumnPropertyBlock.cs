@@ -54,7 +54,7 @@ internal sealed class ColumnPropertyBlock
         }
 
         uint magic = Ru32(blob, 0);
-        if (magic != MagicMr2 && magic != MagicKkd)
+        if (magic is not MagicMr2 and not MagicKkd)
         {
             return null;
         }

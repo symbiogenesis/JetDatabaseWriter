@@ -418,7 +418,7 @@ internal static class IndexBTreeBuilder
             // DecodeIntermediateChildPointer) accepts both endiannesses for
             // back-compat with previously-written test fixtures.
             long cp = e.ChildPage;
-            if (cp < 0 || cp > 0xFFFFFFFFL)
+            if (cp is < 0 or > 0xFFFFFFFFL)
             {
                 throw new ArgumentOutOfRangeException(nameof(entries), "Child page exceeds 32-bit range.");
             }

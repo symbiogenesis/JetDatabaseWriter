@@ -359,7 +359,7 @@ internal static partial class GeneralTextIndexEncoder
     {
         for (int index = 0; index < text.Length; index++)
         {
-            if (index == V2010SuffixBoundaryPreviousIndex || index == V2010SuffixBoundaryIndex)
+            if (index is V2010SuffixBoundaryPreviousIndex or V2010SuffixBoundaryIndex)
             {
                 continue;
             }

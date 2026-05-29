@@ -128,7 +128,7 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            if (objType != Constants.SystemObjects.LinkedTableType && objType != Constants.SystemObjects.LinkedOdbcType)
+            if (objType is not Constants.SystemObjects.LinkedTableType and not Constants.SystemObjects.LinkedOdbcType)
             {
                 continue;
             }
@@ -728,9 +728,9 @@ internal static class LinkedTableManager
             return Path.GetFullPath(path, fullBaseDirectory);
         }
         catch (Exception ex) when (
-            ex is ArgumentException ||
-            ex is NotSupportedException ||
-            ex is PathTooLongException)
+            ex is ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
         {
             throw new UnauthorizedAccessException(
                 $"Invalid path in {context}: '{path}'.",
@@ -810,10 +810,10 @@ internal static class LinkedTableManager
             throw;
         }
         catch (Exception ex) when (
-            ex is IOException ||
-            ex is ArgumentException ||
-            ex is NotSupportedException ||
-            ex is PathTooLongException)
+            ex is IOException or
+            ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
         {
             throw new UnauthorizedAccessException(
                 $"Unable to verify {context} '{path}' for filesystem reparse points.",

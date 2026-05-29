@@ -79,7 +79,7 @@ internal static class IndexKeyEncoder
     /// .NET representation expected by <paramref name="columnType"/>.</exception>
     public static byte[] EncodeEntry(byte columnType, object? value, bool ascending = true)
     {
-        bool isNull = value is null || value is DBNull;
+        bool isNull = value is null or DBNull;
         if (isNull)
         {
             return [ascending ? AscendingNull : DescendingNull];
@@ -114,7 +114,7 @@ internal static class IndexKeyEncoder
         // + extra/unprintable/crazy streams + END_EXTRA_TEXT). The encoder
         // applies its own internal bit-flip for descending — the bulk flip
         // below is intentionally bypassed.
-        if (columnType == TextType || columnType == MemoType)
+        if (columnType is TextType or MemoType)
         {
             return GeneralLegacyTextIndexEncoder.Encode(ToText(value!), ascending);
         }
@@ -426,7 +426,7 @@ internal static class IndexKeyEncoder
     /// <exception cref="NotSupportedException">Thrown when the rescaled mantissa exceeds the 16-byte NUMERIC field.</exception>
     public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)
     {
-        bool isNull = value is null || value is DBNull;
+        bool isNull = value is null or DBNull;
         if (isNull)
         {
             return [ascending ? AscendingNull : DescendingNull];
@@ -525,7 +525,7 @@ internal static class IndexKeyEncoder
     {
         Guard.InRange(declaredScale, 0, 28, nameof(declaredScale));
 
-        if (value is null || value is DBNull)
+        if (value is null or DBNull)
         {
             return EncodeNumericEntry(null, ascending, declaredScale, legacy);
         }
@@ -558,7 +558,7 @@ internal static class IndexKeyEncoder
         int max = 0;
         foreach (object? v in values)
         {
-            if (v is null || v is DBNull)
+            if (v is null or DBNull)
             {
                 continue;
             }

@@ -380,7 +380,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
                 {
                     object v = row[o];
                     Assert.True(
-                        v is System.DateTime || v is System.DBNull,
+                        v is System.DateTime or System.DBNull,
                         $"Date column at ordinal {o} produced {v?.GetType().FullName ?? "null"}");
                     if (v is System.DateTime)
                     {

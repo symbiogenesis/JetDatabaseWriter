@@ -117,7 +117,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         // distinguishing assertion so the test name + message tell the
         // story.
         Assert.True(
-            version == 0 || version == 1,
+            version is 0 or 1,
             $"Unexpected sort-order version {version} for LCID 0x{lcid:X4} in NorthwindTraders.");
     }
 
@@ -240,7 +240,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         {
             int desc = colStart + (i * 25);
             byte colType = fileBytes[desc + 0];
-            if (colType != TextType && colType != MemoType)
+            if (colType is not TextType and not MemoType)
             {
                 continue;
             }

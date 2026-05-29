@@ -116,17 +116,17 @@ internal static class BinaryStringParser
 
     private static int HexToNibble(char value)
     {
-        if (value >= '0' && value <= '9')
+        if (value is >= '0' and <= '9')
         {
             return value - '0';
         }
 
-        if (value >= 'A' && value <= 'F')
+        if (value is >= 'A' and <= 'F')
         {
             return value - 'A' + 10;
         }
 
-        if (value >= 'a' && value <= 'f')
+        if (value is >= 'a' and <= 'f')
         {
             return value - 'a' + 10;
         }

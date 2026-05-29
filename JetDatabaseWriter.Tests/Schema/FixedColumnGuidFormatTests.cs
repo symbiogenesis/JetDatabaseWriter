@@ -70,7 +70,7 @@ public sealed class FixedColumnGuidFormatTests
         // must all be lowercase (no A–F uppercase characters).
         foreach (char c in formatted)
         {
-            if (c >= 'A' && c <= 'F')
+            if (c is >= 'A' and <= 'F')
             {
                 Assert.Fail($"Expected lowercase hex but found uppercase '{c}' in '{formatted}'.");
             }

@@ -329,7 +329,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }
@@ -431,7 +431,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }
@@ -502,7 +502,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             if (fileBytes[pageStart] == 0x01)
             {
                 int nr = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(pageStart + 12, 2));
-                if (nr > 0 && nr < 200)
+                if (nr is > 0 and < 200)
                 {
                     return p;
                 }
@@ -612,7 +612,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }
@@ -706,7 +706,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }
@@ -810,7 +810,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }
@@ -917,7 +917,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
 
             int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr == 0 || nr > 200)
+            if (nr is 0 or > 200)
             {
                 continue;
             }

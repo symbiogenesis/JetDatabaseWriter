@@ -793,7 +793,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
 
-        bool isComplexCol = complexCol.Type == AttachmentType || complexCol.Type == ComplexType;
+        bool isComplexCol = complexCol.Type is AttachmentType or ComplexType;
         if (!isComplexCol)
         {
             throw new NotSupportedException(
@@ -1288,7 +1288,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var complexCols = new List<ColumnInfo>();
         foreach (ColumnInfo col in parentDef.Columns)
         {
-            if (col.Type == AttachmentType || col.Type == ComplexType)
+            if (col.Type is AttachmentType or ComplexType)
             {
                 complexCols.Add(col);
             }
@@ -1762,7 +1762,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var complexCols = new List<ColumnInfo>();
         foreach (ColumnInfo col in parentDef.Columns)
         {
-            if (col.Type == AttachmentType || col.Type == ComplexType)
+            if (col.Type is AttachmentType or ComplexType)
             {
                 complexCols.Add(col);
             }

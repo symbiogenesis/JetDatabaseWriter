@@ -347,7 +347,7 @@ public abstract class AccessBase : IAccessBase
             for (int i = 0; i < value.Length; i++)
             {
                 char c = value[i];
-                if (c == '\0' || c > 0xFF)
+                if (c is '\0' or > (char)0xFF)
                 {
                     compressible = false;
                     break;
@@ -796,7 +796,7 @@ public abstract class AccessBase : IAccessBase
         int numRealIdx = Ri32(td, this.TDef.NumRealIdx);
 
         // Safety: corrupt or unusual TDEFs can report absurd index counts
-        if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
+        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }

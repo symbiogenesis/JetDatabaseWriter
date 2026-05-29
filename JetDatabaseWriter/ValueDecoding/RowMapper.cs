@@ -345,7 +345,7 @@ internal static class RowMapper<T>
             }
 
             object? value = row[i];
-            if (value == null || value is DBNull)
+            if (value is null or DBNull)
             {
                 continue;
             }

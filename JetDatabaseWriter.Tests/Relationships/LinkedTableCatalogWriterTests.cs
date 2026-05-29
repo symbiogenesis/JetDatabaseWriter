@@ -916,7 +916,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             try
             {
                 Assert.True(
-                    root[0] == Constants.IndexLeafPage.PageTypeLeaf || root[0] == Constants.IndexLeafPage.PageTypeIntermediate,
+                    root[0] is Constants.IndexLeafPage.PageTypeLeaf or Constants.IndexLeafPage.PageTypeIntermediate,
                     $"Expected MSysObjects index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
                 root[0] = 0x01;
                 await writer.WritePageAsync(firstDp, root, cancellationToken);

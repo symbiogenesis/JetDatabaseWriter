@@ -20,7 +20,7 @@ internal readonly record struct DelimitedTextFormat
 
     private static void ValidateDelimiter(char delimiter)
     {
-        if (delimiter == '\0' || delimiter == '"' || delimiter == '\r' || delimiter == '\n')
+        if (delimiter is '\0' or '"' or '\r' or '\n')
         {
             throw new ArgumentException("Delimited text separator cannot be NUL, quote, carriage return, or line feed.", nameof(delimiter));
         }

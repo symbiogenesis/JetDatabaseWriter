@@ -265,7 +265,7 @@ internal static class IndexLeafPageBuilder
 
             // Data page: 24-bit big-endian.
             long dp = e.DataPage;
-            if (dp < 0 || dp > 0xFFFFFF)
+            if (dp is < 0 or > 0xFFFFFF)
             {
                 throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dp} exceeds the 24-bit range.");
             }

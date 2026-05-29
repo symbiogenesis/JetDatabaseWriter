@@ -920,7 +920,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 {
                     // Forward Normal (1..N column) and PrimaryKey indexes;
                     // FK indexes are reconstructed from MSysRelationships.
-                    if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
+                    if (idx.Kind is not IndexKind.Normal and not IndexKind.PrimaryKey)
                     {
                         continue;
                     }
@@ -2197,8 +2197,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private static bool ValuesEqual(object? left, object? right)
     {
-        bool leftDbNull = left == null || left is DBNull;
-        bool rightDbNull = right == null || right is DBNull;
+        bool leftDbNull = left is null or DBNull;
+        bool rightDbNull = right is null or DBNull;
         if (leftDbNull || rightDbNull)
         {
             return leftDbNull && rightDbNull;
@@ -2253,7 +2253,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case TypeCode.Decimal:
                 return NumericType;
             case TypeCode.String:
-                return column.MaxLength > 0 && column.MaxLength <= 255 ? TextType : MemoType;
+                return column.MaxLength is > 0 and <= 255 ? TextType : MemoType;
             default:
                 if (clrType == typeof(Guid))
                 {
@@ -2269,14 +2269,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (clrType == typeof(byte[]))
                 {
-                    return column.MaxLength > 0 && column.MaxLength <= 255 ? BinaryType : OleType;
+                    return column.MaxLength is > 0 and <= 255 ? BinaryType : OleType;
                 }
 
                 throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
         }
     }
 
-    internal static bool IsVariableType(byte type) => type == TextType || type == BinaryType || type == MemoType || type == OleType;
+    internal static bool IsVariableType(byte type) => type is TextType or BinaryType or MemoType or OleType;
 
     internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
     {
@@ -3708,7 +3708,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-test-failures.md.
             int numRealIdx = Ri32(page, this.TDef.NumRealIdx);
-            if (numRealIdx > 0 && numRealIdx <= Constants.TableDefinition.MaxIndexes)
+            if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {
                 int slotEnd = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
@@ -4051,7 +4051,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (column.Type != MemoType && column.Type != OleType)
+            if (column.Type is not MemoType and not OleType)
             {
                 continue;
             }

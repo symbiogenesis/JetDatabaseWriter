@@ -408,7 +408,7 @@ public sealed class CompressedUnicodeFlagTests
         for (int i = 0; i < value.Length; i++)
         {
             char c = value[i];
-            if (c == '\0' || c > 0xFF)
+            if (c is '\0' or > (char)0xFF)
             {
                 throw new InvalidOperationException("Compressed test payload must contain only non-zero Latin-1 characters.");
             }

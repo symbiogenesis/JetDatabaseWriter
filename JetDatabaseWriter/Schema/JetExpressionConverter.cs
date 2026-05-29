@@ -23,7 +23,7 @@ internal static class JetExpressionConverter
     /// <exception cref="NotSupportedException">If the value's type cannot be expressed as a Jet literal (e.g. <c>byte[]</c>).</exception>
     public static string? ToJetExpression(object? value)
     {
-        if (value is null || value is DBNull)
+        if (value is null or DBNull)
         {
             return null;
         }

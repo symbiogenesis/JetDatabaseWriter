@@ -40,7 +40,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
             byte flags;
-            bool isComplex = type == AttachmentType || type == ComplexType;
+            bool isComplex = type is AttachmentType or ComplexType;
             if (isComplex)
             {
                 flags = Constants.ColumnDescriptorFlags.ComplexColumn;
@@ -190,7 +190,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             Wu16(page, o + writer.ColumnDescriptor.FixedOff, col.FixedOff);
             Wu16(page, o + writer.ColumnDescriptor.SzOff, col.Size);
 
-            if (col.Type == AttachmentType || col.Type == ComplexType)
+            if (col.Type is AttachmentType or ComplexType)
             {
                 Wi32(page, o + writer.ColumnDescriptor.MiscOff, col.Misc);
             }
@@ -561,7 +561,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
     private static int GetCalculatedDeclaredSize(byte type, int declaredSize)
     {
-        if (type == MemoType || type == OleType)
+        if (type is MemoType or OleType)
         {
             return 0;
         }

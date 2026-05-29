@@ -145,7 +145,7 @@ internal sealed class ConstraintRegistry(
             {
                 ColumnConstraint c = list[i];
                 object? value = values[i];
-                bool isNull = value is null || value is DBNull;
+                bool isNull = value is null or DBNull;
 
                 if (c.IsCalculated)
                 {
@@ -234,7 +234,7 @@ internal sealed class ConstraintRegistry(
             }
 
             object? value = values[i];
-            bool isNull = value is null || value is DBNull;
+            bool isNull = value is null or DBNull;
             if (isNull && !c.IsNullable)
             {
                 throw new InvalidOperationException(
@@ -366,7 +366,7 @@ internal sealed class ConstraintRegistry(
             // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. IsNullable
             // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format),
             // falling back to the legacy 0x08 bit only when LvProp is absent.
-            bool isComplex = col.Type == AttachmentType || col.Type == ComplexType;
+            bool isComplex = col.Type is AttachmentType or ComplexType;
             bool isNullable;
             bool isAutoIncrement = !isComplex && (col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
             if (isComplex)
@@ -417,7 +417,7 @@ internal sealed class ConstraintRegistry(
                 foreach (DataRow row in snapshot.Rows)
                 {
                     object cell = row[columnIndex];
-                    if (cell is null || cell is DBNull)
+                    if (cell is null or DBNull)
                     {
                         continue;
                     }

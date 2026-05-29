@@ -370,7 +370,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         for (int i = 2; i < 34; i++)
         {
             char ch = tableName[i];
-            if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F')))
+            if (ch is not (>= '0' and <= '9' or >= 'A' and <= 'F'))
             {
                 return false;
             }
@@ -861,8 +861,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 // bulk only when the encoder rejects a row or the page chain
                 // is malformed. Removes the "fall back to bulk for
                 // multi-level trees" branch.
-                if (rootPage[0] != Constants.IndexLeafPage.PageTypeIntermediate
-                    && rootPage[0] != Constants.IndexLeafPage.PageTypeLeaf)
+                if (rootPage[0] is not Constants.IndexLeafPage.PageTypeIntermediate
+                    and not Constants.IndexLeafPage.PageTypeLeaf)
                 {
                     this.LastIncrementalBail = $"C6 rootPage[0]={rootPage[0]:X2}";
                     return false;

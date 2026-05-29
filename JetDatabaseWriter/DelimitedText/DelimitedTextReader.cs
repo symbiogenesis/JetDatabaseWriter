@@ -43,7 +43,7 @@ internal sealed class DelimitedTextReader : IDisposable
         return currentLength + increment;
     }
 
-    private static bool IsTrimCharacter(char ch) => ch == ' ' || ch == '\t';
+    private static bool IsTrimCharacter(char ch) => ch is ' ' or '\t';
 
     private static long CountRecord(long recordCount, bool skipFirstRecord, ref bool isFirstRecord)
     {

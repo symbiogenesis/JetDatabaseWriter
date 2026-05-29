@@ -412,7 +412,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         {
             int off = dirOffset + (entry * 128);
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(cfbFile.AsSpan(off + 0x40, 2));
-            if (nameLen == 0 || nameLen > 64)
+            if (nameLen is 0 or > 64)
             {
                 continue;
             }

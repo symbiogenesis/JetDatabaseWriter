@@ -290,7 +290,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
                     if (expected is DBNull)
                     {
                         Assert.True(
-                            actual is DBNull || actual is null,
+                            actual is DBNull or null,
                             $"Row {r} col {c} in table '{table}': expected DBNull but got '{actual}'.");
                     }
                     else

@@ -572,7 +572,7 @@ internal static class OfficeCryptoAgile
 
         long decryptedSize = Ri64(encryptedPackage, 0);
 
-        if (decryptedSize < 0 || decryptedSize > int.MaxValue)
+        if (decryptedSize is < 0 or > int.MaxValue)
         {
             throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }

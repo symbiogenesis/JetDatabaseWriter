@@ -334,7 +334,7 @@ public sealed class LockFileTests : IDisposable
 
             Exception ex = await Assert.ThrowsAnyAsync<Exception>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
             Assert.True(
-                ex is IOException || ex is UnauthorizedAccessException,
+                ex is IOException or UnauthorizedAccessException,
                 $"Expected IOException or UnauthorizedAccessException, got {ex.GetType().Name}");
         }
         finally
@@ -734,7 +734,7 @@ public sealed class LockFileTests : IDisposable
         for (int i = 0; i < buf.Length; i++)
         {
             char c = value[i];
-            buf[i] = (c >= 0x20 && c < 0x7F) ? c : '?';
+            buf[i] = (c is >= (char)0x20 and < (char)0x7F) ? c : '?';
         }
 
         return new string(buf);

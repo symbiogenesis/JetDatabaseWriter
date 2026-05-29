@@ -131,7 +131,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
                 byte[] page = await reader.GetRawPageBytesAsync(idx.FirstDp, ct);
                 byte tag = page[0];
                 string tagMessage = $"{tableName}.{idx.Name}: page {idx.FirstDp} (FirstDp target) has page tag 0x{tag:X2}, expected 0x04 (leaf) or 0x03 (intermediate). Regression: writer's first_dp does not point at an index B-tree page.";
-                Assert.True(tag == 0x04 || tag == 0x03, tagMessage);
+                Assert.True(tag is 0x04 or 0x03, tagMessage);
 
                 checkedCount++;
             }

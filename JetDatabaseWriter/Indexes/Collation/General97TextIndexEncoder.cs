@@ -162,7 +162,7 @@ internal static class General97TextIndexEncoder
             return codes[currentChar];
         }
 
-        if (currentChar < FirstMapChar || currentChar > LastMapChar)
+        if (currentChar is < FirstMapChar or > LastMapChar)
         {
             return GeneralLegacyTextIndexEncoder.IgnoredHandlerInstance;
         }
