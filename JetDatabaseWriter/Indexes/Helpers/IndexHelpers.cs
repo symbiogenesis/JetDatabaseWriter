@@ -832,6 +832,7 @@ internal static class IndexHelpers
     /// </summary>
     /// <param name="original">The original.</param>
     /// <param name="ops">The intermediate operations.</param>
+    /// <exception cref="InvalidOperationException">Thrown when an unknown intermediate op type is encountered or an invalid operation sequence occurs.</exception>
     public static List<DecodedIntermediateEntry> ApplyIntermediateOps(
         List<DecodedIntermediateEntry> original,
         List<IntermediateOp> ops)
@@ -894,6 +895,9 @@ internal static class IndexHelpers
 
                         result.Add(op.NewEntry);
                         break;
+
+                    default:
+                        throw new InvalidOperationException($"Unknown intermediate op type: {op.Type}");
                 }
             }
 
