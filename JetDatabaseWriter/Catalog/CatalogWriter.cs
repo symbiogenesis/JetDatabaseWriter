@@ -2,6 +2,9 @@ namespace JetDatabaseWriter.Catalog;
 
 using System;
 using System.Collections.Generic;
+#if !NET5_0_OR_GREATER
+using System.Globalization;
+#endif
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
