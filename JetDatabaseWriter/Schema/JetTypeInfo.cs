@@ -173,7 +173,7 @@ internal static class JetTypeInfo
         NumericType => ColumnSize.FromBytes(17),
         TextType => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
         MemoType or OleType or AttachmentType or ComplexType => ColumnSize.Lval,
-        _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
+        BinaryType or DateTimeExtendedType or _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
     };
 
     // ── Fixed-column decoding ────────────────────────────────────────
