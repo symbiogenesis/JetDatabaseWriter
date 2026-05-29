@@ -75,7 +75,6 @@ public abstract class AccessBase : IAccessBase
     private protected readonly PageDecryptionKeys pageKeys = new();
 
     internal bool disposed;
-    private readonly SemaphoreSlim ioGate = new(1, 1);
     private volatile List<CatalogEntry>? catalogCache;
     private volatile List<LinkedTableInfo>? linkedTableCache;
 
@@ -93,12 +92,12 @@ public abstract class AccessBase : IAccessBase
     /// instead of being flushed to the underlying stream, and page reads
     /// consult the journal first so the transaction sees its own writes.
     /// Set/cleared exclusively by <see cref="AccessWriter"/> while holding
-    /// <see cref="ioGate"/>.
+    /// <see cref="IoGate"/>.
     /// </summary>
     internal PageJournal? ActiveJournal { get; set; }
 
     /// <summary>Gets the writer's internal I/O gate so derived types may serialise transaction commit / rollback.</summary>
-    internal SemaphoreSlim IoGate => ioGate;
+    internal SemaphoreSlim IoGate { get; } = new(1, 1);
 
     static AccessBase()
     {
@@ -204,7 +203,7 @@ public abstract class AccessBase : IAccessBase
             await stream.DisposeAsync().ConfigureAwait(false);
         }
 
-        ioGate.Dispose();
+        IoGate.Dispose();
         pageKeys.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -622,7 +621,7 @@ public abstract class AccessBase : IAccessBase
             else
 #endif
             {
-                await ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
                     // Inside an explicit transaction, prefer the journal: the page may
@@ -640,7 +639,7 @@ public abstract class AccessBase : IAccessBase
                 }
                 finally
                 {
-                    _ = ioGate.Release();
+                    _ = IoGate.Release();
                 }
             }
 
@@ -997,7 +996,7 @@ public abstract class AccessBase : IAccessBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        await ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (ActiveJournal is { } journal)
@@ -1021,7 +1020,7 @@ public abstract class AccessBase : IAccessBase
         }
         finally
         {
-            _ = ioGate.Release();
+            _ = IoGate.Release();
         }
     }
 
@@ -1029,7 +1028,7 @@ public abstract class AccessBase : IAccessBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        await ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (ActiveJournal is { } journal)
@@ -1054,7 +1053,7 @@ public abstract class AccessBase : IAccessBase
         }
         finally
         {
-            _ = ioGate.Release();
+            _ = IoGate.Release();
         }
     }
 
