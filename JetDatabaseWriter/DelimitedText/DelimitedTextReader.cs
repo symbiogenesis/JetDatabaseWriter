@@ -218,7 +218,6 @@ internal sealed class DelimitedTextReader : IDisposable
 
             fieldLength = AppendBufferedFieldCharacter(
                 field,
-                ch,
                 fieldLength,
                 ref bufferedFieldStart,
                 ref bufferedFieldLength);
@@ -505,7 +504,6 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private int AppendBufferedFieldCharacter(
         StringBuilder field,
-        char ch,
         int fieldLength,
         ref int bufferedFieldStart,
         ref int bufferedFieldLength)
