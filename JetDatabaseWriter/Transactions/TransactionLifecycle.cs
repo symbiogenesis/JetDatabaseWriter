@@ -69,7 +69,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             return;
         }
 
-        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await work(cancellationToken).ConfigureAwait(false);
@@ -110,7 +110,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             return await work(cancellationToken).ConfigureAwait(false);
         }
 
-        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TResult? result = await work(cancellationToken).ConfigureAwait(false);
@@ -195,8 +195,8 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
                 await writer.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
             }
 
-            await BumpCommitLockByteAsync(cancellationToken).ConfigureAwait(false);
-            await FlushDurableAsync(cancellationToken).ConfigureAwait(false);
+            await this.BumpCommitLockByteAsync(cancellationToken).ConfigureAwait(false);
+            await this.FlushDurableAsync(cancellationToken).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
         catch

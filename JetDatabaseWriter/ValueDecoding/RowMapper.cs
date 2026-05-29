@@ -383,12 +383,12 @@ internal static class RowMapper<T>
     {
         public Accessor(PropertyInfo prop)
         {
-            Property = prop;
-            TargetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+            this.Property = prop;
+            this.TargetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
 
             ParameterExpression instance = Expression.Parameter(typeof(T), "i");
             ParameterExpression value = Expression.Parameter(typeof(object), "v");
-            Setter = Expression.Lambda<Action<T, object>>(
+            this.Setter = Expression.Lambda<Action<T, object>>(
                 Expression.Assign(
                     Expression.Property(instance, prop),
                     Expression.Convert(value, prop.PropertyType)),

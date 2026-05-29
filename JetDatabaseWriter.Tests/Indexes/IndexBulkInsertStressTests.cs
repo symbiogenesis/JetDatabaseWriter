@@ -58,7 +58,7 @@ public sealed class IndexBulkInsertStressTests
                 "Big",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[RowCount][];
             for (int i = 0; i < RowCount; i++)
@@ -66,7 +66,7 @@ public sealed class IndexBulkInsertStressTests
                 rows[i] = [i + 1];
             }
 
-            int inserted = await writer.InsertRowsAsync("Big", rows, ct);
+            int inserted = await writer.InsertRowsAsync("Big", rows, this.ct);
             Assert.Equal(RowCount, inserted);
         }
 
@@ -116,7 +116,7 @@ public sealed class IndexBulkInsertStressTests
             "T",
             [new ColumnDefinition("Id", typeof(int))],
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-            ct);
+            this.ct);
 
         var batch = new[]
         {
@@ -128,7 +128,7 @@ public sealed class IndexBulkInsertStressTests
         };
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowsAsync("T", batch, ct));
+            await writer.InsertRowsAsync("T", batch, this.ct));
     }
 
     /// <summary>
@@ -166,19 +166,19 @@ public sealed class IndexBulkInsertStressTests
                         ValidationRule = v => !string.Equals(v as string, "REJECT", StringComparison.Ordinal),
                     },
                 ],
-                ct);
+                this.ct);
 
             // Two distinct values land cleanly: Id auto-assigns 1, 2.
-            await writer.InsertRowAsync("T", [DBNull.Value, "row1"], ct);
-            await writer.InsertRowAsync("T", [DBNull.Value, "row2"], ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row1"], this.ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row2"], this.ct);
 
             // The validation predicate rejects this row before any data is
             // written — the autonumber counter must NOT advance for it.
             await Assert.ThrowsAsync<ArgumentException>(async () =>
-                await writer.InsertRowAsync("T", [DBNull.Value, "REJECT"], ct));
+                await writer.InsertRowAsync("T", [DBNull.Value, "REJECT"], this.ct));
 
             // Next successful insert must use Id == 3, not 4.
-            await writer.InsertRowAsync("T", [DBNull.Value, "row3"], ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row3"], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -222,7 +222,7 @@ public sealed class IndexBulkInsertStressTests
                     new ColumnDefinition("Note", typeof(string), maxLength: 32),
                 ],
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[RowCount][];
             for (int i = 0; i < RowCount; i++)
@@ -230,12 +230,12 @@ public sealed class IndexBulkInsertStressTests
                 rows[i] = [i + 1, "n" + i];
             }
 
-            await writer.InsertRowsAsync("Big", rows, ct);
+            await writer.InsertRowsAsync("Big", rows, this.ct);
 
             // Delete two specific rows (mid-range and near the tail). Each
             // delete triggers a full bulk rebuild via MaintainIndexesAsync.
-            int d1 = await writer.DeleteRowsAsync("Big", "Id", 400, ct);
-            int d2 = await writer.DeleteRowsAsync("Big", "Id", 799, ct);
+            int d1 = await writer.DeleteRowsAsync("Big", "Id", 400, this.ct);
+            int d2 = await writer.DeleteRowsAsync("Big", "Id", 799, this.ct);
 
             Assert.Equal(1, d1);
             Assert.Equal(1, d2);

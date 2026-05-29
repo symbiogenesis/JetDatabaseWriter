@@ -50,7 +50,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -59,7 +59,7 @@ public sealed class IndexMaintenanceTests
                     [1],
                     [2],
                 ],
-                ct);
+                this.ct);
         }
 
         // The most-recent rebuild produced a leaf with 3 entries; orphaned
@@ -81,10 +81,10 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
-            await writer.InsertRowAsync("T", [42], ct);
-            await writer.InsertRowAsync("T", [7], ct);
+            await writer.InsertRowAsync("T", [42], this.ct);
+            await writer.InsertRowAsync("T", [7], this.ct);
         }
 
         Assert.Equal(2, await FindMaxLeafEntryCountAsync(stream, format, "T"));
@@ -106,7 +106,7 @@ public sealed class IndexMaintenanceTests
                     new ColumnDefinition("Score", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Score", "Score")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -115,7 +115,7 @@ public sealed class IndexMaintenanceTests
                     [2, 20],
                     [3, 30],
                 ],
-                ct);
+                this.ct);
 
             // Update the indexed column on one row → triggers index maintenance.
             int updated = await writer.UpdateRowsAsync(
@@ -123,7 +123,7 @@ public sealed class IndexMaintenanceTests
                 "Id",
                 2,
                 new Dictionary<string, object?> { ["Score"] = 99 },
-                ct);
+                this.ct);
 
             Assert.Equal(1, updated);
         }
@@ -145,7 +145,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -155,9 +155,9 @@ public sealed class IndexMaintenanceTests
                     [3],
                     [4],
                 ],
-                ct);
+                this.ct);
 
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 2, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 2, this.ct);
             Assert.Equal(1, deleted);
         }
 
@@ -179,10 +179,10 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[1], [2]], ct);
-            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
+            await writer.InsertRowsAsync("T", [[1], [2]], this.ct);
+            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -205,10 +205,10 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[1], [2]], ct);
-            await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
+            await writer.InsertRowsAsync("T", [[1], [2]], this.ct);
+            await writer.RenameColumnAsync("T", "Id", "Identifier", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -237,10 +237,10 @@ public sealed class IndexMaintenanceTests
                     new IndexDefinition("IX_Id", "Id"),
                     new IndexDefinition("IX_Score", "Score"),
                 ],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[1, 10]], ct);
-            await writer.DropColumnAsync("T", "Score", ct);
+            await writer.InsertRowsAsync("T", [[1, 10]], this.ct);
+            await writer.DropColumnAsync("T", "Score", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -264,7 +264,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Code", typeof(string), maxLength: 32)],
                 [new IndexDefinition("IX_Code", "Code")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -273,7 +273,7 @@ public sealed class IndexMaintenanceTests
                     ["A"],
                     ["C"],
                 ],
-                ct);
+                this.ct);
         }
 
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
@@ -296,7 +296,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Code", typeof(string), maxLength: 32)],
                 [new IndexDefinition("IX_Code", "Code")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -305,7 +305,7 @@ public sealed class IndexMaintenanceTests
                     ["Foo Bar"],
                     ["café"],
                 ],
-                ct);
+                this.ct);
         }
 
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
@@ -328,7 +328,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Body", typeof(string))], // maxLength=0 → MEMO
                 [new IndexDefinition("IX_Body", "Body")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -337,7 +337,7 @@ public sealed class IndexMaintenanceTests
                     ["jumps over the lazy dog"],
                     ["pack my box with five dozen liquor jugs"],
                 ],
-                ct);
+                this.ct);
         }
 
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
@@ -366,7 +366,7 @@ public sealed class IndexMaintenanceTests
                         DescendingColumns = ["Score"],
                     },
                 ],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -375,7 +375,7 @@ public sealed class IndexMaintenanceTests
                     [2, "A", 20],
                     [3, "B", 15],
                 ],
-                ct);
+                this.ct);
 
             int updated = await writer.UpdateRowsAsync(
                 "T",
@@ -386,22 +386,22 @@ public sealed class IndexMaintenanceTests
                     ["Code"] = "C",
                     ["Score"] = -20,
                 },
-                ct);
+                this.ct);
             Assert.Equal(1, updated);
 
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 1, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 1, this.ct);
             Assert.Equal(1, deleted);
 
-            await writer.InsertRowAsync("T", [4, "D", 40], ct);
+            await writer.InsertRowAsync("T", [4, "D", 40], this.ct);
         }
 
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(3, rowsRead.Rows.Count);
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", ct);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", this.ct);
         IndexMetadata index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
         Assert.True(index.EnforcesUniqueness);
         Assert.True(index.HasUniqueFlag);
@@ -428,7 +428,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(RowCount);
             for (int i = 0; i < RowCount; i++)
@@ -436,19 +436,19 @@ public sealed class IndexMaintenanceTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", ct);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", this.ct);
         Assert.Single(indexes);
         Assert.Equal("IX_Id", indexes[0].Name);
 
         // Rows still readable via table scan (the reader does not consume the
         // index, but the rows-on-disk count is the index's truth source).
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(RowCount, rowsRead.Rows.Count);
     }
 
@@ -470,7 +470,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -478,16 +478,16 @@ public sealed class IndexMaintenanceTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Late single insert against the now-multi-level tree.
-            await writer.InsertRowAsync("T", [InitialRows], ct);
+            await writer.InsertRowAsync("T", [InitialRows], this.ct);
         }
 
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -505,7 +505,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -513,14 +513,14 @@ public sealed class IndexMaintenanceTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
 
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 42, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 42, this.ct);
             Assert.Equal(1, deleted);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows - 1, rowsRead.Rows.Count);
     }
 
@@ -536,13 +536,13 @@ public sealed class IndexMaintenanceTests
             "T",
             [new ColumnDefinition("Id", typeof(int))],
             [new IndexDefinition("PK_T", "Id") { IsPrimaryKey = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1], ct);
+        await writer.InsertRowAsync("T", [1], this.ct);
 
         // Inserting the same PK value a second time must throw.
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => writer.InsertRowAsync("T", [1], ct).AsTask());
+            () => writer.InsertRowAsync("T", [1], this.ct).AsTask());
     }
 
     [Theory]
@@ -562,15 +562,15 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[10], [20], [30]], ct);
+            await writer.InsertRowsAsync("T", [[10], [20], [30]], this.ct);
 
             // Single insert → incremental splice.
-            await writer.InsertRowAsync("T", [25], ct);
+            await writer.InsertRowAsync("T", [25], this.ct);
 
             // Single delete → incremental splice.
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 10, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 10, this.ct);
             Assert.Equal(1, deleted);
         }
 
@@ -595,7 +595,7 @@ public sealed class IndexMaintenanceTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -603,19 +603,19 @@ public sealed class IndexMaintenanceTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Late insert: incremental descent into multi-level tree.
-            await writer.InsertRowAsync("T", [InitialRows], ct);
+            await writer.InsertRowAsync("T", [InitialRows], this.ct);
 
             // Late delete: incremental splice.
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 0, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 0, this.ct);
             Assert.Equal(1, deleted);
         }
 
         // Net: InitialRows + 1 insert − 1 delete = InitialRows.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows, rowsRead.Rows.Count);
     }
 

@@ -15,38 +15,38 @@ public class LruCacheBenchmarks : IDisposable
     [GlobalSetup]
     public void Setup()
     {
-        _cache = new LruCache<int, string>(Capacity);
-        for (int i = 0; i < Capacity; i++)
+        this._cache = new LruCache<int, string>(this.Capacity);
+        for (int i = 0; i < this.Capacity; i++)
         {
-            _cache.Add(i, $"value_{i}");
+            this._cache.Add(i, $"value_{i}");
         }
     }
 
     [Benchmark]
     public bool TryGetValue_Hit()
     {
-        _cache.TryGetValue(0, out _);
+        this._cache.TryGetValue(0, out _);
         return true;
     }
 
     [Benchmark]
     public bool TryGetValue_Miss()
     {
-        _cache.TryGetValue(-1, out _);
+        this._cache.TryGetValue(-1, out _);
         return true;
     }
 
     [Benchmark]
-    public void Add_Existing() => _cache.Add(0, "updated");
+    public void Add_Existing() => this._cache.Add(0, "updated");
 
     [Benchmark]
     public void Add_Evict()
     {
         // Exceeds capacity, forcing eviction of the LRU entry (key 0 gets evicted).
-        _cache.Add(Capacity + 1, "new");
+        this._cache.Add(this.Capacity + 1, "new");
 
         // Restore steady state: evict the new key by re-adding the original.
-        _cache.Add(0, "value_0");
+        this._cache.Add(0, "value_0");
     }
 
     [Benchmark]
@@ -54,14 +54,14 @@ public class LruCacheBenchmarks : IDisposable
     {
         for (int i = 0; i < 100; i++)
         {
-            _cache.TryGetValue(i % Capacity, out _);
-            _cache.Add(i % Capacity, $"v{i}");
+            this._cache.TryGetValue(i % this.Capacity, out _);
+            this._cache.Add(i % this.Capacity, $"v{i}");
         }
     }
 
     public void Dispose()
     {
-        Dispose(true);
+        this.Dispose(true);
         GC.SuppressFinalize(this);
     }
 
@@ -69,7 +69,7 @@ public class LruCacheBenchmarks : IDisposable
     {
         if (disposing)
         {
-            _cache.Dispose();
+            this._cache.Dispose();
         }
     }
 }

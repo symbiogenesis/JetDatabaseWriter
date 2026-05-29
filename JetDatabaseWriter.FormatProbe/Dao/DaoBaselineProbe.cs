@@ -524,18 +524,18 @@ internal static class DaoBaselineProbe
 
         private BaselinePageCache(int pageSize, byte[][] pages, bool usesDirectFilePages)
         {
-            PageSize = pageSize;
+            this.PageSize = pageSize;
             this.pages = pages;
-            UsesDirectFilePages = usesDirectFilePages;
+            this.UsesDirectFilePages = usesDirectFilePages;
         }
 
         public int PageSize { get; }
 
         public bool UsesDirectFilePages { get; }
 
-        public long PageCount => pages.LongLength;
+        public long PageCount => this.pages.LongLength;
 
-        public byte[] GetPage(long pageNumber) => pages[checked((int)pageNumber)];
+        public byte[] GetPage(long pageNumber) => this.pages[checked((int)pageNumber)];
     }
 
     private sealed class ReaderSnapshot

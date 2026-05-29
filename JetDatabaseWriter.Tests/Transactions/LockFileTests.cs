@@ -24,7 +24,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_DefaultOptions_CreatesLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -36,7 +36,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_DefaultOptions_DeletesLockFileOnDispose(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -49,7 +49,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_UseLockFileTrue_CreatesLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = true };
 
@@ -62,7 +62,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_UseLockFileTrue_DeletesLockFileOnDispose(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = true };
 
@@ -78,7 +78,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_UseLockFileFalse_DoesNotCreateLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = false };
 
@@ -91,12 +91,12 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
         await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
-        _tempFiles.Add(lockPath);
+        this._tempFiles.Add(lockPath);
 
         var options = new AccessReaderOptions { UseLockFile = false };
         AccessReader reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
@@ -116,7 +116,7 @@ public sealed class LockFileTests : IDisposable
             return; // skip if no .mdb test database
         }
 
-        string temp = CopyToTemp(mdbPath);
+        string temp = this.CopyToTemp(mdbPath);
         string lockPath = Path.ChangeExtension(temp, ".ldb");
 
         await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -133,7 +133,7 @@ public sealed class LockFileTests : IDisposable
             return; // skip if no .accdb test database
         }
 
-        string temp = CopyToTemp(accdbPath);
+        string temp = this.CopyToTemp(accdbPath);
         string lockPath = Path.ChangeExtension(temp, ".laccdb");
 
         await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -147,7 +147,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_DefaultOptions_CreatesLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -159,7 +159,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_DefaultOptions_DeletesLockFileOnDispose(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         AccessWriter writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -172,7 +172,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_UseLockFileTrue_CreatesLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = true };
 
@@ -185,7 +185,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_UseLockFileTrue_DeletesLockFileOnDispose(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = true };
 
@@ -201,7 +201,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_UseLockFileFalse_DoesNotCreateLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = false };
 
@@ -214,12 +214,12 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
         await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
-        _tempFiles.Add(lockPath);
+        this._tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = false };
         AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
@@ -239,7 +239,7 @@ public sealed class LockFileTests : IDisposable
             return; // skip if no .mdb test database
         }
 
-        string temp = CopyToTemp(mdbPath);
+        string temp = this.CopyToTemp(mdbPath);
         string lockPath = Path.ChangeExtension(temp, ".ldb");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -256,7 +256,7 @@ public sealed class LockFileTests : IDisposable
             return; // skip if no .accdb test database
         }
 
-        string temp = CopyToTemp(accdbPath);
+        string temp = this.CopyToTemp(accdbPath);
         string lockPath = Path.ChangeExtension(temp, ".laccdb");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -270,7 +270,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_DisposeTwice_WithoutLockFile_DoesNotThrow(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         var options = new AccessWriterOptions { UseLockFile = false };
         AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
@@ -286,12 +286,12 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_RespectExistingLockFileTrue_ThrowsWhenLockFileExists(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to simulate another process
         await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
-        _tempFiles.Add(lockPath);
+        this._tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true };
 
@@ -302,12 +302,12 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_RespectExistingLockFileFalse_OverwritesExistingLockFile(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to simulate another process
         await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
-        _tempFiles.Add(lockPath);
+        this._tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = false };
 
@@ -320,7 +320,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_RespectExistingLockFileTrue_ThrowsWhenLockPathIsDirectory(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         Directory.CreateDirectory(lockPath);
 
@@ -347,7 +347,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_RespectExistingLockFileFalse_ContinuesWhenLockPathIsDirectory(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         Directory.CreateDirectory(lockPath);
 
@@ -383,7 +383,7 @@ public sealed class LockFileTests : IDisposable
     {
         // A reader holding a lockfile should NOT block a writer that also uses
         // lock files — the lock file is cooperative, not exclusive.
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             temp,
@@ -473,7 +473,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_PopulatesSlot_WithMachineAndUserName(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -491,7 +491,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_PopulatesSlot_WithMachineAndUserName(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -509,7 +509,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_OverrideUserAndMachine_RoundTripsIntoSlot(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         var options = new AccessReaderOptions
@@ -529,7 +529,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Writer_OverrideUserAndMachine_RoundTripsIntoSlot(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         var options = new AccessWriterOptions
@@ -550,7 +550,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_NonAsciiNames_ReplacedWithQuestionMark(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         var options = new AccessReaderOptions
@@ -570,7 +570,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Reader_LongName_TruncatedTo31Chars(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         string longName = new string('a', 64);
@@ -599,7 +599,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Slot_IsZeroedOnDispose(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
@@ -616,7 +616,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task MultipleReaders_AppendDistinctSlots(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         var optsA = new AccessReaderOptions
@@ -646,7 +646,7 @@ public sealed class LockFileTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task SecondOpener_ReusesFreedSlot(string path)
     {
-        string temp = CopyToTemp(path);
+        string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         var optsA = new AccessReaderOptions { LockFileMachineName = "HOST-A", LockFileUserName = "u-a" };
@@ -681,7 +681,7 @@ public sealed class LockFileTests : IDisposable
         // writer only needs the path, not a real Access database.
         string dbPath = Path.Combine(Path.GetTempPath(), $"JetLockFin_{Guid.NewGuid():N}.accdb");
         File.WriteAllBytes(dbPath, Array.Empty<byte>());
-        _tempFiles.Add(dbPath);
+        this._tempFiles.Add(dbPath);
         string lockPath = Path.ChangeExtension(dbPath, ".laccdb");
 
         OpenAndAbandonSlot(dbPath);
@@ -771,7 +771,7 @@ public sealed class LockFileTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string file in _tempFiles)
+        foreach (string file in this._tempFiles)
         {
             try
             {
@@ -815,7 +815,7 @@ public sealed class LockFileTests : IDisposable
         string ext = Path.GetExtension(sourcePath);
         string temp = Path.Combine(Path.GetTempPath(), $"JetLockTest_{Guid.NewGuid():N}{ext}");
         File.Copy(sourcePath, temp, overwrite: true);
-        _tempFiles.Add(temp);
+        this._tempFiles.Add(temp);
         return temp;
     }
 }

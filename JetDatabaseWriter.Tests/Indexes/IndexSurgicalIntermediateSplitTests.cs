@@ -46,7 +46,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                     new ColumnDefinition("Tag", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", "K")],
-                ct);
+                this.ct);
 
             var rows = new object[400][];
             for (int i = 0; i < 400; i++)
@@ -54,7 +54,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 rows[i] = [BuildKey(i), i % 5];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -66,12 +66,12 @@ public sealed class IndexSurgicalIntermediateSplitTests
             // overflow (rare for deletes but possible if max-key
             // propagation widens entries), intermediate split fires; otherwise cross-leaf surgical
             // handles it in-place or bulk rebuild rebuilds.
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, this.ct);
             Assert.Equal(80, deleted);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(320, dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)
@@ -100,7 +100,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                     new ColumnDefinition("V", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", "K")],
-                ct);
+                this.ct);
 
             // Initial bulk to set up multi-level tree.
             var seed = new object[200][];
@@ -109,7 +109,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 seed[i] = [BuildKey(i * 3), i];
             }
 
-            await writer.InsertRowsAsync("T", seed, ct);
+            await writer.InsertRowsAsync("T", seed, this.ct);
 
             // Now drip-feed 30 more rows in 6 small batches. Each batch
             // is a cross-leaf change-set (keys spread across many leaves)
@@ -123,12 +123,12 @@ public sealed class IndexSurgicalIntermediateSplitTests
                     batch[i] = [BuildKey((idx * 3) + 1), idx + 1000];
                 }
 
-                await writer.InsertRowsAsync("T", batch, ct);
+                await writer.InsertRowsAsync("T", batch, this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(230, dt!.Rows.Count);
 
@@ -154,7 +154,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                     new ColumnDefinition("K", typeof(string), maxLength: 220),
                 ],
                 [new IndexDefinition("IX_K", "K")],
-                ct);
+                this.ct);
 
             var rows = new object[300][];
             for (int i = 0; i < 300; i++)
@@ -162,7 +162,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 rows[i] = [BuildKey(i)];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Cycle 1: delete every 7th key, reinsert different ones.
@@ -170,7 +170,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         {
             for (int i = 0; i < 300; i += 7)
             {
-                await writer.DeleteRowsAsync("T", "K", BuildKey(i), ct);
+                await writer.DeleteRowsAsync("T", "K", BuildKey(i), this.ct);
             }
 
             var fresh = new object[10][];
@@ -179,11 +179,11 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 fresh[i] = [BuildKey(1000 + i)];
             }
 
-            await writer.InsertRowsAsync("T", fresh, ct);
+            await writer.InsertRowsAsync("T", fresh, this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
 
         // 300 - ceil(300/7) deleted + 10 inserted = 300 - 43 + 10 = 267.

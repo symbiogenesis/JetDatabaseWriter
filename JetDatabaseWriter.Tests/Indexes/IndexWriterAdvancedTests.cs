@@ -159,13 +159,13 @@ public sealed class IndexWriterAdvancedTests
             "T",
             [new ColumnDefinition("Id", typeof(int))],
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1], ct);
-        await writer.InsertRowAsync("T", [2], ct);
+        await writer.InsertRowAsync("T", [1], this.ct);
+        await writer.InsertRowAsync("T", [2], this.ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1], ct));
+            await writer.InsertRowAsync("T", [1], this.ct));
     }
 
     [Fact]
@@ -179,7 +179,7 @@ public sealed class IndexWriterAdvancedTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -188,7 +188,7 @@ public sealed class IndexWriterAdvancedTests
                     [1],
                     [3],
                 ],
-                ct);
+                this.ct);
         }
 
         await AssertLeafEntryCountAsync(stream, "T", "UQ_Id", expectedCount: 3);
@@ -208,7 +208,7 @@ public sealed class IndexWriterAdvancedTests
                     new ColumnDefinition("B", typeof(int)),
                 ],
                 [new IndexDefinition("IX_AB", CompositeAB)],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -218,7 +218,7 @@ public sealed class IndexWriterAdvancedTests
                     [2, 25],
                     [1, 75],
                 ],
-                ct);
+                this.ct);
         }
 
         // Multi-column composite key concatenation through the maintenance
@@ -240,13 +240,13 @@ public sealed class IndexWriterAdvancedTests
                 new ColumnDefinition("B", typeof(int)),
             ],
             [new IndexDefinition("UQ_AB", CompositeAB) { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1, 10], ct);
-        await writer.InsertRowAsync("T", [1, 20], ct); // (1,10) ≠ (1,20) — fine
+        await writer.InsertRowAsync("T", [1, 10], this.ct);
+        await writer.InsertRowAsync("T", [1, 20], this.ct); // (1,10) ≠ (1,20) — fine
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1, 10], ct));
+            await writer.InsertRowAsync("T", [1, 10], this.ct));
     }
 
     [Fact]
@@ -263,10 +263,10 @@ public sealed class IndexWriterAdvancedTests
                     new ColumnDefinition("B", typeof(int)),
                 ],
                 [new IndexDefinition("IX_AB", CompositeAB) { IsUnique = true }],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[1, 1], [2, 2]], ct);
-            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
+            await writer.InsertRowsAsync("T", [[1, 1], [2, 2]], this.ct);
+            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -287,9 +287,9 @@ public sealed class IndexWriterAdvancedTests
                 "T",
                 [new ColumnDefinition("Score", typeof(int))],
                 [new IndexDefinition("IX_Score", "Score") { DescendingColumns = DescendingScore }],
-                ct);
+                this.ct);
 
-            await writer.RenameColumnAsync("T", "Score", "Points", ct);
+            await writer.RenameColumnAsync("T", "Score", "Points", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -312,7 +312,7 @@ public sealed class IndexWriterAdvancedTests
                 "T",
                 [new ColumnDefinition("Id", typeof(Guid))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -321,7 +321,7 @@ public sealed class IndexWriterAdvancedTests
                     [Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")],
                     [Guid.Parse("11111111-2222-3333-4444-555555555555")],
                 ],
-                ct);
+                this.ct);
         }
 
         // GUID-keyed index participates in the bulk-rebuild path.
@@ -339,14 +339,14 @@ public sealed class IndexWriterAdvancedTests
             "T",
             [new ColumnDefinition("Id", typeof(Guid))],
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-            ct);
+            this.ct);
 
         var dup = Guid.Parse("11111111-2222-3333-4444-555555555555");
-        await writer.InsertRowAsync("T", [dup], ct);
-        await writer.InsertRowAsync("T", [Guid.NewGuid()], ct);
+        await writer.InsertRowAsync("T", [dup], this.ct);
+        await writer.InsertRowAsync("T", [Guid.NewGuid()], this.ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [dup], ct));
+            await writer.InsertRowAsync("T", [dup], this.ct));
     }
 
     [Fact]
@@ -360,7 +360,7 @@ public sealed class IndexWriterAdvancedTests
                 "T",
                 [new ColumnDefinition("Amount", typeof(decimal))],
                 [new IndexDefinition("IX_Amount", "Amount")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -371,7 +371,7 @@ public sealed class IndexWriterAdvancedTests
                     [1.50m],
                     [1000m],
                 ],
-                ct);
+                this.ct);
         }
 
         // Decimal-keyed index participates in the bulk-rebuild path.
@@ -389,17 +389,17 @@ public sealed class IndexWriterAdvancedTests
             "T",
             [new ColumnDefinition("Amount", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 }],
             [new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true }],
-            ct);
+            this.ct);
 
         // 1.50 and 1.5 normalise to the same numeric value at the column's
         // declared scale (2); they must collide under the canonical-scale
         // index encoding. (The intermediate 2m insert is at a different
         // canonical value and must succeed.)
-        await writer.InsertRowAsync("T", [1.50m], ct);
-        await writer.InsertRowAsync("T", [2m], ct);
+        await writer.InsertRowAsync("T", [1.50m], this.ct);
+        await writer.InsertRowAsync("T", [2m], this.ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1.5m], ct));
+            await writer.InsertRowAsync("T", [1.5m], this.ct));
     }
 
     // ── helpers (page scanning) ─────────────────────────────────

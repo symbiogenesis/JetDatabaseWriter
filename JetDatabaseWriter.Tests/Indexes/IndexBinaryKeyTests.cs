@@ -51,7 +51,7 @@ public sealed class IndexBinaryKeyTests
                     new ColumnDefinition("Bin", typeof(byte[]), maxLength: 32),
                 ],
                 [new IndexDefinition("IX_Bin", "Bin")],
-                ct);
+                this.ct);
 
             byte[][] payloads =
             [
@@ -63,12 +63,12 @@ public sealed class IndexBinaryKeyTests
 
             for (int i = 0; i < payloads.Length; i++)
             {
-                await writer.InsertRowAsync("BinIdx", [i, payloads[i]], ct);
+                await writer.InsertRowAsync("BinIdx", [i, payloads[i]], this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rows = await reader.ReadDataTableAsync("BinIdx", cancellationToken: ct);
+        DataTable rows = await reader.ReadDataTableAsync("BinIdx", cancellationToken: this.ct);
         Assert.Equal(4, rows.Rows.Count);
     }
 
@@ -90,14 +90,14 @@ public sealed class IndexBinaryKeyTests
                 new ColumnDefinition("Bin", typeof(byte[]), maxLength: 16),
             ],
             [new IndexDefinition("UX_Bin", "Bin") { IsUnique = true }],
-            ct);
+            this.ct);
 
         byte[] payload = [0xCA, 0xFE, 0xBA, 0xBE];
-        await writer.InsertRowAsync("BinUnique", [1, payload], ct);
+        await writer.InsertRowAsync("BinUnique", [1, payload], this.ct);
 
         // Inserting the same byte payload again must trip the unique check.
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("BinUnique", [2, payload.ToArray()], ct));
+            await writer.InsertRowAsync("BinUnique", [2, payload.ToArray()], this.ct));
     }
 
     [Fact]
@@ -118,15 +118,15 @@ public sealed class IndexBinaryKeyTests
                     new ColumnDefinition("Bin", typeof(byte[]), maxLength: 16),
                 ],
                 [new IndexDefinition("IX_Composite", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
-            await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x01, 0x02 }], ct);
-            await writer.InsertRowAsync("BinComposite", ["beta", new byte[] { 0x03, 0x04, 0x05 }], ct);
-            await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x09 }], ct);
+            await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x01, 0x02 }], this.ct);
+            await writer.InsertRowAsync("BinComposite", ["beta", new byte[] { 0x03, 0x04, 0x05 }], this.ct);
+            await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x09 }], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rows = await reader.ReadDataTableAsync("BinComposite", cancellationToken: ct);
+        DataTable rows = await reader.ReadDataTableAsync("BinComposite", cancellationToken: this.ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 
@@ -151,7 +151,7 @@ public sealed class IndexBinaryKeyTests
                         DescendingColumns = BinDescendingColumns,
                     },
                 ],
-                ct);
+                this.ct);
 
             byte[][] payloads =
             [
@@ -162,12 +162,12 @@ public sealed class IndexBinaryKeyTests
 
             for (int i = 0; i < payloads.Length; i++)
             {
-                await writer.InsertRowAsync("BinDesc", [i, payloads[i]], ct);
+                await writer.InsertRowAsync("BinDesc", [i, payloads[i]], this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rows = await reader.ReadDataTableAsync("BinDesc", cancellationToken: ct);
+        DataTable rows = await reader.ReadDataTableAsync("BinDesc", cancellationToken: this.ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 

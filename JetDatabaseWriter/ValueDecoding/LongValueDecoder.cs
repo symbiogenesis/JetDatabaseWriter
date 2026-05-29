@@ -15,12 +15,12 @@ internal sealed class LongValueDecoder(AccessReader reader)
 {
     internal ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
-        if (TryLocateLvalRowSync(lvalDp, out LongValueStore.LvalRowLocation cached))
+        if (this.TryLocateLvalRowSync(lvalDp, out LongValueStore.LvalRowLocation cached))
         {
             return new ValueTask<LongValueStore.LvalRowLocation>(cached);
         }
 
-        return LocateLvalRowSlowAsync(lvalDp, cancellationToken);
+        return this.LocateLvalRowSlowAsync(lvalDp, cancellationToken);
     }
 
     private async ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowSlowAsync(uint lvalDp, CancellationToken cancellationToken)
@@ -32,7 +32,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
         }
 
         byte[] page = await reader.ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
-        return ParseLvalRowLocation(lvalDp, page);
+        return this.ParseLvalRowLocation(lvalDp, page);
     }
 
     private bool TryLocateLvalRowSync(uint lvalDp, out LongValueStore.LvalRowLocation location)
@@ -50,7 +50,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
             return false;
         }
 
-        location = ParseLvalRowLocation(lvalDp, page);
+        location = this.ParseLvalRowLocation(lvalDp, page);
         return true;
     }
 
@@ -58,7 +58,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
         => LongValueStore.LocateRow(lvalDp, page, reader.DataPage, reader.PageSizeBytes, reader.GetLiveRowBoundsCached(LongValueStore.PageNumber(lvalDp), page));
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader.PageSizeBytes, LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader.PageSizeBytes, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
@@ -72,23 +72,23 @@ internal sealed class LongValueDecoder(AccessReader reader)
             case Constants.LongValue.InlineStorageMode:
                 int memoStart = start + Constants.LongValue.HeaderSize;
                 int inlineLen = Math.Min(descriptor.Length, row.Length - memoStart);
-                return inlineLen <= 0 ? string.Empty : DecodeLongValue(row, memoStart, inlineLen, isOle);
+                return inlineLen <= 0 ? string.Empty : this.DecodeLongValue(row, memoStart, inlineLen, isOle);
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation memoLoc = await LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LongValueStore.LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, descriptor.Length);
                 if (!memoLoc.Failed && memoSize > 0)
                 {
-                    return DecodeLongValue(memoLoc.Page, memoLoc.Start, memoSize, isOle);
+                    return this.DecodeLongValue(memoLoc.Page, memoLoc.Start, memoSize, isOle);
                 }
 
                 return isOle ? "(OLE)" : "(memo on LVAL page)";
 
             default:
-                LvalChainResult chain = await ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
+                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
                 if (chain.Data != null)
                 {
-                    return DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle);
+                    return this.DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle);
                 }
 
                 return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
@@ -115,7 +115,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return row.AsSpan(memoStart, inlineLen).ToArray();
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation memoLoc = await LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LongValueStore.LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, descriptor.Length);
                 if (memoLoc.Failed || memoSize <= 0)
                 {
@@ -125,7 +125,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return memoLoc.Page.AsSpan(memoLoc.Start, memoSize).ToArray();
 
             default:
-                LvalChainResult chain = await ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
+                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
                 return chain.Data ?? [];
         }
     }
@@ -145,14 +145,14 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return inlineLen <= 0 ? [] : AccessReader.DecodeOleValueBytes(row, memoStart, inlineLen);
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation oleLoc = await LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LongValueStore.LvalRowLocation oleLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int oleSize = Math.Min(oleLoc.Size, descriptor.Length);
                 return !oleLoc.Failed && oleSize > 0
                     ? AccessReader.DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)
                     : [];
 
             default:
-                LvalChainResult chain = await ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
+                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
                 return chain.Data != null
                     ? AccessReader.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length, allowInputReuse: true)
                     : [];

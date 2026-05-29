@@ -51,7 +51,7 @@ internal sealed class JetByteRangeLock
     private JetByteRangeLock(FileStream? fileStream, bool enabled, int lockTimeoutMs)
     {
         this.fileStream = fileStream;
-        IsEnabled = enabled;
+        this.IsEnabled = enabled;
         this.lockTimeoutMs = lockTimeoutMs;
     }
 
@@ -100,13 +100,13 @@ internal sealed class JetByteRangeLock
     /// <exception cref="IOException">Thrown if the lock cannot be acquired within the timeout.</exception>
     public IDisposable AcquirePageLock(long pageNumber, int pageSize)
     {
-        if (!IsEnabled)
+        if (!this.IsEnabled)
         {
             return NoOpDisposable.Instance;
         }
 
         long offset = pageNumber * pageSize;
-        AcquireBlocking(offset, pageSize);
+        this.AcquireBlocking(offset, pageSize);
         return new ReleaseToken(this, offset, pageSize);
     }
 
@@ -119,13 +119,13 @@ internal sealed class JetByteRangeLock
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask<IDisposable> AcquirePageLockAsync(long pageNumber, int pageSize, CancellationToken cancellationToken = default)
     {
-        if (!IsEnabled)
+        if (!this.IsEnabled)
         {
             return NoOpDisposable.Instance;
         }
 
         long offset = pageNumber * pageSize;
-        await AcquireBlockingAsync(offset, pageSize, cancellationToken).ConfigureAwait(false);
+        await this.AcquireBlockingAsync(offset, pageSize, cancellationToken).ConfigureAwait(false);
         return new ReleaseToken(this, offset, pageSize);
     }
 
@@ -142,13 +142,13 @@ internal sealed class JetByteRangeLock
     /// <returns>The locked offset, or <see langword="null"/> when locking is disabled.</returns>
     public async ValueTask<long?> AcquireCommitLockOffsetAsync(bool isAccdb, CancellationToken cancellationToken = default)
     {
-        if (!IsEnabled)
+        if (!this.IsEnabled)
         {
             return null;
         }
 
         long offset = isAccdb ? 0xFFFFFFFCL : 0xFFFFFFFEL;
-        await AcquireBlockingAsync(offset, length: 1, cancellationToken).ConfigureAwait(false);
+        await this.AcquireBlockingAsync(offset, length: 1, cancellationToken).ConfigureAwait(false);
         return offset;
     }
 
@@ -156,9 +156,9 @@ internal sealed class JetByteRangeLock
     /// <param name="offset">The offset.</param>
     public void ReleaseCommitLock(long? offset)
     {
-        if (offset.HasValue && IsEnabled)
+        if (offset.HasValue && this.IsEnabled)
         {
-            Release(offset.Value, length: 1);
+            this.Release(offset.Value, length: 1);
         }
     }
 
@@ -179,7 +179,7 @@ internal sealed class JetByteRangeLock
 
     private void AcquireBlocking(long offset, long length)
     {
-        if (TryAcquire(offset, length))
+        if (this.TryAcquire(offset, length))
         {
             return;
         }
@@ -189,19 +189,19 @@ internal sealed class JetByteRangeLock
         {
             Task.Delay(PollIntervalMilliseconds).ConfigureAwait(false).GetAwaiter().GetResult();
 
-            if (TryAcquire(offset, length))
+            if (this.TryAcquire(offset, length))
             {
                 return;
             }
         }
-        while (stopwatch.ElapsedMilliseconds < lockTimeoutMs);
+        while (stopwatch.ElapsedMilliseconds < this.lockTimeoutMs);
 
-        ThrowTimeout(offset, length);
+        this.ThrowTimeout(offset, length);
     }
 
     private async ValueTask AcquireBlockingAsync(long offset, long length, CancellationToken cancellationToken)
     {
-        if (TryAcquire(offset, length))
+        if (this.TryAcquire(offset, length))
         {
             return;
         }
@@ -210,14 +210,14 @@ internal sealed class JetByteRangeLock
         do
         {
             await Task.Delay(PollIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
-            if (TryAcquire(offset, length))
+            if (this.TryAcquire(offset, length))
             {
                 return;
             }
         }
-        while (stopwatch.ElapsedMilliseconds < lockTimeoutMs);
+        while (stopwatch.ElapsedMilliseconds < this.lockTimeoutMs);
 
-        ThrowTimeout(offset, length);
+        this.ThrowTimeout(offset, length);
     }
 
     private bool TryAcquire(long offset, long length)
@@ -229,7 +229,7 @@ internal sealed class JetByteRangeLock
 
         try
         {
-            fileStream!.Lock(offset, length);
+            this.fileStream!.Lock(offset, length);
             return true;
         }
         catch (IOException)
@@ -240,14 +240,14 @@ internal sealed class JetByteRangeLock
 
     private void Release(long offset, long length)
     {
-        if (!IsEnabled || fileStream is null || !PlatformSupportsByteRangeLocks())
+        if (!this.IsEnabled || this.fileStream is null || !PlatformSupportsByteRangeLocks())
         {
             return;
         }
 
         try
         {
-            fileStream.Unlock(offset, length);
+            this.fileStream.Unlock(offset, length);
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or PlatformNotSupportedException)
         {
@@ -260,7 +260,7 @@ internal sealed class JetByteRangeLock
     {
         long pageNumber = length > 0 ? offset / length : -1;
         throw new IOException(
-            $"Timed out after {lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
+            $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
     }
 
     private sealed class ReleaseToken(JetByteRangeLock owner, long offset, long length) : IDisposable
@@ -269,12 +269,12 @@ internal sealed class JetByteRangeLock
 
         public void Dispose()
         {
-            if (released)
+            if (this.released)
             {
                 return;
             }
 
-            released = true;
+            this.released = true;
 
             owner.Release(offset, length);
         }

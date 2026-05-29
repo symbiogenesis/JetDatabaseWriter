@@ -63,14 +63,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        await CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
-        await CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
-        await CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
+        await this.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+        await this.CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
+        await this.CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask CreateCoreSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
-        long acesTdefPage = await CreateSystemTableAsync(
+        long acesTdefPage = await this.CreateSystemTableAsync(
             Constants.SystemTableNames.Aces,
             [
                 new ColumnDefinition("ObjectId", typeof(int)),
@@ -82,7 +82,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             reservedTdefPageNumber: coreSystemTableStartPage,
             cancellationToken).ConfigureAwait(false);
 
-        long queriesTdefPage = await CreateSystemTableAsync(
+        long queriesTdefPage = await this.CreateSystemTableAsync(
             Constants.SystemTableNames.Queries,
             [
                 new ColumnDefinition("ObjectId", typeof(int)),
@@ -98,7 +98,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             reservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 1 : 0,
             cancellationToken).ConfigureAwait(false);
 
-        long relationshipsTdefPage = await CreateSystemTableAsync(
+        long relationshipsTdefPage = await this.CreateSystemTableAsync(
             Constants.SystemTableNames.Relationships,
             [
                 new ColumnDefinition("szRelationship", typeof(string), maxLength: 255),
@@ -118,8 +118,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             reservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 2 : 0,
             cancellationToken).ConfigureAwait(false);
 
-        await InsertCoreCatalogRowsAsync(cancellationToken).ConfigureAwait(false);
-        await PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
+        await this.InsertCoreCatalogRowsAsync(cancellationToken).ConfigureAwait(false);
+        await this.PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
     }
 
     private ValueTask<long> CreateSystemTableAsync(
@@ -128,7 +128,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         IReadOnlyList<IndexDefinition> indexes,
         long reservedTdefPageNumber,
         CancellationToken cancellationToken)
-        => writer.CreateTableInternalAsync(
+        => this.writer.CreateTableInternalAsync(
             tableName,
             columns,
             indexes,
@@ -140,7 +140,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     private async ValueTask InsertCoreCatalogRowsAsync(CancellationToken cancellationToken)
     {
-        await writer.InsertCatalogObjectAsync(
+        await this.writer.InsertCatalogObjectAsync(
             2,
             Constants.SystemObjects.TablesParentId,
             Constants.SystemTableNames.Objects,
@@ -150,7 +150,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
 
-        await writer.InsertCatalogObjectAsync(
+        await this.writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.TablesParentId,
             Constants.SystemObjects.RootParentId,
             "Tables",
@@ -160,7 +160,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
 
-        await writer.InsertCatalogObjectAsync(
+        await this.writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.DatabasesParentId,
             Constants.SystemObjects.RootParentId,
             "Databases",
@@ -170,7 +170,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
 
-        await writer.InsertCatalogObjectAsync(
+        await this.writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.RelationshipsParentId,
             Constants.SystemObjects.RootParentId,
             "Relationships",
@@ -180,7 +180,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             lvProp: null,
             cancellationToken).ConfigureAwait(false);
 
-        await writer.InsertCatalogObjectAsync(
+        await this.writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.DatabaseObjectId,
             Constants.SystemObjects.DatabasesParentId,
             "MSysDb",
@@ -197,7 +197,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         long relationshipsTdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] header = await writer.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        byte[] header = await this.writer.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
         try
         {
             EncryptionManager.TransformHeaderMask(header);
@@ -206,7 +206,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             Wi32(header, 0x28, checked((int)queriesTdefPage));
             Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
             EncryptionManager.TransformHeaderMask(header);
-            await writer.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
+            await this.writer.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -277,11 +277,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     {
         foreach ((string name, ColumnDefinition[] cols) in ComplexTypeTemplates)
         {
-            TableDef tableDef = AccessWriter.BuildTableDefinition(cols, writer.Format);
-            (byte[] tdefPage, _) = writer.BuildTDefPageWithIndexOffsets(tableDef, []);
+            TableDef tableDef = AccessWriter.BuildTableDefinition(cols, this.writer.Format);
+            (byte[] tdefPage, _) = this.writer.BuildTDefPageWithIndexOffsets(tableDef, []);
             long tdefPageNumber = await pageAllocator.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-            await writer.InsertCatalogEntryAsync(
+            await this.writer.InsertCatalogEntryAsync(
                 name,
                 tdefPageNumber,
                 lvProp: null,
@@ -289,7 +289,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 cancellationToken).ConfigureAwait(false);
         }
 
-        writer.InvalidateCatalogCache();
+        this.writer.InvalidateCatalogCache();
     }
 
     /// <summary>
@@ -389,7 +389,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             new IndexDefinition("IdxID", "ComplexID") { IsPrimaryKey = true },
         ];
 
-        _ = await writer.CreateTableInternalAsync(
+        _ = await this.writer.CreateTableInternalAsync(
             Constants.SystemTableNames.ComplexColumns,
             columns,
             indexes,
@@ -399,7 +399,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             emitLvProp: false,
             markSystemTableTdef: false).ConfigureAwait(false);
 
-        writer.InvalidateCatalogCache();
+        this.writer.InvalidateCatalogCache();
     }
 
     /// <summary>
@@ -449,13 +449,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return null;
         }
 
-        if (writer.Format != DatabaseFormat.AceAccdb)
+        if (this.writer.Format != DatabaseFormat.AceAccdb)
         {
             throw new NotSupportedException(
                 "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
         }
 
-        long msysComplexPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysComplexPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysComplexPg == 0)
         {
             throw new NotSupportedException(
@@ -464,7 +464,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 "or open an Access-authored .accdb that already contains the catalog.");
         }
 
-        int nextId = await GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
+        int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
         var allocations = new ComplexColumnAllocation[indices.Count];
         for (int i = 0; i < indices.Count; i++)
         {
@@ -483,16 +483,16 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
-        TableDef msysComplex = await writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await this.writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
         int maxId = 0;
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -500,16 +500,16 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysComplexPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysComplexPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     if (idCol != null)
                     {
-                        string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
+                        string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
                         if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
                         {
                             maxId = v;
@@ -560,13 +560,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             (ColumnDefinition[]? flatCols, IndexDefinition[]? flatIndexes) =
                 BuildFlatTableSchema(parentTableName, col);
 
-            long flatTdefPage = await writer.CreateTableInternalAsync(
+            long flatTdefPage = await this.writer.CreateTableInternalAsync(
                 flatTableName,
                 flatCols,
                 indexes: flatIndexes,
                 catalogFlags: Constants.SystemObjects.ComplexFlatTableFlags,
                 cancellationToken).ConfigureAwait(false);
-            await writer.InsertAceRowsForTableAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
+            await this.writer.InsertAceRowsForTableAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
 
             // resolve the matching MSysComplexType_* template id so the
             // MSysComplexColumns row points at the canonical type-template table
@@ -578,9 +578,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             string? templateName = ResolveComplexTypeTemplateName(col);
             int templateId = templateName is null
                 ? 0
-                : (int)await writer.Relationships.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
+                : (int)await this.writer.Relationships.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
 
-            await InsertMSysComplexColumnsRowAsync(
+            await this.InsertMSysComplexColumnsRowAsync(
                 col.Name,
                 complexId: alloc.ComplexId,
                 conceptualTableId: checked((int)parentTdefPage),
@@ -740,13 +740,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         int complexTypeObjectId,
         CancellationToken cancellationToken)
     {
-        long pg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long pg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (pg == 0)
         {
             throw new InvalidOperationException("MSysComplexColumns table is missing.");
         }
 
-        TableDef msysComplex = await writer.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await this.writer.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         object[] values = msysComplex.CreateNullValueRow();
 
         msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
@@ -755,7 +755,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         msysComplex.SetValueByName(values, "ConceptualTableID", conceptualTableId);
         msysComplex.SetValueByName(values, "ComplexID", complexId);
 
-        await writer.InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.writer.InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
@@ -772,7 +772,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
-        writer.ThrowIfDisposed();
+        this.writer.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         if (parentRowKey.Count == 0)
@@ -780,15 +780,15 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             throw new ArgumentException("At least one key column is required.", nameof(parentRowKey));
         }
 
-        if (writer.Format != DatabaseFormat.AceAccdb)
+        if (this.writer.Format != DatabaseFormat.AceAccdb)
         {
             throw new NotSupportedException(
                 "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
         }
 
         // Resolve parent table + complex column.
-        CatalogEntry parentEntry = await writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef parentDef = await writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry parentEntry = await this.writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef parentDef = await this.writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
@@ -801,14 +801,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.
-        long flatTdefPage = await ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
+        long flatTdefPage = await this.ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
         if (flatTdefPage <= 0)
         {
             throw new InvalidOperationException(
                 $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.");
         }
 
-        TableDef flatDef = await writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+        TableDef flatDef = await this.writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
         ComplexColumnKind kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
         if (kind == ComplexColumnKind.Unknown)
         {
@@ -849,12 +849,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         // Locate the unique parent row.
         (long parentPageNumber, int parentRowIndex, int parentRowStart, int parentRowSize) =
-            await FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
+            await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
                 .ConfigureAwait(false);
 
         // Read the existing ConceptualTableID from the parent row's complex slot;
         // allocate a fresh one when the slot is null.
-        int conceptualTableId = await ReadOrAllocateConceptualTableIdAsync(
+        int conceptualTableId = await this.ReadOrAllocateConceptualTableIdAsync(
             parentPageNumber,
             parentRowStart,
             parentRowSize,
@@ -873,10 +873,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // persisted FLAG_AUTO_LONG bit and seeds the next value from the
         // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
         // a single-call surface.
-        string flatTableName = await ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
-        await writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
+        string flatTableName = await this.ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
+        await this.writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
-        await writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
         await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -911,13 +911,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
-        TableDef? msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await this.writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             throw new InvalidOperationException("MSysObjects catalog table is missing.");
         }
 
-        List<CatalogRow> rows = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await this.writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
             if (row.TDefPage == flatTdefPage)
@@ -940,13 +940,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<long> ResolveFlatTableTdefPageAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysPg == 0)
         {
             return 0;
         }
 
-        TableDef msys = await writer.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await this.writer.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msys.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
         ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
@@ -955,12 +955,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return 0;
         }
 
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -968,26 +968,26 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
+                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
                     if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
                     {
                         continue;
                     }
 
-                    string flatText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                     {
                         return flatId & 0x00FFFFFFL;
@@ -1014,12 +1014,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         (long, int, int, int) match = default;
         bool found = false;
 
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1027,18 +1027,18 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != parentTdefPage)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != parentTdefPage)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     bool ok = true;
                     for (int p = 0; p < predIndexes.Length; p++)
                     {
                         ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                        string actual = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
+                        string actual = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
                         if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
                         {
                             ok = false;
@@ -1085,17 +1085,17 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         CancellationToken cancellationToken)
     {
         // Re-read parent page to inspect the complex slot null bit + 4 bytes.
-        byte[] page = await writer.ReadPageAsync(parentPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.writer.ReadPageAsync(parentPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = writer.ReadRowColumnCount(page, parentRowStart);
+            int numCols = this.writer.ReadRowColumnCount(page, parentRowStart);
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = parentRowSize - nullMaskSz;
             int byteOff = nullMaskPos + (complexCol.ColNum / 8);
             int bitOff = complexCol.ColNum % 8;
             bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
 
-            int slotOff = parentRowStart + writer.RowFields.NumCols + complexCol.FixedOff;
+            int slotOff = parentRowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
             {
                 int existing = Ri32(page, slotOff);
@@ -1111,10 +1111,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Allocate a fresh ConceptualTableID by scanning the flat table for max(FK)+1.
-        int allocated = await GetNextConceptualTableIdForFlatAsync(flatTdefPage, flatDef, cancellationToken).ConfigureAwait(false);
+        int allocated = await this.GetNextConceptualTableIdForFlatAsync(flatTdefPage, flatDef, cancellationToken).ConfigureAwait(false);
 
         // Patch the parent row's complex slot in place: 4 bytes + null-mask bit.
-        await PatchParentComplexSlotAsync(parentPageNumber, parentRowStart, parentRowSize, complexCol, allocated, cancellationToken).ConfigureAwait(false);
+        await this.PatchParentComplexSlotAsync(parentPageNumber, parentRowStart, parentRowSize, complexCol, allocated, cancellationToken).ConfigureAwait(false);
         return allocated;
     }
 
@@ -1126,13 +1126,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         int conceptualTableId,
         CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = writer.ReadRowColumnCount(page, rowStart);
+            int numCols = this.writer.ReadRowColumnCount(page, rowStart);
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = rowSize - nullMaskSz;
-            int slotOff = rowStart + writer.RowFields.NumCols + complexCol.FixedOff;
+            int slotOff = rowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotOff + 4 > rowStart + rowSize)
             {
                 throw new InvalidDataException("Complex column slot is out of row bounds.");
@@ -1146,7 +1146,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 page[rowStart + byteOff] |= (byte)(1 << bitOff);
             }
 
-            await writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            await this.writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1168,12 +1168,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
 
         int maxId = 0;
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1181,14 +1181,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != flatTdefPage)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != flatTdefPage)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string text = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
+                    string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                     if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
                     {
                         maxId = v;
@@ -1308,7 +1308,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
         foreach (ColumnInfo col in complexCols)
         {
-            long flatPg = await ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
+            long flatPg = await this.ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
             if (flatPg > 0)
             {
                 flatPagesByCol[col.ColNum] = flatPg;
@@ -1336,10 +1336,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                int numCols = writer.ReadRowColumnCount(page, loc.RowStart);
+                int numCols = this.writer.ReadRowColumnCount(page, loc.RowStart);
                 int nullMaskSz = (numCols + 7) / 8;
                 int nullMaskPos = loc.RowSize - nullMaskSz;
 
@@ -1359,7 +1359,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    int slotOff = loc.RowStart + writer.RowFields.NumCols + col.FixedOff;
+                    int slotOff = loc.RowStart + this.writer.RowFields.NumCols + col.FixedOff;
                     if (slotOff + 4 > loc.RowStart + loc.RowSize)
                     {
                         continue;
@@ -1396,7 +1396,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            TableDef flatDef = await writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+            TableDef flatDef = await this.writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
 
             ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
                 ?? flatDef.Columns.Find(c => c.Type == LongIntegerType);
@@ -1406,13 +1406,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
 
             int deletedFromFlat = 0;
-            long total = writer.PhysicalPageCount;
+            long total = this.writer.PhysicalPageCount;
             for (long pageNumber = 3; pageNumber < total; pageNumber++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var rowsToDelete = new List<int>();
-                byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 try
                 {
                     if (page[0] != Constants.PageTypes.Data)
@@ -1420,14 +1420,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    if (Ri32(page, writer.DataPage.TDefOff) != flatTdefPage)
+                    if (Ri32(page, this.writer.DataPage.TDefOff) != flatTdefPage)
                     {
                         continue;
                     }
 
-                    foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                    foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                     {
-                        string fkText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
+                        string fkText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                         if (CatalogValueReader.TryParseInt32(fkText, out int fk)
                             && ids.Contains(fk))
                         {
@@ -1442,14 +1442,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
                 foreach (int rowIdx in rowsToDelete)
                 {
-                    await writer.MarkRowDeletedAsync(pageNumber, rowIdx, cancellationToken).ConfigureAwait(false);
+                    await this.writer.MarkRowDeletedAsync(pageNumber, rowIdx, cancellationToken).ConfigureAwait(false);
                     deletedFromFlat++;
                 }
             }
 
             if (deletedFromFlat > 0)
             {
-                await writer.AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
+                await this.writer.AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1467,13 +1467,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask DropSingleComplexChildAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysCxPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
@@ -1485,12 +1485,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         long flatTdefPage = 0;
         var deletedRows = new List<(long PageNumber, int RowIndex)>();
 
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1498,26 +1498,26 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
                     }
 
-                    string flatText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                     {
                         flatTdefPage = fid & 0x00FFFFFFL;
@@ -1534,12 +1534,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri) in deletedRows)
         {
-            await writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
         {
-            await writer.AdjustTDefRowCountAsync(msysCxPg, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+            await this.writer.AdjustTDefRowCountAsync(msysCxPg, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
         }
 
         if (flatTdefPage <= 0)
@@ -1550,13 +1550,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // Drop the hidden flat-table catalog row. Same model as
         // DropComplexChildrenForTableAsync — orphaned data pages are reclaimed
         // by Access on the next Compact &amp; Repair pass.
-        TableDef? msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await this.writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;
         }
 
-        List<CatalogRow> catalog = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> catalog = await this.writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in catalog)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
@@ -1566,7 +1566,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
             if (row.TDefPage == flatTdefPage)
             {
-                await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1586,13 +1586,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysCxPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || cxIdCol == null)
@@ -1601,12 +1601,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1614,20 +1614,20 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
@@ -1636,7 +1636,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     var values = new object[msysCxDef.Columns.Count];
                     for (int i = 0; i < values.Length; i++)
                     {
-                        string text = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
+                        string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
                         values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                     }
 
@@ -1652,12 +1652,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
-            await writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long _, int _, object[] values) in matched)
         {
-            await writer.InsertSystemRowAndMaintainAsync(
+            await this.writer.InsertSystemRowAndMaintainAsync(
                 msysCxPg,
                 msysCxDef,
                 Constants.SystemTableNames.ComplexColumns,
@@ -1669,13 +1669,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     public async ValueTask UpdateComplexColumnParentTableIdAsync(int complexId, int parentTdefPage, CancellationToken cancellationToken)
     {
-        long msysCxPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (cxIdCol == null)
         {
@@ -1683,12 +1683,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1696,14 +1696,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
@@ -1712,7 +1712,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     var values = new object[msysCxDef.Columns.Count];
                     for (int i = 0; i < values.Length; i++)
                     {
-                        string text = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
+                        string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
                         values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                     }
 
@@ -1728,12 +1728,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
-            await writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long _, int _, object[] values) in matched)
         {
-            await writer.InsertSystemRowAndMaintainAsync(
+            await this.writer.InsertSystemRowAndMaintainAsync(
                 msysCxPg,
                 msysCxDef,
                 Constants.SystemTableNames.ComplexColumns,
@@ -1756,7 +1756,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
     {
-        TableDef? parentDef = await writer.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? parentDef = await this.writer.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         if (parentDef == null)
         {
             return;
@@ -1776,13 +1776,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        long msysCxPg = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await this.writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
@@ -1806,12 +1806,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var flatTdefPages = new HashSet<long>();
         var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
 
-        long total = writer.PhysicalPageCount;
+        long total = this.writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)
@@ -1819,15 +1819,15 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    string idText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!CatalogValueReader.TryParseInt32(idText, out int rid))
                     {
                         continue;
@@ -1838,7 +1838,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    string flatText = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                     {
                         _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
@@ -1855,12 +1855,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri) in cxRowsToDelete)
         {
-            await writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (cxRowsToDelete.Count > 0)
         {
-            await writer.AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
+            await this.writer.AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
         }
 
         if (flatTdefPages.Count == 0)
@@ -1870,13 +1870,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         // Drop the hidden flat-table catalog rows (system-flag tables —
         // public DropTableAsync would skip them).
-        TableDef? msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await this.writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;
         }
 
-        List<CatalogRow> catalog = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> catalog = await this.writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in catalog)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
@@ -1886,7 +1886,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
             if (flatTdefPages.Contains(row.TDefPage))
             {
-                await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             }
         }
     }

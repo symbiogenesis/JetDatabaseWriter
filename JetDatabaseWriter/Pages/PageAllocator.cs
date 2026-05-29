@@ -22,7 +22,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     internal async ValueTask<long> AllocatePageAsync(byte[] page, CancellationToken cancellationToken)
     {
-        long pageNumber = await ReserveContiguousPagesAsync(1, cancellationToken).ConfigureAwait(false);
+        long pageNumber = await this.ReserveContiguousPagesAsync(1, cancellationToken).ConfigureAwait(false);
         await writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         return pageNumber;
     }
@@ -34,13 +34,13 @@ internal sealed class PageAllocator(AccessWriter writer)
             throw new ArgumentOutOfRangeException(nameof(pageCount), "Page count must be positive.");
         }
 
-        List<long> freePages = await EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false);
+        List<long> freePages = await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false);
         long reusableStart = FindContiguousRun(freePages, pageCount);
         if (reusableStart > 0)
         {
             for (int offset = 0; offset < pageCount; offset++)
             {
-                await SetPageFreeStateAsync(reusableStart + offset, free: false, cancellationToken).ConfigureAwait(false);
+                await this.SetPageFreeStateAsync(reusableStart + offset, free: false, cancellationToken).ConfigureAwait(false);
             }
 
             return reusableStart;
@@ -72,14 +72,14 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
 
         bool secure = writer.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-        await WriteFreedPageAsync(pageNumber, secure, cancellationToken).ConfigureAwait(false);
-        await SetPageFreeStateAsync(pageNumber, free: true, cancellationToken).ConfigureAwait(false);
+        await this.WriteFreedPageAsync(pageNumber, secure, cancellationToken).ConfigureAwait(false);
+        await this.SetPageFreeStateAsync(pageNumber, free: true, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken)
     {
-        var freePages = new SortedSet<long>(await EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false));
-        long totalPages = LogicalPageCount;
+        var freePages = new SortedSet<long>(await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false));
+        long totalPages = this.LogicalPageCount;
         for (long pageNumber = 2; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -106,8 +106,8 @@ internal sealed class PageAllocator(AccessWriter writer)
                 continue;
             }
 
-            await WriteFreedPageAsync(pageNumber, secure: true, cancellationToken).ConfigureAwait(false);
-            await SetPageFreeStateAsync(pageNumber, free: true, cancellationToken).ConfigureAwait(false);
+            await this.WriteFreedPageAsync(pageNumber, secure: true, cancellationToken).ConfigureAwait(false);
+            await this.SetPageFreeStateAsync(pageNumber, free: true, cancellationToken).ConfigureAwait(false);
             scrubbed++;
         }
 
@@ -122,20 +122,20 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
 
         bool secure = writer.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-        long totalPages = LogicalPageCount;
+        long totalPages = this.LogicalPageCount;
         long newTotalPages = totalPages;
         while (newTotalPages > 3)
         {
             cancellationToken.ThrowIfCancellationRequested();
             long candidatePage = newTotalPages - 1;
-            if (!await IsPageFreeAsync(candidatePage, cancellationToken).ConfigureAwait(false))
+            if (!await this.IsPageFreeAsync(candidatePage, cancellationToken).ConfigureAwait(false))
             {
                 break;
             }
 
             if (secure)
             {
-                await WriteFreedPageAsync(candidatePage, secure: true, cancellationToken).ConfigureAwait(false);
+                await this.WriteFreedPageAsync(candidatePage, secure: true, cancellationToken).ConfigureAwait(false);
             }
 
             newTotalPages--;
@@ -154,7 +154,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     internal async ValueTask<bool> IsPageFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= LogicalPageCount)
+        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= this.LogicalPageCount)
         {
             return false;
         }
@@ -163,7 +163,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         try
         {
             return IsPhysicallyReusableFreePage(page)
-                && await IsPageMarkedFreeAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                && await this.IsPageMarkedFreeAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -219,7 +219,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask<List<long>> EnumerateMappedFreePagesAsync(CancellationToken cancellationToken)
     {
-        byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!UsageMap.TryGetFirstRowBound(globalPage, writer.DataPage, writer.PageSizeBytes, out RowBound rowBound))
@@ -232,7 +232,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 globalPage,
                 rowBound,
                 writer.PageSizeBytes,
-                LogicalPageCount,
+                this.LogicalPageCount,
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
                 writer.ReadPageAsync,
@@ -244,7 +244,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 return [];
             }
 
-            return await FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
+            return await this.FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -282,7 +282,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask<bool> IsPageMarkedFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!UsageMap.TryGetFirstRowBound(globalPage, writer.DataPage, writer.PageSizeBytes, out RowBound rowBound))
@@ -293,7 +293,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             return globalPage[rowBound.RowStart] switch
             {
                 Constants.UsageMap.InlineMapType => UsageMap.TryGetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, out bool isFree) && isFree,
-                Constants.UsageMap.ReferenceMapType => await TryGetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, cancellationToken).ConfigureAwait(false),
+                Constants.UsageMap.ReferenceMapType => await this.TryGetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, cancellationToken).ConfigureAwait(false),
                 _ => false,
             };
         }
@@ -305,12 +305,12 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     private async ValueTask SetPageFreeStateAsync(long pageNumber, bool free, CancellationToken cancellationToken)
     {
-        byte[] globalPage = await ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!UsageMap.TryGetFirstRowBound(globalPage, writer.DataPage, writer.PageSizeBytes, out RowBound rowBound))
             {
-                InitializeGlobalUsageMapPage(globalPage);
+                this.InitializeGlobalUsageMapPage(globalPage);
                 rowBound = new AccessBase.RowBound(0, writer.PageSizeBytes - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
             }
 
@@ -328,14 +328,14 @@ internal sealed class PageAllocator(AccessWriter writer)
                     return;
                 }
 
-                await PromoteInlineToReferenceAsync(globalPage, rowBound.RowStart, rowBound.RowSize, cancellationToken).ConfigureAwait(false);
-                await SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
+                await this.PromoteInlineToReferenceAsync(globalPage, rowBound.RowStart, rowBound.RowSize, cancellationToken).ConfigureAwait(false);
+                await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
             if (mapType == Constants.UsageMap.ReferenceMapType)
             {
-                await SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, cancellationToken).ConfigureAwait(false);
+                await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -352,7 +352,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             rowStart,
             rowSize,
             writer.PageSizeBytes,
-            LogicalPageCount,
+            this.LogicalPageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
             existingFreePages);
@@ -362,7 +362,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
         foreach (long freePageNumber in existingFreePages)
         {
-            await SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, freePageNumber, free: true, cancellationToken).ConfigureAwait(false);
+            await this.SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, freePageNumber, free: true, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -377,7 +377,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
-        if (mapPageNumber <= 0 || mapPageNumber >= LogicalPageCount)
+        if (mapPageNumber <= 0 || mapPageNumber >= this.LogicalPageCount)
         {
             return false;
         }
@@ -454,9 +454,9 @@ internal sealed class PageAllocator(AccessWriter writer)
     private async ValueTask<byte[]> ReadGlobalUsageMapPageAsync(CancellationToken cancellationToken)
     {
         byte[] page = await writer.ReadPageAsync(GlobalUsageMapPageNumber, cancellationToken).ConfigureAwait(false);
-        if (!IsGlobalUsageMapPage(page))
+        if (!this.IsGlobalUsageMapPage(page))
         {
-            InitializeGlobalUsageMapPage(page);
+            this.InitializeGlobalUsageMapPage(page);
             await writer.WritePageAsync(GlobalUsageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
         }
 

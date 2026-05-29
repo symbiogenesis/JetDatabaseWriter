@@ -482,8 +482,8 @@ public sealed class DataRemanenceTests
         int Start,
         byte[] Bytes)
     {
-        public bool IsLive => (RawOffset & 0xC000) == 0;
+        public bool IsLive => (this.RawOffset & 0xC000) == 0;
 
-        public bool IsDeleted => (RawOffset & 0x8000) != 0;
+        public bool IsDeleted => (this.RawOffset & 0x8000) != 0;
     }
 }

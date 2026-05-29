@@ -7,9 +7,9 @@ internal readonly record struct DelimitedTextFormat
     internal DelimitedTextFormat(bool hasHeaderRow, char delimiter, bool trimValues = false)
     {
         ValidateDelimiter(delimiter);
-        HasHeaderRow = hasHeaderRow;
-        Delimiter = delimiter;
-        TrimValues = trimValues;
+        this.HasHeaderRow = hasHeaderRow;
+        this.Delimiter = delimiter;
+        this.TrimValues = trimValues;
     }
 
     internal bool HasHeaderRow { get; }

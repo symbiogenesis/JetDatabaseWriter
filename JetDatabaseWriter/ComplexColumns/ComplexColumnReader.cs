@@ -119,12 +119,12 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         return byComplexId.Count == 0
             ? []
-            : await JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
+            : await this.JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        ComplexColumnInfo? info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+        ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (info == null || string.IsNullOrEmpty(info.FlatTableName))
         {
             return [];
@@ -175,7 +175,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     internal async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        ComplexColumnInfo? info = await FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+        ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (info == null || string.IsNullOrEmpty(info.FlatTableName))
         {
             return [];
@@ -258,11 +258,11 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         }
         catch (InvalidDataException ex)
         {
-            TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
+            this.TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
         }
         catch (IndexOutOfRangeException ex)
         {
-            TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
+            this.TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
         }
 
         return result;
@@ -285,7 +285,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 continue;
             }
 
-            Dictionary<int, byte[]>? colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
+            Dictionary<int, byte[]>? colData = await this.LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
             if (colData?.Count > 0)
             {
                 result ??= [];
@@ -483,7 +483,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     private async ValueTask<ComplexColumnInfo?> FindComplexColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
-        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ComplexColumnInfo> complex = await this.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
         foreach (ComplexColumnInfo column in complex)
         {
             if (string.Equals(column.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
@@ -522,7 +522,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        Dictionary<long, string> objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
+        Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
         await foreach (string[] row in reader.EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
@@ -643,7 +643,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         }
         catch (InvalidDataException ex)
         {
-            TraceBestEffortFallback(nameof(GetComplexFlatTablePageAsync), ex);
+            this.TraceBestEffortFallback(nameof(GetComplexFlatTablePageAsync), ex);
         }
 
         return 0;
@@ -653,10 +653,10 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     {
         try
         {
-            long tdefPage = await GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+            long tdefPage = await this.GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
             if (tdefPage <= 0)
             {
-                tdefPage = await FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
+                tdefPage = await this.FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
             }
 
             TableDef? td = tdefPage > 0 ? await reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
@@ -714,22 +714,22 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         }
         catch (InvalidDataException ex)
         {
-            TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
+            this.TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
             return null;
         }
         catch (IndexOutOfRangeException ex)
         {
-            TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
+            this.TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
             return null;
         }
         catch (IOException ex)
         {
-            TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
+            this.TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
             return null;
         }
         catch (OverflowException ex)
         {
-            TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
+            this.TraceBestEffortFallback(nameof(LoadAttachmentDataAsync), ex);
             return null;
         }
     }

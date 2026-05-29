@@ -109,23 +109,23 @@ internal readonly record struct RowFieldSizes(int NumCols, int VarEntry, int Eod
     /// <param name="page">The page bytes.</param>
     /// <param name="off">The byte offset.</param>
     public int ReadNumCols(ReadOnlySpan<byte> page, int off) =>
-        NumCols == 2 ? Ru16(page, off) : page[off];
+        this.NumCols == 2 ? Ru16(page, off) : page[off];
 
     /// <summary>Reads a <see cref="VarEntry"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="off">The byte offset.</param>
     public int ReadVarEntry(ReadOnlySpan<byte> page, int off) =>
-        VarEntry == 2 ? Ru16(page, off) : page[off];
+        this.VarEntry == 2 ? Ru16(page, off) : page[off];
 
     /// <summary>Reads a <see cref="VarLen"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="off">The byte offset.</param>
     public int ReadVarLen(ReadOnlySpan<byte> page, int off) =>
-        VarLen == 2 ? Ru16(page, off) : page[off];
+        this.VarLen == 2 ? Ru16(page, off) : page[off];
 
     /// <summary>Reads an <see cref="Eod"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="off">The byte offset.</param>
     public int ReadEod(ReadOnlySpan<byte> page, int off) =>
-        Eod == 2 ? Ru16(page, off) : page[off];
+        this.Eod == 2 ? Ru16(page, off) : page[off];
 }

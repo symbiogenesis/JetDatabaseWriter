@@ -9,7 +9,7 @@ public class ColumnInfoBenchmarks
     private ColumnInfo[] _columns = null!;
 
     [GlobalSetup]
-    public void Setup() => _columns =
+    public void Setup() => this._columns =
         [
             new() { Type = 0x01, Flags = 0x00, Name = "Bool" },       // Boolean → fixed
             new() { Type = 0x04, Flags = 0x00, Name = "Long" },       // LongInteger → fixed
@@ -28,9 +28,9 @@ public class ColumnInfoBenchmarks
     public int IsFixed_AllColumns()
     {
         int fixedCount = 0;
-        for (int i = 0; i < _columns.Length; i++)
+        for (int i = 0; i < this._columns.Length; i++)
         {
-            if (_columns[i].IsFixed)
+            if (this._columns[i].IsFixed)
             {
                 fixedCount++;
             }
@@ -40,11 +40,11 @@ public class ColumnInfoBenchmarks
     }
 
     [Benchmark]
-    public bool IsFixed_FixedType() => _columns[0].IsFixed;
+    public bool IsFixed_FixedType() => this._columns[0].IsFixed;
 
     [Benchmark]
-    public bool IsFixed_VariableType() => _columns[5].IsFixed;
+    public bool IsFixed_VariableType() => this._columns[5].IsFixed;
 
     [Benchmark]
-    public bool IsFixed_FallbackFlag() => _columns[9].IsFixed;
+    public bool IsFixed_FallbackFlag() => this._columns[9].IsFixed;
 }

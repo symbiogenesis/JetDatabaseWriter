@@ -219,7 +219,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        await AssertEveryTableStreamsAsync(TestDatabases.MdbtoolsNwind);
+        await this.AssertEveryTableStreamsAsync(TestDatabases.MdbtoolsNwind);
     }
 
     // ── ASampleDatabase.accdb (ACE / Access 2007+) ────────────────────────────
@@ -304,7 +304,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             return;
         }
 
-        await AssertEveryTableStreamsAsync(TestDatabases.MdbtoolsASampleDatabase);
+        await this.AssertEveryTableStreamsAsync(TestDatabases.MdbtoolsASampleDatabase);
     }
 
     // ── DateTestDatabase.mdb ──────────────────────────────────────────────────

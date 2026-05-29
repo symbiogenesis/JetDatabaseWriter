@@ -54,8 +54,8 @@ public sealed class IndexCursorTests
         byte[] existingKey = IndexKeyEncoder.EncodeEntry(0x04, 750, ascending: true);
         byte[] missingKey = IndexKeyEncoder.EncodeEntry(0x04, 5000, ascending: true);
 
-        Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, existingKey, cancellationToken));
-        Assert.False(await cursor.ContainsKeyAsync(tree.RootPageNumber, missingKey, cancellationToken));
+        Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, existingKey, this.cancellationToken));
+        Assert.False(await cursor.ContainsKeyAsync(tree.RootPageNumber, missingKey, this.cancellationToken));
     }
 
     [Theory]
@@ -71,7 +71,7 @@ public sealed class IndexCursorTests
         List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
             tree.RootPageNumber,
             duplicateKey,
-            cancellationToken);
+            this.cancellationToken);
 
         var expected = entries
             .Select(entry => (entry.DataPage, RowIndex: (int)entry.DataRow))
@@ -111,11 +111,11 @@ public sealed class IndexCursorTests
 
         IndexCursor cursor = CreateCursor(tree);
 
-        Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, appendedKey, cancellationToken));
+        Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, appendedKey, this.cancellationToken));
         List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
             tree.RootPageNumber,
             appendedKey,
-            cancellationToken);
+            this.cancellationToken);
         Assert.Equal([(999, 7)], matches);
     }
 

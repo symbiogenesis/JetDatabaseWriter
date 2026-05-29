@@ -16,8 +16,8 @@ public readonly record struct ColumnSize
 
     private ColumnSize(int? value, ColumnSizeUnit unit)
     {
-        Value = value;
-        Unit = unit;
+        this.Value = value;
+        this.Unit = unit;
     }
 
     /// <summary>Gets the numeric count; <c>null</c> for <see cref="ColumnSizeUnit.Variable"/> and <see cref="ColumnSizeUnit.Lval"/>.</summary>
@@ -44,14 +44,14 @@ public readonly record struct ColumnSize
     /// <inheritdoc/>
     public override string ToString()
     {
-        switch (Unit)
+        switch (this.Unit)
         {
             case ColumnSizeUnit.Bits:
-                return Value == 1 ? "1 bit" : $"{Value} bits";
+                return this.Value == 1 ? "1 bit" : $"{this.Value} bits";
             case ColumnSizeUnit.Bytes:
-                return Value == 1 ? "1 byte" : $"{Value} bytes";
+                return this.Value == 1 ? "1 byte" : $"{this.Value} bytes";
             case ColumnSizeUnit.Chars:
-                return $"{Value} chars";
+                return $"{this.Value} chars";
             case ColumnSizeUnit.Variable:
                 return "variable";
             case ColumnSizeUnit.Lval:

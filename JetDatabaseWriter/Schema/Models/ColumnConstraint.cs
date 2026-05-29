@@ -34,5 +34,5 @@ internal sealed class ColumnConstraint
     internal Expressions.CalculatedExpressionEvaluator.Plan? CalculatedExpressionPlan { get; set; }
 
     public bool HasAnyConstraint =>
-        !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null || IsCalculated;
+        !this.IsNullable || this.DefaultValue != null || this.IsAutoIncrement || this.ValidationRule != null || this.IsCalculated;
 }

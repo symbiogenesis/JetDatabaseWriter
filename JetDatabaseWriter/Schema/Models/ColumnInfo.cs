@@ -56,7 +56,7 @@ internal sealed class ColumnInfo
     /// <c>MSysObjects.LvProp</c>; the column-descriptor <c>col_type</c> byte
     /// already mirrors that result type for the columns Access produces.
     /// </summary>
-    public bool IsCalculated => (ExtraFlags & Constants.CalculatedColumn.ExtFlagMask) == Constants.CalculatedColumn.ExtFlagMask;
+    public bool IsCalculated => (this.ExtraFlags & Constants.CalculatedColumn.ExtFlagMask) == Constants.CalculatedColumn.ExtFlagMask;
 
     /// <summary>
     /// Gets a value indicating whether this text/memo column supports
@@ -66,7 +66,7 @@ internal sealed class ColumnInfo
     /// (Jackcess <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>).
     /// Always false for Jet3 columns (no ExtraFlags slot).
     /// </summary>
-    public bool IsCompressedUnicode => (ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
+    public bool IsCompressedUnicode => (this.ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
 
     public string Name { get; set; } = string.Empty;
 
@@ -113,18 +113,18 @@ internal sealed class ColumnInfo
         get
         {
             // BOOL stores its value in the null mask, never in fixed area.
-            if (Type == BooleanType && !IsCalculated)
+            if (this.Type == BooleanType && !this.IsCalculated)
             {
                 return true;
             }
 
             // TEXT/BINARY/MEMO/OLE always live in the variable area.
-            if (JetTypeInfo.IsAlwaysVariableLength(Type))
+            if (JetTypeInfo.IsAlwaysVariableLength(this.Type))
             {
                 return false;
             }
 
-            return (Flags & Constants.ColumnDescriptorFlags.Fixed) != 0;
+            return (this.Flags & Constants.ColumnDescriptorFlags.Fixed) != 0;
         }
     }
 }

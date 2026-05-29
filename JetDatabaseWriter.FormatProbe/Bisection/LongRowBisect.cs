@@ -301,7 +301,7 @@ internal static class LongRowBisect
 
         public void AppendInline(char c, List<byte> output)
         {
-            Func<char, byte[]?> getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
+            Func<char, byte[]?> getInlineBytes = c <= 0x00FF ? this.codes[c] : this.extCodes[c - 0x0100];
             byte[]? inline = getInlineBytes(c);
             if (inline is not null)
             {
@@ -338,36 +338,36 @@ internal static class LongRowBisect
 
         public InlineEncodingCache(string value, InlineEncoder encoder)
         {
-            offsets = new int[value.Length + 1];
+            this.offsets = new int[value.Length + 1];
             var output = new List<byte>(value.Length * 2);
             for (int i = 0; i < value.Length; i++)
             {
-                offsets[i] = output.Count;
+                this.offsets[i] = output.Count;
                 encoder.AppendInline(value[i], output);
             }
 
-            offsets[value.Length] = output.Count;
-            bytes = [.. output];
+            this.offsets[value.Length] = output.Count;
+            this.bytes = [.. output];
         }
 
         public int ByteLength(int start, int end)
-            => offsets[end] - offsets[start];
+            => this.offsets[end] - this.offsets[start];
 
         public bool SliceEqualsBytes(int start, int end, byte[] other, int otherOffset, int otherLength)
         {
-            int byteLength = ByteLength(start, end);
+            int byteLength = this.ByteLength(start, end);
             return byteLength == otherLength
-                   && bytes.AsSpan(offsets[start], byteLength).SequenceEqual(other.AsSpan(otherOffset, otherLength));
+                   && this.bytes.AsSpan(this.offsets[start], byteLength).SequenceEqual(other.AsSpan(otherOffset, otherLength));
         }
 
         public bool SliceMatchesAt(int start, int end, byte[] haystack, int haystackOffset)
         {
-            int byteLength = ByteLength(start, end);
+            int byteLength = this.ByteLength(start, end);
             return haystackOffset + byteLength <= haystack.Length
-                   && bytes.AsSpan(offsets[start], byteLength).SequenceEqual(haystack.AsSpan(haystackOffset, byteLength));
+                   && this.bytes.AsSpan(this.offsets[start], byteLength).SequenceEqual(haystack.AsSpan(haystackOffset, byteLength));
         }
 
         public string ToHex(int start, int end)
-            => Convert.ToHexString(bytes.AsSpan(offsets[start], ByteLength(start, end)));
+            => Convert.ToHexString(this.bytes.AsSpan(this.offsets[start], this.ByteLength(start, end)));
     }
 }

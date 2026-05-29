@@ -17,15 +17,15 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
     public ScaffoldRunnerTests()
     {
-        _outputDir = Path.Combine(Path.GetTempPath(), "ScaffoldRunnerTests_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_outputDir);
+        this._outputDir = Path.Combine(Path.GetTempPath(), "ScaffoldRunnerTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(this._outputDir);
     }
 
     public void Dispose()
     {
-        if (Directory.Exists(_outputDir))
+        if (Directory.Exists(this._outputDir))
         {
-            Directory.Delete(_outputDir, recursive: true);
+            Directory.Delete(this._outputDir, recursive: true);
         }
     }
 
@@ -37,7 +37,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "TestNs", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "TestNs", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, result);
         Assert.Contains("No user tables found", stdout.ToString(), StringComparison.Ordinal);
@@ -60,10 +60,10 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "MyApp.Models", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "MyApp.Models", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result);
-        string filePath = Path.Combine(_outputDir, "Customers.cs");
+        string filePath = Path.Combine(this._outputDir, "Customers.cs");
         Assert.True(File.Exists(filePath));
         string content = await File.ReadAllTextAsync(filePath, TestContext.Current.CancellationToken);
         Assert.Contains("namespace MyApp.Models", content, StringComparison.Ordinal);
@@ -88,12 +88,12 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, result);
-        Assert.True(File.Exists(Path.Combine(_outputDir, "Orders.cs")));
-        Assert.True(File.Exists(Path.Combine(_outputDir, "Products.cs")));
-        Assert.True(File.Exists(Path.Combine(_outputDir, "Categories.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "Orders.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "Products.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "Categories.cs")));
         Assert.Contains("Done. 3 model(s) generated.", stdout.ToString(), StringComparison.Ordinal);
     }
 
@@ -113,9 +113,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: true, nullable: false, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: true, nullable: false, TestContext.Current.CancellationToken);
 
-        string content = await File.ReadAllTextAsync(Path.Combine(_outputDir, "Items.cs"), TestContext.Current.CancellationToken);
+        string content = await File.ReadAllTextAsync(Path.Combine(this._outputDir, "Items.cs"), TestContext.Current.CancellationToken);
         Assert.Contains("record Items", content, StringComparison.Ordinal);
         Assert.DoesNotContain("class Items", content, StringComparison.Ordinal);
     }
@@ -136,9 +136,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
 
-        string content = await File.ReadAllTextAsync(Path.Combine(_outputDir, "People.cs"), TestContext.Current.CancellationToken);
+        string content = await File.ReadAllTextAsync(Path.Combine(this._outputDir, "People.cs"), TestContext.Current.CancellationToken);
         Assert.Contains("#nullable enable", content, StringComparison.Ordinal);
     }
 
@@ -158,9 +158,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
-        string content = await File.ReadAllTextAsync(Path.Combine(_outputDir, "People.cs"), TestContext.Current.CancellationToken);
+        string content = await File.ReadAllTextAsync(Path.Combine(this._outputDir, "People.cs"), TestContext.Current.CancellationToken);
         Assert.DoesNotContain("#nullable", content, StringComparison.Ordinal);
     }
 
@@ -185,12 +185,12 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result);
-        Assert.True(File.Exists(Path.Combine(_outputDir, "Good.cs")));
-        Assert.True(File.Exists(Path.Combine(_outputDir, "AlsoGood.cs")));
-        Assert.False(File.Exists(Path.Combine(_outputDir, "Bad.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "Good.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "AlsoGood.cs")));
+        Assert.False(File.Exists(Path.Combine(this._outputDir, "Bad.cs")));
         Assert.Contains("Warning: skipping table 'Bad'", stderr.ToString(), StringComparison.Ordinal);
         Assert.Contains("corrupt table", stderr.ToString(), StringComparison.Ordinal);
     }
@@ -215,11 +215,11 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result);
-        Assert.True(File.Exists(Path.Combine(_outputDir, "First.cs")));
-        Assert.False(File.Exists(Path.Combine(_outputDir, "Broken.cs")));
+        Assert.True(File.Exists(Path.Combine(this._outputDir, "First.cs")));
+        Assert.False(File.Exists(Path.Combine(this._outputDir, "Broken.cs")));
         Assert.Contains("Warning: skipping table 'Broken'", stderr.ToString(), StringComparison.Ordinal);
     }
 
@@ -239,17 +239,17 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         string className = NameCleaner.ToClassName("my table 1");
-        string filePath = Path.Combine(_outputDir, $"{className}.cs");
+        string filePath = Path.Combine(this._outputDir, $"{className}.cs");
         Assert.True(File.Exists(filePath), $"Expected file {filePath} to exist");
     }
 
     [Fact]
     public async Task RunAsync_CreatesOutputDirectory_WhenNotExists()
     {
-        string nested = Path.Combine(_outputDir, "sub", "deep");
+        string nested = Path.Combine(this._outputDir, "sub", "deep");
         var columns = new List<ColumnMetadata>
         {
             new() { Name = "X", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
@@ -283,7 +283,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Contains("Found 2 table(s)", stdout.ToString(), StringComparison.Ordinal);
     }
@@ -306,7 +306,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Contains("3 columns", stdout.ToString(), StringComparison.Ordinal);
     }
@@ -327,7 +327,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        int result = await runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
+        int result = await runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, result);
         Assert.Contains("Done. 0 model(s) generated.", stdout.ToString(), StringComparison.Ordinal);
@@ -349,9 +349,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await using var stderr = new StringWriter();
         var runner = new ScaffoldRunner(reader, stdout, stderr);
 
-        await runner.RunAsync(_outputDir, "Acme.Data.Entities", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+        await runner.RunAsync(this._outputDir, "Acme.Data.Entities", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
 
-        string content = await File.ReadAllTextAsync(Path.Combine(_outputDir, "Foo.cs"), TestContext.Current.CancellationToken);
+        string content = await File.ReadAllTextAsync(Path.Combine(this._outputDir, "Foo.cs"), TestContext.Current.CancellationToken);
         Assert.Contains("namespace Acme.Data.Entities", content, StringComparison.Ordinal);
     }
 
@@ -373,7 +373,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         var runner = new ScaffoldRunner(reader, TextWriter.Null, TextWriter.Null);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => runner.RunAsync(_outputDir, "NS", useRecords: false, nullable: false, cts.Token));
+            () => runner.RunAsync(this._outputDir, "NS", useRecords: false, nullable: false, cts.Token));
     }
 
     /// <summary>
@@ -413,12 +413,12 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_failingTables.TryGetValue(tableName, out Exception? ex))
+            if (this._failingTables.TryGetValue(tableName, out Exception? ex))
             {
                 throw ex;
             }
 
-            if (_columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
+            if (this._columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
             {
                 return new ValueTask<List<ColumnMetadata>>(cols);
             }

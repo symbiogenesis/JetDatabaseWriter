@@ -25,35 +25,35 @@ internal sealed class AsyncLazyInitializer<T>(Func<CancellationToken, ValueTask<
     /// <param name="cancellationToken">A token used to cancel the asynchronous build.</param>
     public async ValueTask<T> GetAsync(CancellationToken cancellationToken)
     {
-        T? cached = value;
+        T? cached = this.value;
         if (cached != null)
         {
             return cached;
         }
 
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            cached = value;
+            cached = this.value;
             if (cached != null)
             {
                 return cached;
             }
 
             cached = await factory(cancellationToken).ConfigureAwait(false);
-            value = cached;
+            this.value = cached;
             return cached;
         }
         finally
         {
-            gate.Release();
+            this.gate.Release();
         }
     }
 
     /// <summary>Drops the cached value and releases the underlying gate.</summary>
     public void Dispose()
     {
-        value = null;
-        gate.Dispose();
+        this.value = null;
+        this.gate.Dispose();
     }
 }

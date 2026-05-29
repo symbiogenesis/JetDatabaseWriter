@@ -41,7 +41,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                     new ColumnDefinition("Val", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -49,7 +49,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i + 1, 0];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -61,7 +61,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "Id",
                 50,
                 new Dictionary<string, object?> { ["Val"] = 999 },
-                ct);
+                this.ct);
             Assert.Equal(1, updated);
         }
 
@@ -72,7 +72,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt!.Rows.Count);
     }
@@ -91,7 +91,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // Insert ids 0, 10, 20, ..., 7990 — gaps allow a true "middle"
             // insert later that doesn't change the affected leaf's max.
@@ -101,7 +101,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -110,14 +110,14 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         {
             // Land on a leaf in the middle (not the tail); 105 sits between
             // 100 and 110 and is well below any leaf's max key.
-            await writer.InsertRowAsync("T", [105], ct);
+            await writer.InsertRowAsync("T", [105], this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -146,7 +146,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -154,14 +154,14 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i + 1];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 50, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 50, this.ct);
             Assert.Equal(1, deleted);
         }
 
@@ -169,7 +169,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(799, dt!.Rows.Count);
     }
@@ -190,7 +190,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // Sparse layout: ids 0, 100, 200, ..., 79900. Plenty of room to
             // pick an insert key between the max of one leaf and the min of
@@ -201,7 +201,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i * 100];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -214,14 +214,14 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             // strictly between the chosen leaf's prior max and the next
             // leaf's min. Either way (max-changes or doesn't), surgical
             // path applies and no new index pages should appear.
-            await writer.InsertRowAsync("T", [40050], ct);
+            await writer.InsertRowAsync("T", [40050], this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
     }
@@ -242,7 +242,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // 1200 entries → multi-leaf tree. Each int entry is ~9 bytes
             // (1 flag + 4 key + 3 page + 1 row) and a single 4096-byte page
@@ -253,7 +253,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -276,7 +276,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 inserts[i] = [(i * 6) + 1];
             }
 
-            await writer.InsertRowsAsync("T", inserts, ct);
+            await writer.InsertRowsAsync("T", inserts, this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
@@ -290,7 +290,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             $"Expected surgical leaf split to append at most 2 index pages, but added {idxAfter - idxBefore}.");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(1230, dt!.Rows.Count);
     }
@@ -310,7 +310,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -318,18 +318,18 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i + 1];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Two inserts spanning the leaf boundary (key 50 in leaf 1, key
             // 700 in a later leaf) → surgical bails to bulk rebuild.
-            await writer.InsertRowsAsync("T", [[50_000], [60_000]], ct);
+            await writer.InsertRowsAsync("T", [[50_000], [60_000]], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
     }
@@ -348,7 +348,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -356,7 +356,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 rows[i] = [i + 1];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Delete a contiguous range that covers a whole leaf (~400 rows).
@@ -364,12 +364,12 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         {
             for (int id = 1; id <= 400; id++)
             {
-                await writer.DeleteRowsAsync("T", "Id", id, ct);
+                await writer.DeleteRowsAsync("T", "Id", id, this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
     }

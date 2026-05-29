@@ -310,7 +310,7 @@ internal static class IndexBTreeBuilder
         /// <summary>
         /// Gets key + (3B page + 1B row) + 4B child.
         /// </summary>
-        public int OnDiskSize => Summary.Key.Length + 4 + 4;
+        public int OnDiskSize => this.Summary.Key.Length + 4 + 4;
     }
 
     private static (List<List<IntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(

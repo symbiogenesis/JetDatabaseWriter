@@ -37,7 +37,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(short), (short)1, (short)2, (short)3)]
     public async Task AutoIncrement_NullValues_AssignsMonotonicSequenceFromOne(Type clrType, object expected1, object expected2, object expected3)
     {
-        await using MemoryStream? ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await this.CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -85,7 +85,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(int))]
     public async Task AutoIncrement_FlagPersists_AcrossWriterClose(Type clrType)
     {
-        await using MemoryStream? ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await this.CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -117,7 +117,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [Fact]
     public async Task AutoIncrement_AfterDeleteAllRows_DoesNotReuseValues()
     {
-        await using MemoryStream? ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await this.CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -165,7 +165,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [Fact]
     public async Task AutoIncrement_ExplicitValue_OverridesCounterAndRoundTrips()
     {
-        await using MemoryStream? ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await this.CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -213,7 +213,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(long))]
     public async Task AutoIncrement_OnUnsupportedIntegralType_ThrowsNotSupported(Type clrType)
     {
-        await using MemoryStream? ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await this.CopyNorthwindAsync();
         if (ms is null)
         {
             return;

@@ -87,12 +87,12 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// </summary>
     public void Acquire()
     {
-        if (!IsEnabled || slot is not null)
+        if (!this.IsEnabled || this.slot is not null)
         {
             return;
         }
 
-        slot = LockFileSlotWriter.Open(
+        this.slot = LockFileSlotWriter.Open(
             databasePath,
             ownerTypeName,
             respectExisting: settings.RespectExisting,
@@ -116,7 +116,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
         var combined = new Func<ValueTask>[steps.Length + 1];
         combined[0] = () => new ValueTask(waitForOperations);
         Array.Copy(steps, 0, combined, 1, steps.Length);
-        return DisposeAfterAsync(combined);
+        return this.DisposeAfterAsync(combined);
     }
 
     /// <summary>
@@ -155,7 +155,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
 
         try
         {
-            Dispose();
+            this.Dispose();
         }
 #pragma warning disable CA1031 // See above — disposal aggregates failures.
         catch (Exception ex)
@@ -182,8 +182,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// <inheritdoc/>
     public void Dispose()
     {
-        slot?.Dispose();
-        slot = null;
+        this.slot?.Dispose();
+        this.slot = null;
     }
 }
 

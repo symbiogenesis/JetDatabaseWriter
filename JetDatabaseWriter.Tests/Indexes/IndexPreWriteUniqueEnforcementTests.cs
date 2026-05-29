@@ -32,13 +32,13 @@ public sealed class IndexPreWriteUniqueEnforcementTests
             "T",
             [new ColumnDefinition("Id", typeof(int))],
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1], ct);
-        await writer.InsertRowAsync("T", [2], ct);
+        await writer.InsertRowAsync("T", [1], this.ct);
+        await writer.InsertRowAsync("T", [2], this.ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1], ct));
+            await writer.InsertRowAsync("T", [1], this.ct));
 
         // Error message must indicate the conflict was caught BEFORE the
         // row hit disk: it should contain "before any row was written".
@@ -46,7 +46,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         // Table should still contain exactly the two rows successfully inserted.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(2, dt!.Rows.Count);
     }
@@ -64,20 +64,20 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 new ColumnDefinition("Tag", typeof(int)),
             ],
             [new IndexDefinition("UQ_Tag", "Tag") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [DBNull.Value, 100], ct); // Id=1
-        await writer.InsertRowAsync("T", [DBNull.Value, 200], ct); // Id=2
+        await writer.InsertRowAsync("T", [DBNull.Value, 100], this.ct); // Id=1
+        await writer.InsertRowAsync("T", [DBNull.Value, 200], this.ct); // Id=2
 
         // Duplicate Tag=100 → must throw before consuming Id=3.
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [DBNull.Value, 100], ct));
+            await writer.InsertRowAsync("T", [DBNull.Value, 100], this.ct));
 
         // Next successful insert should use Id=3, not Id=4.
-        await writer.InsertRowAsync("T", [DBNull.Value, 300], ct);
+        await writer.InsertRowAsync("T", [DBNull.Value, 300], this.ct);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         var ids = dt!.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         Assert.Equal(ExpectedIds123, ids);
@@ -94,7 +94,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var batch = new[]
             {
@@ -106,13 +106,13 @@ public sealed class IndexPreWriteUniqueEnforcementTests
             };
 
             InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-                await writer.InsertRowsAsync("T", batch, ct));
+                await writer.InsertRowsAsync("T", batch, this.ct));
             Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
         }
 
         // Re-open and confirm the batch was fully rolled back.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Empty(dt!.Rows);
     }
@@ -131,7 +131,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                     new ColumnDefinition("Code", typeof(int)),
                 ],
                 [new IndexDefinition("UQ_Code", "Code") { IsUnique = true }],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -140,7 +140,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                     [2, 200],
                     [3, 300],
                 ],
-                ct);
+                this.ct);
 
             // Try to update Id=2 so its Code collides with Id=1's Code.
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -149,12 +149,12 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                     "Id",
                     2,
                     new Dictionary<string, object?> { ["Code"] = 100 },
-                    ct));
+                    this.ct));
         }
 
         // Reopen and confirm the original Code value survived.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         var codeById = dt!.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
         Assert.Equal(100, codeById[1]);
@@ -175,14 +175,14 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 new ColumnDefinition("B", typeof(int)),
             ],
             [new IndexDefinition("UQ_AB", CompositeAB) { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1, 10], ct);
-        await writer.InsertRowAsync("T", [1, 20], ct); // different B → ok
-        await writer.InsertRowAsync("T", [2, 10], ct); // different A → ok
+        await writer.InsertRowAsync("T", [1, 10], this.ct);
+        await writer.InsertRowAsync("T", [1, 20], this.ct); // different B → ok
+        await writer.InsertRowAsync("T", [2, 10], this.ct); // different A → ok
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1, 10], ct));
+            await writer.InsertRowAsync("T", [1, 10], this.ct));
     }
 
     [Fact]
@@ -194,12 +194,12 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1], ct);
+        await writer.InsertRowAsync("T", [1], this.ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1], ct));
+            await writer.InsertRowAsync("T", [1], this.ct));
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
     }
 
@@ -214,7 +214,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // Same Id three times — non-unique → must succeed.
             await writer.InsertRowsAsync(
@@ -224,11 +224,11 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                     [1],
                     [1],
                 ],
-                ct);
+                this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt!.Rows.Count);
     }

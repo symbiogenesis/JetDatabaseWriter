@@ -431,8 +431,8 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public ExtraCodesStream GetOrCreateExtraCodes()
         {
-            ExtraCodes ??= new ExtraCodesStream(initialCapacity);
-            return ExtraCodes;
+            this.ExtraCodes ??= new ExtraCodesStream(initialCapacity);
+            return this.ExtraCodes;
         }
     }
 

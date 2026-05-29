@@ -47,7 +47,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -55,7 +55,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 rows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -67,7 +67,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync(
                 "T",
                 [[5], [4005]],
-                ct);
+                this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
@@ -77,7 +77,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -105,7 +105,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // Sparse keys 0, 10, ..., 7990. Leaf 0 ends at ~3990, leaf 1 at
             // 7990 (the tail).
@@ -115,7 +115,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 rows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -129,14 +129,14 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync(
                 "T",
                 [[3991], [4005]],
-                ct);
+                this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -159,7 +159,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -167,7 +167,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 rows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -182,11 +182,11 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                     [25],    // leaf 0
                     [4005],  // leaf 1
                 ],
-                ct);
+                this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(803, dt!.Rows.Count);
 
@@ -218,7 +218,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             // Pack leaf 0 nearly full so a single INSERT into it overflows.
             // ~400 9-byte entries fit per ACE leaf with ints; populate 399
@@ -235,7 +235,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 rows.Add([10000 + (i * 10)]); // 10000..13990 sparse, leaf 1
             }
 
-            await writer.InsertRowsAsync("T", rows.ToArray(), ct);
+            await writer.InsertRowsAsync("T", rows.ToArray(), this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -247,7 +247,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync(
                 "T",
                 [[200], [10005]],
-                ct);
+                this.ct);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
@@ -260,7 +260,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.True(delta <= 2, $"Expected ≤2 new index pages, got {delta}.");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -283,7 +283,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var seedRows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -291,7 +291,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 seedRows[i] = [i * 10];
             }
 
-            await writer.InsertRowsAsync("T", seedRows, ct);
+            await writer.InsertRowsAsync("T", seedRows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -300,7 +300,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync(
                 "T",
                 [[1], [2], [4001]],
-                ct);
+                this.ct);
 
             // Batch 2: 4 cross-leaf inserts.
             await writer.InsertRowsAsync(
@@ -311,11 +311,11 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                     [4002],
                     [4003],
                 ],
-                ct);
+                this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(807, dt!.Rows.Count);
 

@@ -46,7 +46,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                     new ColumnDefinition("Tag", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -55,17 +55,17 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 9, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 9, this.ct);
             Assert.Equal(leftSubtreeRows, deleted);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows, dt!.Rows.Count);
 
@@ -106,7 +106,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                     new ColumnDefinition("Tag", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var rows = new object[1500][];
             for (int i = 0; i < 1500; i++)
@@ -115,16 +115,16 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.DeleteRowsAsync("T", "Tag", 1, ct);
+            await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(25, dt!.Rows.Count);
 
@@ -156,7 +156,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                     new ColumnDefinition("Tag", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -165,12 +165,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.DeleteRowsAsync("T", "Tag", 9, ct);
+            await writer.DeleteRowsAsync("T", "Tag", 9, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -181,11 +181,11 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 reins[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), 7];
             }
 
-            await writer.InsertRowsAsync("T", reins, ct);
+            await writer.InsertRowsAsync("T", reins, this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt!.Rows.Count);
 

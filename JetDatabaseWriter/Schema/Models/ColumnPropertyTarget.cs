@@ -22,7 +22,7 @@ internal sealed record ColumnPropertyTarget(
     /// <param name="propertyName">The property name.</param>
     public ColumnPropertyEntry? Find(string propertyName)
     {
-        foreach (ColumnPropertyEntry e in Entries)
+        foreach (ColumnPropertyEntry e in this.Entries)
         {
             if (string.Equals(e.Name, propertyName, StringComparison.OrdinalIgnoreCase))
             {
@@ -41,7 +41,7 @@ internal sealed record ColumnPropertyTarget(
     /// <param name="format">Database format (selects Jet3 vs Jet4 decoding).</param>
     public string? GetTextValue(string propertyName, DatabaseFormat format)
     {
-        ColumnPropertyEntry? entry = Find(propertyName);
+        ColumnPropertyEntry? entry = this.Find(propertyName);
         if (entry is null)
         {
             return null;
@@ -66,7 +66,7 @@ internal sealed record ColumnPropertyTarget(
     /// <param name="propertyName">Property name (case-insensitive).</param>
     public bool? GetBooleanValue(string propertyName)
     {
-        ColumnPropertyEntry? entry = Find(propertyName);
+        ColumnPropertyEntry? entry = this.Find(propertyName);
         if (entry is null || entry.DataType != Constants.ColumnTypes.BooleanType || entry.Value.Length == 0)
         {
             return null;

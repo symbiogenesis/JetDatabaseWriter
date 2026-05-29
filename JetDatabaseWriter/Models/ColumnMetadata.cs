@@ -115,5 +115,5 @@ public sealed record ColumnMetadata
     /// and debugger output.
     /// </summary>
     /// <returns>A short single-line description of this column.</returns>
-    public override string ToString() => $"{Name} ({TypeName}, {Size})";
+    public override string ToString() => $"{this.Name} ({this.TypeName}, {this.Size})";
 }

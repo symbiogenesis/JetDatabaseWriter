@@ -61,13 +61,13 @@ internal sealed class IndexCursor
     {
         Guard.NotNull(searchKey, nameof(searchKey));
 
-        byte[]? leafPage = await FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
+        byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
         if (leafPage == null)
         {
             return false;
         }
 
-        return await ContainsInLeafChainAsync(leafPage, searchKey, cancellationToken).ConfigureAwait(false);
+        return await this.ContainsInLeafChainAsync(leafPage, searchKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -85,13 +85,13 @@ internal sealed class IndexCursor
         Guard.NotNull(searchKey, nameof(searchKey));
 
         var matches = new List<(long DataPage, int RowIndex)>();
-        byte[]? leafPage = await FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
+        byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
         if (leafPage == null)
         {
             return matches;
         }
 
-        await CollectLeafChainAsync(leafPage, searchKey, matches, cancellationToken).ConfigureAwait(false);
+        await this.CollectLeafChainAsync(leafPage, searchKey, matches, cancellationToken).ConfigureAwait(false);
         return matches;
     }
 
@@ -100,7 +100,7 @@ internal sealed class IndexCursor
         byte[] searchKey,
         CancellationToken cancellationToken)
     {
-        if (rootPageNumber <= 0 || pageSize <= layout.FirstEntryOffset)
+        if (rootPageNumber <= 0 || this.pageSize <= this.layout.FirstEntryOffset)
         {
             return null;
         }
@@ -110,7 +110,7 @@ internal sealed class IndexCursor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await readPage(currentPageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.readPage(currentPageNumber, cancellationToken).ConfigureAwait(false);
             if (IndexPageCodec.IsLeaf(page))
             {
                 return page;
@@ -121,8 +121,8 @@ internal sealed class IndexCursor
                 return null;
             }
 
-            long? selectedChildPage = IndexPageCodec.SelectChildPage(layout, page, pageSize, searchKey);
-            long nextPageNumber = selectedChildPage ?? IndexPageCodec.ReadTailPage(layout, page);
+            long? selectedChildPage = IndexPageCodec.SelectChildPage(this.layout, page, this.pageSize, searchKey);
+            long nextPageNumber = selectedChildPage ?? IndexPageCodec.ReadTailPage(this.layout, page);
             if (nextPageNumber <= 0)
             {
                 return null;
@@ -144,7 +144,7 @@ internal sealed class IndexCursor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            (bool found, bool continueToNext) = IndexPageCodec.ContainsKeyInLeafPage(layout, page, pageSize, searchKey);
+            (bool found, bool continueToNext) = IndexPageCodec.ContainsKeyInLeafPage(this.layout, page, this.pageSize, searchKey);
             if (found)
             {
                 return true;
@@ -155,13 +155,13 @@ internal sealed class IndexCursor
                 return false;
             }
 
-            long nextPageNumber = IndexPageCodec.ReadNextPage(layout, page);
+            long nextPageNumber = IndexPageCodec.ReadNextPage(this.layout, page);
             if (nextPageNumber <= 0)
             {
                 return false;
             }
 
-            page = await readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
         return false;
@@ -178,19 +178,19 @@ internal sealed class IndexCursor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            bool continueToNext = IndexPageCodec.CollectMatchingLeafEntries(layout, page, pageSize, searchKey, matches);
+            bool continueToNext = IndexPageCodec.CollectMatchingLeafEntries(this.layout, page, this.pageSize, searchKey, matches);
             if (!continueToNext)
             {
                 return;
             }
 
-            long nextPageNumber = IndexPageCodec.ReadNextPage(layout, page);
+            long nextPageNumber = IndexPageCodec.ReadNextPage(this.layout, page);
             if (nextPageNumber <= 0)
             {
                 return;
             }
 
-            page = await readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
     }
 }

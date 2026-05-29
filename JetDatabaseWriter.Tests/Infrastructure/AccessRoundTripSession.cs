@@ -27,11 +27,11 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
 
     private AccessRoundTripSession(string workDir, string sourcePath, string compactedPath, TimeSpan compactTimeout, string databaseExtension)
     {
-        WorkDir = workDir;
-        SourcePath = sourcePath;
-        CompactedPath = compactedPath;
-        _databaseExtension = databaseExtension;
-        _compactTimeout = compactTimeout;
+        this.WorkDir = workDir;
+        this.SourcePath = sourcePath;
+        this.CompactedPath = compactedPath;
+        this._databaseExtension = databaseExtension;
+        this._compactTimeout = compactTimeout;
     }
 
     /// <summary>Gets the temporary working directory for scripts and databases.</summary>
@@ -148,14 +148,14 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="prefix">Filename prefix.</param>
     /// <returns>Unique ACCDB path.</returns>
     public string CreateDatabasePath(string prefix) =>
-        Path.Combine(WorkDir, $"{prefix}_{Guid.NewGuid():N}{_databaseExtension}");
+        Path.Combine(this.WorkDir, $"{prefix}_{Guid.NewGuid():N}{this._databaseExtension}");
 
     /// <summary>Copies the Northwind fixture to a unique ACCDB path in the workspace.</summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Path to the copied fixture.</returns>
     public async Task<string> CopyNorthwindAsync(CancellationToken cancellationToken)
     {
-        string destinationPath = CreateDatabasePath("nw");
+        string destinationPath = this.CreateDatabasePath("nw");
         await CopyNorthwindToAsync(destinationPath, cancellationToken).ConfigureAwait(false);
         return destinationPath;
     }
@@ -164,17 +164,17 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Writer for the session source database.</returns>
     public ValueTask<AccessWriter> OpenWriterAsync(CancellationToken cancellationToken = default) =>
-        AccessWriter.OpenAsync(SourcePath, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
+        AccessWriter.OpenAsync(this.SourcePath, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
 
     /// <summary>Runs DAO CompactDatabase from <see cref="SourcePath"/> to <see cref="CompactedPath"/>.</summary>
     public void RunDaoCompact()
     {
         AccessRoundTripEnvironment.CompactResult result = AccessRoundTripEnvironment.RunDaoCompact(
-            SourcePath,
-            CompactedPath,
-            _compactTimeout);
+            this.SourcePath,
+            this.CompactedPath,
+            this._compactTimeout);
 
-        if (result.ExitCode != 0 || !File.Exists(CompactedPath))
+        if (result.ExitCode != 0 || !File.Exists(this.CompactedPath))
         {
             throw new Xunit.Sdk.XunitException(
                 $"""
@@ -192,7 +192,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     public AccessRoundTripEnvironment.CompactResult RunDaoEngineScript(string engineScript, TimeSpan timeout) =>
-        AccessRoundTripEnvironment.RunDaoEngineScript(engineScript, WorkDir, timeout);
+        AccessRoundTripEnvironment.RunDaoEngineScript(engineScript, this.WorkDir, timeout);
 
     /// <summary>Runs a DAO database script in this session's temporary workspace.</summary>
     /// <param name="databasePath">Database path to open.</param>
@@ -200,14 +200,14 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     public AccessRoundTripEnvironment.CompactResult RunDaoDatabaseScript(string databasePath, string databaseScript, TimeSpan timeout) =>
-        AccessRoundTripEnvironment.RunDaoDatabaseScript(databasePath, databaseScript, WorkDir, timeout);
+        AccessRoundTripEnvironment.RunDaoDatabaseScript(databasePath, databaseScript, this.WorkDir, timeout);
 
     /// <summary>Runs a DAO database script against <see cref="SourcePath" />, then compacts to <see cref="CompactedPath" /> in the same host.</summary>
     /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     public AccessRoundTripEnvironment.CompactResult RunDaoDatabaseScriptThenCompact(string databaseScript, TimeSpan timeout) =>
-        AccessRoundTripEnvironment.RunDaoDatabaseScriptThenCompact(SourcePath, CompactedPath, databaseScript, WorkDir, timeout);
+        AccessRoundTripEnvironment.RunDaoDatabaseScriptThenCompact(this.SourcePath, this.CompactedPath, databaseScript, this.WorkDir, timeout);
 
     /// <summary>Runs a DAO create-database script in this session's temporary workspace.</summary>
     /// <param name="databasePath">Database path to create.</param>
@@ -220,16 +220,16 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         string attributes,
         string databaseScript,
         TimeSpan timeout) =>
-        AccessRoundTripEnvironment.RunDaoCreateDatabaseScript(databasePath, attributes, databaseScript, WorkDir, timeout);
+        AccessRoundTripEnvironment.RunDaoCreateDatabaseScript(databasePath, attributes, databaseScript, this.WorkDir, timeout);
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
         try
         {
-            if (Directory.Exists(WorkDir))
+            if (Directory.Exists(this.WorkDir))
             {
-                Directory.Delete(WorkDir, recursive: true);
+                Directory.Delete(this.WorkDir, recursive: true);
             }
         }
         catch (IOException)

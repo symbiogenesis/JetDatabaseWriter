@@ -301,16 +301,16 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParseExpression(int minimumPrecedence)
         {
-            string left = ParsePrefix();
+            string left = this.ParsePrefix();
             while (true)
             {
-                Token token = Peek();
+                Token token = this.Peek();
                 if (token.Kind is TokenKind.End or TokenKind.CloseParen or TokenKind.Comma)
                 {
                     break;
                 }
 
-                if (stopAtBetweenAnd && token.IsWord("AND"))
+                if (this.stopAtBetweenAnd && token.IsWord("AND"))
                 {
                     break;
                 }
@@ -321,18 +321,18 @@ internal static class CalculatedExpressionNormalizer
                     break;
                 }
 
-                Read();
+                this.Read();
                 left = info.Value.Name switch
                 {
-                    "IS" => ParseIs(left),
-                    "NOT" => ParsePostfixNot(left, info.Value.Precedence),
-                    "BETWEEN" => ParseBetween(left, negate: false),
-                    "IN" => ParseIn(left, negate: false),
-                    "LIKE" => ParseFunctionBinary("LIKE", left, info.Value),
-                    "MOD" => ParseFunctionBinary("MOD", left, info.Value),
-                    "INTDIV" => ParseFunctionBinary("INTDIV", left, info.Value),
-                    "AND" or "OR" or "XOR" or "EQV" or "IMP" => ParseFunctionBinary(info.Value.Name, left, info.Value),
-                    _ => ParseInfix(left, info.Value),
+                    "IS" => this.ParseIs(left),
+                    "NOT" => this.ParsePostfixNot(left, info.Value.Precedence),
+                    "BETWEEN" => this.ParseBetween(left, negate: false),
+                    "IN" => this.ParseIn(left, negate: false),
+                    "LIKE" => this.ParseFunctionBinary("LIKE", left, info.Value),
+                    "MOD" => this.ParseFunctionBinary("MOD", left, info.Value),
+                    "INTDIV" => this.ParseFunctionBinary("INTDIV", left, info.Value),
+                    "AND" or "OR" or "XOR" or "EQV" or "IMP" => this.ParseFunctionBinary(info.Value.Name, left, info.Value),
+                    _ => this.ParseInfix(left, info.Value),
                 };
             }
 
@@ -341,31 +341,31 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParsePrefix()
         {
-            Token token = Peek();
+            Token token = this.Peek();
             if (token.IsWord("NOT"))
             {
-                Read();
-                return "NOT(" + ParseExpression(6) + ")";
+                this.Read();
+                return "NOT(" + this.ParseExpression(6) + ")";
             }
 
             if (token.Kind == TokenKind.Operator && (token.Text == "+" || token.Text == "-"))
             {
-                Read();
-                return token.Text + ParseExpression(12);
+                this.Read();
+                return token.Text + this.ParseExpression(12);
             }
 
-            return ParsePrimary();
+            return this.ParsePrimary();
         }
 
         private string ParsePrimary()
         {
-            Token token = Read();
+            Token token = this.Read();
             switch (token.Kind)
             {
                 case TokenKind.Identifier:
-                    if (Peek().Kind == TokenKind.OpenParen)
+                    if (this.Peek().Kind == TokenKind.OpenParen)
                     {
-                        return ParseFunctionCall(token.Text);
+                        return this.ParseFunctionCall(token.Text);
                     }
 
                     return token.Text;
@@ -379,8 +379,8 @@ internal static class CalculatedExpressionNormalizer
                 case TokenKind.Value:
                     return token.Text;
                 case TokenKind.OpenParen:
-                    string inner = ParseExpression(0);
-                    Expect(TokenKind.CloseParen, ")");
+                    string inner = this.ParseExpression(0);
+                    this.Expect(TokenKind.CloseParen, ")");
                     return "(" + inner + ")";
                 default:
                     throw new ArgumentException($"Unexpected token '{token.Text}' in calculated-column expression.");
@@ -394,37 +394,37 @@ internal static class CalculatedExpressionNormalizer
                 name = name.Substring(0, name.Length - 1);
             }
 
-            Expect(TokenKind.OpenParen, "(");
+            this.Expect(TokenKind.OpenParen, "(");
             var arguments = new List<string>();
-            if (Peek().Kind != TokenKind.CloseParen)
+            if (this.Peek().Kind != TokenKind.CloseParen)
             {
                 while (true)
                 {
-                    arguments.Add(ParseExpression(0));
+                    arguments.Add(this.ParseExpression(0));
                     ValidateFunctionArgumentCount(name, arguments.Count);
-                    if (Peek().Kind != TokenKind.Comma)
+                    if (this.Peek().Kind != TokenKind.Comma)
                     {
                         break;
                     }
 
-                    Read();
+                    this.Read();
                 }
             }
 
-            Expect(TokenKind.CloseParen, ")");
+            this.Expect(TokenKind.CloseParen, ")");
             return name + "(" + string.Join(",", arguments) + ")";
         }
 
         private string ParseIs(string left)
         {
             bool negate = false;
-            if (Peek().IsWord("NOT"))
+            if (this.Peek().IsWord("NOT"))
             {
-                Read();
+                this.Read();
                 negate = true;
             }
 
-            Token token = Read();
+            Token token = this.Read();
             if (!token.IsWord("NULL"))
             {
                 throw new ArgumentException("Calculated-column 'Is' expressions are only supported for Null checks.");
@@ -436,20 +436,20 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParsePostfixNot(string left, int precedence)
         {
-            Token token = Read();
+            Token token = this.Read();
             if (token.IsWord("LIKE"))
             {
-                return "NOT(" + ParseFunctionBinary("LIKE", left, new BinaryOperatorInfo("LIKE", precedence, false)) + ")";
+                return "NOT(" + this.ParseFunctionBinary("LIKE", left, new BinaryOperatorInfo("LIKE", precedence, false)) + ")";
             }
 
             if (token.IsWord("IN"))
             {
-                return ParseIn(left, negate: true);
+                return this.ParseIn(left, negate: true);
             }
 
             if (token.IsWord("BETWEEN"))
             {
-                return ParseBetween(left, negate: true);
+                return this.ParseBetween(left, negate: true);
             }
 
             throw new ArgumentException($"Unexpected token '{token.Text}' after postfix Not in calculated-column expression.");
@@ -457,71 +457,71 @@ internal static class CalculatedExpressionNormalizer
 
         private string ParseBetween(string left, bool negate)
         {
-            bool previousStop = stopAtBetweenAnd;
-            stopAtBetweenAnd = true;
+            bool previousStop = this.stopAtBetweenAnd;
+            this.stopAtBetweenAnd = true;
             string lower;
             try
             {
-                lower = ParseExpression(0);
+                lower = this.ParseExpression(0);
             }
             finally
             {
-                stopAtBetweenAnd = previousStop;
+                this.stopAtBetweenAnd = previousStop;
             }
 
-            Token separator = Read();
+            Token separator = this.Read();
             if (!separator.IsWord("AND"))
             {
                 throw new ArgumentException("Calculated-column Between expression is missing the And separator.");
             }
 
-            string upper = ParseExpression(7);
+            string upper = this.ParseExpression(7);
             string call = "BETWEEN(" + left + "," + lower + "," + upper + ")";
             return negate ? "NOT(" + call + ")" : call;
         }
 
         private string ParseIn(string left, bool negate)
         {
-            Expect(TokenKind.OpenParen, "(");
+            this.Expect(TokenKind.OpenParen, "(");
             var values = new List<string> { left };
-            if (Peek().Kind != TokenKind.CloseParen)
+            if (this.Peek().Kind != TokenKind.CloseParen)
             {
                 while (true)
                 {
-                    values.Add(ParseExpression(0));
-                    if (Peek().Kind != TokenKind.Comma)
+                    values.Add(this.ParseExpression(0));
+                    if (this.Peek().Kind != TokenKind.Comma)
                     {
                         break;
                     }
 
-                    Read();
+                    this.Read();
                 }
             }
 
-            Expect(TokenKind.CloseParen, ")");
+            this.Expect(TokenKind.CloseParen, ")");
             string call = "IN(" + string.Join(",", values) + ")";
             return negate ? "NOT(" + call + ")" : call;
         }
 
         private string ParseFunctionBinary(string functionName, string left, BinaryOperatorInfo info)
         {
-            string right = ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
+            string right = this.ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
             return functionName + "(" + left + "," + right + ")";
         }
 
         private string ParseInfix(string left, BinaryOperatorInfo info)
         {
-            string right = ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
+            string right = this.ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
             return "(" + left + info.Name + right + ")";
         }
 
-        private Token Peek() => tokens[position];
+        private Token Peek() => this.tokens[this.position];
 
-        private Token Read() => tokens[position++];
+        private Token Read() => this.tokens[this.position++];
 
         private void Expect(TokenKind kind, string text)
         {
-            Token token = Read();
+            Token token = this.Read();
             if (token.Kind != kind || (text.Length > 0 && token.Text != text))
             {
                 throw new ArgumentException($"Expected '{text}' in calculated-column expression, got '{token.Text}'.");
@@ -532,7 +532,7 @@ internal static class CalculatedExpressionNormalizer
 
         private readonly record struct Token(TokenKind Kind, string Text)
         {
-            public bool IsWord(string text) => Kind == TokenKind.Word && Text.Equals(text, StringComparison.OrdinalIgnoreCase);
+            public bool IsWord(string text) => this.Kind == TokenKind.Word && this.Text.Equals(text, StringComparison.OrdinalIgnoreCase);
         }
 
         private enum TokenKind

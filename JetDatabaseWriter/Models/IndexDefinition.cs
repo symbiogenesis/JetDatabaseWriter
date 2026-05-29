@@ -49,8 +49,8 @@ public sealed record IndexDefinition
     /// <param name="columnName">The name of the column this index covers. Must match a column on the same table, case-insensitively.</param>
     public IndexDefinition(string name, string columnName)
     {
-        Name = name;
-        Columns = [columnName];
+        this.Name = name;
+        this.Columns = [columnName];
     }
 
     /// <summary>
@@ -75,8 +75,8 @@ public sealed record IndexDefinition
             copy[i] = columns[i];
         }
 
-        Name = name;
-        Columns = copy;
+        this.Name = name;
+        this.Columns = copy;
     }
 
     /// <summary>Gets the logical-index name.</summary>

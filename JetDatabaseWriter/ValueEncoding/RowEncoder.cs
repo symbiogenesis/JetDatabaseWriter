@@ -349,7 +349,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
             if (column.IsFixed)
             {
-                if (!CanStoreFixedColumn(column))
+                if (!this.CanStoreFixedColumn(column))
                 {
                     continue;
                 }
@@ -371,7 +371,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
             else
             {
-                byte[]? variableValue = EncodeVariableValue(column, value);
+                byte[]? variableValue = this.EncodeVariableValue(column, value);
                 if (variableValue == null)
                 {
                     continue;
@@ -456,22 +456,22 @@ internal sealed class RowEncoder(AccessWriter writer)
     {
         if (column.IsCalculated)
         {
-            return EncodeCalculatedValue(column, value);
+            return this.EncodeCalculatedValue(column, value);
         }
 
         switch (column.Type)
         {
             case TextType:
-                return EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
+                return this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
             case BinaryType:
-                return EncodeBinaryValue(value, column.Size);
+                return this.EncodeBinaryValue(value, column.Size);
             case MemoType:
                 if (value is PreEncodedLongValue preMemo)
                 {
                     return preMemo.HeaderBytes;
                 }
 
-                return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
+                return this.EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
             case OleType:
                 return EncodeOleValue(value);
             case ByteType:
@@ -516,11 +516,11 @@ internal sealed class RowEncoder(AccessWriter writer)
         {
             case TextType:
                 return CalculatedColumnUtil.Wrap(
-                    EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
+                    this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
             case BinaryType:
-                return CalculatedColumnUtil.Wrap(EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
+                return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
             case MemoType:
-                return EncodeCalculatedMemoValue(value);
+                return this.EncodeCalculatedMemoValue(value);
             case OleType:
                 return EncodeCalculatedOleValue(value);
             default:

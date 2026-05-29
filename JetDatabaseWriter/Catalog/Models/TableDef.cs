@@ -63,13 +63,13 @@ internal sealed class TableDef
     /// </summary>
     public void InitializeColumnMetadata()
     {
-        var clrTypes = new Type[Columns.Count];
+        var clrTypes = new Type[this.Columns.Count];
         bool hasVar = false;
         bool hasComplex = false;
         bool hasHyperlink = false;
-        for (int i = 0; i < Columns.Count; i++)
+        for (int i = 0; i < this.Columns.Count; i++)
         {
-            ColumnInfo c = Columns[i];
+            ColumnInfo c = this.Columns[i];
             Type clr = JetTypeInfo.ResolveClrType(c);
             clrTypes[i] = clr;
             if (!c.IsFixed)
@@ -88,10 +88,10 @@ internal sealed class TableDef
             }
         }
 
-        ClrTypes = clrTypes;
-        HasVarColumns = hasVar;
-        HasComplexColumns = hasComplex;
-        HasHyperlinkColumns = hasHyperlink;
+        this.ClrTypes = clrTypes;
+        this.HasVarColumns = hasVar;
+        this.HasComplexColumns = hasComplex;
+        this.HasHyperlinkColumns = hasHyperlink;
     }
 
     /// <summary>
@@ -100,14 +100,14 @@ internal sealed class TableDef
     /// such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public int FindColumnIndex(string columnName) => Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public int FindColumnIndex(string columnName) => this.Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Returns the column whose name matches <paramref name="columnName"/>
     /// case-insensitively, or <see langword="null"/> when no such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public ColumnInfo? FindColumn(string columnName) => Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public ColumnInfo? FindColumn(string columnName) => this.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Resolves <paramref name="columnNames"/> to their <see cref="ColumnInfo.ColNum"/>
@@ -119,13 +119,13 @@ internal sealed class TableDef
         var result = new int[columnNames.Length];
         for (int i = 0; i < columnNames.Length; i++)
         {
-            int idx = FindColumnIndex(columnNames[i]);
+            int idx = this.FindColumnIndex(columnNames[i]);
             if (idx < 0)
             {
                 return [];
             }
 
-            result[i] = Columns[idx].ColNum;
+            result[i] = this.Columns[idx].ColNum;
         }
 
         return result;
@@ -141,7 +141,7 @@ internal sealed class TableDef
     /// <param name="value">The value.</param>
     public void SetValueByName(object[] values, string columnName, object value)
     {
-        int index = FindColumnIndex(columnName);
+        int index = this.FindColumnIndex(columnName);
         if (index >= 0)
         {
             values[index] = value;
@@ -155,7 +155,7 @@ internal sealed class TableDef
     /// </summary>
     public object[] CreateNullValueRow()
     {
-        var values = new object[Columns.Count];
+        var values = new object[this.Columns.Count];
         for (int i = 0; i < values.Length; i++)
         {
             values[i] = DBNull.Value;
@@ -172,7 +172,7 @@ internal sealed class TableDef
     /// candidate exists. Throws when no <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
-    public ColumnInfo FindFlatTableForeignKeyColumn() => Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
-            ?? Columns.Find(c => c.Type == LongIntegerType)
+    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+            ?? this.Columns.Find(c => c.Type == LongIntegerType)
             ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
 }

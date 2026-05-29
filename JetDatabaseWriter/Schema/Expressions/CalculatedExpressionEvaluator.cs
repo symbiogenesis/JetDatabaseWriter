@@ -29,8 +29,8 @@ internal static class CalculatedExpressionEvaluator
     {
         private Plan(CalculatedExpressionNode root, Dictionary<string, string> placeholderToColumn)
         {
-            Root = root;
-            PlaceholderToColumn = placeholderToColumn;
+            this.Root = root;
+            this.PlaceholderToColumn = placeholderToColumn;
         }
 
         public CalculatedExpressionNode Root { get; }
@@ -72,36 +72,36 @@ internal static class CalculatedExpressionEvaluator
             this.constraints = constraints;
             this.values = values;
             this.force = force;
-            evaluating = new bool[constraints.Count];
-            evaluated = new bool[constraints.Count];
-            columnIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            this.evaluating = new bool[constraints.Count];
+            this.evaluated = new bool[constraints.Count];
+            this.columnIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < tableDef.Columns.Count; i++)
             {
-                columnIndexes[tableDef.Columns[i].Name] = i;
+                this.columnIndexes[tableDef.Columns[i].Name] = i;
             }
         }
 
         public object EvaluateColumn(int index)
         {
-            object current = values[index];
-            ColumnConstraint constraint = constraints[index];
+            object current = this.values[index];
+            ColumnConstraint constraint = this.constraints[index];
             if (!constraint.IsCalculated)
             {
                 return current ?? DBNull.Value;
             }
 
-            if (evaluated[index])
+            if (this.evaluated[index])
             {
-                return values[index] ?? DBNull.Value;
+                return this.values[index] ?? DBNull.Value;
             }
 
-            if (!force && !IsNull(current))
+            if (!this.force && !IsNull(current))
             {
-                evaluated[index] = true;
+                this.evaluated[index] = true;
                 return current;
             }
 
-            if (evaluating[index])
+            if (this.evaluating[index])
             {
                 throw new InvalidOperationException($"Calculated column '{constraint.Name}' participates in a circular expression dependency.");
             }
@@ -111,24 +111,24 @@ internal static class CalculatedExpressionEvaluator
                 return current ?? DBNull.Value;
             }
 
-            evaluating[index] = true;
+            this.evaluating[index] = true;
             try
             {
                 constraint.CalculatedExpressionPlan ??= Plan.Parse(constraint.CalculationExpression);
                 object raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this, constraint.CalculatedExpressionPlan);
                 object coerced = CoerceResult(raw, constraint.ClrType);
-                values[index] = coerced;
-                evaluated[index] = true;
+                this.values[index] = coerced;
+                this.evaluated[index] = true;
                 return coerced;
             }
-            catch (NotSupportedException) when (!force && !IsNull(current))
+            catch (NotSupportedException) when (!this.force && !IsNull(current))
             {
-                evaluated[index] = true;
+                this.evaluated[index] = true;
                 return current;
             }
             finally
             {
-                evaluating[index] = false;
+                this.evaluating[index] = false;
             }
         }
 
@@ -139,41 +139,41 @@ internal static class CalculatedExpressionEvaluator
                 name = columnName;
             }
 
-            if (!columnIndexes.TryGetValue(name, out int index))
+            if (!this.columnIndexes.TryGetValue(name, out int index))
             {
                 throw new InvalidOperationException($"Calculated-column expression references unknown name '{name}'.");
             }
 
-            ColumnConstraint referenced = constraints[index];
-            return referenced.IsCalculated ? EvaluateColumn(index) : values[index] ?? DBNull.Value;
+            ColumnConstraint referenced = this.constraints[index];
+            return referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index] ?? DBNull.Value;
         }
 
         public double NextRandom(object? seed)
         {
             if (IsNull(seed))
             {
-                return GenerateRandomValue();
+                return this.GenerateRandomValue();
             }
 
             double seedValue = ToDouble(seed);
             if (seedValue < 0d)
             {
-                lastRandomValue = DeterministicRandomValue(seedValue);
-                return lastRandomValue.Value;
+                this.lastRandomValue = DeterministicRandomValue(seedValue);
+                return this.lastRandomValue.Value;
             }
 
-            if (seedValue == 0d && lastRandomValue.HasValue)
+            if (seedValue == 0d && this.lastRandomValue.HasValue)
             {
-                return lastRandomValue.Value;
+                return this.lastRandomValue.Value;
             }
 
-            return GenerateRandomValue();
+            return this.GenerateRandomValue();
         }
 
         private double GenerateRandomValue()
         {
-            lastRandomValue = RandomNumberGenerator.GetInt32(0, int.MaxValue) / (double)int.MaxValue;
-            return lastRandomValue.Value;
+            this.lastRandomValue = RandomNumberGenerator.GetInt32(0, int.MaxValue) / (double)int.MaxValue;
+            return this.lastRandomValue.Value;
         }
     }
 }

@@ -36,7 +36,7 @@ internal sealed class PageJournal
         Guard.Positive(pageSize, nameof(pageSize));
         Guard.Positive(maxPages, nameof(maxPages));
 
-        BaseFileLengthBytes = baseFileLengthBytes;
+        this.BaseFileLengthBytes = baseFileLengthBytes;
         this.pageSize = pageSize;
         this.maxPages = maxPages;
     }
@@ -45,13 +45,13 @@ internal sealed class PageJournal
     public long BaseFileLengthBytes { get; }
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
-    public int Count => pages.Count;
+    public int Count => this.pages.Count;
 
     /// <summary>
     /// Gets the page number that the next <see cref="Append"/> call will assign,
     /// computed as <c>(BaseFileLengthBytes / pageSize) + appendedCount</c>.
     /// </summary>
-    public long NextAppendPageNumber => (BaseFileLengthBytes / pageSize) + appendedCount;
+    public long NextAppendPageNumber => (this.BaseFileLengthBytes / this.pageSize) + this.appendedCount;
 
     /// <summary>
     /// Buffers a write to <paramref name="pageNumber"/>. The supplied bytes are
@@ -65,28 +65,28 @@ internal sealed class PageJournal
     /// <exception cref="ArgumentException">Thrown when <paramref name="page"/> does not match the journal page size.</exception>
     public void Write(long pageNumber, ReadOnlySpan<byte> page)
     {
-        if (page.Length != pageSize)
+        if (page.Length != this.pageSize)
         {
             throw new ArgumentException("Page length mismatch.", nameof(page));
         }
 
-        if (pages.TryGetValue(pageNumber, out byte[]? existing))
+        if (this.pages.TryGetValue(pageNumber, out byte[]? existing))
         {
             page.CopyTo(existing);
             return;
         }
 
-        if (pages.Count >= maxPages)
+        if (this.pages.Count >= this.maxPages)
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
-                maxPages));
+                this.maxPages));
         }
 
-        var copy = new byte[pageSize];
+        var copy = new byte[this.pageSize];
         page.CopyTo(copy);
-        pages.Add(pageNumber, copy);
+        this.pages.Add(pageNumber, copy);
     }
 
     /// <summary>
@@ -99,19 +99,19 @@ internal sealed class PageJournal
     /// </exception>
     public long Append(ReadOnlySpan<byte> page)
     {
-        long pageNumber = NextAppendPageNumber;
+        long pageNumber = this.NextAppendPageNumber;
 
         // Pre-check budget so we don't increment _appendedCount on failure.
-        if (!pages.ContainsKey(pageNumber) && pages.Count >= maxPages)
+        if (!this.pages.ContainsKey(pageNumber) && this.pages.Count >= this.maxPages)
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
-                maxPages));
+                this.maxPages));
         }
 
-        Write(pageNumber, page);
-        appendedCount++;
+        this.Write(pageNumber, page);
+        this.appendedCount++;
         return pageNumber;
     }
 
@@ -121,12 +121,12 @@ internal sealed class PageJournal
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
     public byte[]? TryGet(long pageNumber)
-        => pages.TryGetValue(pageNumber, out byte[]? p) ? p : null;
+        => this.pages.TryGetValue(pageNumber, out byte[]? p) ? p : null;
 
     /// <summary>
     /// Enumerates every (pageNumber, pageBytes) pair in ascending page-number
     /// order. The enumeration is stable so the commit replay extends the file
     /// monotonically rather than seeking back and forth.
     /// </summary>
-    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => pages;
+    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => this.pages;
 }

@@ -256,7 +256,7 @@ internal static class LongValueStore
 
     internal readonly record struct LvalRowLocation(byte[] Page, int Start, int Size, string? Error)
     {
-        public bool Failed => Error is not null;
+        public bool Failed => this.Error is not null;
     }
 
     private struct SmallLvalDpSet
@@ -276,51 +276,51 @@ internal static class LongValueStore
 
         public bool Add(uint value)
         {
-            if (overflow is not null)
+            if (this.overflow is not null)
             {
-                return overflow.Add(value);
+                return this.overflow.Add(value);
             }
 
-            for (int index = 0; index < count; index++)
+            for (int index = 0; index < this.count; index++)
             {
-                if (GetValue(index) == value)
+                if (this.GetValue(index) == value)
                 {
                     return false;
                 }
             }
 
-            if (count < InlineCapacity)
+            if (this.count < InlineCapacity)
             {
-                SetValue(count, value);
-                count++;
+                this.SetValue(this.count, value);
+                this.count++;
                 return true;
             }
 
-            overflow = new HashSet<uint>(InlineCapacity + 1)
+            this.overflow = new HashSet<uint>(InlineCapacity + 1)
             {
-                value0,
-                value1,
-                value2,
-                value3,
-                value4,
-                value5,
-                value6,
-                value7,
+                this.value0,
+                this.value1,
+                this.value2,
+                this.value3,
+                this.value4,
+                this.value5,
+                this.value6,
+                this.value7,
             };
 
-            return overflow.Add(value);
+            return this.overflow.Add(value);
         }
 
         private readonly uint GetValue(int index) => index switch
         {
-            0 => value0,
-            1 => value1,
-            2 => value2,
-            3 => value3,
-            4 => value4,
-            5 => value5,
-            6 => value6,
-            7 => value7,
+            0 => this.value0,
+            1 => this.value1,
+            2 => this.value2,
+            3 => this.value3,
+            4 => this.value4,
+            5 => this.value5,
+            6 => this.value6,
+            7 => this.value7,
             _ => throw new ArgumentOutOfRangeException(nameof(index)),
         };
 
@@ -329,35 +329,35 @@ internal static class LongValueStore
             switch (index)
             {
                 case 0:
-                    value0 = value;
+                    this.value0 = value;
                     break;
 
                 case 1:
-                    value1 = value;
+                    this.value1 = value;
                     break;
 
                 case 2:
-                    value2 = value;
+                    this.value2 = value;
                     break;
 
                 case 3:
-                    value3 = value;
+                    this.value3 = value;
                     break;
 
                 case 4:
-                    value4 = value;
+                    this.value4 = value;
                     break;
 
                 case 5:
-                    value5 = value;
+                    this.value5 = value;
                     break;
 
                 case 6:
-                    value6 = value;
+                    this.value6 = value;
                     break;
 
                 case 7:
-                    value7 = value;
+                    this.value7 = value;
                     break;
 
                 default:

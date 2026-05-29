@@ -30,7 +30,7 @@ public sealed class EmittedPageInvariantTests
                     new ColumnDefinition("Code", typeof(string), maxLength: 32),
                 ],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
         }
 
         EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), format);
@@ -53,7 +53,7 @@ public sealed class EmittedPageInvariantTests
                     new ColumnDefinition("Score", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Score", "Score")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -63,17 +63,17 @@ public sealed class EmittedPageInvariantTests
                     [3, 30],
                     [4, 40],
                 ],
-                ct);
+                this.ct);
 
             int updated = await writer.UpdateRowsAsync(
                 "T",
                 "Id",
                 2,
                 new Dictionary<string, object?> { ["Score"] = 99 },
-                ct);
+                this.ct);
             Assert.Equal(1, updated);
 
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 3, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 3, this.ct);
             Assert.Equal(1, deleted);
         }
 
@@ -93,7 +93,7 @@ public sealed class EmittedPageInvariantTests
                 "IndexedRows",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(700);
             for (int rowNumber = 0; rowNumber < 700; rowNumber++)
@@ -101,7 +101,7 @@ public sealed class EmittedPageInvariantTests
                 rows.Add([rowNumber]);
             }
 
-            await writer.InsertRowsAsync("IndexedRows", rows, ct);
+            await writer.InsertRowsAsync("IndexedRows", rows, this.ct);
 
             await writer.CreateTableAsync(
                 "LongTextRows",
@@ -109,10 +109,10 @@ public sealed class EmittedPageInvariantTests
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Body", typeof(string)),
                 ],
-                ct);
+                this.ct);
 
             string longText = new('X', 9000);
-            await writer.InsertRowAsync("LongTextRows", [1, longText], ct);
+            await writer.InsertRowAsync("LongTextRows", [1, longText], this.ct);
         }
 
         EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), format);

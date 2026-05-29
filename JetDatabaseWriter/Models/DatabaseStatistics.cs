@@ -37,7 +37,7 @@ public sealed class DatabaseStatistics
     public DatabaseFormat Format { get; init; }
 
     /// <summary>Gets the page size in bytes (2048 for Jet3, 4096 for Jet4/ACE), derived from <see cref="Format"/>.</summary>
-    public int PageSize => AccessBase.GetPageSize(Format);
+    public int PageSize => AccessBase.GetPageSize(this.Format);
 
     /// <summary>Gets or initializes the code page identifier used for text encoding.</summary>
     public int CodePage { get; init; }

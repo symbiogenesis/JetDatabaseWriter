@@ -93,11 +93,11 @@ public sealed record RelationshipDefinition
             fkCopy[i] = foreignColumns[i];
         }
 
-        Name = name;
-        PrimaryTable = primaryTable;
-        PrimaryColumns = pkCopy;
-        ForeignTable = foreignTable;
-        ForeignColumns = fkCopy;
+        this.Name = name;
+        this.PrimaryTable = primaryTable;
+        this.PrimaryColumns = pkCopy;
+        this.ForeignTable = foreignTable;
+        this.ForeignColumns = fkCopy;
     }
 
     /// <summary>Gets the relationship name (written to the <c>szRelationship</c> column).</summary>

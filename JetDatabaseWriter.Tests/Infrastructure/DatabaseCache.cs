@@ -21,7 +21,7 @@ public sealed class DatabaseCache : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Lazy<Task<AccessReader>>> _readers = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<byte[]> GetFileAsync(string path, CancellationToken cancellationToken = default) =>
-        _fileCache.GetOrAdd(
+        this._fileCache.GetOrAdd(
             path,
             static (p, ct) => new Lazy<Task<byte[]>>(() => File.ReadAllBytesAsync(p, ct)),
             cancellationToken).Value;
@@ -36,7 +36,7 @@ public sealed class DatabaseCache : IAsyncDisposable
     /// <returns>A <see cref="MemoryStream"/> containing the file's bytes, positioned at 0.</returns>
     public async ValueTask<MemoryStream> CopyToStreamAsync(string path, CancellationToken cancellationToken = default)
     {
-        byte[] bytes = await GetFileAsync(path, cancellationToken);
+        byte[] bytes = await this.GetFileAsync(path, cancellationToken);
         var ms = new MemoryStream(bytes.Length);
         ms.Write(bytes);
         ms.Position = 0;
@@ -44,20 +44,20 @@ public sealed class DatabaseCache : IAsyncDisposable
     }
 
     public Task<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
-        _readers.GetOrAdd(
+        this._readers.GetOrAdd(
             path,
             static (p, state) => new Lazy<Task<AccessReader>>(() => AccessReader.OpenAsync(p, state.Options, state.Token).AsTask()),
             (Options: options, Token: cancellationToken)).Value;
 
     public Task<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
-        GetReaderAsync(path, DefaultOptions, cancellationToken);
+        this.GetReaderAsync(path, DefaultOptions, cancellationToken);
 
     public async ValueTask DisposeAsync()
     {
         List<Task> disposeTasks = [];
         List<Exception> exceptions = [];
 
-        foreach ((string? key, Lazy<Task<AccessReader>>? lazy) in _readers)
+        foreach ((string? key, Lazy<Task<AccessReader>>? lazy) in this._readers)
         {
             if (!lazy.IsValueCreated)
             {
@@ -80,8 +80,8 @@ public sealed class DatabaseCache : IAsyncDisposable
             exceptions.Add(new TaskCanceledException(allDisposals));
         }
 
-        _readers.Clear();
-        _fileCache.Clear();
+        this._readers.Clear();
+        this._fileCache.Clear();
 
         if (exceptions.Count > 0)
         {

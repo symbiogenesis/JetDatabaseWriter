@@ -81,23 +81,23 @@ internal sealed class DelimitedTextReader : IDisposable
         this.reader = reader ?? throw new ArgumentNullException(nameof(reader));
         this.format = format;
         this.limits = limits;
-        unquotedSpecialChars = CreateUnquotedSpecialChars(format.Delimiter);
-        buffer = ArrayPool<char>.Shared.Rent(bufferLength);
+        this.unquotedSpecialChars = CreateUnquotedSpecialChars(format.Delimiter);
+        this.buffer = ArrayPool<char>.Shared.Rent(bufferLength);
     }
 
     internal async ValueTask<DelimitedTextRecord?> ReadRecordAsync(CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
+        this.ThrowIfDisposed();
 
-        recordVersion++;
+        this.recordVersion++;
         List<DelimitedTextField> fields = this.fields;
         fields.Clear();
-        StringBuilder field = ResetFieldBuilder();
+        StringBuilder field = this.ResetFieldBuilder();
         int bufferedFieldStart = -1;
         int bufferedFieldLength = 0;
         int recordLength = 0;
         int fieldLength = 0;
-        int lineNumberFrom = lineNumber;
+        int lineNumberFrom = this.lineNumber;
         bool inQuotes = false;
         bool atFieldStart = true;
         bool sawAnyCharacter = false;
@@ -105,7 +105,7 @@ internal sealed class DelimitedTextReader : IDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            int value = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+            int value = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
             if (value < 0)
             {
                 if (!sawAnyCharacter && fields.Count == 0 && field.Length == 0)
@@ -118,12 +118,12 @@ internal sealed class DelimitedTextReader : IDisposable
                     throw new InvalidDataException("Delimited text source contains a quoted field without a closing quote.");
                 }
 
-                AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
-                _ = ResetFieldBuilder();
-                return CreateRecord(fields, lineNumberFrom, lineNumber + 1);
+                this.AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
+                _ = this.ResetFieldBuilder();
+                return this.CreateRecord(fields, lineNumberFrom, this.lineNumber + 1);
             }
 
-            recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
+            recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
             char ch = (char)value;
             sawAnyCharacter = true;
 
@@ -131,11 +131,11 @@ internal sealed class DelimitedTextReader : IDisposable
             {
                 if (ch == Quote)
                 {
-                    if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == Quote)
+                    if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == Quote)
                     {
-                        _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                        recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-                        fieldLength = AppendFieldCharacter(field, Quote, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
+                        _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                        recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+                        fieldLength = this.AppendFieldCharacter(field, Quote, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
                     }
                     else
                     {
@@ -147,26 +147,26 @@ internal sealed class DelimitedTextReader : IDisposable
 
                 if (ch == '\r')
                 {
-                    fieldLength = AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
-                    if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
+                    fieldLength = this.AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
+                    if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
                     {
-                        _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                        recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-                        fieldLength = AppendFieldCharacter(field, '\n', fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
+                        _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                        recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+                        fieldLength = this.AppendFieldCharacter(field, '\n', fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
                     }
 
-                    IncrementLineNumber();
+                    this.IncrementLineNumber();
                     continue;
                 }
 
                 if (ch == '\n')
                 {
-                    fieldLength = AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
-                    IncrementLineNumber();
+                    fieldLength = this.AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
+                    this.IncrementLineNumber();
                     continue;
                 }
 
-                fieldLength = AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
+                fieldLength = this.AppendFieldCharacter(field, ch, fieldLength, ref bufferedFieldStart, ref bufferedFieldLength);
                 continue;
             }
 
@@ -177,15 +177,15 @@ internal sealed class DelimitedTextReader : IDisposable
                 continue;
             }
 
-            if (format.TrimValues && atFieldStart && IsTrimCharacter(ch))
+            if (this.format.TrimValues && atFieldStart && IsTrimCharacter(ch))
             {
                 continue;
             }
 
-            if (ch == format.Delimiter)
+            if (ch == this.format.Delimiter)
             {
-                AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
-                field = ResetFieldBuilder();
+                this.AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
+                field = this.ResetFieldBuilder();
                 bufferedFieldStart = -1;
                 bufferedFieldLength = 0;
                 fieldLength = 0;
@@ -195,40 +195,40 @@ internal sealed class DelimitedTextReader : IDisposable
 
             if (ch == '\r')
             {
-                SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
-                if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
+                this.SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
+                if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
                 {
-                    _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                    recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
+                    _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                    recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
                 }
 
-                IncrementLineNumber();
-                AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
-                _ = ResetFieldBuilder();
-                return CreateRecord(fields, lineNumberFrom, lineNumber);
+                this.IncrementLineNumber();
+                this.AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
+                _ = this.ResetFieldBuilder();
+                return this.CreateRecord(fields, lineNumberFrom, this.lineNumber);
             }
 
             if (ch == '\n')
             {
-                IncrementLineNumber();
-                AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
-                _ = ResetFieldBuilder();
-                return CreateRecord(fields, lineNumberFrom, lineNumber);
+                this.IncrementLineNumber();
+                this.AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
+                _ = this.ResetFieldBuilder();
+                return this.CreateRecord(fields, lineNumberFrom, this.lineNumber);
             }
 
-            fieldLength = AppendBufferedFieldCharacter(
+            fieldLength = this.AppendBufferedFieldCharacter(
                 field,
                 fieldLength,
                 ref bufferedFieldStart,
                 ref bufferedFieldLength);
-            AppendUnquotedRunFromBuffer(field, ref fieldLength, ref recordLength, ref bufferedFieldStart, ref bufferedFieldLength);
+            this.AppendUnquotedRunFromBuffer(field, ref fieldLength, ref recordLength, ref bufferedFieldStart, ref bufferedFieldLength);
             atFieldStart = false;
         }
     }
 
     internal async ValueTask<long> CountRecordsAsync(bool skipFirstRecord, CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
+        this.ThrowIfDisposed();
 
         long recordCount = 0;
         int recordLength = 0;
@@ -242,7 +242,7 @@ internal sealed class DelimitedTextReader : IDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            int value = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+            int value = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
             if (value < 0)
             {
                 if (!sawAnyCharacter && fieldCount == 0 && fieldLength == 0)
@@ -255,11 +255,11 @@ internal sealed class DelimitedTextReader : IDisposable
                     throw new InvalidDataException("Delimited text source contains a quoted field without a closing quote.");
                 }
 
-                AddCountedField(ref fieldCount);
+                this.AddCountedField(ref fieldCount);
                 return CountRecord(recordCount, skipFirstRecord, ref isFirstRecord);
             }
 
-            recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
+            recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
             char ch = (char)value;
             sawAnyCharacter = true;
 
@@ -267,11 +267,11 @@ internal sealed class DelimitedTextReader : IDisposable
             {
                 if (ch == Quote)
                 {
-                    if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == Quote)
+                    if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == Quote)
                     {
-                        _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                        recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-                        fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
+                        _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                        recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+                        fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
                     }
                     else
                     {
@@ -283,26 +283,26 @@ internal sealed class DelimitedTextReader : IDisposable
 
                 if (ch == '\r')
                 {
-                    fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-                    if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
+                    fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+                    if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
                     {
-                        _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                        recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-                        fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
+                        _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                        recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+                        fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
                     }
 
-                    IncrementLineNumber();
+                    this.IncrementLineNumber();
                     continue;
                 }
 
                 if (ch == '\n')
                 {
-                    fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-                    IncrementLineNumber();
+                    fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+                    this.IncrementLineNumber();
                     continue;
                 }
 
-                fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
+                fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
                 continue;
             }
 
@@ -313,14 +313,14 @@ internal sealed class DelimitedTextReader : IDisposable
                 continue;
             }
 
-            if (format.TrimValues && atFieldStart && IsTrimCharacter(ch))
+            if (this.format.TrimValues && atFieldStart && IsTrimCharacter(ch))
             {
                 continue;
             }
 
-            if (ch == format.Delimiter)
+            if (ch == this.format.Delimiter)
             {
-                AddCountedField(ref fieldCount);
+                this.AddCountedField(ref fieldCount);
                 fieldLength = 0;
                 atFieldStart = true;
                 continue;
@@ -328,14 +328,14 @@ internal sealed class DelimitedTextReader : IDisposable
 
             if (ch == '\r')
             {
-                if (await PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
+                if (await this.PeekCharAsync(cancellationToken).ConfigureAwait(false) == '\n')
                 {
-                    _ = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
-                    recordLength = IncrementLength(recordLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
+                    _ = await this.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+                    recordLength = IncrementLength(recordLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
                 }
 
-                IncrementLineNumber();
-                AddCountedField(ref fieldCount);
+                this.IncrementLineNumber();
+                this.AddCountedField(ref fieldCount);
                 recordCount = CountRecord(recordCount, skipFirstRecord, ref isFirstRecord);
                 recordLength = 0;
                 fieldLength = 0;
@@ -347,8 +347,8 @@ internal sealed class DelimitedTextReader : IDisposable
 
             if (ch == '\n')
             {
-                IncrementLineNumber();
-                AddCountedField(ref fieldCount);
+                this.IncrementLineNumber();
+                this.AddCountedField(ref fieldCount);
                 recordCount = CountRecord(recordCount, skipFirstRecord, ref isFirstRecord);
                 recordLength = 0;
                 fieldLength = 0;
@@ -358,27 +358,27 @@ internal sealed class DelimitedTextReader : IDisposable
                 continue;
             }
 
-            fieldLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-            SkipUnquotedRunFromBuffer(ref fieldLength, ref recordLength);
+            fieldLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+            this.SkipUnquotedRunFromBuffer(ref fieldLength, ref recordLength);
             atFieldStart = false;
         }
     }
 
     public void Dispose()
     {
-        if (buffer.Length != 0)
+        if (this.buffer.Length != 0)
         {
-            ArrayPool<char>.Shared.Return(buffer);
-            buffer = [];
+            ArrayPool<char>.Shared.Return(this.buffer);
+            this.buffer = [];
         }
 
-        fields.Clear();
-        _ = fieldBuilder.Clear();
+        this.fields.Clear();
+        _ = this.fieldBuilder.Clear();
     }
 
     internal string[] MaterializeFields(int fieldCount, int version)
     {
-        if (version != recordVersion)
+        if (version != this.recordVersion)
         {
             throw new InvalidOperationException("Delimited text records must be materialized before reading the next record.");
         }
@@ -386,9 +386,9 @@ internal sealed class DelimitedTextReader : IDisposable
         var result = new string[fieldCount];
         for (int i = 0; i < result.Length; i++)
         {
-            DelimitedTextField field = fields[i];
+            DelimitedTextField field = this.fields[i];
             result[i] = field.IsBuffered
-                ? MaterializeBufferedField(field.BufferStart, field.BufferLength)
+                ? this.MaterializeBufferedField(field.BufferStart, field.BufferLength)
                 : field.Value!;
         }
 
@@ -397,62 +397,62 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private DelimitedTextRecord CreateRecord(List<DelimitedTextField> fields, int lineNumberFrom, int lineNumberToExclusive)
     {
-        rowIndex++;
-        return new DelimitedTextRecord(this, fields.Count, rowIndex, lineNumberFrom, lineNumberToExclusive, recordVersion);
+        this.rowIndex++;
+        return new DelimitedTextRecord(this, fields.Count, this.rowIndex, lineNumberFrom, lineNumberToExclusive, this.recordVersion);
     }
 
     private async ValueTask<int> ReadCharAsync(CancellationToken cancellationToken)
     {
-        if (bufferIndex >= bufferLength && !await FillBufferAsync(cancellationToken).ConfigureAwait(false))
+        if (this.bufferIndex >= this.bufferLength && !await this.FillBufferAsync(cancellationToken).ConfigureAwait(false))
         {
             return -1;
         }
 
-        int value = buffer[bufferIndex];
-        bufferIndex++;
+        int value = this.buffer[this.bufferIndex];
+        this.bufferIndex++;
         return value;
     }
 
     private async ValueTask<int> PeekCharAsync(CancellationToken cancellationToken)
     {
-        if (bufferIndex >= bufferLength && !await FillBufferAsync(cancellationToken).ConfigureAwait(false))
+        if (this.bufferIndex >= this.bufferLength && !await this.FillBufferAsync(cancellationToken).ConfigureAwait(false))
         {
             return -1;
         }
 
-        return buffer[bufferIndex];
+        return this.buffer[this.bufferIndex];
     }
 
     private async ValueTask<bool> FillBufferAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        MaterializeBufferedFieldsBeforeFill();
-        bufferIndex = 0;
-        bufferLength = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
-        return bufferLength > 0;
+        this.MaterializeBufferedFieldsBeforeFill();
+        this.bufferIndex = 0;
+        this.bufferLength = await this.reader.ReadAsync(this.buffer, 0, this.buffer.Length).ConfigureAwait(false);
+        return this.bufferLength > 0;
     }
 
     private void MaterializeBufferedFieldsBeforeFill()
     {
-        for (int i = 0; i < fields.Count; i++)
+        for (int i = 0; i < this.fields.Count; i++)
         {
-            DelimitedTextField field = fields[i];
+            DelimitedTextField field = this.fields[i];
             if (field.IsBuffered)
             {
-                fields[i] = DelimitedTextField.FromString(MaterializeBufferedField(field.BufferStart, field.BufferLength));
+                this.fields[i] = DelimitedTextField.FromString(this.MaterializeBufferedField(field.BufferStart, field.BufferLength));
             }
         }
     }
 
     private int GetUnquotedRunLengthFromBuffer()
     {
-        if (bufferIndex >= bufferLength)
+        if (this.bufferIndex >= this.bufferLength)
         {
             return 0;
         }
 
-        ReadOnlySpan<char> remaining = buffer.AsSpan(bufferIndex, bufferLength - bufferIndex);
-        int relativeIndex = IndexOfUnquotedSpecialChar(remaining, unquotedSpecialChars);
+        ReadOnlySpan<char> remaining = this.buffer.AsSpan(this.bufferIndex, this.bufferLength - this.bufferIndex);
+        int relativeIndex = IndexOfUnquotedSpecialChar(remaining, this.unquotedSpecialChars);
         return relativeIndex < 0 ? remaining.Length : relativeIndex;
     }
 
@@ -463,30 +463,30 @@ internal sealed class DelimitedTextReader : IDisposable
         ref int bufferedFieldStart,
         ref int bufferedFieldLength)
     {
-        int runLength = GetUnquotedRunLengthFromBuffer();
+        int runLength = this.GetUnquotedRunLengthFromBuffer();
         if (runLength == 0)
         {
             return;
         }
 
-        fieldLength = IncrementLength(fieldLength, runLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-        recordLength = IncrementLength(recordLength, runLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-        AppendBufferedFieldRun(field, bufferIndex, runLength, ref bufferedFieldStart, ref bufferedFieldLength);
-        bufferIndex += runLength;
-        SpillBufferedFieldAtEndOfBuffer(field, ref bufferedFieldStart, ref bufferedFieldLength);
+        fieldLength = IncrementLength(fieldLength, runLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+        recordLength = IncrementLength(recordLength, runLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+        this.AppendBufferedFieldRun(field, this.bufferIndex, runLength, ref bufferedFieldStart, ref bufferedFieldLength);
+        this.bufferIndex += runLength;
+        this.SpillBufferedFieldAtEndOfBuffer(field, ref bufferedFieldStart, ref bufferedFieldLength);
     }
 
     private void SkipUnquotedRunFromBuffer(ref int fieldLength, ref int recordLength)
     {
-        int runLength = GetUnquotedRunLengthFromBuffer();
+        int runLength = this.GetUnquotedRunLengthFromBuffer();
         if (runLength == 0)
         {
             return;
         }
 
-        fieldLength = IncrementLength(fieldLength, runLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-        recordLength = IncrementLength(recordLength, runLength, limits.MaxRecordLength, limits.MaxRecordLengthOptionName);
-        bufferIndex += runLength;
+        fieldLength = IncrementLength(fieldLength, runLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+        recordLength = IncrementLength(recordLength, runLength, this.limits.MaxRecordLength, this.limits.MaxRecordLengthOptionName);
+        this.bufferIndex += runLength;
     }
 
     private int AppendFieldCharacter(
@@ -496,8 +496,8 @@ internal sealed class DelimitedTextReader : IDisposable
         ref int bufferedFieldStart,
         ref int bufferedFieldLength)
     {
-        int newLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-        SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
+        int newLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+        this.SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
         field.Append(ch);
         return newLength;
     }
@@ -508,26 +508,26 @@ internal sealed class DelimitedTextReader : IDisposable
         ref int bufferedFieldStart,
         ref int bufferedFieldLength)
     {
-        int newLength = IncrementLength(fieldLength, limits.MaxFieldLength, limits.MaxFieldLengthOptionName);
-        AppendBufferedFieldRun(field, bufferIndex - 1, 1, ref bufferedFieldStart, ref bufferedFieldLength);
-        SpillBufferedFieldAtEndOfBuffer(field, ref bufferedFieldStart, ref bufferedFieldLength);
+        int newLength = IncrementLength(fieldLength, this.limits.MaxFieldLength, this.limits.MaxFieldLengthOptionName);
+        this.AppendBufferedFieldRun(field, this.bufferIndex - 1, 1, ref bufferedFieldStart, ref bufferedFieldLength);
+        this.SpillBufferedFieldAtEndOfBuffer(field, ref bufferedFieldStart, ref bufferedFieldLength);
         return newLength;
     }
 
     private void AddField(List<DelimitedTextField> fields, StringBuilder field, int bufferedFieldStart, int bufferedFieldLength)
     {
-        if (fields.Count >= limits.MaxColumnCount)
+        if (fields.Count >= this.limits.MaxColumnCount)
         {
-            throw new InvalidDataException($"Delimited text source exceeds {limits.MaxColumnCountOptionName} ({limits.MaxColumnCount}).");
+            throw new InvalidDataException($"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).");
         }
 
         if (field.Length == 0 && bufferedFieldStart >= 0)
         {
-            fields.Add(DelimitedTextField.FromBuffer(bufferedFieldStart, GetTrimmedBufferedLength(bufferedFieldStart, bufferedFieldLength)));
+            fields.Add(DelimitedTextField.FromBuffer(bufferedFieldStart, this.GetTrimmedBufferedLength(bufferedFieldStart, bufferedFieldLength)));
             return;
         }
 
-        fields.Add(DelimitedTextField.FromString(MaterializeBuiltField(field)));
+        fields.Add(DelimitedTextField.FromString(this.MaterializeBuiltField(field)));
     }
 
     private void AppendBufferedFieldRun(
@@ -550,8 +550,8 @@ internal sealed class DelimitedTextReader : IDisposable
             return;
         }
 
-        SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
-        field.Append(buffer, runStart, runLength);
+        this.SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
+        field.Append(this.buffer, runStart, runLength);
     }
 
     private void SpillBufferedField(StringBuilder field, ref int bufferedFieldStart, ref int bufferedFieldLength)
@@ -561,28 +561,28 @@ internal sealed class DelimitedTextReader : IDisposable
             return;
         }
 
-        field.Append(buffer, bufferedFieldStart, bufferedFieldLength);
+        field.Append(this.buffer, bufferedFieldStart, bufferedFieldLength);
         bufferedFieldStart = -1;
         bufferedFieldLength = 0;
     }
 
     private void SpillBufferedFieldAtEndOfBuffer(StringBuilder field, ref int bufferedFieldStart, ref int bufferedFieldLength)
     {
-        if (bufferIndex >= bufferLength)
+        if (this.bufferIndex >= this.bufferLength)
         {
-            SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
+            this.SpillBufferedField(field, ref bufferedFieldStart, ref bufferedFieldLength);
         }
     }
 
     private string MaterializeBufferedField(int bufferStart, int bufferLength)
     {
-        int length = GetTrimmedBufferedLength(bufferStart, bufferLength);
-        return length == 0 ? string.Empty : new string(buffer, bufferStart, length);
+        int length = this.GetTrimmedBufferedLength(bufferStart, bufferLength);
+        return length == 0 ? string.Empty : new string(this.buffer, bufferStart, length);
     }
 
     private string MaterializeBuiltField(StringBuilder field)
     {
-        int length = GetTrimmedBuiltLength(field);
+        int length = this.GetTrimmedBuiltLength(field);
         if (length == 0)
         {
             return string.Empty;
@@ -593,13 +593,13 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private int GetTrimmedBufferedLength(int bufferStart, int bufferLength)
     {
-        if (!format.TrimValues)
+        if (!this.format.TrimValues)
         {
             return bufferLength;
         }
 
         int length = bufferLength;
-        while (length > 0 && IsTrimCharacter(buffer[bufferStart + length - 1]))
+        while (length > 0 && IsTrimCharacter(this.buffer[bufferStart + length - 1]))
         {
             length--;
         }
@@ -609,7 +609,7 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private int GetTrimmedBuiltLength(StringBuilder field)
     {
-        if (!format.TrimValues)
+        if (!this.format.TrimValues)
         {
             return field.Length;
         }
@@ -625,31 +625,31 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private StringBuilder ResetFieldBuilder()
     {
-        if (fieldBuilder.Capacity > MaxRetainedFieldBuilderCapacity)
+        if (this.fieldBuilder.Capacity > MaxRetainedFieldBuilderCapacity)
         {
-            fieldBuilder = new StringBuilder();
-            return fieldBuilder;
+            this.fieldBuilder = new StringBuilder();
+            return this.fieldBuilder;
         }
 
-        _ = fieldBuilder.Clear();
-        return fieldBuilder;
+        _ = this.fieldBuilder.Clear();
+        return this.fieldBuilder;
     }
 
     private void AddCountedField(ref int fieldCount)
     {
-        if (fieldCount >= limits.MaxColumnCount)
+        if (fieldCount >= this.limits.MaxColumnCount)
         {
-            throw new InvalidDataException($"Delimited text source exceeds {limits.MaxColumnCountOptionName} ({limits.MaxColumnCount}).");
+            throw new InvalidDataException($"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).");
         }
 
         fieldCount++;
     }
 
-    private void IncrementLineNumber() => lineNumber++;
+    private void IncrementLineNumber() => this.lineNumber++;
 
     private void ThrowIfDisposed()
     {
-        if (buffer.Length == 0)
+        if (this.buffer.Length == 0)
         {
             throw new ObjectDisposedException(nameof(DelimitedTextReader));
         }

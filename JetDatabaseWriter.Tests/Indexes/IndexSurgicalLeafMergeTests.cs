@@ -43,7 +43,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Id", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Tag", "Tag")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 400; i++)
@@ -56,14 +56,14 @@ public sealed class IndexSurgicalLeafMergeTests
                 rows[400 + i] = [1, i];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 0, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 0, this.ct);
             Assert.Equal(400, deleted);
         }
 
@@ -76,7 +76,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
 
@@ -111,7 +111,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Id", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Tag", "Tag")],
-                ct);
+                this.ct);
 
             var rows = new object[1200][];
             for (int t = 0; t < 3; t++)
@@ -122,17 +122,17 @@ public sealed class IndexSurgicalLeafMergeTests
                 }
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
             Assert.Equal(400, deleted);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt!.Rows.Count);
 
@@ -173,7 +173,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Region", typeof(string), maxLength: 4),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[Total][];
             for (int i = 0; i < Total; i++)
@@ -181,7 +181,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 rows[i] = [i * 10, i < LeftAndMidCount ? "AB" : "C"];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -189,7 +189,7 @@ public sealed class IndexSurgicalLeafMergeTests
         const int ExpectedDeletes = Total - LeftAndMidCount; // 398
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Region", "C", ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Region", "C", this.ct);
             Assert.Equal(ExpectedDeletes, deleted);
         }
 
@@ -197,7 +197,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(LeftAndMidCount, dt!.Rows.Count);
 
@@ -226,7 +226,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Desc", typeof(string), maxLength: 8),
                 ],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new object[800][];
             for (int i = 0; i < 800; i++)
@@ -234,14 +234,14 @@ public sealed class IndexSurgicalLeafMergeTests
                 rows[i] = [i + 1, (i % 2 == 0) ? "DEL" : "KEEP"];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Desc", "DEL", ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Desc", "DEL", this.ct);
             Assert.Equal(400, deleted);
         }
 
@@ -249,7 +249,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
 
@@ -282,7 +282,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Id", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Tag", "Tag")],
-                ct);
+                this.ct);
 
             var rows = new object[1200][];
             for (int t = 0; t < 3; t++)
@@ -293,17 +293,17 @@ public sealed class IndexSurgicalLeafMergeTests
                 }
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.DeleteRowsAsync("T", "Tag", 1, ct);
-            await writer.InsertRowAsync("T", [0, 9999], ct);
+            await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
+            await writer.InsertRowAsync("T", [0, 9999], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -357,7 +357,7 @@ public sealed class IndexSurgicalLeafMergeTests
                     new ColumnDefinition("Region", typeof(string), maxLength: 4),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[Total][];
             for (int i = 0; i < Total; i++)
@@ -365,7 +365,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 rows[i] = [i * 10, i < LeftLeafCount ? "A" : "B"];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
@@ -373,7 +373,7 @@ public sealed class IndexSurgicalLeafMergeTests
         const int ExpectedDeletes = Total - LeftLeafCount; // 399
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Region", "B", ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Region", "B", this.ct);
             Assert.Equal(ExpectedDeletes, deleted);
         }
 
@@ -381,7 +381,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(LeftLeafCount, dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)

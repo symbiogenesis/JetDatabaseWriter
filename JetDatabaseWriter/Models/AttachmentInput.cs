@@ -29,8 +29,8 @@ public sealed record AttachmentInput
             throw new ArgumentException("File name is required.", nameof(fileName));
         }
 
-        FileName = fileName;
-        FileData = fileData ?? throw new ArgumentNullException(nameof(fileData));
+        this.FileName = fileName;
+        this.FileData = fileData ?? throw new ArgumentNullException(nameof(fileData));
     }
 
     /// <summary>Gets the display file name (e.g. <c>"invoice.pdf"</c>).</summary>

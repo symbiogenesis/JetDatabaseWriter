@@ -32,14 +32,14 @@ public class AccessReaderOwnedPageDiscoveryBenchmarks
     [Benchmark]
     public async Task<int> ColdOpenFirstRow()
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
+        await using AccessReader reader = await AccessReader.OpenAsync(this.ResolveDatabasePath()).ConfigureAwait(false);
         return await CountFirstRowAsync(reader).ConfigureAwait(false);
     }
 
     [Benchmark]
     public async Task<int> ColdOpenFullScan()
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(ResolveDatabasePath()).ConfigureAwait(false);
+        await using AccessReader reader = await AccessReader.OpenAsync(this.ResolveDatabasePath()).ConfigureAwait(false);
         return await CountRowsAsync(reader).ConfigureAwait(false);
     }
 
@@ -67,10 +67,10 @@ public class AccessReaderOwnedPageDiscoveryBenchmarks
     }
 
     private string ResolveDatabasePath()
-        => Path switch
+        => this.Path switch
         {
             OwnedPageDiscoveryPath.RecognizedUsageMap => SyntheticDatabases.OwnedPageDiscoveryMappedDbPath,
             OwnedPageDiscoveryPath.WholeFileFallback => SyntheticDatabases.OwnedPageDiscoveryFallbackDbPath,
-            _ => throw new ArgumentOutOfRangeException(nameof(Path), Path, null),
+            _ => throw new ArgumentOutOfRangeException(nameof(this.Path), this.Path, null),
         };
 }

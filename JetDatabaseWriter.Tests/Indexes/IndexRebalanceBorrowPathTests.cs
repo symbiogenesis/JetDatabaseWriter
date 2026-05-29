@@ -58,7 +58,7 @@ public sealed class IndexRebalanceBorrowPathTests
                     new ColumnDefinition("DeleteBucket", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
@@ -66,7 +66,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 rows[i] = [i * 10, string.Create(CultureInfo.InvariantCulture, $"v{i}"), i % 3 == 0 ? 0 : 1];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Phase 2: Scattered deletes — remove every 3rd row. This thins
@@ -78,7 +78,7 @@ public sealed class IndexRebalanceBorrowPathTests
             .ToHashSet();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "DeleteBucket", 0, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "DeleteBucket", 0, this.ct);
             Assert.Equal(deletedIds.Count, deleted);
         }
 
@@ -98,12 +98,12 @@ public sealed class IndexRebalanceBorrowPathTests
                 insertedIds.Add(id);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Verify: all survivors + new inserts are present.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
 
         int expectedCount = initialRows - deletedIds.Count + insertCount;
         Assert.Equal(expectedCount, dt.Rows.Count);
@@ -148,7 +148,7 @@ public sealed class IndexRebalanceBorrowPathTests
                     new ColumnDefinition("Round", typeof(int)),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
@@ -156,7 +156,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 rows[i] = [i, 0];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         int nextId = initialRows;
@@ -171,7 +171,7 @@ public sealed class IndexRebalanceBorrowPathTests
             {
                 foreach (int id in toDelete)
                 {
-                    await writer.DeleteRowsAsync("T", "Id", id, ct);
+                    await writer.DeleteRowsAsync("T", "Id", id, this.ct);
                     expected.Remove(id);
                 }
             }
@@ -188,12 +188,12 @@ public sealed class IndexRebalanceBorrowPathTests
                     nextId++;
                 }
 
-                await writer.InsertRowsAsync("T", rows, ct);
+                await writer.InsertRowsAsync("T", rows, this.ct);
             }
 
             // Verify after each round.
             await using AccessReader reader = await OpenReaderAsync(stream);
-            DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+            DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
             Assert.Equal(expected.Count, dt.Rows.Count);
 
             var actual = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
@@ -230,7 +230,7 @@ public sealed class IndexRebalanceBorrowPathTests
                     new ColumnDefinition("Zone", typeof(string), maxLength: 10),
                 ],
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -252,23 +252,23 @@ public sealed class IndexRebalanceBorrowPathTests
                 rows[i] = [i, zone];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Delete low-end rows.
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.DeleteRowsAsync("T", "Zone", "low", ct);
+            await writer.DeleteRowsAsync("T", "Zone", "low", this.ct);
         }
 
         // Delete high-end rows.
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.DeleteRowsAsync("T", "Zone", "high", ct);
+            await writer.DeleteRowsAsync("T", "Zone", "high", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
 
         const int expectedCount = rowCount - (2 * deletePerSide);
         Assert.Equal(expectedCount, dt.Rows.Count);

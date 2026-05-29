@@ -17,10 +17,10 @@ public class RowMapperBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        _headers = ["Id", "Name", "Value", "Description", "IsActive"];
-        _index = RowMapper<SampleEntity>.BuildIndex(_headers);
-        _row = [42, "TestName", 3.14, "A description", true];
-        _tableDef = new TableDef
+        this._headers = ["Id", "Name", "Value", "Description", "IsActive"];
+        this._index = RowMapper<SampleEntity>.BuildIndex(this._headers);
+        this._row = [42, "TestName", 3.14, "A description", true];
+        this._tableDef = new TableDef
         {
             Columns =
             [
@@ -31,7 +31,7 @@ public class RowMapperBenchmarks
                 new ColumnInfo { Name = "IsActive" },
             ],
         };
-        _entity = new SampleEntity
+        this._entity = new SampleEntity
         {
             Id = 42,
             Name = "TestName",
@@ -42,20 +42,20 @@ public class RowMapperBenchmarks
     }
 
     [Benchmark]
-    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(_headers);
+    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(this._headers);
 
     [Benchmark]
-    public SampleEntity Map() => RowMapper<SampleEntity>.Map(_row, _index);
+    public SampleEntity Map() => RowMapper<SampleEntity>.Map(this._row, this._index);
 
     [Benchmark]
-    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(_tableDef, _entity);
+    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(this._tableDef, this._entity);
 
     [Benchmark]
     public SampleEntity MapWithConversion()
     {
         // Int64 -> Int32 forces Convert.ChangeType path
         object[] row = [42L, "TestName", 3.14f, "Desc", true];
-        return RowMapper<SampleEntity>.Map(row, _index);
+        return RowMapper<SampleEntity>.Map(row, this._index);
     }
 
     public class SampleEntity

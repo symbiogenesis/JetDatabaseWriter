@@ -27,51 +27,51 @@ internal sealed class AsyncReentrantOperationGate
     private int activeOperations;
     private int state;
 
-    public Task DisposeCompleted => disposeCompleted.Task;
+    public Task DisposeCompleted => this.disposeCompleted.Task;
 
     public Lease Enter(object owner)
     {
-        int depth = operationDepth.Value;
+        int depth = this.operationDepth.Value;
         if (depth > 0)
         {
-            operationDepth.Value = depth + 1;
+            this.operationDepth.Value = depth + 1;
             return new Lease(this, isRoot: false);
         }
 
-        if (Volatile.Read(ref state) != StateOpen)
+        if (Volatile.Read(ref this.state) != StateOpen)
         {
             throw new ObjectDisposedException(owner?.GetType().FullName);
         }
 
-        _ = Interlocked.Increment(ref activeOperations);
+        _ = Interlocked.Increment(ref this.activeOperations);
 
-        if (Volatile.Read(ref state) != StateOpen)
+        if (Volatile.Read(ref this.state) != StateOpen)
         {
-            ReleaseActiveOperation();
+            this.ReleaseActiveOperation();
             throw new ObjectDisposedException(owner?.GetType().FullName);
         }
 
-        operationDepth.Value = 1;
+        this.operationDepth.Value = 1;
         return new Lease(this, isRoot: true);
     }
 
     public bool TryBeginDispose(out Task waitForOperations)
     {
-        if (Interlocked.CompareExchange(ref state, StateDisposing, StateOpen) != StateOpen)
+        if (Interlocked.CompareExchange(ref this.state, StateDisposing, StateOpen) != StateOpen)
         {
-            waitForOperations = disposeCompleted.Task;
+            waitForOperations = this.disposeCompleted.Task;
             return false;
         }
 
-        lock (stateLock)
+        lock (this.stateLock)
         {
-            operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (Volatile.Read(ref activeOperations) == 0)
+            this.operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (Volatile.Read(ref this.activeOperations) == 0)
             {
-                operationsDrained.TrySetResult(null);
+                this.operationsDrained.TrySetResult(null);
             }
 
-            waitForOperations = operationsDrained.Task;
+            waitForOperations = this.operationsDrained.Task;
             return true;
         }
     }
@@ -80,40 +80,40 @@ internal sealed class AsyncReentrantOperationGate
     {
         if (error == null)
         {
-            disposeCompleted.TrySetResult(null);
+            this.disposeCompleted.TrySetResult(null);
         }
         else
         {
-            disposeCompleted.TrySetException(error);
+            this.disposeCompleted.TrySetException(error);
         }
 
-        Volatile.Write(ref state, StateDisposed);
+        Volatile.Write(ref this.state, StateDisposed);
     }
 
     private void ReleaseOperation(bool isRoot)
     {
-        int depth = operationDepth.Value;
-        operationDepth.Value = depth > 0 ? depth - 1 : 0;
+        int depth = this.operationDepth.Value;
+        this.operationDepth.Value = depth > 0 ? depth - 1 : 0;
 
         if (!isRoot)
         {
             return;
         }
 
-        ReleaseActiveOperation();
+        this.ReleaseActiveOperation();
     }
 
     private void ReleaseActiveOperation()
     {
-        if (Interlocked.Decrement(ref activeOperations) != 0)
+        if (Interlocked.Decrement(ref this.activeOperations) != 0)
         {
             return;
         }
 
         TaskCompletionSource<object?>? drained;
-        lock (stateLock)
+        lock (this.stateLock)
         {
-            drained = operationsDrained;
+            drained = this.operationsDrained;
         }
 
         drained?.TrySetResult(null);

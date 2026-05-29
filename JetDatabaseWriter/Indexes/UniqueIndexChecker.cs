@@ -162,7 +162,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;
@@ -193,13 +193,13 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         if (needsSnapshot)
         {
             using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-            CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
+            this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
             return;
         }
 
         // Gather existing key-column values directly from data pages.
         List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        await CheckUniqueIndexesFastPathAsync(tableName, descriptors, tableDef, locations, pendingRows, cancellationToken).ConfigureAwait(false);
+        await this.CheckUniqueIndexesFastPathAsync(tableName, descriptors, tableDef, locations, pendingRows, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -269,7 +269,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
                 // Map from the columnOrdinalsArray position back to the full row object[].
                 object[] fullRow = UniqueIndexChecker.BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
                 _ = seenSets[d].Add(key);
             }
         }
@@ -281,7 +281,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
                 int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
 
                 if (!seenSets[d].Add(key))
                 {
@@ -315,7 +315,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;
@@ -327,7 +327,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             replaceAt[idx] = newRow;
         }
 
-        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
+        this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
     }
 
     private static int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
@@ -418,7 +418,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
                     effectiveRow = snapshot.Rows[r].ItemArray;
                 }
 
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
 
                 if (!seen.Add(key))
                 {
@@ -430,7 +430,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
             for (int p = 0; p < pendingCount; p++)
             {
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
 
                 if (!seen.Add(key))
                 {

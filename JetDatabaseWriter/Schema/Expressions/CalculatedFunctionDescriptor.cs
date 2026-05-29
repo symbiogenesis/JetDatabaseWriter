@@ -23,21 +23,21 @@ internal sealed class CalculatedFunctionDescriptor(CalculatedFunctionDomain doma
     {
         get
         {
-            yield return Name;
-            for (int i = 0; i < Aliases.Length; i++)
+            yield return this.Name;
+            for (int i = 0; i < this.Aliases.Length; i++)
             {
-                yield return Aliases[i];
+                yield return this.Aliases[i];
             }
         }
     }
 
     public void ValidateArgumentCount(string functionName, int actual)
     {
-        int effectiveMax = Math.Min(MaxArgs, MaxFunctionArguments);
-        if (actual < MinArgs || actual > effectiveMax)
+        int effectiveMax = Math.Min(this.MaxArgs, MaxFunctionArguments);
+        if (actual < this.MinArgs || actual > effectiveMax)
         {
             throw new ArgumentException(
-                $"Calculated-column function '{functionName}' expects {MinArgs}" + (MinArgs == effectiveMax ? string.Empty : $"..{effectiveMax}") + $" argument(s), got {actual}.");
+                $"Calculated-column function '{functionName}' expects {this.MinArgs}" + (this.MinArgs == effectiveMax ? string.Empty : $"..{effectiveMax}") + $" argument(s), got {actual}.");
         }
     }
 }

@@ -116,14 +116,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     }
 
     public byte[] BuildTDefPage(TableDef tableDef)
-        => BuildTDefPageWithIndexOffsets(tableDef, []).Page;
+        => this.BuildTDefPageWithIndexOffsets(tableDef, []).Page;
 
     public byte[] BuildTDefPage(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
-        => BuildTDefPageWithIndexOffsets(tableDef, indexes).Page;
+        => this.BuildTDefPageWithIndexOffsets(tableDef, indexes).Page;
 
     public (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
-        (byte[][]? pages, int[]? firstDpOffsets, int[] _) = BuildTDefPagesWithIndexOffsets(tableDef, indexes);
+        (byte[][]? pages, int[]? firstDpOffsets, int[] _) = this.BuildTDefPagesWithIndexOffsets(tableDef, indexes);
         if (pages.Length != 1)
         {
             throw new NotSupportedException(
@@ -411,7 +411,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             Wu16(page, 2, Math.Max(0, writer.PageSizeBytes - tdefLen - 8));
         }
 
-        (byte[][]? pages, int[]? logicalFirstDpOffsets) = SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
+        (byte[][]? pages, int[]? logicalFirstDpOffsets) = this.SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
         return (pages, logicalFirstDpOffsets, usedPagesOffsets);
     }
 

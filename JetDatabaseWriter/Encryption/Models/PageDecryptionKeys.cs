@@ -33,7 +33,7 @@ internal sealed class PageDecryptionKeys : IDisposable
         get;
         set
         {
-            DisposeAesTransforms();
+            this.DisposeAesTransforms();
             field = value;
         }
     }
@@ -41,50 +41,50 @@ internal sealed class PageDecryptionKeys : IDisposable
     /// <summary>Returns the cached AES decryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
     internal ICryptoTransform GetAesDecryptor()
     {
-        EnsureAesTransforms();
-        return aesDecryptor!;
+        this.EnsureAesTransforms();
+        return this.aesDecryptor!;
     }
 
     /// <summary>Returns the cached AES encryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
     internal ICryptoTransform GetAesEncryptor()
     {
-        EnsureAesTransforms();
-        return aesEncryptor!;
+        this.EnsureAesTransforms();
+        return this.aesEncryptor!;
     }
 
     /// <inheritdoc/>
-    public void Dispose() => DisposeAesTransforms();
+    public void Dispose() => this.DisposeAesTransforms();
 
     private void EnsureAesTransforms()
     {
-        if (aes != null)
+        if (this.aes != null)
         {
             return;
         }
 
-        if (AesPageKey == null)
+        if (this.AesPageKey == null)
         {
             throw new InvalidOperationException("AesPageKey must be set before requesting AES transforms.");
         }
 
 #pragma warning disable CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
-        aes = Aes.Create();
-        aes.Key = AesPageKey;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
+        this.aes = Aes.Create();
+        this.aes.Key = this.AesPageKey;
+        this.aes.Mode = CipherMode.ECB;
+        this.aes.Padding = PaddingMode.None;
 #pragma warning restore CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
 
-        aesEncryptor = aes.CreateEncryptor();
-        aesDecryptor = aes.CreateDecryptor();
+        this.aesEncryptor = this.aes.CreateEncryptor();
+        this.aesDecryptor = this.aes.CreateDecryptor();
     }
 
     private void DisposeAesTransforms()
     {
-        aesEncryptor?.Dispose();
-        aesDecryptor?.Dispose();
-        aes?.Dispose();
-        aesEncryptor = null;
-        aesDecryptor = null;
-        aes = null;
+        this.aesEncryptor?.Dispose();
+        this.aesDecryptor?.Dispose();
+        this.aes?.Dispose();
+        this.aesEncryptor = null;
+        this.aesDecryptor = null;
+        this.aes = null;
     }
 }

@@ -36,7 +36,7 @@ public class RowMapperTests
     {
         public int Id { get; set; }
 
-        public string Computed => $"Item-{Id}";
+        public string Computed => $"Item-{this.Id}";
     }
 
     private sealed class TypeMismatchPoco

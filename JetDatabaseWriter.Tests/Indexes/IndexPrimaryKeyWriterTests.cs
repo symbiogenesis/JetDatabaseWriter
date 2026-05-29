@@ -211,7 +211,7 @@ public sealed class IndexPrimaryKeyWriterTests
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -220,7 +220,7 @@ public sealed class IndexPrimaryKeyWriterTests
                     [1],
                     [3],
                 ],
-                ct);
+                this.ct);
         }
 
         // PK leaf was rebuilt in bulk → most-recent leaf reports 3 entries
@@ -243,7 +243,7 @@ public sealed class IndexPrimaryKeyWriterTests
                     new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
                 ],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -252,7 +252,7 @@ public sealed class IndexPrimaryKeyWriterTests
                     [1, 2],
                     [3, 1],
                 ],
-                ct);
+                this.ct);
         }
 
         // Multi-column PK leaf is now maintained on bulk insert.
@@ -275,7 +275,7 @@ public sealed class IndexPrimaryKeyWriterTests
                     new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Note", typeof(string), maxLength: 50),
                 ],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -284,16 +284,16 @@ public sealed class IndexPrimaryKeyWriterTests
                     [1, 2, "b"],
                     [2, 1, "c"],
                 ],
-                ct);
+                this.ct);
 
             _ = await writer.UpdateRowsAsync(
                 "T",
                 "OrderId",
                 1,
                 new Dictionary<string, object?> { ["Note"] = "updated" },
-                ct);
+                this.ct);
 
-            _ = await writer.DeleteRowsAsync("T", "LineNo", 1, ct);
+            _ = await writer.DeleteRowsAsync("T", "LineNo", 1, this.ct);
         }
 
         // After delete the latest (highest-page-number) leaf is the current
@@ -317,7 +317,7 @@ public sealed class IndexPrimaryKeyWriterTests
                     new ColumnDefinition("A", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("B", typeof(int)) { IsPrimaryKey = true },
                 ],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -325,12 +325,12 @@ public sealed class IndexPrimaryKeyWriterTests
                     [1, 1],
                     [2, 2],
                 ],
-                ct);
+                this.ct);
 
             await writer.AddColumnAsync(
                 "T",
                 new ColumnDefinition("C", typeof(string), maxLength: 10),
-                ct);
+                this.ct);
         }
 
         // RewriteTableAsync forwards the composite PK and rebuilds the leaf
@@ -351,10 +351,10 @@ public sealed class IndexPrimaryKeyWriterTests
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
                 ],
-                ct);
+                this.ct);
 
-            await writer.InsertRowsAsync("T", [[1, "a"], [2, "b"]], ct);
-            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
+            await writer.InsertRowsAsync("T", [[1, "a"], [2, "b"]], this.ct);
+            await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -381,9 +381,9 @@ public sealed class IndexPrimaryKeyWriterTests
                 [
                     new IndexDefinition("PK_Order", CompositeOrderLine) { IsPrimaryKey = true },
                 ],
-                ct);
+                this.ct);
 
-            await writer.DropColumnAsync("T", "LineNo", ct);
+            await writer.DropColumnAsync("T", "LineNo", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -401,9 +401,9 @@ public sealed class IndexPrimaryKeyWriterTests
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
-                ct);
+                this.ct);
 
-            await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
+            await writer.RenameColumnAsync("T", "Id", "Identifier", this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);

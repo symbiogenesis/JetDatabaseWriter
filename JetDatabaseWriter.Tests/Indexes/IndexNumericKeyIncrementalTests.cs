@@ -35,11 +35,11 @@ public sealed class IndexNumericKeyIncrementalTests
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Amount", typeof(decimal)) { NumericPrecision = 18, NumericScale = 4 },
                 ],
-                ct);
+                this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync("T", ct);
+        IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync("T", this.ct);
         ColumnMetadata amount = cols.Single(c => c.Name == "Amount");
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)4, amount.NumericScale);
@@ -56,11 +56,11 @@ public sealed class IndexNumericKeyIncrementalTests
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("Amount", typeof(decimal))],
-                ct);
+                this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        ColumnMetadata amount = (await reader.GetColumnMetadataAsync("T", ct)).Single();
+        ColumnMetadata amount = (await reader.GetColumnMetadataAsync("T", this.ct)).Single();
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)0, amount.NumericScale);
     }
@@ -81,7 +81,7 @@ public sealed class IndexNumericKeyIncrementalTests
                 "T",
                 [new ColumnDefinition("Amount", typeof(decimal)) { NumericScale = 2 }],
                 [new IndexDefinition("IX_Amount", "Amount")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -90,7 +90,7 @@ public sealed class IndexNumericKeyIncrementalTests
                     [3.00m],
                     [5.00m],
                 ],
-                ct);
+                this.ct);
         }
 
         long lengthAfterBulk = stream.Length;
@@ -99,7 +99,7 @@ public sealed class IndexNumericKeyIncrementalTests
         {
             // One row insert that lands between two existing keys ⇒
             // single-leaf splice.
-            await writer.InsertRowAsync("T", [2.00m], ct);
+            await writer.InsertRowAsync("T", [2.00m], this.ct);
         }
 
         long lengthAfterSplice = stream.Length;
@@ -117,7 +117,7 @@ public sealed class IndexNumericKeyIncrementalTests
         // Round-trip verification.
         await using AccessReader reader = await OpenReaderAsync(stream);
         List<object[]> rows = [];
-        await foreach (object[] row in reader.Rows("T", cancellationToken: ct))
+        await foreach (object[] row in reader.Rows("T", cancellationToken: this.ct))
         {
             rows.Add(row);
         }
@@ -141,7 +141,7 @@ public sealed class IndexNumericKeyIncrementalTests
                 "T",
                 [new ColumnDefinition("Seq", typeof(decimal)) { NumericScale = 2 }],
                 [new IndexDefinition("IX_Seq", "Seq")],
-                ct);
+                this.ct);
 
             // Bulk-load enough rows to force a multi-level tree so the
             // append optimisation is meaningfully different from the
@@ -149,7 +149,7 @@ public sealed class IndexNumericKeyIncrementalTests
             object[][] bulk = Enumerable.Range(1, 400)
                 .Select(i => new object[] { i + 0.50m })
                 .ToArray();
-            await writer.InsertRowsAsync("T", bulk, ct);
+            await writer.InsertRowsAsync("T", bulk, this.ct);
         }
 
         long beforeAppend = stream.Length;
@@ -157,7 +157,7 @@ public sealed class IndexNumericKeyIncrementalTests
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Pure append — sorts after every existing key.
-            await writer.InsertRowAsync("T", [9999.00m], ct);
+            await writer.InsertRowAsync("T", [9999.00m], this.ct);
         }
 
         long afterAppend = stream.Length;
@@ -171,7 +171,7 @@ public sealed class IndexNumericKeyIncrementalTests
             $"Append grew file by {delta} bytes; expected ≤ 32 KB (in-place tail rewrite).");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        long count = await reader.Rows("T", cancellationToken: ct).CountAsync(cancellationToken: ct);
+        long count = await reader.Rows("T", cancellationToken: this.ct).CountAsync(cancellationToken: this.ct);
         Assert.Equal(401, count);
     }
 
@@ -189,7 +189,7 @@ public sealed class IndexNumericKeyIncrementalTests
                     new ColumnDefinition("Amount", typeof(decimal)) { NumericScale = 2 },
                 ],
                 [new IndexDefinition("IX_Amount", "Amount")],
-                ct);
+                this.ct);
 
             await writer.InsertRowsAsync(
                 "T",
@@ -198,14 +198,14 @@ public sealed class IndexNumericKeyIncrementalTests
                     [2, 20.00m],
                     [3, 30.00m],
                 ],
-                ct);
+                this.ct);
         }
 
         long beforeDelete = stream.Length;
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Id", 2, ct);
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 2, this.ct);
             Assert.Equal(1, deleted);
         }
 
@@ -217,7 +217,7 @@ public sealed class IndexNumericKeyIncrementalTests
             $"Delete grew file by {delta} bytes; expected ≤ 32 KB (incremental rewrite).");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        long count = await reader.Rows("T", cancellationToken: ct).CountAsync(cancellationToken: ct);
+        long count = await reader.Rows("T", cancellationToken: this.ct).CountAsync(cancellationToken: this.ct);
         Assert.Equal(2, count);
     }
 
@@ -235,11 +235,11 @@ public sealed class IndexNumericKeyIncrementalTests
             "T",
             [new ColumnDefinition("Amount", typeof(decimal)) { NumericScale = 2 }],
             [new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1.50m], ct);
+        await writer.InsertRowAsync("T", [1.50m], this.ct);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [1.5m], ct));
+            await writer.InsertRowAsync("T", [1.5m], this.ct));
     }
 
     [Fact]
@@ -256,12 +256,12 @@ public sealed class IndexNumericKeyIncrementalTests
             "T",
             [new ColumnDefinition("N", typeof(decimal))],
             [new IndexDefinition("UQ_N", "N") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("T", [1.4m], ct); // → 1 at scale 0
-        await writer.InsertRowAsync("T", [1.6m], ct); // → 2 at scale 0
+        await writer.InsertRowAsync("T", [1.4m], this.ct); // → 1 at scale 0
+        await writer.InsertRowAsync("T", [1.6m], this.ct); // → 2 at scale 0
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", [2.0m], ct));
+            await writer.InsertRowAsync("T", [2.0m], this.ct));
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public sealed class IndexNumericKeyIncrementalTests
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("N", typeof(decimal)) { NumericPrecision = 30 }],
-                ct));
+                this.ct));
     }
 
     [Fact]
@@ -289,7 +289,7 @@ public sealed class IndexNumericKeyIncrementalTests
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("N", typeof(decimal)) { NumericPrecision = 5, NumericScale = 6 }],
-                ct));
+                this.ct));
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

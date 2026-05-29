@@ -32,7 +32,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ParentSeekIndex? resolved = null;
         try
         {
-            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
+            SeekIndexCore? core = await this.TryResolveSeekIndexCoreAsync(
                 rel.PrimaryTable,
                 rel.PrimaryColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -91,7 +91,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ChildSeekIndex? resolved = null;
         try
         {
-            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
+            SeekIndexCore? core = await this.TryResolveSeekIndexCoreAsync(
                 rel.ForeignTable,
                 rel.ForeignColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -153,7 +153,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             numericScales[index] = definition.Columns[columnIndex].NumericScale;
         }
 
-        (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
+        (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await this.TryFindCoveringRealIdxAsync(
             entry.TDefPage,
             columnNumbers,
             cancellationToken).ConfigureAwait(false);
@@ -198,7 +198,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             return null;
         }
 
-        int realIndexDescriptorStart = LocateRealIdxDescStart(tableDefinition, numColumns, numRealIndexes);
+        int realIndexDescriptorStart = this.LocateRealIdxDescStart(tableDefinition, numColumns, numRealIndexes);
         if (realIndexDescriptorStart < 0)
         {
             return null;

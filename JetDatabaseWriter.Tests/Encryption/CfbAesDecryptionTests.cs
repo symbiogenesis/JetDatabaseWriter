@@ -42,7 +42,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // After opening an AES-encrypted ACCDB with the correct password,
         // ListTablesAsync must decrypt the catalog page and return table names.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -68,7 +68,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // Reading a DataTable from an AES-encrypted database must decrypt
         // data pages and return valid rows, not garbled bytes.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -91,7 +91,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // Generic POCO mapping through AES-decrypted pages must produce
         // typed objects, not throw during deserialization.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -120,7 +120,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // Streaming through AES-encrypted data pages must yield rows
         // with valid data, not encrypted garbage.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -146,7 +146,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     public async Task AesPageDecryption_GetColumnMetadata_ReturnsValidSchema()
     {
         // Column metadata lives on TDEF pages that must be AES-decrypted.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -173,7 +173,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // DatabaseStatistics scans the catalog and counts rows across all tables.
         // Both catalog and data pages must be decrypted.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -196,7 +196,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     public async Task AesPageDecryption_ReadAllTables_Succeeds()
     {
         // Bulk read of every table exercises decryption across all page types.
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -223,7 +223,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         List<string> expectedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
@@ -244,7 +244,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         List<TableStat> expectedStats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
-        byte[] data = await CreateAesEncryptedAccdbAsync();
+        byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),

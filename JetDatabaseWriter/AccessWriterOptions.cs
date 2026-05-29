@@ -23,7 +23,7 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessWriterOptions(string? plainTextPassword)
     {
-        Password = plainTextPassword.AsMemory();
+        this.Password = plainTextPassword.AsMemory();
     }
 
     /// <summary>

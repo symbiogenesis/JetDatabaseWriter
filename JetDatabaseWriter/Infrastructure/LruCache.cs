@@ -44,24 +44,24 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         this.capacity = capacity;
         this.onEvict = onEvict;
-        map = new Dictionary<TKey, int>(capacity);
-        nodes = new Node[capacity + 1]; // +1 for sentinel
-        nodes[Sentinel].Next = Sentinel;
-        nodes[Sentinel].Prev = Sentinel;
+        this.map = new Dictionary<TKey, int>(capacity);
+        this.nodes = new Node[capacity + 1]; // +1 for sentinel
+        this.nodes[Sentinel].Next = Sentinel;
+        this.nodes[Sentinel].Prev = Sentinel;
     }
 
     public int Count
     {
         get
         {
-            rwLock.EnterReadLock();
+            this.rwLock.EnterReadLock();
             try
             {
-                return map.Count;
+                return this.map.Count;
             }
             finally
             {
-                rwLock.ExitReadLock();
+                this.rwLock.ExitReadLock();
             }
         }
     }
@@ -71,14 +71,14 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         get
         {
-            rwLock.EnterReadLock();
+            this.rwLock.EnterReadLock();
             try
             {
-                return hits;
+                return this.hits;
             }
             finally
             {
-                rwLock.ExitReadLock();
+                this.rwLock.ExitReadLock();
             }
         }
     }
@@ -88,146 +88,146 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         get
         {
-            rwLock.EnterReadLock();
+            this.rwLock.EnterReadLock();
             try
             {
-                return misses;
+                return this.misses;
             }
             finally
             {
-                rwLock.ExitReadLock();
+                this.rwLock.ExitReadLock();
             }
         }
     }
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        rwLock.EnterWriteLock();
+        this.rwLock.EnterWriteLock();
         try
         {
-            if (map.TryGetValue(key, out int idx))
+            if (this.map.TryGetValue(key, out int idx))
             {
-                if (nodes[Sentinel].Next != idx)
+                if (this.nodes[Sentinel].Next != idx)
                 {
-                    MoveToFront(idx);
+                    this.MoveToFront(idx);
                 }
 
-                value = nodes[idx].Value;
-                hits++;
+                value = this.nodes[idx].Value;
+                this.hits++;
                 return true;
             }
 
             value = default!;
-            misses++;
+            this.misses++;
             return false;
         }
         finally
         {
-            rwLock.ExitWriteLock();
+            this.rwLock.ExitWriteLock();
         }
     }
 
     public void Add(TKey key, TValue value)
     {
-        rwLock.EnterWriteLock();
+        this.rwLock.EnterWriteLock();
         try
         {
-            if (map.TryGetValue(key, out int existingIdx))
+            if (this.map.TryGetValue(key, out int existingIdx))
             {
-                if (nodes[Sentinel].Next != existingIdx)
+                if (this.nodes[Sentinel].Next != existingIdx)
                 {
-                    MoveToFront(existingIdx);
+                    this.MoveToFront(existingIdx);
                 }
 
-                nodes[existingIdx].Value = value;
+                this.nodes[existingIdx].Value = value;
                 return;
             }
 
             int nodeIdx;
-            if (map.Count >= capacity)
+            if (this.map.Count >= this.capacity)
             {
                 // Evict LRU entry and reuse its slot in-place (zero allocation).
-                nodeIdx = nodes[Sentinel].Prev;
-                Detach(nodeIdx);
-                ref Node evicted = ref nodes[nodeIdx];
-                map.Remove(evicted.Key);
+                nodeIdx = this.nodes[Sentinel].Prev;
+                this.Detach(nodeIdx);
+                ref Node evicted = ref this.nodes[nodeIdx];
+                this.map.Remove(evicted.Key);
                 TValue? evictedValue = evicted.Value;
 
                 // Clear references so reused slot doesn't temporarily root the old key/value.
                 evicted.Key = default!;
                 evicted.Value = default!;
-                onEvict?.Invoke(evictedValue);
+                this.onEvict?.Invoke(evictedValue);
             }
             else
             {
-                nodeIdx = nextSlot++;
+                nodeIdx = this.nextSlot++;
             }
 
-            nodes[nodeIdx].Key = key;
-            nodes[nodeIdx].Value = value;
-            Prepend(nodeIdx);
-            map[key] = nodeIdx;
+            this.nodes[nodeIdx].Key = key;
+            this.nodes[nodeIdx].Value = value;
+            this.Prepend(nodeIdx);
+            this.map[key] = nodeIdx;
         }
         finally
         {
-            rwLock.ExitWriteLock();
+            this.rwLock.ExitWriteLock();
         }
     }
 
     public void Clear()
     {
-        rwLock.EnterWriteLock();
+        this.rwLock.EnterWriteLock();
         try
         {
-            if (onEvict != null)
+            if (this.onEvict != null)
             {
-                foreach (KeyValuePair<TKey, int> kvp in map)
+                foreach (KeyValuePair<TKey, int> kvp in this.map)
                 {
-                    onEvict(nodes[kvp.Value].Value);
+                    this.onEvict(this.nodes[kvp.Value].Value);
                 }
             }
 
             // Null out references so the backing array doesn't keep keys/values alive.
             if (RuntimeHelpers.IsReferenceOrContainsReferences<Node>())
             {
-                Array.Clear(nodes, 0, nextSlot);
+                Array.Clear(this.nodes, 0, this.nextSlot);
             }
 
-            map.Clear();
-            nodes[Sentinel].Next = Sentinel;
-            nodes[Sentinel].Prev = Sentinel;
-            nextSlot = 1;
+            this.map.Clear();
+            this.nodes[Sentinel].Next = Sentinel;
+            this.nodes[Sentinel].Prev = Sentinel;
+            this.nextSlot = 1;
         }
         finally
         {
-            rwLock.ExitWriteLock();
+            this.rwLock.ExitWriteLock();
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Detach(int idx)
     {
-        ref Node node = ref nodes[idx];
-        nodes[node.Prev].Next = node.Next;
-        nodes[node.Next].Prev = node.Prev;
+        ref Node node = ref this.nodes[idx];
+        this.nodes[node.Prev].Next = node.Next;
+        this.nodes[node.Next].Prev = node.Prev;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void MoveToFront(int idx)
     {
-        Detach(idx);
-        Prepend(idx);
+        this.Detach(idx);
+        this.Prepend(idx);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Prepend(int idx)
     {
-        ref Node node = ref nodes[idx];
-        int oldHead = nodes[Sentinel].Next;
+        ref Node node = ref this.nodes[idx];
+        int oldHead = this.nodes[Sentinel].Next;
         node.Next = oldHead;
         node.Prev = Sentinel;
-        nodes[oldHead].Prev = idx;
-        nodes[Sentinel].Next = idx;
+        this.nodes[oldHead].Prev = idx;
+        this.nodes[Sentinel].Next = idx;
     }
 
     private struct Node
@@ -241,5 +241,5 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         public int Next { get; set; }
     }
 
-    public void Dispose() => rwLock.Dispose();
+    public void Dispose() => this.rwLock.Dispose();
 }

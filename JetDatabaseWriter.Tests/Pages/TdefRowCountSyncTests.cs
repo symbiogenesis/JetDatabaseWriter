@@ -46,14 +46,14 @@ public sealed class TdefRowCountSyncTests
         var ms = new MemoryStream();
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+            ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
         {
             await writer.CreateTableAsync(
-                "T1", [new ColumnDefinition("A", typeof(int))], ct);
+                "T1", [new ColumnDefinition("A", typeof(int))], this.ct);
             await writer.CreateTableAsync(
-                "T2", [new ColumnDefinition("B", typeof(int))], ct);
+                "T2", [new ColumnDefinition("B", typeof(int))], this.ct);
             await writer.CreateTableAsync(
-                "T3", [new ColumnDefinition("C", typeof(int))], ct);
+                "T3", [new ColumnDefinition("C", typeof(int))], this.ct);
         }
 
         AssertAllTdefsHaveSyncedCounters(ms.ToArray(), format);
@@ -68,13 +68,13 @@ public sealed class TdefRowCountSyncTests
         var ms = new MemoryStream();
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+            ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(7);
             for (int i = 1; i <= 7; i++)
@@ -82,7 +82,7 @@ public sealed class TdefRowCountSyncTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         AssertAllTdefsHaveSyncedCounters(ms.ToArray(), format);

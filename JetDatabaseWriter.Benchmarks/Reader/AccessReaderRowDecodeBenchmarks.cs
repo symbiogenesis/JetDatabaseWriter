@@ -25,27 +25,27 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task Setup()
     {
         await SyntheticDatabases.EnsureAllAsync().ConfigureAwait(false);
-        _numericReader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
-        _textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
-        _wideReader = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
+        this._numericReader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
+        this._textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
+        this._wideReader = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
 
         // Dedicated reader for the row-bounds re-scan benchmark. Sized to hold
         // every data page of NumericTable so the second pass is a pure cache
         // hit and the row-bounds memoization shows up cleanly.
-        _numericReaderRescan = await AccessReader.OpenAsync(
+        this._numericReaderRescan = await AccessReader.OpenAsync(
             SyntheticDatabases.NumericDbPath,
             new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
-        _memoReader = await AccessReader.OpenAsync(SyntheticDatabases.MemoDbPath).ConfigureAwait(false);
+        this._memoReader = await AccessReader.OpenAsync(SyntheticDatabases.MemoDbPath).ConfigureAwait(false);
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        await _numericReader.DisposeAsync().ConfigureAwait(false);
-        await _textReader.DisposeAsync().ConfigureAwait(false);
-        await _wideReader.DisposeAsync().ConfigureAwait(false);
-        await _numericReaderRescan.DisposeAsync().ConfigureAwait(false);
-        await _memoReader.DisposeAsync().ConfigureAwait(false);
+        await this._numericReader.DisposeAsync().ConfigureAwait(false);
+        await this._textReader.DisposeAsync().ConfigureAwait(false);
+        await this._wideReader.DisposeAsync().ConfigureAwait(false);
+        await this._numericReaderRescan.DisposeAsync().ConfigureAwait(false);
+        await this._memoReader.DisposeAsync().ConfigureAwait(false);
     }
 
     // ── Numeric / date-heavy ──────────────────────────────────────────
@@ -54,7 +54,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_Untyped()
     {
         int count = 0;
-        await foreach (object[] row in _numericReader.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+        await foreach (object[] row in this._numericReader.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -67,7 +67,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_Typed()
     {
         int count = 0;
-        await foreach (NumericRow? row in _numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+        await foreach (NumericRow? row in this._numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -80,7 +80,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_AsStrings()
     {
         int count = 0;
-        await foreach (string[] row in _numericReader.RowsAsStrings(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+        await foreach (string[] row in this._numericReader.RowsAsStrings(SyntheticDatabases.NumericTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -92,7 +92,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Numeric_DataTable()
     {
-        DataTable dt = await _numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        DataTable dt = await this._numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -102,7 +102,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_Untyped()
     {
         int count = 0;
-        await foreach (object[] row in _textReader.Rows(SyntheticDatabases.TextTable).ConfigureAwait(false))
+        await foreach (object[] row in this._textReader.Rows(SyntheticDatabases.TextTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -115,7 +115,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_Typed()
     {
         int count = 0;
-        await foreach (TextRow? row in _textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
+        await foreach (TextRow? row in this._textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -128,7 +128,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_AsStrings()
     {
         int count = 0;
-        await foreach (string[] row in _textReader.RowsAsStrings(SyntheticDatabases.TextTable).ConfigureAwait(false))
+        await foreach (string[] row in this._textReader.RowsAsStrings(SyntheticDatabases.TextTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -140,7 +140,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Text_DataTable()
     {
-        DataTable dt = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        DataTable dt = await this._textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -150,7 +150,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Wide_Untyped()
     {
         int count = 0;
-        await foreach (object[] row in _wideReader.Rows(SyntheticDatabases.WideTable).ConfigureAwait(false))
+        await foreach (object[] row in this._wideReader.Rows(SyntheticDatabases.WideTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -163,7 +163,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Wide_Typed_NarrowProjection()
     {
         int count = 0;
-        await foreach (WideRowNarrowProjection? row in _wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
+        await foreach (WideRowNarrowProjection? row in this._wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -184,7 +184,7 @@ public class AccessReaderRowDecodeBenchmarks
         int count = 0;
         for (int pass = 0; pass < 2; pass++)
         {
-            await foreach (object[] row in _numericReaderRescan.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+            await foreach (object[] row in this._numericReaderRescan.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
             {
                 _ = row;
                 count++;
@@ -228,7 +228,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_Untyped()
     {
         int count = 0;
-        await foreach (object[] row in _memoReader.Rows(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        await foreach (object[] row in this._memoReader.Rows(SyntheticDatabases.MemoTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -241,7 +241,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_Typed()
     {
         int count = 0;
-        await foreach (MemoRow? row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        await foreach (MemoRow? row in this._memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -253,7 +253,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Memo_DataTable()
     {
-        DataTable dt = await _memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
+        DataTable dt = await this._memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -263,27 +263,27 @@ public class AccessReaderRowDecodeBenchmarks
 
     [Benchmark]
     public async Task<int> Decode_Memo_Inline_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoInlineTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.MemoInlineTable).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Decode_Memo_SinglePage_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoSinglePageTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.MemoSinglePageTable).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Decode_Memo_Chained_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoChainedTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.MemoChainedTable).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Decode_Ole_Inline_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleInlineTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.OleInlineTable).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Decode_Ole_SinglePage_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleSinglePageTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.OleSinglePageTable).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Decode_Ole_Chained_Untyped()
-        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleChainedTable).ConfigureAwait(false);
+        => await CountUntypedRowsAsync(this._memoReader, SyntheticDatabases.OleChainedTable).ConfigureAwait(false);
 
     private static async Task<int> CountUntypedRowsAsync(AccessReader reader, string tableName)
     {

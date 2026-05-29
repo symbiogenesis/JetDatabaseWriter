@@ -31,26 +31,26 @@ public class LinkedTextReadBenchmarks
 
     /// <summary>Gets the linked table name selected by <see cref="TableKind"/>.</summary>
     /// <value>The linked table name selected by <see cref="TableKind"/>.</value>
-    private string CurrentTableName => TableKind == HeaderedKind ? HeaderedTable : HeaderlessTable;
+    private string CurrentTableName => this.TableKind == HeaderedKind ? HeaderedTable : HeaderlessTable;
 
     /// <summary>Creates a temporary front-end database and linked CSV sources.</summary>
     /// <returns>A task representing setup work.</returns>
     [GlobalSetup]
     public async Task Setup()
     {
-        _rootDirectory = Path.Combine(Path.GetTempPath(), "JetBench", "LinkedText_" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
-        Directory.CreateDirectory(_rootDirectory);
+        this._rootDirectory = Path.Combine(Path.GetTempPath(), "JetBench", "LinkedText_" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(this._rootDirectory);
 
-        string databasePath = Path.Combine(_rootDirectory, "LinkedText.accdb");
+        string databasePath = Path.Combine(this._rootDirectory, "LinkedText.accdb");
         const string headeredFileName = "headered.csv";
         const string headerlessFileName = "headerless.csv";
 
         await File.WriteAllTextAsync(
-            Path.Combine(_rootDirectory, headeredFileName),
+            Path.Combine(this._rootDirectory, headeredFileName),
             BuildCsvSource(hasHeader: true),
             Encoding.UTF8).ConfigureAwait(false);
         await File.WriteAllTextAsync(
-            Path.Combine(_rootDirectory, headerlessFileName),
+            Path.Combine(this._rootDirectory, headerlessFileName),
             BuildCsvSource(hasHeader: false),
             Encoding.UTF8).ConfigureAwait(false);
 
@@ -59,17 +59,17 @@ public class LinkedTextReadBenchmarks
         {
             await writer.CreateLinkedTextTableAsync(
                 HeaderedTable,
-                _rootDirectory,
+                this._rootDirectory,
                 headeredFileName,
                 "Text;HDR=YES;FMT=Delimited").ConfigureAwait(false);
             await writer.CreateLinkedTextTableAsync(
                 HeaderlessTable,
-                _rootDirectory,
+                this._rootDirectory,
                 headerlessFileName,
                 "Text;HDR=NO;FMT=Delimited").ConfigureAwait(false);
         }
 
-        _reader = await AccessReader.OpenAsync(
+        this._reader = await AccessReader.OpenAsync(
             databasePath,
             new AccessReaderOptions { UseLockFile = false }).ConfigureAwait(false);
     }
@@ -79,16 +79,16 @@ public class LinkedTextReadBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_reader is not null)
+        if (this._reader is not null)
         {
-            await _reader.DisposeAsync().ConfigureAwait(false);
+            await this._reader.DisposeAsync().ConfigureAwait(false);
         }
 
-        if (Directory.Exists(_rootDirectory))
+        if (Directory.Exists(this._rootDirectory))
         {
             try
             {
-                Directory.Delete(_rootDirectory, recursive: true);
+                Directory.Delete(this._rootDirectory, recursive: true);
             }
             catch (IOException)
             {
@@ -103,7 +103,7 @@ public class LinkedTextReadBenchmarks
     /// <returns>The linked text row count.</returns>
     [Benchmark]
     public async Task<long> GetRealRowCount()
-        => await _reader.GetRealRowCountAsync(CurrentTableName).ConfigureAwait(false);
+        => await this._reader.GetRealRowCountAsync(this.CurrentTableName).ConfigureAwait(false);
 
     /// <summary>Measures streaming linked text rows as strings.</summary>
     /// <returns>The streamed row count.</returns>
@@ -111,7 +111,7 @@ public class LinkedTextReadBenchmarks
     public async Task<int> RowsAsStrings_Streaming()
     {
         int rowCount = 0;
-        await foreach (string[] row in _reader.RowsAsStrings(CurrentTableName).ConfigureAwait(false))
+        await foreach (string[] row in this._reader.RowsAsStrings(this.CurrentTableName).ConfigureAwait(false))
         {
             _ = row;
             rowCount++;
@@ -125,7 +125,7 @@ public class LinkedTextReadBenchmarks
     [Benchmark]
     public async Task<int> ReadDataTable()
     {
-        using DataTable table = await _reader.ReadDataTableAsync(CurrentTableName).ConfigureAwait(false);
+        using DataTable table = await this._reader.ReadDataTableAsync(this.CurrentTableName).ConfigureAwait(false);
         return table.Rows.Count;
     }
 

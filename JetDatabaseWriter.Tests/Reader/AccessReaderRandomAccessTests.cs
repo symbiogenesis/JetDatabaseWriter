@@ -16,7 +16,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     [Fact]
     public async Task OpenAsync_PathWithParallelPageReads_UsesRandomAccessPageReads()
     {
-        string path = await CreateReadableDatabaseAsync();
+        string path = await this.CreateReadableDatabaseAsync();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
@@ -35,7 +35,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     public async Task OpenAsync_PathWithParallelPageReads_ReadsMultiPageTableInOrder()
     {
         const int RowCount = 2_000;
-        string path = await CreateReadableDatabaseAsync(RowCount);
+        string path = await this.CreateReadableDatabaseAsync(RowCount);
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
@@ -60,7 +60,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     [Fact]
     public async Task OpenAsync_PathWithoutParallelPageReads_UsesSeekReadPageReads()
     {
-        string path = await CreateReadableDatabaseAsync();
+        string path = await this.CreateReadableDatabaseAsync();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
@@ -74,7 +74,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     [Fact]
     public async Task OpenAsync_CallerSuppliedFileStreamWithParallelPageReads_UsesSeekReadPageReads()
     {
-        string path = await CreateReadableDatabaseAsync();
+        string path = await this.CreateReadableDatabaseAsync();
 
         await using FileStream stream = FileStreamFactory.Open(
             path,
@@ -98,7 +98,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string path in _paths)
+        foreach (string path in this._paths)
         {
             TryDeleteFile(path);
         }
@@ -131,8 +131,8 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     private async ValueTask<string> CreateReadableDatabaseAsync(int rowCount = 1)
     {
         string path = Path.Combine(Path.GetTempPath(), $"ReaderRandomAccess_{Guid.NewGuid():N}.mdb");
-        _paths.Add(path);
-        _paths.Add(Path.ChangeExtension(path, ".ldb"));
+        this._paths.Add(path);
+        this._paths.Add(Path.ChangeExtension(path, ".ldb"));
 
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             path,

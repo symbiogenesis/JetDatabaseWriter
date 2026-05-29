@@ -17,9 +17,9 @@ public sealed record ColumnDefinition
     /// <param name="maxLength">Maximum length for variable-length types (e.g., string). Ignored for fixed-length types.</param>
     public ColumnDefinition(string name, Type clrType, int maxLength = 0)
     {
-        Name = name;
-        ClrType = clrType;
-        MaxLength = maxLength;
+        this.Name = name;
+        this.ClrType = clrType;
+        this.MaxLength = maxLength;
     }
 
     /// <summary>Gets the column name.</summary>

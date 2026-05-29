@@ -50,7 +50,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     new ColumnDefinition("V", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -58,10 +58,10 @@ public sealed class IndexSurgicalNWaySplitTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await AssertAllRowsPresentAsync(stream, rowCount, ct);
+        await AssertAllRowsPresentAsync(stream, rowCount, this.ct);
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     new ColumnDefinition("V", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -91,10 +91,10 @@ public sealed class IndexSurgicalNWaySplitTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await AssertAllRowsPresentAsync(stream, rowCount, ct);
+        await AssertAllRowsPresentAsync(stream, rowCount, this.ct);
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     new ColumnDefinition("V", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             var seed = new object[5][];
             for (int i = 0; i < 5; i++)
@@ -126,7 +126,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 seed[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
             }
 
-            await writer.InsertRowsAsync("T", seed, ct);
+            await writer.InsertRowsAsync("T", seed, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -139,10 +139,10 @@ public sealed class IndexSurgicalNWaySplitTests
                 batch[i] = [BuildKey(n, prefix: 'A'), BuildKey(n, prefix: 'M'), n];
             }
 
-            await writer.InsertRowsAsync("T", batch, ct);
+            await writer.InsertRowsAsync("T", batch, this.ct);
         }
 
-        await AssertAllRowsPresentAsync(stream, expectedRows: 65, ct);
+        await AssertAllRowsPresentAsync(stream, expectedRows: 65, this.ct);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     new ColumnDefinition("V", typeof(int)),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                ct);
+                this.ct);
 
             // Seed: 300 rows in one bulk insert, distributed across many
             // leaves (the bulk rebuild bulk-rebuild path is engaged for this
@@ -178,7 +178,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 seed[i] = [BuildKey(n, prefix: 'A'), BuildKey(n, prefix: 'M'), n];
             }
 
-            await writer.InsertRowsAsync("T", seed, ct);
+            await writer.InsertRowsAsync("T", seed, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -195,7 +195,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     batch[i] = [BuildKey(n, prefix: 'A'), BuildKey(n, prefix: 'M'), n];
                 }
 
-                await writer.InsertRowsAsync("T", batch, ct);
+                await writer.InsertRowsAsync("T", batch, this.ct);
             }
         }
 
@@ -212,11 +212,11 @@ public sealed class IndexSurgicalNWaySplitTests
                 bigBatch[i] = [BuildKey(n, prefix: 'A'), BuildKey(n, prefix: 'M'), n];
             }
 
-            await writer.InsertRowsAsync("T", bigBatch, ct);
+            await writer.InsertRowsAsync("T", bigBatch, this.ct);
         }
 
         // Total: 300 + 30 * 5 + 50 = 500 rows.
-        await AssertAllRowsPresentAsync(stream, expectedRows: 500, ct);
+        await AssertAllRowsPresentAsync(stream, expectedRows: 500, this.ct);
     }
 
     [Fact]
@@ -238,7 +238,7 @@ public sealed class IndexSurgicalNWaySplitTests
                     new ColumnDefinition("K2", typeof(string), maxLength: 255),
                 ],
                 [new IndexDefinition("IX_K", CompositeKeyColumns) { IsUnique = true }],
-                ct);
+                this.ct);
 
             var rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
@@ -246,7 +246,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')];
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         // Reopen and try to insert a duplicate key from each of the now
@@ -259,11 +259,11 @@ public sealed class IndexSurgicalNWaySplitTests
                     await writer.InsertRowAsync(
                         "T",
                         [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')],
-                        ct));
+                        this.ct));
             }
         }
 
-        await AssertAllRowsPresentAsync(stream, expectedRows: rowCount, ct);
+        await AssertAllRowsPresentAsync(stream, expectedRows: rowCount, this.ct);
     }
 
     private static async Task AssertAllRowsPresentAsync(MemoryStream stream, int expectedRows, System.Threading.CancellationToken ct)

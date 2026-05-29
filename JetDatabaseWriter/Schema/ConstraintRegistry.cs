@@ -87,22 +87,22 @@ internal sealed class ConstraintRegistry(
 
         if (anyConstraint)
         {
-            constraints[tableName] = list;
+            this.constraints[tableName] = list;
         }
         else
         {
-            constraints.Remove(tableName);
+            this.constraints.Remove(tableName);
         }
     }
 
-    public void Unregister(string tableName) => constraints.Remove(tableName);
+    public void Unregister(string tableName) => this.constraints.Remove(tableName);
 
     public void Rename(string oldName, string newName)
     {
-        if (constraints.TryGetValue(oldName, out List<ColumnConstraint>? list))
+        if (this.constraints.TryGetValue(oldName, out List<ColumnConstraint>? list))
         {
-            constraints.Remove(oldName);
-            constraints[newName] = list;
+            this.constraints.Remove(oldName);
+            this.constraints[newName] = list;
         }
     }
 
@@ -129,7 +129,7 @@ internal sealed class ConstraintRegistry(
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
-        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
 
         // The constraint list is positionally aligned with the columns at registration time.
         // Add/Drop/Rename re-registers, so the count must match. Defensive bail-out otherwise.
@@ -162,7 +162,7 @@ internal sealed class ConstraintRegistry(
                 if (isNull && c.IsAutoIncrement)
                 {
                     long? previous = c.NextAutoValue;
-                    long next = await GetNextAutoValueAsync(tableName, c, i, cancellationToken).ConfigureAwait(false);
+                    long next = await this.GetNextAutoValueAsync(tableName, c, i, cancellationToken).ConfigureAwait(false);
                     (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
                     value = ConvertIntegral(next, c.ClrType);
                     isNull = false;
@@ -200,7 +200,7 @@ internal sealed class ConstraintRegistry(
 
     public async ValueTask ApplyCalculatedAsync(string tableName, TableDef tableDef, object[] values, bool force, CancellationToken cancellationToken)
     {
-        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
         if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
         {
             return;
@@ -328,7 +328,7 @@ internal sealed class ConstraintRegistry(
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
-        if (constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) && list != null)
+        if (this.constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) && list != null)
         {
             return list;
         }
@@ -340,7 +340,7 @@ internal sealed class ConstraintRegistry(
         ColumnPropertyBlock? props = readLvPropForTable is null
             ? null
             : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
-        return HydrateFromTableDef(tableName, tableDef, props);
+        return this.HydrateFromTableDef(tableName, tableDef, props);
     }
 
     /// <summary>
@@ -401,7 +401,7 @@ internal sealed class ConstraintRegistry(
         // so subsequent inserts on the same table skip both HydrateFromTableDef and the
         // (potentially expensive) readLvPropForTable LvProp scan. Without this negative
         // caching, every row in a multi-row InsertRowsAsync re-reads MSysObjects.LvProp.
-        constraints[tableName] = list;
+        this.constraints[tableName] = list;
 
         return list;
     }

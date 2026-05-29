@@ -46,7 +46,7 @@ internal sealed class ColumnPropertyBlockBuilder
     /// zero unknown chunks — i.e. the resulting blob would carry only the magic
     /// header and is therefore not worth persisting.
     /// </summary>
-    public bool IsEmpty => Targets.Count == 0 && UnknownChunks.Count == 0;
+    public bool IsEmpty => this.Targets.Count == 0 && this.UnknownChunks.Count == 0;
 
     /// <summary>
     /// Constructs a builder seeded with the parsed targets and unknown chunks of an
@@ -94,7 +94,7 @@ internal sealed class ColumnPropertyBlockBuilder
     public TargetBuilder GetOrAddTarget(string name)
     {
         Guard.NotNullOrEmpty(name, nameof(name));
-        foreach (TargetBuilder t in Targets)
+        foreach (TargetBuilder t in this.Targets)
         {
             if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {
@@ -103,7 +103,7 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         var nt = new TargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
-        Targets.Add(nt);
+        this.Targets.Add(nt);
         return nt;
     }
 
@@ -114,11 +114,11 @@ internal sealed class ColumnPropertyBlockBuilder
     /// <param name="name">The name.</param>
     public bool RemoveTarget(string name)
     {
-        for (int i = 0; i < Targets.Count; i++)
+        for (int i = 0; i < this.Targets.Count; i++)
         {
-            if (string.Equals(Targets[i].Name, name, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(this.Targets[i].Name, name, StringComparison.OrdinalIgnoreCase))
             {
-                Targets.RemoveAt(i);
+                this.Targets.RemoveAt(i);
                 return true;
             }
         }
@@ -135,7 +135,7 @@ internal sealed class ColumnPropertyBlockBuilder
     public void RenameTarget(string oldName, string newName)
     {
         Guard.NotNullOrEmpty(newName, nameof(newName));
-        foreach (TargetBuilder t in Targets)
+        foreach (TargetBuilder t in this.Targets)
         {
             if (string.Equals(t.Name, oldName, StringComparison.OrdinalIgnoreCase))
             {
@@ -153,7 +153,7 @@ internal sealed class ColumnPropertyBlockBuilder
     /// <exception cref="InvalidOperationException">If a chunk would exceed the on-disk uint16 / uint32 length limits.</exception>
     public byte[]? ToBytes(DatabaseFormat format)
     {
-        if (IsEmpty)
+        if (this.IsEmpty)
         {
             return null;
         }
@@ -165,7 +165,7 @@ internal sealed class ColumnPropertyBlockBuilder
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
         var nameToIndex = new Dictionary<string, ushort>(StringComparer.Ordinal);
         var nameOrder = new List<string>();
-        foreach (TargetBuilder t in Targets)
+        foreach (TargetBuilder t in this.Targets)
         {
             foreach (EntryBuilder e in t.Entries)
             {
@@ -184,17 +184,17 @@ internal sealed class ColumnPropertyBlockBuilder
 
         byte[] namePoolPayload = BuildNamePoolPayload(nameOrder, stringEncoding);
 
-        var propertyBlockPayloads = new byte[Targets.Count][];
+        var propertyBlockPayloads = new byte[this.Targets.Count][];
         int totalLength = MagicLength;
         totalLength = AddChunkLength(totalLength, namePoolPayload.Length);
 
-        for (int targetIndex = 0; targetIndex < Targets.Count; targetIndex++)
+        for (int targetIndex = 0; targetIndex < this.Targets.Count; targetIndex++)
         {
-            propertyBlockPayloads[targetIndex] = BuildPropertyBlockPayload(Targets[targetIndex], nameToIndex, stringEncoding);
+            propertyBlockPayloads[targetIndex] = BuildPropertyBlockPayload(this.Targets[targetIndex], nameToIndex, stringEncoding);
             totalLength = AddChunkLength(totalLength, propertyBlockPayloads[targetIndex].Length);
         }
 
-        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk unknownChunk in this.UnknownChunks)
         {
             totalLength = AddChunkLength(totalLength, unknownChunk.Payload.Length);
         }
@@ -207,14 +207,14 @@ internal sealed class ColumnPropertyBlockBuilder
         WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);
 
         // Property-block chunks.
-        for (int targetIndex = 0; targetIndex < Targets.Count; targetIndex++)
+        for (int targetIndex = 0; targetIndex < this.Targets.Count; targetIndex++)
         {
-            WriteChunk(blob, ref offset, Targets[targetIndex].ChunkType, propertyBlockPayloads[targetIndex]);
+            WriteChunk(blob, ref offset, this.Targets[targetIndex].ChunkType, propertyBlockPayloads[targetIndex]);
         }
 
         // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
         // the name pool the parser depends on).
-        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk unknownChunk in this.UnknownChunks)
         {
             WriteChunk(blob, ref offset, (ColumnPropertyChunkType)unknownChunk.ChunkType, unknownChunk.Payload);
         }
@@ -400,7 +400,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
             Guard.NotNull(value, nameof(value));
             Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
-            Entries.Add(new EntryBuilder
+            this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
                 DataType = Constants.ColumnTypes.TextType,
@@ -418,7 +418,7 @@ internal sealed class ColumnPropertyBlockBuilder
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
             Guard.NotNull(value, nameof(value));
             Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
-            Entries.Add(new EntryBuilder
+            this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
                 DataType = Constants.ColumnTypes.MemoType,
@@ -433,7 +433,7 @@ internal sealed class ColumnPropertyBlockBuilder
         public void AddByte(string propertyName, byte value)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            Entries.Add(new EntryBuilder
+            this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
                 DataType = Constants.ColumnTypes.ByteType,
@@ -452,7 +452,7 @@ internal sealed class ColumnPropertyBlockBuilder
         public void AddBoolean(string propertyName, bool value)
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            Entries.Add(new EntryBuilder
+            this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
                 DataType = Constants.ColumnTypes.BooleanType,

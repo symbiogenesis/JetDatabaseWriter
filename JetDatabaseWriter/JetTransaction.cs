@@ -36,7 +36,7 @@ public sealed class JetTransaction : IAsyncDisposable
     internal JetTransaction(AccessWriter writer, PageJournal journal)
     {
         this.writer = writer;
-        Journal = journal;
+        this.Journal = journal;
     }
 
     /// <summary>Gets a value indicating whether the transaction has been committed.</summary>
@@ -46,11 +46,11 @@ public sealed class JetTransaction : IAsyncDisposable
     public bool IsRolledBack { get; private set; }
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
-    public int JournaledPageCount => Journal.Count;
+    public int JournaledPageCount => this.Journal.Count;
 
     internal PageJournal Journal { get; }
 
-    internal bool IsTerminated => IsCommitted || IsRolledBack;
+    internal bool IsTerminated => this.IsCommitted || this.IsRolledBack;
 
     /// <summary>
     /// Replays every buffered page to the database file, applying per-page
@@ -60,7 +60,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous commit.</returns>
     public ValueTask CommitAsync(CancellationToken cancellationToken = default)
-        => writer.CommitTransactionAsync(this, cancellationToken);
+        => this.writer.CommitTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Discards the journal without touching the database file. Safe to call
@@ -70,7 +70,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous rollback.</returns>
     public ValueTask RollbackAsync(CancellationToken cancellationToken = default)
-        => writer.RollbackTransactionAsync(this, cancellationToken);
+        => this.writer.RollbackTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Rolls back the transaction if it has not been committed. Equivalent to
@@ -79,14 +79,14 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <returns>A task representing the asynchronous dispose.</returns>
     public async ValueTask DisposeAsync()
     {
-        if (IsTerminated)
+        if (this.IsTerminated)
         {
             return;
         }
 
         try
         {
-            await RollbackAsync().ConfigureAwait(false);
+            await this.RollbackAsync().ConfigureAwait(false);
         }
         catch (InvalidOperationException)
         {
@@ -94,7 +94,7 @@ public sealed class JetTransaction : IAsyncDisposable
         }
     }
 
-    internal void MarkCommitted() => IsCommitted = true;
+    internal void MarkCommitted() => this.IsCommitted = true;
 
-    internal void MarkRolledBack() => IsRolledBack = true;
+    internal void MarkRolledBack() => this.IsRolledBack = true;
 }

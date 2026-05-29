@@ -41,10 +41,10 @@ public sealed record Hyperlink
     /// <param name="screenTip">Optional tooltip text shown when hovering. May be empty.</param>
     public Hyperlink(string displayText = "", string address = "", string subAddress = "", string screenTip = "")
     {
-        DisplayText = displayText ?? string.Empty;
-        Address = address ?? string.Empty;
-        SubAddress = subAddress ?? string.Empty;
-        ScreenTip = screenTip ?? string.Empty;
+        this.DisplayText = displayText ?? string.Empty;
+        this.Address = address ?? string.Empty;
+        this.SubAddress = subAddress ?? string.Empty;
+        this.ScreenTip = screenTip ?? string.Empty;
     }
 
     /// <summary>Gets the display text shown in place of the raw address.</summary>
@@ -107,22 +107,22 @@ public sealed record Hyperlink
     public override string ToString()
     {
         var sb = new StringBuilder();
-        _ = sb.Append(Encode(DisplayText));
+        _ = sb.Append(Encode(this.DisplayText));
         _ = sb.Append('#');
-        _ = sb.Append(Encode(Address));
+        _ = sb.Append(Encode(this.Address));
 
-        bool hasTip = !string.IsNullOrEmpty(ScreenTip);
-        bool hasSub = !string.IsNullOrEmpty(SubAddress);
+        bool hasTip = !string.IsNullOrEmpty(this.ScreenTip);
+        bool hasSub = !string.IsNullOrEmpty(this.SubAddress);
         if (hasSub || hasTip)
         {
             _ = sb.Append('#');
-            _ = sb.Append(Encode(SubAddress));
+            _ = sb.Append(Encode(this.SubAddress));
         }
 
         if (hasTip)
         {
             _ = sb.Append('#');
-            _ = sb.Append(Encode(ScreenTip));
+            _ = sb.Append(Encode(this.ScreenTip));
         }
 
         return sb.ToString();

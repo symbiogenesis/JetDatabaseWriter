@@ -102,7 +102,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 continue;
             }
 
-            byte[] header = await EncodeAsLvalChainAsync(data, cancellationToken).ConfigureAwait(false);
+            byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken).ConfigureAwait(false);
             result ??= (object[])values.Clone();
             result[i] = new PreEncodedLongValue(header);
         }
@@ -118,7 +118,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         }
 
         byte[] data = writer.EncodeTextForFormat(text, compress);
-        byte[] header = await EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
+        byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }
 

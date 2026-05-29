@@ -53,7 +53,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_OpenWithoutPassword_ThrowsUnauthorizedAccessException()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
@@ -69,7 +69,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_OpenWithWrongPassword_ThrowsUnauthorizedAccessException()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         var options = new AccessReaderOptions
@@ -87,7 +87,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_OpenWithEmptyPassword_ThrowsUnauthorizedAccessException()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         var options = new AccessReaderOptions
@@ -109,7 +109,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_OpenWithCorrectPassword_Succeeds()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -130,7 +130,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
 
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
@@ -148,7 +148,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_ReadDataTable_ReturnsRows()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -171,7 +171,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_StreamRows_YieldsRows()
     {
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -197,7 +197,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         AccessReader sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
@@ -227,7 +227,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             expectedCols[table] = await sourceReader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         }
 
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
@@ -257,7 +257,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         const string TableName = "StandardWriteRoundTrip";
 
-        byte[] data = await BuildStandardEncryptedFixtureAsync();
+        byte[] data = await this.BuildStandardEncryptedFixtureAsync();
         string temp = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.accdb");
         await File.WriteAllBytesAsync(temp, data, TestContext.Current.CancellationToken);
 
@@ -597,7 +597,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_EncryptAsync_ProducesEncryptedFile()
     {
-        string path = await CloneTempFileAsync(".accdb");
+        string path = await this.CloneTempFileAsync(".accdb");
         try
         {
             await AccessWriter.EncryptAsync(
@@ -625,7 +625,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Standard_ChangePassword_OnlyNewPasswordWorks()
     {
         const string NewPassword = "rotated!Pa$$";
-        string path = await CloneTempFileAsync(".accdb");
+        string path = await this.CloneTempFileAsync(".accdb");
         try
         {
             await AccessWriter.EncryptAsync(
@@ -664,7 +664,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_Decrypt_RemovesEncryption()
     {
-        string path = await CloneTempFileAsync(".accdb");
+        string path = await this.CloneTempFileAsync(".accdb");
         try
         {
             await AccessWriter.EncryptAsync(

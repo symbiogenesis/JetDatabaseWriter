@@ -529,100 +529,100 @@ public sealed class JetTransactionTests
         private int? throwOnFlushCall;
         private bool armed;
 
-        public override bool CanRead => inner.CanRead;
+        public override bool CanRead => this.inner.CanRead;
 
-        public override bool CanSeek => inner.CanSeek;
+        public override bool CanSeek => this.inner.CanSeek;
 
-        public override bool CanWrite => inner.CanWrite;
+        public override bool CanWrite => this.inner.CanWrite;
 
-        public override long Length => inner.Length;
+        public override long Length => this.inner.Length;
 
         public override long Position
         {
-            get => inner.Position;
-            set => inner.Position = value;
+            get => this.inner.Position;
+            set => this.inner.Position = value;
         }
 
         public int PageWritesAfterArm { get; private set; }
 
         public int FlushesAfterArm { get; private set; }
 
-        public IReadOnlyList<long> SuccessfulPageWriteOffsets => successfulPageWriteOffsets;
+        public IReadOnlyList<long> SuccessfulPageWriteOffsets => this.successfulPageWriteOffsets;
 
         public void ThrowBeforePageWrite(int pageWriteNumber)
         {
-            armed = true;
-            throwBeforePageWrite = pageWriteNumber;
+            this.armed = true;
+            this.throwBeforePageWrite = pageWriteNumber;
         }
 
         public void ThrowBeforePageWriteAtOffset(long offset)
         {
-            armed = true;
-            throwBeforePageWriteAtOffset = offset;
+            this.armed = true;
+            this.throwBeforePageWriteAtOffset = offset;
         }
 
         public void CancelBeforePageWriteAtOffset(long offset, CancellationTokenSource cancellation)
         {
-            armed = true;
-            cancelPageWriteOffset = offset;
-            cancelBeforePageWriteAtOffset = cancellation;
+            this.armed = true;
+            this.cancelPageWriteOffset = offset;
+            this.cancelBeforePageWriteAtOffset = cancellation;
         }
 
         public void ThrowOnFlushCall(int flushCallNumber)
         {
-            armed = true;
-            throwOnFlushCall = flushCallNumber;
+            this.armed = true;
+            this.throwOnFlushCall = flushCallNumber;
         }
 
-        public byte[] ToArray() => inner.ToArray();
+        public byte[] ToArray() => this.inner.ToArray();
 
-        public override void Flush() => inner.Flush();
+        public override void Flush() => this.inner.Flush();
 
         public override Task FlushAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (armed)
+            if (this.armed)
             {
-                int nextFlush = FlushesAfterArm + 1;
-                if (throwOnFlushCall == nextFlush)
+                int nextFlush = this.FlushesAfterArm + 1;
+                if (this.throwOnFlushCall == nextFlush)
                 {
                     throw new IOException("Injected flush failure.");
                 }
 
-                FlushesAfterArm++;
+                this.FlushesAfterArm++;
             }
 
-            return inner.FlushAsync(cancellationToken);
+            return this.inner.FlushAsync(cancellationToken);
         }
 
-        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override int Read(byte[] buffer, int offset, int count) => this.inner.Read(buffer, offset, count);
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-            inner.ReadAsync(buffer, cancellationToken);
+            this.inner.ReadAsync(buffer, cancellationToken);
 
-        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override long Seek(long offset, SeekOrigin origin) => this.inner.Seek(offset, origin);
 
-        public override void SetLength(long value) => inner.SetLength(value);
+        public override void SetLength(long value) => this.inner.SetLength(value);
 
         public override void Write(byte[] buffer, int offset, int count)
         {
-            MaybeThrowBeforePageWrite(count, CancellationToken.None);
-            inner.Write(buffer, offset, count);
-            RecordPageWrite(count);
+            this.MaybeThrowBeforePageWrite(count, CancellationToken.None);
+            this.inner.Write(buffer, offset, count);
+            this.RecordPageWrite(count);
         }
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            MaybeThrowBeforePageWrite(buffer.Length, cancellationToken);
-            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            RecordPageWrite(buffer.Length);
+            this.MaybeThrowBeforePageWrite(buffer.Length, cancellationToken);
+            await this.inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            this.RecordPageWrite(buffer.Length);
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                inner.Dispose();
+                this.inner.Dispose();
             }
 
             base.Dispose(disposing);
@@ -631,20 +631,20 @@ public sealed class JetTransactionTests
         private void MaybeThrowBeforePageWrite(int count, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!armed || count != Constants.PageSizes.Jet4)
+            if (!this.armed || count != Constants.PageSizes.Jet4)
             {
                 return;
             }
 
-            long writeOffset = inner.Position;
-            if (cancelPageWriteOffset == writeOffset && cancelBeforePageWriteAtOffset is not null)
+            long writeOffset = this.inner.Position;
+            if (this.cancelPageWriteOffset == writeOffset && this.cancelBeforePageWriteAtOffset is not null)
             {
-                cancelBeforePageWriteAtOffset.Cancel();
+                this.cancelBeforePageWriteAtOffset.Cancel();
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            int nextPageWrite = PageWritesAfterArm + 1;
-            if (throwBeforePageWrite == nextPageWrite || throwBeforePageWriteAtOffset == writeOffset)
+            int nextPageWrite = this.PageWritesAfterArm + 1;
+            if (this.throwBeforePageWrite == nextPageWrite || this.throwBeforePageWriteAtOffset == writeOffset)
             {
                 throw new IOException("Injected page-write failure.");
             }
@@ -652,13 +652,13 @@ public sealed class JetTransactionTests
 
         private void RecordPageWrite(int count)
         {
-            if (!armed || count != Constants.PageSizes.Jet4)
+            if (!this.armed || count != Constants.PageSizes.Jet4)
             {
                 return;
             }
 
-            successfulPageWriteOffsets.Add(inner.Position - count);
-            PageWritesAfterArm++;
+            this.successfulPageWriteOffsets.Add(this.inner.Position - count);
+            this.PageWritesAfterArm++;
         }
     }
 }

@@ -16,8 +16,8 @@ internal sealed class FuzzRandom : Random
     private FuzzRandom(byte[] bytes)
     {
         this.bytes = bytes;
-        fallback = new Random(CreateFallbackSeed(bytes));
-        pos = 0;
+        this.fallback = new Random(CreateFallbackSeed(bytes));
+        this.pos = 0;
     }
 
     private FuzzRandom(Random fallback)
@@ -32,25 +32,25 @@ internal sealed class FuzzRandom : Random
 
     private int NextByte()
     {
-        if (bytes != null && pos < bytes.Length)
+        if (this.bytes != null && this.pos < this.bytes.Length)
         {
-            return bytes[pos++];
+            return this.bytes[this.pos++];
         }
 
-        return fallback?.Next(0, 256) ?? 0;
+        return this.fallback?.Next(0, 256) ?? 0;
     }
 
     public override int Next()
     {
         // Use 4 bytes for int
-        int b1 = NextByte();
-        int b2 = NextByte();
-        int b3 = NextByte();
-        int b4 = NextByte();
+        int b1 = this.NextByte();
+        int b2 = this.NextByte();
+        int b3 = this.NextByte();
+        int b4 = this.NextByte();
         return (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
     }
 
-    public override int Next(int maxValue) => Next(0, maxValue);
+    public override int Next(int maxValue) => this.Next(0, maxValue);
 
     public override int Next(int minValue, int maxValue)
     {
@@ -60,13 +60,13 @@ internal sealed class FuzzRandom : Random
         }
 
         long range = (long)maxValue - minValue;
-        uint value = unchecked((uint)Next());
+        uint value = unchecked((uint)this.Next());
         return (int)(minValue + (long)(value % (ulong)range));
     }
 
     public override double NextDouble()
     {
-        int value = Next();
+        int value = this.Next();
         return (value & 0x7FFFFFFF) / (double)int.MaxValue;
     }
 
@@ -74,7 +74,7 @@ internal sealed class FuzzRandom : Random
     {
         for (int i = 0; i < buffer.Length; i++)
         {
-            buffer[i] = (byte)NextByte();
+            buffer[i] = (byte)this.NextByte();
         }
     }
 
@@ -98,25 +98,25 @@ internal sealed class FuzzRandom : Random
 
     public byte[] RandomBytes(int maxLength = 32)
     {
-        var arr = new byte[Next(0, maxLength)];
-        NextBytes(arr);
+        var arr = new byte[this.Next(0, maxLength)];
+        this.NextBytes(arr);
         return arr;
     }
 
-    public Type RandomType() => SupportedTypes[Next(SupportedTypes.Length)];
+    public Type RandomType() => SupportedTypes[this.Next(SupportedTypes.Length)];
 
     public object? RandomValue(Type type) => type switch
     {
-        _ when type == typeof(int) => Next(),
-        _ when type == typeof(long) => (long)Next() << 32 | (long)Next(),
-        _ when type == typeof(short) => (short)Next(short.MinValue, short.MaxValue),
-        _ when type == typeof(byte) => (byte)Next(byte.MinValue, byte.MaxValue),
-        _ when type == typeof(bool) => NextDouble() < 0.5,
-        _ when type == typeof(string) => RandomString(Next(0, 20)),
-        _ when type == typeof(DateTime) => DateTime.UtcNow.AddDays(Next(-10000, 10000)),
-        _ when type == typeof(double) => NextDouble() * Next(),
-        _ when type == typeof(float) => (float)(NextDouble() * Next()),
-        _ when type == typeof(byte[]) => RandomBytes(),
+        _ when type == typeof(int) => this.Next(),
+        _ when type == typeof(long) => (long)this.Next() << 32 | (long)this.Next(),
+        _ when type == typeof(short) => (short)this.Next(short.MinValue, short.MaxValue),
+        _ when type == typeof(byte) => (byte)this.Next(byte.MinValue, byte.MaxValue),
+        _ when type == typeof(bool) => this.NextDouble() < 0.5,
+        _ when type == typeof(string) => this.RandomString(this.Next(0, 20)),
+        _ when type == typeof(DateTime) => DateTime.UtcNow.AddDays(this.Next(-10000, 10000)),
+        _ when type == typeof(double) => this.NextDouble() * this.Next(),
+        _ when type == typeof(float) => (float)(this.NextDouble() * this.Next()),
+        _ when type == typeof(byte[]) => this.RandomBytes(),
         _ => null,
     };
 

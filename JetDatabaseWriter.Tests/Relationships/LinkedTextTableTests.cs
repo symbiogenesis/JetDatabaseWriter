@@ -66,7 +66,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_CreateViaSchemaInterface_ReturnsEntryWithConnectString()
     {
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkSchema");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkSchema");
         const string connect = "Text;HDR=YES;FMT=Delimited";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
@@ -96,7 +96,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListLinkedTables_ReturnsEntryWithConnectString()
     {
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkFE");
         const string connect = "Text;HDR=YES;FMT=Delimited";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
@@ -124,8 +124,8 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListLinkedTables_DistinguishesFromAccessLinked()
     {
-        string sourcePath = await CreateTempAccdbDatabaseAsync("TextLinkSrc");
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMix");
+        string sourcePath = await this.CreateTempAccdbDatabaseAsync("TextLinkSrc");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkMix");
         const string textConnect = "Text;HDR=YES;FMT=FixedLength";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
@@ -174,7 +174,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListTables_ExcludesTextLinkedEntries()
     {
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkExclude");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkExclude");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -196,11 +196,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_ReadsDelimitedRowsThroughManagedReader()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCsvFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"orders_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(
             csvPath,
             "OrderId,Customer,Note\r\n1,\"Ada, Inc.\",\"He said \"\"hi\"\"\"\r\n2,Grace,\"line\r\nbreak\"\r\n",
@@ -273,11 +273,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_WithoutHeader_UsesGeneratedColumnNames()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvNoHeaderFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCsvNoHeaderFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"customers_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "1,Ada\r\n2,Grace\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -307,11 +307,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_CustomDelimiter_ReadsDelimitedRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvSemicolonFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCsvSemicolonFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"orders_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id;Customer;Note\r\n1;Ada;\"uses;delimiter\"\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -342,11 +342,11 @@ public sealed class LinkedTextTableTests : IDisposable
         string expectedValue)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFormatFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkFormatFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"format_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, sourceText, ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -371,11 +371,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_CarriageReturnLineEndings_ReadsDelimitedRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvCrFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCsvCrFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"orders_cr_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Customer\r1,Ada\r2,Grace", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -400,11 +400,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_SeparatorsOnlyRow_MaterializesEmptyFields()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkEmptyFieldsFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkEmptyFieldsFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"empty_fields_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "A,B,C,D\r\n,,,\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -431,11 +431,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_RaggedRows_NormalizesToHeaderWidth()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkRaggedRowsFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkRaggedRowsFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"ragged_rows_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "A,B,C\r\n1,2\r\n3,4,5,6\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -484,11 +484,11 @@ public sealed class LinkedTextTableTests : IDisposable
         ArgumentNullException.ThrowIfNull(encoding);
 
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkEncodingFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkEncodingFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"encoding_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
 
         const string firstName = "Zo\u00EB";
         const string firstCity = "M\u00FCnchen";
@@ -529,11 +529,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_ValueWhitespace_MatchesDaoTrimming()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkValueWhitespaceFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkValueWhitespaceFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"value_whitespace_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(
             csvPath,
             "Id,Unquoted,Quoted,AfterQuote,LeadingSpaceBeforeQuote\r\n1,  unquoted  ,\"  quoted  \",\"closed\"  , \"not-starting-quote\" \r\n",
@@ -563,11 +563,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_FieldLengthBudget_ThrowsInvalidData()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFieldBudgetFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkFieldBudgetFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"field_budget_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,abcdef\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -592,11 +592,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_RecordLengthBudget_ThrowsInvalidData()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkRecordBudgetFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkRecordBudgetFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"record_budget_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,record-is-too-long\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -625,11 +625,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_MissingClosingQuote_ThrowsInvalidData()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMissingQuoteFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkMissingQuoteFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"missing_quote_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,\"unterminated\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -657,11 +657,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_ColumnCountBudget_ThrowsBeforeDataTableColumns()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkColumnBudgetFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkColumnBudgetFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"column_budget_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "A,B,C,D\r\n1,2,3,4\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -690,11 +690,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_ManyDuplicateHeaders_NormalizesLinearly()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkDuplicateHeadersFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkDuplicateHeadersFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"duplicate_headers_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         string header = string.Join(",", Enumerable.Repeat("A", 64));
         string row = string.Join(",", Enumerable.Range(1, 64));
         await File.WriteAllTextAsync(csvPath, header + "\r\n" + row + "\r\n", ct);
@@ -724,11 +724,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_CancellationDuringLongQuotedRecord_ThrowsOperationCanceled()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCancelLongRecordFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCancelLongRecordFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"cancel_long_record_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         string longQuotedValue = new('x', 2_000_000);
         await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,\"" + longQuotedValue + "\"\r\n", ct);
 
@@ -758,11 +758,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_MaxRowsPreview_DoesNotParseOversizedLaterRecord()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkPreviewBudgetFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkPreviewBudgetFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"preview_budget_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,ok\r\n2,oversized\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -791,11 +791,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_SourceFileSizeLimit_ThrowsInvalidData()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkSourceSizeFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkSourceSizeFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"source_size_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -824,11 +824,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_MaterializedRowLimit_ThrowsBeforeAddingExtraRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMaterializedRowsFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkMaterializedRowsFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"materialized_rows_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -856,11 +856,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_MaterializedRowLimit_AppliesToTypedReads()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkTypedRowsFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkTypedRowsFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"typed_rows_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -889,18 +889,18 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_SourceDirectoryReparsePoint_IsBlockedByDefault()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string hostDirectory = CreateTempDirectory("TextLinkReparseHost");
-        string targetDirectory = CreateTempDirectory("TextLinkReparseTarget");
+        string hostDirectory = this.CreateTempDirectory("TextLinkReparseHost");
+        string targetDirectory = this.CreateTempDirectory("TextLinkReparseTarget");
         string linkDirectory = Path.Combine(hostDirectory, "LinkedSource");
-        if (!TryCreateDirectorySymlink(linkDirectory, targetDirectory))
+        if (!this.TryCreateDirectorySymlink(linkDirectory, targetDirectory))
         {
             Assert.Skip("Directory symbolic links are unavailable on this machine.");
         }
 
-        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("TextLinkReparseFE", hostDirectory);
+        string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("TextLinkReparseFE", hostDirectory);
         string csvFileName = $"reparse_source_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(targetDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -924,11 +924,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_PathValidatorMutation_DoesNotPoisonLinkedTableCache()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkValidatorMutationFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkValidatorMutationFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"validator_mutation_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -967,8 +967,8 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_RelativeForeignNameTraversal_IsBlockedByDefault()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string hostDirectory = CreateTempDirectory("TextLinkTraversalHost");
-        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("TextLinkTraversalFE", hostDirectory);
+        string hostDirectory = this.CreateTempDirectory("TextLinkTraversalHost");
+        string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("TextLinkTraversalFE", hostDirectory);
         string outsideFileName = $"outside_{Guid.NewGuid():N}.csv";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -991,10 +991,10 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_StreamHostWithoutPathPolicy_IsBlockedByDefault()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string sourceDirectory = CreateTempDirectory("TextLinkStreamSource");
+        string sourceDirectory = this.CreateTempDirectory("TextLinkStreamSource");
         string csvFileName = $"data_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using var stream = new MemoryStream();
@@ -1037,10 +1037,10 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_StreamHostWithAllowlistedSourceDirectory_ReadsDelimitedRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string sourceDirectory = CreateTempDirectory("TextLinkStreamAllowedSource");
+        string sourceDirectory = this.CreateTempDirectory("TextLinkStreamAllowedSource");
         string csvFileName = $"data_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using var stream = new MemoryStream();
@@ -1087,11 +1087,11 @@ public sealed class LinkedTextTableTests : IDisposable
     public async Task LinkedTextTable_CsvFile_UnsupportedFormat_ThrowsNotSupported(string connectString, string expectedFormat)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkUnsupportedFormatFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkUnsupportedFormatFE");
         string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
         string csvFileName = $"unsupported_format_{Guid.NewGuid():N}.csv";
         string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        _tempFiles.Add(csvPath);
+        this._tempFiles.Add(csvPath);
         await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -1114,7 +1114,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_CreateLinkedTextTableAsync_DuplicateLocalTableName_Throws()
     {
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkDup");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkDup");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
@@ -1133,7 +1133,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string path in _tempFiles)
+        foreach (string path in this._tempFiles)
         {
             try
             {
@@ -1145,7 +1145,7 @@ public sealed class LinkedTextTableTests : IDisposable
             }
         }
 
-        foreach (string path in _tempDirectories)
+        foreach (string path in this._tempDirectories)
         {
             try
             {
@@ -1166,7 +1166,7 @@ public sealed class LinkedTextTableTests : IDisposable
     {
         string directory = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
-        _tempDirectories.Add(directory);
+        this._tempDirectories.Add(directory);
         return directory;
     }
 
@@ -1175,7 +1175,7 @@ public sealed class LinkedTextTableTests : IDisposable
         try
         {
             Directory.CreateSymbolicLink(linkPath, targetPath);
-            _tempDirectories.Add(linkPath);
+            this._tempDirectories.Add(linkPath);
             return (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
@@ -1195,7 +1195,7 @@ public sealed class LinkedTextTableTests : IDisposable
         {
         }
 
-        _tempFiles.Add(temp);
+        this._tempFiles.Add(temp);
         return temp;
     }
 
@@ -1210,7 +1210,7 @@ public sealed class LinkedTextTableTests : IDisposable
         {
         }
 
-        _tempFiles.Add(temp);
+        this._tempFiles.Add(temp);
         return temp;
     }
 

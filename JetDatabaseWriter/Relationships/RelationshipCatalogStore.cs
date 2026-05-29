@@ -162,7 +162,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
 
     public async ValueTask<IReadOnlyList<FkRelationship>> GetEnforcedRelationshipsAsync(CancellationToken cancellationToken)
     {
-        long page = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        long page = await this.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (page == 0)
         {
             return [];

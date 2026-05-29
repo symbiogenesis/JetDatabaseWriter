@@ -171,7 +171,7 @@ internal static class IndexCatalogReader
         /// </summary>
         /// <param name="realIdxNum">The real index number of.</param>
         public string GetNameOrFallback(int realIdxNum)
-            => NameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
+            => this.NameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
 
         /// <summary>
         /// Returns <see langword="true"/> when <paramref name="realIdxNum"/>
@@ -181,8 +181,8 @@ internal static class IndexCatalogReader
         /// </summary>
         /// <param name="realIdxNum">The real index number of.</param>
         public bool IsUniqueOrPk(int realIdxNum)
-            => (RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
-                || PkRealIdxNums.Contains(realIdxNum);
+            => (this.RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
+                || this.PkRealIdxNums.Contains(realIdxNum);
     }
 
     /// <summary>
@@ -203,7 +203,7 @@ internal static class IndexCatalogReader
         Dictionary<int, List<IndexLayout.KeyColumnInfo>> KeyColumnInfosByRealIdx)
     {
         /// <summary>Gets the decoded real-idx slots; shortcut for <c>Catalog.RealIdxByNum</c>.</summary>
-        public Dictionary<int, IndexLayout.RealIdxEntry> RealIdxByNum => Catalog.RealIdxByNum;
+        public Dictionary<int, IndexLayout.RealIdxEntry> RealIdxByNum => this.Catalog.RealIdxByNum;
 
         /// <summary>
         /// Returns the pre-resolved key columns for <paramref name="realIdxNum"/>,
@@ -214,7 +214,7 @@ internal static class IndexCatalogReader
         /// <param name="keyColInfos">The key col infos.</param>
         public bool TryGetKeyColumnInfos(int realIdxNum, out List<IndexLayout.KeyColumnInfo> keyColInfos)
         {
-            if (KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))
+            if (this.KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))
             {
                 keyColInfos = infos;
                 return true;

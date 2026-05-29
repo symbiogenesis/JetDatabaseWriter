@@ -14,14 +14,14 @@ internal readonly record struct DelimitedTextRecord
         int version)
     {
         this.reader = reader;
-        FieldCount = fieldCount;
-        RowIndex = rowIndex;
-        LineNumberFrom = lineNumberFrom;
-        LineNumberToExclusive = lineNumberToExclusive;
+        this.FieldCount = fieldCount;
+        this.RowIndex = rowIndex;
+        this.LineNumberFrom = lineNumberFrom;
+        this.LineNumberToExclusive = lineNumberToExclusive;
         this.version = version;
     }
 
-    internal string[] Fields => reader?.MaterializeFields(FieldCount, version) ?? [];
+    internal string[] Fields => this.reader?.MaterializeFields(this.FieldCount, this.version) ?? [];
 
     internal int FieldCount { get; }
 
@@ -34,7 +34,7 @@ internal readonly record struct DelimitedTextRecord
 
 internal readonly record struct DelimitedTextField(string? Value, int BufferStart, int BufferLength)
 {
-    internal bool IsBuffered => Value is null;
+    internal bool IsBuffered => this.Value is null;
 
     internal static DelimitedTextField FromBuffer(int bufferStart, int bufferLength) => new(null, bufferStart, bufferLength);
 

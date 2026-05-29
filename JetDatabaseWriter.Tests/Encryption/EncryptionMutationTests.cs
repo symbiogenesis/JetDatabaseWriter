@@ -41,7 +41,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
 
     public void Dispose()
     {
-        foreach (string path in _tempFiles)
+        foreach (string path in this._tempFiles)
         {
             try
             {
@@ -59,7 +59,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task DetectEncryptionFormat_OnUnencryptedFile_ReturnsNone()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         AccessEncryptionFormat fmt = await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken);
 
@@ -73,10 +73,10 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
 
-        string blockedPath = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string blockedPath = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         string blockedLockPath = LockFileSlotWriter.GetLockFilePath(blockedPath);
         await File.WriteAllBytesAsync(blockedLockPath, [1], ct);
-        _tempFiles.Add(blockedLockPath);
+        this._tempFiles.Add(blockedLockPath);
 
         await Assert.ThrowsAsync<IOException>(async () =>
             await AccessWriter.EncryptAsync(
@@ -87,10 +87,10 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
 
         Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(blockedPath, ct));
 
-        string allowedPath = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string allowedPath = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         string allowedLockPath = LockFileSlotWriter.GetLockFilePath(allowedPath);
         await File.WriteAllBytesAsync(allowedLockPath, new byte[LockFileSlotWriter.SlotSize], ct);
-        _tempFiles.Add(allowedLockPath);
+        this._tempFiles.Add(allowedLockPath);
 
         var options = new AccessWriterOptions
         {
@@ -110,7 +110,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_Jet4Rc4_RoundTripsThroughChangePassword()
     {
-        string path = await CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+        string path = await this.CloneAsync(TestDatabases.AdventureWorks, ".mdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.Jet4Rc4, NoLockOptions, TestContext.Current.CancellationToken);
@@ -134,7 +134,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbLegacy_RoundTripsThroughChangePassword()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
@@ -155,7 +155,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbAesCfbWrapped_RoundTripsThroughChangePassword()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAesCfbWrapped, NoLockOptions, TestContext.Current.CancellationToken);
@@ -180,7 +180,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
 
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgile, NoLockOptions, ct);
@@ -208,7 +208,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
 
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgileCfb, NoLockOptions, ct);
@@ -231,7 +231,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbStandard_RoundTripsThroughChangePassword()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbStandard, NoLockOptions, TestContext.Current.CancellationToken);
@@ -255,7 +255,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ReEncrypt_AccdbLegacyToAgile_PreservesData()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
@@ -271,7 +271,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptAsync_OnAlreadyEncryptedFile_Throws()
     {
-        string path = await CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+        string path = await this.CloneAsync(TestDatabases.AdventureWorks, ".mdb");
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.Jet4Rc4, NoLockOptions, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -281,7 +281,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task DecryptAsync_OnUnencryptedFile_Throws()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await AccessWriter.DecryptAsync(path, FirstPassword, NoLockOptions, TestContext.Current.CancellationToken));
@@ -290,7 +290,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ChangePasswordAsync_OnUnencryptedFile_Throws()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions, TestContext.Current.CancellationToken));
@@ -299,7 +299,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ChangePasswordAsync_WithWrongOldPassword_Throws()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
@@ -309,7 +309,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptAsync_Jet4Rc4_OnAccdbFile_ThrowsNotSupported()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.Jet4Rc4, NoLockOptions, TestContext.Current.CancellationToken));
@@ -318,7 +318,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptAsync_Agile_OnMdbFile_ThrowsNotSupported()
     {
-        string path = await CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+        string path = await this.CloneAsync(TestDatabases.AdventureWorks, ".mdb");
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgile, NoLockOptions, TestContext.Current.CancellationToken));
@@ -392,7 +392,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbAgile_PreservesColumnMetadata()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         Dictionary<string, List<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
         Assert.NotEmpty(originalMeta);
@@ -408,7 +408,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_Jet4Rc4_PreservesColumnMetadata()
     {
-        string path = await CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+        string path = await this.CloneAsync(TestDatabases.AdventureWorks, ".mdb");
 
         Dictionary<string, List<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
         Assert.NotEmpty(originalMeta);
@@ -424,7 +424,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbLegacyPassword_PreservesColumnMetadata()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         Dictionary<string, List<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
         Assert.NotEmpty(originalMeta);
@@ -440,7 +440,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbAesCfbWrapped_PreservesColumnMetadata()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         Dictionary<string, List<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
         Assert.NotEmpty(originalMeta);
@@ -456,7 +456,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task EncryptDecrypt_AccdbStandard_PreservesColumnMetadata()
     {
-        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
 
         Dictionary<string, List<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
         Assert.NotEmpty(originalMeta);
@@ -586,7 +586,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
         string temp = Path.Combine(Path.GetTempPath(), $"jdwenc_{Guid.NewGuid():N}{ext}");
         await File.WriteAllBytesAsync(temp, bytes, TestContext.Current.CancellationToken);
-        _tempFiles.Add(temp);
+        this._tempFiles.Add(temp);
         return temp;
     }
 }

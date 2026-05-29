@@ -78,56 +78,56 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     internal Task<CoreValidationResult> GetCoreResultAsync(CancellationToken cancellationToken)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _coreResultTask ??= BuildCoreResultAsync(cancellationToken);
-            return _coreResultTask;
+            this._coreResultTask ??= this.BuildCoreResultAsync(cancellationToken);
+            return this._coreResultTask;
         }
     }
 
     internal Task<DaoMemoResult> GetDaoMemoResultAsync(CancellationToken cancellationToken)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _daoMemoResultTask ??= BuildDaoMemoResultAsync(cancellationToken);
-            return _daoMemoResultTask;
+            this._daoMemoResultTask ??= this.BuildDaoMemoResultAsync(cancellationToken);
+            return this._daoMemoResultTask;
         }
     }
 
     internal Task<EncryptedCompactResult> GetEncryptedCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _encryptedCompactResultTask ??= BuildEncryptedCompactResultAsync(cancellationToken);
-            return _encryptedCompactResultTask;
+            this._encryptedCompactResultTask ??= this.BuildEncryptedCompactResultAsync(cancellationToken);
+            return this._encryptedCompactResultTask;
         }
     }
 
     internal Task<ComplexCompactResult> GetComplexCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _complexCompactResultTask ??= BuildComplexCompactResultAsync(cancellationToken);
-            return _complexCompactResultTask;
+            this._complexCompactResultTask ??= this.BuildComplexCompactResultAsync(cancellationToken);
+            return this._complexCompactResultTask;
         }
     }
 
     internal Task<StressCompactResult> GetStressCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _stressCompactResultTask ??= BuildStressCompactResultAsync(cancellationToken);
-            return _stressCompactResultTask;
+            this._stressCompactResultTask ??= this.BuildStressCompactResultAsync(cancellationToken);
+            return this._stressCompactResultTask;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
         AccessRoundTripSession[] sessions;
-        lock (_sync)
+        lock (this._sync)
         {
-            sessions = [.. _sessions];
-            _sessions.Clear();
+            sessions = [.. this._sessions];
+            this._sessions.Clear();
         }
 
         foreach (AccessRoundTripSession session in sessions)
@@ -139,7 +139,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<CoreValidationResult> BuildCoreResultAsync(CancellationToken cancellationToken)
     {
-        AccessRoundTripSession session = await CreateDaoSessionAsync(cancellationToken).ConfigureAwait(false);
+        AccessRoundTripSession session = await this.CreateDaoSessionAsync(cancellationToken).ConfigureAwait(false);
         await PrepareCoreValidationDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScript(
@@ -166,7 +166,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         // The MEMO payload is authored by DAO so the reader assertion compares
         // against engine-written bytes, not bytes produced by this library.
         var session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
-        Track(session);
+        this.Track(session);
 
         string databasePath = session.CreateDatabasePath("dao_memo");
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoCreateDatabaseScript(
@@ -183,7 +183,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<EncryptedCompactResult> BuildEncryptedCompactResultAsync(CancellationToken cancellationToken)
     {
-        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken).ConfigureAwait(false);
+        AccessRoundTripSession session = await this.CreateNorthwindSessionAsync(cancellationToken).ConfigureAwait(false);
         await PrepareEncryptedDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         string compactedPath = session.CreateDatabasePath("compacted");
@@ -236,7 +236,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<ComplexCompactResult> BuildComplexCompactResultAsync(CancellationToken cancellationToken)
     {
-        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
+        AccessRoundTripSession session = await this.CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
         await PrepareComplexCompactDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         session.RunDaoCompact();
@@ -294,7 +294,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<StressCompactResult> BuildStressCompactResultAsync(CancellationToken cancellationToken)
     {
-        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
+        AccessRoundTripSession session = await this.CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
         await PrepareStressDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         int preCompactTableCount = await CountTablesAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
@@ -359,7 +359,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             cancellationToken,
             TempDirectoryName,
             compactTimeout).ConfigureAwait(false);
-        Track(session);
+        this.Track(session);
         return session;
     }
 
@@ -373,15 +373,15 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             cancellationToken,
             TempDirectoryName,
             compactTimeout).ConfigureAwait(false);
-        Track(session);
+        this.Track(session);
         return session;
     }
 
     private void Track(AccessRoundTripSession session)
     {
-        lock (_sync)
+        lock (this._sync)
         {
-            _sessions.Add(session);
+            this._sessions.Add(session);
         }
     }
 

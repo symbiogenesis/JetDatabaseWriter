@@ -33,7 +33,7 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
         }
 
         // Snapshot FK index metadata before mutation.
-        List<(string Table, string IndexName)> before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> before = await this.SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
         Assert.True(before.Count > 0, "NorthwindTraders should have FK indexes.");
 
         // Mutate: copy the database, add a scratch table with rows.
@@ -71,7 +71,7 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
             return;
         }
 
-        List<(string Table, string IndexName)> before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> before = await this.SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
         Assert.True(before.Count > 0, "NorthwindTraders should have FK indexes.");
 
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);

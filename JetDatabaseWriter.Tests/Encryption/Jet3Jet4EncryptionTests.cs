@@ -41,7 +41,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // Jet3 encryption uses a simple XOR mask applied to every page.
         // Verify the reader detects and transparently decrypts XOR-masked databases.
-        byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
+        byte[] data = await this.CloneFileAsync(TestDatabases.Jet3Test);
         ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
         SetJet3EncryptionFlag(data);
 
@@ -65,7 +65,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // Verify that a Jet4 database with the password flag set is readable
         // when the correct password is provided.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
 
         var options = new AccessReaderOptions
@@ -85,7 +85,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // Opening an encrypted database without a password throws with a
         // message that hints at providing a password.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
 
         await using MemoryStream ms = ToStream(data);
@@ -98,7 +98,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Encryption_Jet4Rc4_WithWrongPassword_ThrowsMeaningfulError()
     {
         // An incorrect password produces a clear error rather than corrupt data.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
 
         var options = new AccessReaderOptions
@@ -119,9 +119,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithoutPassword_ThrowsDescriptiveError()
     {
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
-        string temp = WriteTempBytes(data, ".mdb");
+        string temp = this.WriteTempBytes(data, ".mdb");
 
         UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessWriter.OpenAsync(temp, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
@@ -132,9 +132,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithWrongPassword_ThrowsMeaningfulError()
     {
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
-        string temp = WriteTempBytes(data, ".mdb");
+        string temp = this.WriteTempBytes(data, ".mdb");
 
         var options = new AccessWriterOptions
         {
@@ -149,9 +149,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithCorrectPassword_Opens()
     {
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
-        string temp = WriteTempBytes(data, ".mdb");
+        string temp = this.WriteTempBytes(data, ".mdb");
 
         var options = new AccessWriterOptions
         {
@@ -172,9 +172,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // it with AccessWriter and inserting a row must re-encrypt the
         // mutated pages on flush. Re-opening with AccessReader (RC4 path)
         // must surface the new row as plaintext.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
-        string temp = WriteTempBytes(data, ".mdb");
+        string temp = this.WriteTempBytes(data, ".mdb");
 
         var writerOptions = new AccessWriterOptions
         {
@@ -214,10 +214,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // The Jet3 XOR mask is symmetric — write-back must re-mask each page
         // so a fresh reader can decrypt it.
-        byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
+        byte[] data = await this.CloneFileAsync(TestDatabases.Jet3Test);
         ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
         SetJet3EncryptionFlag(data);
-        string temp = WriteTempBytes(data, ".mdb");
+        string temp = this.WriteTempBytes(data, ".mdb");
 
         var writerOptions = new AccessWriterOptions { UseLockFile = false };
 
@@ -256,9 +256,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // we flush. Verify a round-trip by inserting a row and reading it back.
         const string TableName = "AesWriteRoundTrip";
 
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        byte[] data = await this.CloneFileAsync(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(data);
-        string temp = WriteTempBytes(data, ".accdb");
+        string temp = this.WriteTempBytes(data, ".accdb");
 
         var options = new AccessWriterOptions
         {
@@ -310,7 +310,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // A Jet4 database with RC4 encryption set and password provided
         // should return actual row data, not garbled bytes.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
@@ -326,7 +326,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Rc4Decryption_EncryptedJet4_StreamRows_ReturnsDecryptedRows()
     {
         // Streaming should also work through RC4-encrypted pages.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
@@ -344,7 +344,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Rc4Decryption_EncryptedJet4_GetStatistics_ReturnsValidStats()
     {
         // Statistics (catalog scan, row counts) should work on encrypted databases.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
@@ -360,7 +360,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Rc4Decryption_EncryptedJet4_ColumnMetadata_IsCorrect()
     {
         // Column metadata from TDEF pages must be decrypted correctly.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
@@ -383,7 +383,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     public async Task Rc4Decryption_EncryptedJet4_ReadAllTables_Succeeds()
     {
         // Bulk read of all tables should succeed on an RC4-encrypted database.
-        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        byte[] data = await this.CloneFileAsync(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
@@ -401,7 +401,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
     public void Dispose()
     {
-        foreach (string path in _tempFiles)
+        foreach (string path in this._tempFiles)
         {
             try
             {
@@ -627,7 +627,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         string temp = Path.Combine(Path.GetTempPath(), $"JetEncTest_{Guid.NewGuid():N}{extension}");
         File.WriteAllBytes(temp, data);
-        _tempFiles.Add(temp);
+        this._tempFiles.Add(temp);
         return temp;
     }
 }

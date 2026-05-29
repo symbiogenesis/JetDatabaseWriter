@@ -187,7 +187,7 @@ public sealed class IndexTailPageAppendTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -195,7 +195,7 @@ public sealed class IndexTailPageAppendTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         long sizeAfterBulk = stream.Length;
@@ -204,7 +204,7 @@ public sealed class IndexTailPageAppendTests
         {
             // Strictly-greater-than current tree max. Triggers the tail-page append
             // append-only fast path.
-            await writer.InsertRowAsync("T", [InitialRows], ct);
+            await writer.InsertRowAsync("T", [InitialRows], this.ct);
         }
 
         long sizeAfterAppend = stream.Length;
@@ -221,7 +221,7 @@ public sealed class IndexTailPageAppendTests
 
         // Row count must still be correct after the append.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -244,7 +244,7 @@ public sealed class IndexTailPageAppendTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i += 2)
@@ -254,7 +254,7 @@ public sealed class IndexTailPageAppendTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -262,11 +262,11 @@ public sealed class IndexTailPageAppendTests
             // Falls into a gap (id = 5 is well below the tree max) — fails
             // the tail-page append append predicate and routes through the existing
             // incremental fall-back paths.
-            await writer.InsertRowAsync("T", [5], ct);
+            await writer.InsertRowAsync("T", [5], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal((InitialRows / 2) + 1, rowsRead.Rows.Count);
     }
 
@@ -287,7 +287,7 @@ public sealed class IndexTailPageAppendTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -295,7 +295,7 @@ public sealed class IndexTailPageAppendTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
         long sizeAfterBulk = stream.Length;
@@ -304,7 +304,7 @@ public sealed class IndexTailPageAppendTests
         {
             for (int j = 0; j < Appends; j++)
             {
-                await writer.InsertRowAsync("T", [InitialRows + j], ct);
+                await writer.InsertRowAsync("T", [InitialRows + j], this.ct);
             }
         }
 
@@ -314,7 +314,7 @@ public sealed class IndexTailPageAppendTests
             $"Expected {Appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows + Appends, rowsRead.Rows.Count);
     }
 
@@ -334,7 +334,7 @@ public sealed class IndexTailPageAppendTests
                 "T",
                 [new ColumnDefinition("Id", typeof(int))],
                 [new IndexDefinition("IX_Id", "Id")],
-                ct);
+                this.ct);
 
             var rows = new List<object[]>(InitialRows);
             for (int i = 0; i < InitialRows; i++)
@@ -342,16 +342,16 @@ public sealed class IndexTailPageAppendTests
                 rows.Add([i]);
             }
 
-            await writer.InsertRowsAsync("T", rows, ct);
+            await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Three sequential append-only inserts.
-            await writer.InsertRowAsync("T", [InitialRows], ct);
-            await writer.InsertRowAsync("T", [InitialRows + 1], ct);
-            await writer.InsertRowAsync("T", [InitialRows + 2], ct);
+            await writer.InsertRowAsync("T", [InitialRows], this.ct);
+            await writer.InsertRowAsync("T", [InitialRows + 1], this.ct);
+            await writer.InsertRowAsync("T", [InitialRows + 2], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(InitialRows + 3, rowsRead.Rows.Count);
 
         // The three appended values must be present at least once each.

@@ -12,13 +12,13 @@ using System.Buffers.Binary;
 /// <param name="Token">The token.</param>
 internal readonly record struct LongValueDescriptor(int Length, byte StorageMode, uint FirstDp, uint Token)
 {
-    public bool IsInline => StorageMode == Constants.LongValue.InlineStorageMode;
+    public bool IsInline => this.StorageMode == Constants.LongValue.InlineStorageMode;
 
-    public bool IsSinglePage => StorageMode == Constants.LongValue.SinglePageStorageMode;
+    public bool IsSinglePage => this.StorageMode == Constants.LongValue.SinglePageStorageMode;
 
-    public bool IsExternal => !IsInline;
+    public bool IsExternal => !this.IsInline;
 
-    public bool UsesChainedPages => IsExternal && !IsSinglePage;
+    public bool UsesChainedPages => this.IsExternal && !this.IsSinglePage;
 
     public static LongValueDescriptor Inline(int length) => new(length, Constants.LongValue.InlineStorageMode, 0, 0);
 
@@ -47,7 +47,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
     public byte[] ToHeaderBytes()
     {
         var header = new byte[Constants.LongValue.HeaderSize];
-        WriteTo(header);
+        this.WriteTo(header);
         return header;
     }
 
@@ -58,11 +58,11 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
         }
 
-        destination[0] = unchecked((byte)(Length & 0xFF));
-        destination[1] = unchecked((byte)((Length >> 8) & 0xFF));
-        destination[2] = unchecked((byte)((Length >> 16) & 0xFF));
-        destination[3] = StorageMode;
-        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), FirstDp);
-        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), Token);
+        destination[0] = unchecked((byte)(this.Length & 0xFF));
+        destination[1] = unchecked((byte)((this.Length >> 8) & 0xFF));
+        destination[2] = unchecked((byte)((this.Length >> 16) & 0xFF));
+        destination[3] = this.StorageMode;
+        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), this.FirstDp);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), this.Token);
     }
 }

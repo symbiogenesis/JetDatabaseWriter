@@ -40,7 +40,7 @@ public sealed record IndexMetadata
     /// uniqueness. Primary keys always enforce uniqueness even when Access leaves
     /// the backing real-index <c>flags &amp; 0x01</c> bit clear.
     /// </summary>
-    public bool EnforcesUniqueness => HasUniqueFlag || Kind == IndexKind.PrimaryKey;
+    public bool EnforcesUniqueness => this.HasUniqueFlag || this.Kind == IndexKind.PrimaryKey;
 
     /// <summary>
     /// Gets a value indicating whether the backing real-index descriptor has the

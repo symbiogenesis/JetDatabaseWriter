@@ -44,13 +44,13 @@ public sealed class IndexLongBinaryKeyTests
                     new ColumnDefinition("Bin", typeof(byte[]), maxLength: 255),
                 ],
                 [new IndexDefinition("IX_LongBin", "Bin") { IsUnique = true }],
-                ct);
+                this.ct);
 
-            await writer.InsertRowAsync("LongBin", [1, payload], ct);
+            await writer.InsertRowAsync("LongBin", [1, payload], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: this.ct);
         Assert.Single(dt.Rows);
         byte[] actual = Assert.IsType<byte[]>(dt.Rows[0]["Bin"]);
         Assert.Equal(payload, actual);
@@ -87,16 +87,16 @@ public sealed class IndexLongBinaryKeyTests
                     new ColumnDefinition("Bin", typeof(byte[]), maxLength: 255),
                 ],
                 [new IndexDefinition("IX_MultiBin", "Bin")],
-                ct);
+                this.ct);
 
             for (int i = 0; i < payloads.Length; i++)
             {
-                await writer.InsertRowAsync("MultiBin", [i, payloads[i]], ct);
+                await writer.InsertRowAsync("MultiBin", [i, payloads[i]], this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         // Verify each payload was stored and round-tripped correctly.
@@ -138,16 +138,16 @@ public sealed class IndexLongBinaryKeyTests
                         DescendingColumns = ["Bin"],
                     },
                 ],
-                ct);
+                this.ct);
 
             for (int i = 0; i < payloads.Length; i++)
             {
-                await writer.InsertRowAsync("DescLongBin", [i, payloads[i]], ct);
+                await writer.InsertRowAsync("DescLongBin", [i, payloads[i]], this.ct);
             }
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         foreach (byte[] expected in payloads)
@@ -177,12 +177,12 @@ public sealed class IndexLongBinaryKeyTests
                 new ColumnDefinition("Bin", typeof(byte[]), maxLength: 255),
             ],
             [new IndexDefinition("UX_LongBin", "Bin") { IsUnique = true }],
-            ct);
+            this.ct);
 
-        await writer.InsertRowAsync("UniqueLongBin", [1, payload], ct);
+        await writer.InsertRowAsync("UniqueLongBin", [1, payload], this.ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("UniqueLongBin", [2, payload.ToArray()], ct));
+            await writer.InsertRowAsync("UniqueLongBin", [2, payload.ToArray()], this.ct));
     }
 
     /// <summary>
@@ -207,15 +207,15 @@ public sealed class IndexLongBinaryKeyTests
                     new ColumnDefinition("Bin", typeof(byte[]), maxLength: 255),
                 ],
                 [new IndexDefinition("IX_CompLongBin", ["Tag", "Bin"])],
-                ct);
+                this.ct);
 
-            await writer.InsertRowAsync("CompLongBin", ["alpha", bin1], ct);
-            await writer.InsertRowAsync("CompLongBin", ["alpha", bin2], ct);
-            await writer.InsertRowAsync("CompLongBin", ["beta", bin1], ct);
+            await writer.InsertRowAsync("CompLongBin", ["alpha", bin1], this.ct);
+            await writer.InsertRowAsync("CompLongBin", ["alpha", bin2], this.ct);
+            await writer.InsertRowAsync("CompLongBin", ["beta", bin1], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: this.ct);
         Assert.Equal(3, dt.Rows.Count);
     }
 

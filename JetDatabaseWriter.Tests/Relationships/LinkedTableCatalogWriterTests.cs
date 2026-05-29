@@ -37,8 +37,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedTableAsync_AllocatesCatalogIdAndSplicesMsysObjectsIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedCatalogSrc");
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogFE");
+        string sourcePath = await this.CreateTempAccdbDatabaseAsync("LinkedCatalogSrc");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedCatalogFE");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
@@ -77,7 +77,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             Assert.Skip("Linkee fixture is unavailable on this machine.");
         }
 
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogCacheNulls");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedCatalogCacheNulls");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
@@ -112,7 +112,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             Assert.Skip("Linkee fixture is unavailable on this machine.");
         }
 
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogDao");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedCatalogDao");
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
@@ -128,7 +128,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         string workDir = Path.GetDirectoryName(frontEndPath)!;
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedCatalogDao_{Guid.NewGuid():N}.accdb");
-        tempFiles.Add(compactedPath);
+        this.tempFiles.Add(compactedPath);
         AssertDaoSuccess(
             AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
                 frontEndPath,
@@ -143,7 +143,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedOdbcTableAsync_MetadataOnly_GeneratesRealTableLvProp()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCatalog");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcCatalog");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
@@ -174,7 +174,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedOdbcTableAsync_SourceColumnsGeneratesRealSchemaLvProp()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchema");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchema");
         ColumnDefinition[] sourceColumns =
         [
             new("OrderId", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
@@ -223,7 +223,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedOdbcTableAsync_SourceColumnsRejectsEmptySchema()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchemaReject");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchemaReject");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -247,7 +247,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         LinkedOdbcFixtureSnapshot fixture = await GetOdbcFixtureSnapshotAsync(ct);
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchema");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchema");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
@@ -274,7 +274,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvPropRejectsPlaceholder()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaReject");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaReject");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -301,7 +301,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         LinkedOdbcFixtureSnapshot fixture = await GetOdbcFixtureSnapshotAsync(ct);
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaDao");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaDao");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
@@ -322,7 +322,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedOdbcCachedSchemaDao_{Guid.NewGuid():N}.accdb");
-        tempFiles.Add(compactedPath);
+        this.tempFiles.Add(compactedPath);
         AssertDaoSuccess(
             AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
             "DAO CompactDatabase cached-schema ODBC linked table");
@@ -338,7 +338,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedTextTableAsync_AllocatesCatalogId()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextCatalog");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedTextCatalog");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
@@ -368,10 +368,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextSource_{Guid.NewGuid():N}");
         Directory.CreateDirectory(sourceDirectory);
-        tempDirs.Add(sourceDirectory);
+        this.tempDirs.Add(sourceDirectory);
         await File.WriteAllTextAsync(Path.Combine(sourceDirectory, "data.csv"), "ID,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
 
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextDao");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedTextDao");
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
@@ -405,7 +405,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         string workDir = Path.GetDirectoryName(frontEndPath)!;
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedTextDao_{Guid.NewGuid():N}.accdb");
-        tempFiles.Add(compactedPath);
+        this.tempFiles.Add(compactedPath);
         AssertDaoSuccess(
             AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
                 frontEndPath,
@@ -425,7 +425,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceSource_{Guid.NewGuid():N}");
         Directory.CreateDirectory(sourceDirectory);
-        tempDirs.Add(sourceDirectory);
+        this.tempDirs.Add(sourceDirectory);
         const string csvText =
             "ID,Unquoted,Quoted,AfterQuote,LeadingSpaceBeforeQuote\r\n" +
             "1,  unquoted  ,\"  quoted  \",\"closed\"  , \"not-starting-quote\" \r\n";
@@ -434,7 +434,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             csvText,
             ct);
 
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextWhitespaceDao");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedTextWhitespaceDao");
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
@@ -455,7 +455,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         string workDir = Path.GetDirectoryName(frontEndPath)!;
         string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceDao_{Guid.NewGuid():N}.accdb");
-        tempFiles.Add(compactedPath);
+        this.tempFiles.Add(compactedPath);
         AssertDaoSuccess(
             AccessRoundTripEnvironment.RunDaoCompactThenDatabaseScript(
                 frontEndPath,
@@ -470,7 +470,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedTableAsync_DuplicateLinkedTableName_Throws()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedDupFE");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedDupFE");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct);
@@ -488,7 +488,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             Assert.Skip("Jet3 index fixture is unavailable on this machine.");
         }
 
-        string frontEndPath = await CopyTempDatabaseAsync(TestDatabases.IndexTestV1997, "Jet3CatalogSplice", ".mdb", ct);
+        string frontEndPath = await this.CopyTempDatabaseAsync(TestDatabases.IndexTestV1997, "Jet3CatalogSplice", ".mdb", ct);
         int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.Jet3Mdb, ct);
         Assert.True(catalogLeafEntriesBefore > 0, "Expected the Access-authored Jet3 fixture to have indexed MSysObjects leaves.");
 
@@ -516,7 +516,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedTableApis_Jet3Mdb_CreateCatalogRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempMdbDatabaseAsync("Jet3LinkedCatalog");
+        string frontEndPath = await this.CreateTempMdbDatabaseAsync("Jet3LinkedCatalog");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
@@ -539,7 +539,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task InsertCatalogObjectAsync_DuplicateParentIdName_ThrowsBeforeSplice()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectDup");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.InsertCatalogObjectAsync(
@@ -573,7 +573,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task InsertCatalogObjectAsync_ManyRows_PromotesFreshMsysObjectsIndexesToIntermediateRoots()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
@@ -604,7 +604,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task CreateLinkedTableAsync_Throws_WhenMsysObjectsCatalogSpliceCannotMaintainIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
@@ -621,7 +621,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     public async Task DropTableAsync_Throws_WhenMsysObjectsCatalogDeleteCannotMaintainIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogDeleteSpliceFail");
+        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogDeleteSpliceFail");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.CreateTableAsync(
@@ -637,7 +637,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string path in tempFiles)
+        foreach (string path in this.tempFiles)
         {
             try
             {
@@ -650,7 +650,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
         }
 
-        foreach (string path in tempDirs)
+        foreach (string path in this.tempDirs)
         {
             try
             {
@@ -980,7 +980,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         {
         }
 
-        tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 
@@ -995,7 +995,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         {
         }
 
-        tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 
@@ -1008,7 +1008,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
         }
 
-        tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 

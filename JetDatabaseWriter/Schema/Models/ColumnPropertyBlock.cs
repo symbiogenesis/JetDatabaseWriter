@@ -127,7 +127,7 @@ internal sealed class ColumnPropertyBlock
     /// <param name="name">The name.</param>
     public ColumnPropertyTarget? FindTarget(string name)
     {
-        foreach (ColumnPropertyTarget t in Targets)
+        foreach (ColumnPropertyTarget t in this.Targets)
         {
             if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {

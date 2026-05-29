@@ -7,8 +7,8 @@ internal sealed record LvalChainResult
 {
     private LvalChainResult(byte[]? data, string? error)
     {
-        Data = data;
-        Error = error;
+        this.Data = data;
+        this.Error = error;
     }
 
     public byte[]? Data { get; }

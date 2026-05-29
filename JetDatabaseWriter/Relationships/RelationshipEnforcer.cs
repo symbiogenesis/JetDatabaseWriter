@@ -150,7 +150,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            ParentSeekIndex? seekIndex = await seekPlanner.ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            ParentSeekIndex? seekIndex = await this.seekPlanner.ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (seekIndex != null)
             {
                 if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? pendingSet))
@@ -186,7 +186,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 }
             }
 
-            HashSet<string> parentKeys = await GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            HashSet<string> parentKeys = await this.GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (!parentKeys.Contains(key))
             {
                 throw new InvalidOperationException(
@@ -227,10 +227,10 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            ChildSeekIndex? childSeek = await seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
             {
-                bool seekOk = await TryProcessCascadeDeleteWithSeekAsync(
+                bool seekOk = await this.TryProcessCascadeDeleteWithSeekAsync(
                     rel,
                     childEntry,
                     childDef,
@@ -279,7 +279,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 childDeletedRows.Add(childSnap.Rows[rowIndex].ItemArray);
             }
 
-            await EnforceFkOnPrimaryDeleteAsync(
+            await this.EnforceFkOnPrimaryDeleteAsync(
                 rel.ForeignTable,
                 childDef,
                 childDeletedRows,
@@ -365,10 +365,10 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            ChildSeekIndex? childSeek = await seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
             {
-                bool seekOk = await TryProcessCascadeUpdateWithSeekAsync(
+                bool seekOk = await this.TryProcessCascadeUpdateWithSeekAsync(
                     rel,
                     childEntry,
                     childDef,
@@ -502,7 +502,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
             requests.Add((primaryKey, 0));
         }
 
-        List<(RowLocation Loc, byte Payload)>? hits = await childRowLocator.TrySeekChildLocationsAsync(
+        List<(RowLocation Loc, byte Payload)>? hits = await this.childRowLocator.TrySeekChildLocationsAsync(
             childEntry,
             childSeek,
             requests,
@@ -530,13 +530,13 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
             fullLocations.Add(location);
         }
 
-        List<object?[]>? childDeletedRows = await TryReadAllRowsTypedAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
+        List<object?[]>? childDeletedRows = await this.TryReadAllRowsTypedAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
         if (childDeletedRows == null)
         {
             return false;
         }
 
-        await EnforceFkOnPrimaryDeleteAsync(
+        await this.EnforceFkOnPrimaryDeleteAsync(
             rel.ForeignTable,
             childDef,
             childDeletedRows,
@@ -578,7 +578,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
             requests.Add((change.Value.OldPkSubset, change.Value.NewPkSubset));
         }
 
-        List<(RowLocation Loc, object[] NewPkSubset)>? rowMeta = await childRowLocator.TrySeekChildLocationsAsync(
+        List<(RowLocation Loc, object[] NewPkSubset)>? rowMeta = await this.childRowLocator.TrySeekChildLocationsAsync(
             childEntry,
             childSeek,
             requests,
@@ -606,7 +606,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
             locations.Add(location);
         }
 
-        List<object?[]>? rows = await TryReadAllRowsTypedAsync(childDef, locations, cancellationToken).ConfigureAwait(false);
+        List<object?[]>? rows = await this.TryReadAllRowsTypedAsync(childDef, locations, cancellationToken).ConfigureAwait(false);
         if (rows == null)
         {
             return false;

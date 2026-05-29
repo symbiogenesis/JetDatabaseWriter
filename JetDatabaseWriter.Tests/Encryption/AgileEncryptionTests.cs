@@ -57,7 +57,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_OpenWithoutPassword_ThrowsUnauthorizedAccessException()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
@@ -73,7 +73,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_OpenWithWrongPassword_ThrowsUnauthorizedAccessException()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         var options = new AccessReaderOptions
@@ -93,7 +93,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_OpenWithCorrectPassword_Succeeds()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -117,7 +117,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
 
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
@@ -139,7 +139,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_ReadDataTable_ReturnsRows()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -162,7 +162,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_StreamRows_YieldsRows()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -188,7 +188,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
@@ -248,7 +248,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     {
         const string TableName = "AgileWriteRoundTrip";
 
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
         string temp = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.accdb");
         await File.WriteAllBytesAsync(temp, data, TestContext.Current.CancellationToken);
 
@@ -317,7 +317,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_TamperedEncryptedPackage_ThrowsIntegrityError()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         // Flip a byte deep inside the ciphertext (offset 16 past the
         // 8-byte size prefix) to avoid corrupting the size header.
@@ -345,7 +345,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_WrongPassword_StillRejected_IndependentOfHmac()
     {
-        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        byte[] data = await this.BuildAgileEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
         var options = new AccessReaderOptions

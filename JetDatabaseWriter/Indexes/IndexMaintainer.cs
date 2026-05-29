@@ -97,7 +97,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] buffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] buffer = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         int numCols = Ru16(buffer, writer.TDef.NumCols);
         int numIdx = Ri32(buffer, writer.TDef.NumCols + 2);
@@ -167,7 +167,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // bail (TdefPreambleStatus != Ok or a downstream layout check) on
         // those tables; that is the same fall-back trigger documented in
         // §7.9 of docs/design/index-and-relationship-format-notes.md.
-        (TdefPreambleStatus status, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (status != TdefPreambleStatus.Ok)
         {
             // Bulk path is silent on every bail (Empty / TooMany /
@@ -215,7 +215,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 rebuiltIndexPageGroups[i] = Array.Empty<long>();
             }
 
-            oldIndexPageGroups = await ReadIndexPageGroupsFromUsageMapAsync(
+            oldIndexPageGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(
                 ReadTableUsageMapPage(tdefBuffer),
                 numRealIdx,
                 cancellationToken).ConfigureAwait(false);
@@ -242,7 +242,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     cells[k] = cell is DBNull ? null : cell;
                 }
 
-                byte[] composite = EncodeCompositeKey(keyColInfos, cells);
+                byte[] composite = this.EncodeCompositeKey(keyColInfos, cells);
                 entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
             }
 
@@ -279,7 +279,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long[] pageNumbers;
 
             int oldRootPageNumber = Ri32(tdefBuffer, rie.FirstDpOffset);
-            if (build.Pages.Count == 1 && await CanReuseSingleLeafPageAsync(oldRootPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
+            if (build.Pages.Count == 1 && await this.CanReuseSingleLeafPageAsync(oldRootPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
             {
                 await writer.WritePageAsync(oldRootPageNumber, build.Pages[0], cancellationToken).ConfigureAwait(false);
                 rootPageNumber = oldRootPageNumber;
@@ -343,7 +343,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 && !IsGeneratedComplexFlatTableName(tableName)
                 && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
         {
-            await DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            await this.DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -467,7 +467,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (oldPageNumber > 2
                     && !newPages.Contains(oldPageNumber)
                     && deallocatedPages.Add(oldPageNumber)
-                    && await IsReplacedIndexPageAsync(oldPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
+                    && await this.IsReplacedIndexPageAsync(oldPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
                 {
                     await pageAllocator.DeallocatePageAsync(oldPageNumber, cancellationToken).ConfigureAwait(false);
                 }
@@ -569,7 +569,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            long[]? pageGroup = await TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false);
+            long[]? pageGroup = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false);
             if (pageGroup is null)
             {
                 return false;
@@ -616,7 +616,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            byte[] page = await ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             if (Ri32(page, 4) != tdefPage)
             {
                 return null;
@@ -710,7 +710,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         List<(RowLocation Loc, object[] Row)>? deletedRows,
         CancellationToken cancellationToken)
     {
-        LastIncrementalBail = null;
+        this.LastIncrementalBail = null;
 
         // Jet3 (.mdb Access 97) participates in the
         // incremental fast paths via the per-format LeafPageLayout descriptor
@@ -731,7 +731,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return true;
         }
 
-        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         switch (preStatus)
         {
             case TdefPreambleStatus.Ok:
@@ -739,10 +739,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             case TdefPreambleStatus.Empty:
                 return true;
             case TdefPreambleStatus.TooMany:
-                LastIncrementalBail = $"NumIdx_TooMany numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
+                this.LastIncrementalBail = $"NumIdx_TooMany numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
                 return false;
             case TdefPreambleStatus.ColumnNameWalkFailed:
-                LastIncrementalBail = $"C0 col-name walk i={preamble.FailedColumnIndex} namePos={preamble.FailedColumnNamePos}";
+                this.LastIncrementalBail = $"C0 col-name walk i={preamble.FailedColumnIndex} namePos={preamble.FailedColumnNamePos}";
                 return false;
             default:
                 return false;
@@ -762,13 +762,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         {
             if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
             {
-                LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
+                this.LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
                 return false;
             }
 
             if (entry.IndexType == IndexKind.ForeignKey)
             {
-                LastIncrementalBail = "C1c foreign-key logical index present";
+                this.LastIncrementalBail = "C1c foreign-key logical index present";
                 return false;
             }
         }
@@ -779,7 +779,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         {
             if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? keyCols))
             {
-                LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
+                this.LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
                 return false;
             }
 
@@ -793,7 +793,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         if (slots.Count == 0)
         {
-            LastIncrementalBail = $"C1d no usable real-idx slots numIdx={numIdx} numRealIdx={numRealIdx}";
+            this.LastIncrementalBail = $"C1d no usable real-idx slots numIdx={numIdx} numRealIdx={numRealIdx}";
             return false;
         }
 
@@ -807,7 +807,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             // Resolve key columns to (ColumnInfo, snapshot index, ascending).
             if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo>? keyColInfos))
             {
-                LastIncrementalBail = "C2 resolveFailed";
+                this.LastIncrementalBail = "C2 resolveFailed";
                 return false;
             }
 
@@ -815,19 +815,19 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long firstDp = (uint)Ri32(tdefBuffer, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
-                LastIncrementalBail = $"C3 firstDp={firstDp}";
+                this.LastIncrementalBail = $"C3 firstDp={firstDp}";
                 return false;
             }
 
-            byte[] rootPage = await ReadAndClonePageAsync(firstDp, cancellationToken).ConfigureAwait(false);
+            byte[] rootPage = await this.ReadAndClonePageAsync(firstDp, cancellationToken).ConfigureAwait(false);
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
-            List<IndexEntry> addEntries = EncodeHintEntries(insertedRows, keyColInfos);
+            List<IndexEntry> addEntries = this.EncodeHintEntries(insertedRows, keyColInfos);
             if (addCount > 0 && addEntries.Count != addCount)
             {
                 // Encoder rejected at least one row; bail to bulk.
-                LastIncrementalBail = $"C4 addEntries.Count={addEntries.Count} addCount={addCount}";
+                this.LastIncrementalBail = $"C4 addEntries.Count={addEntries.Count} addCount={addCount}";
                 return false;
             }
 
@@ -836,10 +836,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             // key from the live leaf entry); the surgical multi-level path
             // needs the keys to perform a path-capturing descent that
             // confirms every change targets the same leaf.
-            List<IndexEntry> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
+            List<IndexEntry> removeEntries = this.EncodeHintEntries(deletedRows, keyColInfos);
             if (delCount > 0 && removeEntries.Count != delCount)
             {
-                LastIncrementalBail = "C5";
+                this.LastIncrementalBail = "C5";
                 return false;
             }
 
@@ -864,7 +864,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (rootPage[0] != Constants.IndexLeafPage.PageTypeIntermediate
                     && rootPage[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
-                    LastIncrementalBail = $"C6 rootPage[0]={rootPage[0]:X2}";
+                    this.LastIncrementalBail = $"C6 rootPage[0]={rootPage[0]:X2}";
                     return false;
                 }
 
@@ -881,7 +881,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 // malformed page.
                 if (delCount == 0 && addEntries.Count > 0)
                 {
-                    bool tailHandled = await btreeEditor.TryAppendToTailLeafAsync(
+                    bool tailHandled = await this.btreeEditor.TryAppendToTailLeafAsync(
                         layout,
                         tdefPage,
                         rootPage,
@@ -907,7 +907,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 // the encoder/IO chain hits a malformed page). The caller
                 // falls through to the bulk rebuild on false. See
                 // docs/design/index-and-relationship-format-notes.md §7.
-                bool surgicalHandled = await btreeEditor.TrySurgicalMultiLevelMaintainAsync(
+                bool surgicalHandled = await this.btreeEditor.TrySurgicalMultiLevelMaintainAsync(
                     layout,
                     tdefPage,
                     firstDp,
@@ -931,7 +931,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     tdefDirty = false;
                 }
 
-                bool crossLeafHandled = await btreeEditor.TrySurgicalCrossLeafMaintainAsync(
+                bool crossLeafHandled = await this.btreeEditor.TrySurgicalCrossLeafMaintainAsync(
                     layout,
                     tdefPage,
                     firstDp,
@@ -941,14 +941,14 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     cancellationToken).ConfigureAwait(false);
                 if (crossLeafHandled)
                 {
-                    tdefBuffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    tdefBuffer = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                long leftmostLeaf = await btreeEditor.DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
+                long leftmostLeaf = await this.btreeEditor.DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
                 if (leftmostLeaf <= 0)
                 {
-                    LastIncrementalBail = $"C7 firstDp={firstDp}";
+                    this.LastIncrementalBail = $"C7 firstDp={firstDp}";
                     return false;
                 }
 
@@ -959,16 +959,16 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 {
                     if (--safetyBudget <= 0)
                     {
-                        LastIncrementalBail = "C8 safetyBudget";
+                        this.LastIncrementalBail = "C8 safetyBudget";
                         return false;
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    byte[] leaf = await ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+                    byte[] leaf = await this.ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
 
                     if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                     {
-                        LastIncrementalBail = $"C9 walkPage={walkPage} leaf[0]={leaf[0]:X2}";
+                        this.LastIncrementalBail = $"C9 walkPage={walkPage} leaf[0]={leaf[0]:X2}";
                         return false;
                     }
 
@@ -979,7 +979,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 List<IndexEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
                 if (splicedAll is null)
                 {
-                    LastIncrementalBail = $"C10 allExisting={allExisting.Count}";
+                    this.LastIncrementalBail = $"C10 allExisting={allExisting.Count}";
                     return false;
                 }
 
@@ -991,7 +991,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
                 catch (ArgumentOutOfRangeException ex)
                 {
-                    LastIncrementalBail = $"C11 {ex.Message}";
+                    this.LastIncrementalBail = $"C11 {ex.Message}";
                     return false;
                 }
 
@@ -1009,23 +1009,23 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
-                LastIncrementalBail = $"C12 existing={existing.Count}";
+                this.LastIncrementalBail = $"C12 existing={existing.Count}";
                 return false;
             }
 
             byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, writer.PageSizeBytes, tdefPage, spliced);
             if (newLeaf is null)
             {
-                LastIncrementalBail = $"C13 spliced={spliced.Count}";
+                this.LastIncrementalBail = $"C13 spliced={spliced.Count}";
                 return false;
             }
 
             await writer.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!await RefreshIncrementalIndexUsageMapsAsync(tdefPage, tdefBuffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false))
+        if (!await this.RefreshIncrementalIndexUsageMapsAsync(tdefPage, tdefBuffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false))
         {
-            LastIncrementalBail = "C14 usage-map refresh failed";
+            this.LastIncrementalBail = "C14 usage-map refresh failed";
             return false;
         }
 
@@ -1109,7 +1109,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         try
         {
-            return EncodeCompositeKey(keyColInfos, cells);
+            return this.EncodeCompositeKey(keyColInfos, cells);
         }
         catch (NotSupportedException)
         {
@@ -1146,7 +1146,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         foreach ((RowLocation loc, object[] row) in rows)
         {
-            byte[]? composite = TryEncodeCompositeKey(keyColInfos, row);
+            byte[]? composite = this.TryEncodeCompositeKey(keyColInfos, row);
             if (composite is null)
             {
                 return results;
@@ -1213,18 +1213,18 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     {
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.Format);
 
-        LastIncrementalBail = null;
+        this.LastIncrementalBail = null;
 
-        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         switch (preStatus)
         {
             case TdefPreambleStatus.Ok:
                 break;
             case TdefPreambleStatus.Empty:
-                LastIncrementalBail = $"S0 numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
+                this.LastIncrementalBail = $"S0 numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
                 return true;
             case TdefPreambleStatus.TooMany:
-                LastIncrementalBail = "S1 too many idx";
+                this.LastIncrementalBail = "S1 too many idx";
                 return false;
             case TdefPreambleStatus.ColumnNameWalkFailed:
                 return false;
@@ -1251,22 +1251,22 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long firstDp = (uint)Ri32(tdefBuf, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
-                LastIncrementalBail = $"S2 ri={ri} firstDp=0";
+                this.LastIncrementalBail = $"S2 ri={ri} firstDp=0";
                 continue;
             }
 
             // Resolve key columns to TDEF ColumnInfos.
             if (!catalog.TryGetKeyColumnInfos(ri, out List<KeyColumnInfo>? keyColInfos))
             {
-                LastIncrementalBail = $"S3 ri={ri} resolveFailed";
+                this.LastIncrementalBail = $"S3 ri={ri} resolveFailed";
                 return false;
             }
 
             // Encode the composite key for the new row.
-            byte[]? composite = TryEncodeCompositeKey(keyColInfos, newRowValues);
+            byte[]? composite = this.TryEncodeCompositeKey(keyColInfos, newRowValues);
             if (composite is null)
             {
-                LastIncrementalBail = $"S4 ri={ri} encErr";
+                this.LastIncrementalBail = $"S4 ri={ri} encErr";
                 return false;
             }
 
@@ -1279,7 +1279,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             // won't be possible (but a split can still chain-append).
             var descentPath = new List<DescentStep>();
             bool hasCleanPath = true;
-            long targetLeafPage = await btreeEditor.DescendCapturingAsync(
+            long targetLeafPage = await this.btreeEditor.DescendCapturingAsync(
                 layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
             if (targetLeafPage <= 0)
             {
@@ -1287,20 +1287,20 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 // incomplete but the chain walk handles placement.
                 descentPath.Clear();
                 hasCleanPath = false;
-                targetLeafPage = await btreeEditor.DescendCapturingAsync(
+                targetLeafPage = await this.btreeEditor.DescendCapturingAsync(
                     layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
                 if (targetLeafPage <= 0)
                 {
-                    LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
+                    this.LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
                     return false;
                 }
             }
 
-            byte[] leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
-                LastIncrementalBail = $"S8 ri={ri} targetLeafPage={targetLeafPage} type=0x{leaf[0]:X2}";
+                this.LastIncrementalBail = $"S8 ri={ri} targetLeafPage={targetLeafPage} type=0x{leaf[0]:X2}";
                 return false;
             }
 
@@ -1328,16 +1328,16 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
                 if (--chainBudget <= 0)
                 {
-                    LastIncrementalBail = $"S8b ri={ri} chainBudget exhausted";
+                    this.LastIncrementalBail = $"S8b ri={ri} chainBudget exhausted";
                     return false;
                 }
 
                 targetLeafPage = nextLeaf;
-                leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+                leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
                 if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
-                    LastIncrementalBail = $"S8c ri={ri} walkedTo={targetLeafPage} type=0x{leaf[0]:X2}";
+                    this.LastIncrementalBail = $"S8c ri={ri} walkedTo={targetLeafPage} type=0x{leaf[0]:X2}";
                     return false;
                 }
             }
@@ -1360,7 +1360,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 Array.Empty<(long DataPage, byte DataRow)>());
             if (spliced is null)
             {
-                LastIncrementalBail = $"S11 ri={ri} splice null";
+                this.LastIncrementalBail = $"S11 ri={ri} splice null";
                 return false;
             }
 
@@ -1381,11 +1381,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             catch (ArgumentOutOfRangeException)
             {
                 // Leaf overflow → N-way split.
-                SplitPages? splitPages = btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
+                SplitPages? splitPages = this.btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
                     ?? IndexHelpers.TryGreedySplitLeafInN(layout, writer.PageSizeBytes, spliced);
                 if (splitPages is null)
                 {
-                    LastIncrementalBail = $"S12 ri={ri} split failed";
+                    this.LastIncrementalBail = $"S12 ri={ri} split failed";
                     return false;
                 }
 
@@ -1393,10 +1393,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 long firstFreshPage = await pageAllocator.ReserveContiguousPagesAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
                 long[] pageNumbers = IndexBTreeEditor.AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
-                byte[][]? pageBytesAll = btreeEditor.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
+                byte[][]? pageBytesAll = this.btreeEditor.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
                 if (pageBytesAll is null)
                 {
-                    LastIncrementalBail = $"S12b ri={ri} split build failed";
+                    this.LastIncrementalBail = $"S12b ri={ri} split build failed";
                     return false;
                 }
 
@@ -1413,10 +1413,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                         rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
                     }
 
-                    ancestorWrites = btreeEditor.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, leftSummary, rightSummaries);
+                    ancestorWrites = this.btreeEditor.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, leftSummary, rightSummaries);
                     if (ancestorWrites is null)
                     {
-                        bool rebuilt = await btreeEditor.TryRebuildCatalogIndexTreeAsync(
+                        bool rebuilt = await this.btreeEditor.TryRebuildCatalogIndexTreeAsync(
                             layout,
                             tdefPage,
                             firstDp,
@@ -1425,7 +1425,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                             cancellationToken).ConfigureAwait(false);
                         if (!rebuilt)
                         {
-                            LastIncrementalBail = $"S12c ri={ri} ancestor overflow";
+                            this.LastIncrementalBail = $"S12c ri={ri} ancestor overflow";
                             return false;
                         }
 
@@ -1434,7 +1434,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
                 else
                 {
-                    bool rebuilt = await btreeEditor.TryRebuildCatalogIndexTreeAsync(
+                    bool rebuilt = await this.btreeEditor.TryRebuildCatalogIndexTreeAsync(
                         layout,
                         tdefPage,
                         firstDp,
@@ -1443,7 +1443,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                         cancellationToken).ConfigureAwait(false);
                     if (!rebuilt)
                     {
-                        LastIncrementalBail = $"S12c ri={ri} no clean ancestor path";
+                        this.LastIncrementalBail = $"S12c ri={ri} no clean ancestor path";
                         return false;
                     }
 
@@ -1459,7 +1459,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
                 if (leafNext > 0)
                 {
-                    byte[] nextLeafBuf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+                    byte[] nextLeafBuf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
                     Wi32(nextLeafBuf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
                     await writer.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
                 }

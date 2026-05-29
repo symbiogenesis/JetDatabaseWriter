@@ -6992,10 +6992,10 @@ internal static class LongRowSuffixProbe
 
         public void Add(ushort suffix)
         {
-            Rows++;
+            this.Rows++;
             if (suffix != firstSuffix)
             {
-                HasConflict = true;
+                this.HasConflict = true;
             }
         }
     }
@@ -7050,21 +7050,21 @@ internal static class LongRowSuffixProbe
         public string[] TextInputs { get; } = BuildCandidateTextInputs(row.Text!);
 
         public byte[][] GetInputCandidates(Encoding cp1252) =>
-            inputCandidates ??= BuildInputCandidates(FullKey, Row.Text!, cp1252);
+            this.inputCandidates ??= BuildInputCandidates(this.FullKey, this.Row.Text!, cp1252);
 
         public byte[][] GetNormalizedInputCandidates(Encoding cp1252) =>
-            normalizedInputCandidates ??= BuildInputCandidates(NormalizedFullKey, Row.Text!, cp1252);
+            this.normalizedInputCandidates ??= BuildInputCandidates(this.NormalizedFullKey, this.Row.Text!, cp1252);
 
         public byte[] GetByteRuleInput(int inputIndex) =>
-            (byteRuleInputs ??= BuildByteRuleInputs(this))[inputIndex];
+            (this.byteRuleInputs ??= BuildByteRuleInputs(this))[inputIndex];
 
         public byte[] GetDigestBytes(string hashName, int byteInputIndex, Func<byte[], byte[]> compute)
         {
             var key = new DigestCacheKey(hashName, byteInputIndex);
-            if (!digestBytes.TryGetValue(key, out byte[]? bytes))
+            if (!this.digestBytes.TryGetValue(key, out byte[]? bytes))
             {
-                bytes = compute(GetByteRuleInput(byteInputIndex));
-                digestBytes.Add(key, bytes);
+                bytes = compute(this.GetByteRuleInput(byteInputIndex));
+                this.digestBytes.Add(key, bytes);
             }
 
             return bytes;
@@ -7073,10 +7073,10 @@ internal static class LongRowSuffixProbe
         public byte[] GetLcMapHashBytes(string localeName, uint flags, string value)
         {
             var key = new LcMapCacheKey(localeName, flags, value);
-            if (!lcMapHashBytes.TryGetValue(key, out byte[]? bytes))
+            if (!this.lcMapHashBytes.TryGetValue(key, out byte[]? bytes))
             {
                 bytes = LcMapHashBytes(localeName, flags, value);
-                lcMapHashBytes.Add(key, bytes);
+                this.lcMapHashBytes.Add(key, bytes);
             }
 
             return bytes;
@@ -7085,10 +7085,10 @@ internal static class LongRowSuffixProbe
         public byte[] GetLcMapSortKeyBytes(string localeName, uint flags, string value)
         {
             var key = new LcMapCacheKey(localeName, flags, value);
-            if (!lcMapSortKeyBytes.TryGetValue(key, out byte[]? bytes))
+            if (!this.lcMapSortKeyBytes.TryGetValue(key, out byte[]? bytes))
             {
                 bytes = LcMapSortKeyBytes(localeName, flags, value);
-                lcMapSortKeyBytes.Add(key, bytes);
+                this.lcMapSortKeyBytes.Add(key, bytes);
             }
 
             return bytes;
@@ -7181,21 +7181,21 @@ internal static class LongRowSuffixProbe
 
         public void Increment(ushort key)
         {
-            if (counts[key] == 0)
+            if (this.counts[key] == 0)
             {
-                touched.Add(key);
+                this.touched.Add(key);
             }
 
-            counts[key]++;
+            this.counts[key]++;
         }
 
         public (ushort Key, int Count) Best()
         {
             ushort bestKey = 0;
             int bestCount = 0;
-            foreach (ushort key in touched)
+            foreach (ushort key in this.touched)
             {
-                int count = counts[key];
+                int count = this.counts[key];
                 if (count > bestCount)
                 {
                     bestKey = key;
@@ -7208,12 +7208,12 @@ internal static class LongRowSuffixProbe
 
         public void Clear()
         {
-            foreach (ushort key in touched)
+            foreach (ushort key in this.touched)
             {
-                counts[key] = 0;
+                this.counts[key] = 0;
             }
 
-            touched.Clear();
+            this.touched.Clear();
         }
     }
 

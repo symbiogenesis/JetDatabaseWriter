@@ -31,7 +31,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="lvProp">The LvProp payload.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
-        => InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
+        => this.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
 
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
@@ -44,7 +44,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
@@ -60,7 +60,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
+        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -86,7 +86,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await EnsureCatalogContainerNameAvailableAsync(msys, parentId, objectName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, parentId, objectName, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
@@ -110,7 +110,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await RequireCatalogIndexSpliceAsync(msys, loc, values, objectName, cancellationToken).ConfigureAwait(false);
+        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, objectName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -121,9 +121,9 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.RelationshipsParentId, relationshipName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.RelationshipsParentId, relationshipName, cancellationToken).ConfigureAwait(false);
 
-        int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
+        int objectId = await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
@@ -138,7 +138,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await RequireCatalogIndexSpliceAsync(msys, loc, values, relationshipName, cancellationToken).ConfigureAwait(false);
+        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, relationshipName, cancellationToken).ConfigureAwait(false);
 
         return objectId;
     }
@@ -164,9 +164,9 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, linkedTableName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, linkedTableName, cancellationToken).ConfigureAwait(false);
 
-        int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
+        int objectId = await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
@@ -196,7 +196,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         if (!string.IsNullOrEmpty(sourceDatabasePath))
         {
             object databaseValue = objectType == Constants.SystemObjects.LinkedTableType
-                ? await EncodeLinkedMemoFieldAsync(sourceDatabasePath, cancellationToken).ConfigureAwait(false)
+                ? await this.EncodeLinkedMemoFieldAsync(sourceDatabasePath, cancellationToken).ConfigureAwait(false)
                 : sourceDatabasePath;
             msys.SetValueByName(values, "Database", databaseValue);
         }
@@ -209,15 +209,15 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         try
         {
-            await RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
+            await this.RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
         }
         catch (InvalidOperationException ex) when (IsCatalogSpliceFailure(ex))
         {
-            await RemoveUnindexedCatalogRowAsync(loc, cancellationToken).ConfigureAwait(false);
+            await this.RemoveUnindexedCatalogRowAsync(loc, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
-        await InsertAceRowsForCatalogObjectAsync(
+        await this.InsertAceRowsForCatalogObjectAsync(
             objectId,
             useRestrictedOwnerAcm: true,
             useRelationshipGroupAcm: false,
@@ -241,7 +241,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        byte[]? adminsSid = await HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+        byte[]? adminsSid = await this.HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
 
         byte[][] sids = adminsSid != null
             ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
@@ -264,7 +264,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="objectId">The object id.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken)
-        => await InsertAceRowsForCatalogObjectAsync(
+        => await this.InsertAceRowsForCatalogObjectAsync(
             objectId,
             useRestrictedOwnerAcm: true,
             useRelationshipGroupAcm: true,
@@ -321,7 +321,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        byte[]? adminsSid = await HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+        byte[]? adminsSid = await this.HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
 
         byte[][] sids = adminsSid != null
             ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
@@ -429,7 +429,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
 
         long? tdefPage = null;
         uint catalogFlags = 0;
@@ -466,7 +466,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
         }
 
-        await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
+        await this.InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
         writer.Constraints.Rename(oldName, newName);
         writer.InvalidateCatalogCache();
     }
@@ -536,7 +536,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
     private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, CancellationToken cancellationToken)
     {
-        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
             bool sameParent = row.ParentId == parentId

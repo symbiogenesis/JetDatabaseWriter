@@ -525,8 +525,8 @@ internal static class EmittedPageInvariantAssert
 
     private readonly record struct RowSlotInfo(int RowIndex, int RawOffset, int Start, int End)
     {
-        public bool IsLive => (RawOffset & 0xC000) == 0;
+        public bool IsLive => (this.RawOffset & 0xC000) == 0;
 
-        public int Size => End - Start + 1;
+        public int Size => this.End - this.Start + 1;
     }
 }

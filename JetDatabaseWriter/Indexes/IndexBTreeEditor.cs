@@ -130,8 +130,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             List<IndexEntry> left = entries.GetRange(0, splitIndex);
             List<IndexEntry> right = entries.GetRange(splitIndex, entries.Count - splitIndex);
-            if (!TryMeasureLeafFreeSpace(layout, left, maxPrefixLength, out int leftFree)
-                || !TryMeasureLeafFreeSpace(layout, right, maxPrefixLength, out int rightFree))
+            if (!this.TryMeasureLeafFreeSpace(layout, left, maxPrefixLength, out int leftFree)
+                || !this.TryMeasureLeafFreeSpace(layout, right, maxPrefixLength, out int rightFree))
             {
                 continue;
             }
@@ -233,7 +233,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         for (int depth = 0; depth < 16; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -297,7 +297,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        byte[] tailLeaf = await ReadAndClonePageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] tailLeaf = await this.ReadAndClonePageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (tailLeaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -414,7 +414,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // 1. Path-capturing descent with the FIRST change key.
         byte[] firstKey = addEntries.Count > 0 ? addEntries[0].Key : removeEntries[0].Key;
         var path = new List<DescentStep>();
-        long targetLeafPage = await DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
+        long targetLeafPage = await this.DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
         if (targetLeafPage <= 0 || path.Count == 0)
         {
             // Either descent overshot (search key > every summary, follows
@@ -443,7 +443,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         // 3. Read the target leaf and decode existing entries.
-        byte[] leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -502,7 +502,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             // for this leaf (and propagating up while the change is to the
             // last summary on each ancestor).
             var newSummary = new DecodedIntermediateEntry(new(newLast.Key, newLast.DataPage, newLast.DataRow), ChildPage: targetLeafPage);
-            List<(long PageNum, byte[] Bytes)>? ancestorWrites = PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
+            List<(long PageNum, byte[] Bytes)>? ancestorWrites = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
             if (ancestorWrites is null)
             {
                 return false;
@@ -532,7 +532,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         long firstFreshPage = writer.PhysicalPageCount;
         long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
-        byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
+        byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
         if (pageBytesAll is null)
         {
             return false;
@@ -550,7 +550,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         // Compute parent (and grandparent, ...) writes WITHOUT committing —
         // bail cleanly on overflow.
-        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = PrepareAncestorSplitWrites(
+        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = this.PrepareAncestorSplitWrites(
             layout, tdefPage, path, leftSummary, rightSummaries);
         if (splitAncestorWrites is null)
         {
@@ -576,7 +576,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         if (leafNext > 0)
         {
-            byte[] nextLeaf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+            byte[] nextLeaf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
 
             // prev_page is per layout (§4.1).
             Wi32(nextLeaf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
@@ -629,7 +629,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         for (int depth = 0; depth < 32; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -833,7 +833,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         DecodedIntermediateEntry rightmost = rightSummaries[rightSummaries.Length - 1];
         DecodedIntermediateEntry newAncestor = rightmost with { ChildPage = step.PageNumber };
         List<DescentStep> subPath = path.GetRange(0, level);
-        List<(long PageNum, byte[] Bytes)>? more = PrepareAncestorReplaceWrites(layout, tdefPage, subPath, newAncestor);
+        List<(long PageNum, byte[] Bytes)>? more = this.PrepareAncestorReplaceWrites(layout, tdefPage, subPath, newAncestor);
         if (more is null)
         {
             return null;
@@ -929,7 +929,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         // ── Phase A: per-key descent → group by leaf ─────────────────
-        Dictionary<long, LeafGroup>? groups = await GroupChangesByTargetLeafAsync(
+        Dictionary<long, LeafGroup>? groups = await this.GroupChangesByTargetLeafAsync(
             layout,
             firstDp,
             addEntries,
@@ -1022,7 +1022,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] leaf = await ReadAndClonePageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await this.ReadAndClonePageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
 
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -1163,7 +1163,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             long[] pageNumbers = AllocateSplitPageNumbers(group.LeafPage, splitCount, nextAllocatedPageNumber);
             nextAllocatedPageNumber += splitCount - 1;
 
-            byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
+            byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
             if (pageBytesAll is null)
             {
                 return false;
@@ -1271,7 +1271,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             NextAllocatedPageNumber = nextAllocatedPageNumber,
         };
-        bool stagingOk = await TryStageIntermediateRewritesAsync(
+        bool stagingOk = await this.TryStageIntermediateRewritesAsync(
             layout,
             tdefPage,
             groups,
@@ -1316,7 +1316,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         foreach ((long neighbourPage, long newPrevValue) in leafNextPointerPatches)
         {
-            byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
+            byte[] neighbour = await this.ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 prev_page (per layout).
             Wi32(neighbour, layout.PrevPageOffset, checked((int)newPrevValue));
@@ -1325,7 +1325,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         foreach ((long neighbourPage, long newNextValue) in leafPrevPointerPatches)
         {
-            byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
+            byte[] neighbour = await this.ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 next_page (per layout).
             Wi32(neighbour, layout.NextPageOffset, checked((int)newNextValue));
@@ -1345,7 +1345,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // newPageAppends above, so the page number is stable.
         if (newRootPage.HasValue)
         {
-            byte[] tdefBytes = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            byte[] tdefBytes = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage.Value));
             await writer.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
@@ -1381,7 +1381,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         for (int i = 0; i < addEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = addEntries[i];
-            LeafGroup? g = await DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
@@ -1399,7 +1399,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         for (int i = 0; i < removeEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = removeEntries[i];
-            LeafGroup? g = await DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
@@ -1426,7 +1426,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // captured path lets us verify the key actually landed there
         // (reusing a stale path could mis-route a key that overshoots).
         var path = new List<DescentStep>();
-        long leafPage = await DescendCapturingAsync(layout, firstDp, key, path, cancellationToken).ConfigureAwait(false);
+        long leafPage = await this.DescendCapturingAsync(layout, firstDp, key, path, cancellationToken).ConfigureAwait(false);
         if (leafPage <= 0 || path.Count == 0)
         {
             return null;
@@ -1721,7 +1721,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 }
                 else
                 {
-                    newTail = await GetEffectiveTailPageAsync(
+                    newTail = await this.GetEffectiveTailPageAsync(
                         layout, lastChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -1787,7 +1787,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     for (int p = 0; p < nSplit; p++)
                     {
                         DecodedIntermediateEntry lastEntry = splitInts[p][splitInts[p].Count - 1];
-                        intTails[p] = await GetEffectiveTailPageAsync(
+                        intTails[p] = await this.GetEffectiveTailPageAsync(
                             layout, lastEntry.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
                             .ConfigureAwait(false);
                     }
@@ -1969,7 +1969,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         List<IndexEntry> addEntries,
         CancellationToken cancellationToken)
     {
-        long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
+        long leftmostLeaf = await this.DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
         if (leftmostLeaf <= 0)
         {
             return false;
@@ -1986,7 +1986,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] leaf = await ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await this.ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return false;
@@ -2025,7 +2025,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             expectedPage++;
         }
 
-        byte[] currentTdef = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] currentTdef = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
         await writer.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
         return true;
