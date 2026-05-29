@@ -17,9 +17,11 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Regression tests for MS-OFFCRYPTO §2.3.6 "Standard" encryption support
 /// in <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
-///
+/// </para>
+/// <para>
 /// Standard encryption is the scheme used by password-encrypted .accdb files
 /// produced by Access 2007. The file is a CFB compound document with:
 ///   • <c>EncryptionInfo</c>  — version (3,2) or (4,2) binary header with
@@ -27,7 +29,8 @@ using Xunit;
 ///                              encrypted verifier/hash fields.
 ///   • <c>EncryptedPackage</c> — 8-byte LE decrypted size + AES-128-CBC
 ///                              encrypted data (IV = all zeros).
-///
+/// </para>
+/// <para>
 /// Tests are structured as:
 ///   1. Password enforcement (no password, wrong password)
 ///   2. Happy path (successful open, catalog, data reading)
@@ -35,6 +38,7 @@ using Xunit;
 ///   4. Malformed encryption data (truncated, corrupt headers)
 ///   5. Null guards
 ///   6. Format detection.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>

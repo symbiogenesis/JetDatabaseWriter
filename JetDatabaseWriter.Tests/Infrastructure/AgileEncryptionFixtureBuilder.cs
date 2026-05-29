@@ -7,16 +7,19 @@ using System.Text;
 using JetDatabaseWriter.Tests.Encryption;
 
 /// <summary>
+/// <para>
 /// Builds a real, ECMA-376 §2.3.4 "Agile"–encrypted .accdb fixture in
 /// memory. The output is a CFB v4 (4096-byte sector) compound document
 /// containing two streams:
 ///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
 ///   • <c>EncryptedPackage</c> — 8-byte LE size + AES-256-CBC encrypted
 ///                               segments (4096 bytes each)
-///
+/// </para>
+/// <para>
 /// Used exclusively by <see cref="AgileEncryptionTests"/>. Once the
 /// production reader implements Agile decryption, the test public-API
 /// assertions in that test class verify the round-trip.
+/// </para>
 /// </summary>
 internal static class AgileEncryptionFixtureBuilder
 {

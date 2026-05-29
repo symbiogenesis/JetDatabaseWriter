@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Tests verifying that the writer respects the per-column
 /// <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c> (bit 0x01 in the TDEF
 /// column descriptor ExtraFlags byte at offset 16). Writer-created
@@ -15,9 +16,11 @@ using Xunit;
 /// emit the compressed form (FF FE + 1 byte/char) for Latin-1 text.
 /// Columns without the flag (e.g. system table columns authored by
 /// DAO/Access) must always emit plain UCS-2 LE.
-///
+/// </para>
+/// <para>
 /// Reader-side: the reader decodes both forms correctly regardless
 /// of the flag — it detects compression by the FF FE marker bytes.
+/// </para>
 /// </summary>
 public sealed class CompressedUnicodeFlagTests
 {

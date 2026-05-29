@@ -15,17 +15,20 @@ using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Round-trip tests for the encryption-mutation API exposed by
 /// <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>,
 /// <see cref="AccessWriter.ChangePasswordAsync(string, string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>,
 /// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>.
-///
+/// </para>
+/// <para>
 /// Each selectable format follows the same round-trip:
 ///   1. Clone an unencrypted source database to a temp file.
 ///   2. Encrypt with one of the supported target formats.
 ///   3. Verify <see cref="AccessReader"/> can re-open with the new password.
 ///   4. Change the password; verify only the new password works.
 ///   5. Decrypt; verify the file opens with no password and matches the original tables.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable

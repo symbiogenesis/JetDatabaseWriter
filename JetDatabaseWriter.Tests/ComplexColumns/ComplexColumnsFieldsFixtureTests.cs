@@ -8,22 +8,26 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Tests targeting <c>ComplexFields.accdb</c> — an ACCDB fixture created by
 /// Access 16 COM automation. It contains:
 ///   • Table <c>Documents</c> — columns ID (LONG), Title (TEXT), Attachments (ATTACHMENT / 0x12).
 ///     Two rows inserted, each with one attached .txt file.
 ///   • Table <c>Tags</c> — plain text column used as a non-complex control table.
-///
+/// </para>
+/// <para>
 /// ── Important ACE format finding ────────────────────────────────────────────
 /// Access 2007+ ACCDB stores Attachment columns as column_type = 0x12 (Complex)
 /// in the TDEF column descriptor, NOT as 0x11 (Attachment).
 /// The specific subtype (Attachment vs. Multi-Value vs. Version History) is
 /// stored in the system table <c>MSysComplexColumns</c>.
-///
+/// </para>
+/// <para>
 /// ── Complex-field coverage ──────────────────────────────────────────────────
 ///   • TypeName — resolved via MSysComplexColumns lookup.
 ///   • Cell values — attachment cells are decoded by resolving the complex_id
 ///     against the hidden flat attachment table recorded in MSysComplexColumns.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>

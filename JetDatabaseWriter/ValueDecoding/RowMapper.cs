@@ -86,17 +86,20 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
+    /// <para>
     /// Compiles a single delegate that materializes a fresh <typeparamref name="T"/>
     /// from an <c>object?[]</c> row in one call. The <c>new T()</c> is baked into
     /// the compiled expression tree itself — no captured delegates, no extra
     /// per-row allocations.
-    ///
+    /// </para>
+    /// <para>
     /// When <paramref name="sourceTypes"/> is supplied and a column's source type
     /// matches the target property's underlying type, the generated expression
     /// emits a direct unbox-and-assign (skipping the runtime <c>GetType()</c>
     /// check and the <see cref="Convert.ChangeType(object, Type, IFormatProvider)"/>
     /// fallback). Hyperlink ↔ string interop is preserved via the
     /// <see cref="CoerceToTarget"/> helper.
+    /// </para>
     /// </summary>
     /// <param name="headers">The headers.</param>
     /// <param name="sourceTypes">The source types.</param>

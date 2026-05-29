@@ -7,8 +7,8 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Regression tests for ACCDB (ACE) legacy password verification.
-///
+/// <para>Regression tests for ACCDB (ACE) legacy password verification.</para>
+/// <para>
 /// The <c>AesEncrypted.accdb</c> fixture was created with:
 ///   <c>$access.DBEngine.CompactDatabase(plain, dest, ";;", 4, ";pwd=secret")</c>
 /// using Access 16 COM automation. Its characteristics:
@@ -17,12 +17,14 @@ using Xunit;
 ///   • Encryption flag 0x62: 0x07 (bits 0/1/2 set)
 ///   • Data pages: NOT AES-encrypted; readable without decryption
 ///   • Password: stored via ACE internal scheme (not the Jet4 XOR mask at 0x42)
-///
+/// </para>
+/// <para>
 /// The reader detects the ACE password flag at offset 0x62 for ACCDB files
 /// (ver ≥ 2) and verifies the password using the ACE internal scheme. Opening
 /// without a password, or with the wrong password, throws
 /// <see cref="UnauthorizedAccessException"/>; opening with the correct password
 /// succeeds and returns data.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixture<DatabaseCache>

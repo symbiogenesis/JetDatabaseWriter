@@ -11,19 +11,22 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Regression tests for ACCDB AES page decryption (synthetic CFB-wrapped legacy AES path).
-///
+/// <para>Regression tests for ACCDB AES page decryption (synthetic CFB-wrapped legacy AES path).</para>
+/// <para>
 /// Each test creates a synthetic AES-encrypted ACCDB by:
 ///   1. Cloning NorthwindTraders.accdb
 ///   2. Setting CFB magic header (D0 CF 11 E0) + encoding the password
 ///   3. AES-encrypting all data pages (pages 1+)
-///
+/// </para>
+/// <para>
 /// The reader is expected to detect CFB magic, verify the password, and
 /// transparently decrypt pages so that catalog, TDEF and data reads return
 /// the same content as an unencrypted copy.
-///
+/// </para>
+/// <para>
 /// The fixture uses a simplified scheme (SHA-256 key + AES-128-ECB) — distinct
 /// from the ECMA-376 Agile path covered by <see cref="AgileEncryptionTests"/>.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>

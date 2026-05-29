@@ -12,17 +12,19 @@ using JetDatabaseWriter.Pages;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Verifies the TDEF-page invariant that every per-real-idx
 /// <c>num_idx_rows</c> counter (4-byte LE u32 at offset
 /// <c>BlockEnd + i*RealIdxEntrySz + 4</c>) tracks the table-level
 /// <c>row_count</c> field at <see cref="Constants.TableDefinition.RowCountOffset"/>.
-///
+/// </para>
+/// <para>
 /// This invariant is required for DAO Compact &amp; Repair: when the two
 /// disagree DAO aborts compact with "could not find the object 'MSysDb'".
 /// See <see href="docs/design/round-trip-test-failures.md" /> hypothesis #2
 /// and the corresponding fix in <c>AccessWriter.UpdateRowCountAsync</c>.
-///
-/// The invariant is exercised in two paths:
+/// </para>
+/// <para>The invariant is exercised in two paths:</para>
 /// <list type="bullet">
 ///   <item><c>CreateTableAsync</c> writes a new <c>MSysObjects</c> row → the
 ///   MSysObjects TDEF must bump both <c>row_count</c> and the per-real-idx

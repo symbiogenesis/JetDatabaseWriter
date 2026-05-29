@@ -11,14 +11,17 @@ using Xunit;
 #pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
 
 /// <summary>
+/// <para>
 /// Robustness tests that mirror the mdbtools libFuzzer harness
 /// (https://github.com/mdbtools/mdbtools/blob/dev/src/fuzz/fuzz_mdb.c):
 /// open arbitrary bytes as a database, walk the catalog, read every column, and
 /// stream every row. The harness asserts only that the library never crashes the
 /// process — every failure mode must surface as a documented exception.
-///
+/// </para>
+/// <para>
 /// We seed the corpus with deterministic byte patterns, single-byte mutations of
 /// a real header, and pseudo-random buffers (fixed seed for reproducibility).
+/// </para>
 /// </summary>
 public sealed class AccessReaderFuzzRobustnessTests
 {

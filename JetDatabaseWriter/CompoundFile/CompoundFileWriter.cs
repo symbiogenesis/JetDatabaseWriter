@@ -7,10 +7,12 @@ using System.Text;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
+/// <para>
 /// Minimal writer for the OLE / Microsoft Compound File Binary (CFB / OLE2)
 /// format ("MS-CFB"). Emits a compound document containing the supplied named
 /// streams as top-level entries under the Root Entry.
-///
+/// </para>
+/// <para>
 /// Only the subset needed to wrap Office Crypto API encrypted .accdb files and
 /// test fixtures is implemented:
 ///   • Single root storage with N stream children (typically two:
@@ -19,10 +21,12 @@ using JetDatabaseWriter.Infrastructure;
 ///   • FAT sectors addressed by the header DIFAT and, when needed, DIFAT
 ///     extension sectors
 ///   • Directory entries stored in regular directory sectors
-///
+/// </para>
+/// <para>
 /// The directory red-black tree is laid out as an ascending right-sibling
 /// chain, which is a valid representation accepted by Microsoft Office and
 /// the <see cref="CompoundFileReader"/> in this assembly.
+/// </para>
 /// </summary>
 internal static class CompoundFileWriter
 {

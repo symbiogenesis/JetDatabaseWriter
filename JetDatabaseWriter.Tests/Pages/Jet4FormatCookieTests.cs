@@ -13,15 +13,18 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Verifies the Jet4/ACE format-wide magic cookie <c>0x00000659</c> is
 /// correctly stamped into every required location on writer-emitted TDEFs
 /// (header, column descriptors, real-idx physical descriptors, logical-idx
 /// entries), and that MSysObjects catalog rows carry the expected
 /// <c>Owner</c>, <c>LvProp</c>, and <c>MSysACEs</c> entries.
-///
+/// </para>
+/// <para>
 /// These invariants are required for DAO Compact &amp; Repair — omitting
 /// any one of them causes err 3011 "could not find the object 'MSysDb'".
 /// See <see href="docs/design/round-trip-test-failures.md" />.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<DatabaseCache>

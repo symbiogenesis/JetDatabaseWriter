@@ -15,13 +15,16 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Regression tests for ECMA-376 §2.3.4.10–.13 "Agile" encryption support
 /// in <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
-///
+/// </para>
+/// <para>
 /// Office Crypto Agile encryption is one form of the modern scheme used by
 /// password-encrypted .accdb files. These tests exercise the CFB compound
 /// document shape with two streams:
-///
+/// </para>
+/// <para>
 ///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
 ///                              (PBKDF salt, spinCount, hashAlgorithm,
 ///                              cipherAlgorithm, encryptedKeyValue, etc.)
@@ -29,7 +32,8 @@ using Xunit;
 ///                              AES-CBC encrypted segments (4096-byte
 ///                              segments with per-segment IV derived from
 ///                              the keyData salt and segment index).
-///
+/// </para>
+/// <para>
 /// These tests build a real, spec-compliant Agile-encrypted .accdb fixture
 /// in memory by wrapping <see cref="TestDatabases.ComplexFields"/> and feed
 /// it through <see cref="AccessReader.OpenAsync(Stream, AccessReaderOptions?, bool, System.Threading.CancellationToken)"/>
@@ -41,6 +45,7 @@ using Xunit;
 ///   5. Verify the password (verifierHashInput vs verifierHashValue)
 ///   6. Decrypt the EncryptedPackage segments
 ///   7. Hand the decrypted bytes to the existing JET page reader.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>

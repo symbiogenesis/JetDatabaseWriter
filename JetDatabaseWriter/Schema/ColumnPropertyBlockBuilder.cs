@@ -13,10 +13,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (<c>MR2\0</c> / <c>KKD\0</c>).
 /// </summary>
 /// <remarks>
+/// <para>
 /// Mirrors the on-disk layout consumed by <see cref="ColumnPropertyBlock.Parse(byte[], DatabaseFormat)"/>;
 /// see <see href="docs/design/persisted-column-properties-format-notes.md" /> §2 for the
 /// authoritative byte layout.
-///
+/// </para>
+/// <para>
 /// Round-trip guarantee: an unmodified blob parsed via
 /// <see cref="ColumnPropertyBlock.Parse(byte[], DatabaseFormat)"/> and re-serialized via
 /// <see cref="FromBlock(ColumnPropertyBlock)"/> + <see cref="ToBytes(DatabaseFormat)"/>
@@ -24,6 +26,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// and unknown chunks all preserved). Byte-identity with the original is *not*
 /// guaranteed because the inner property-block header carries opaque bytes that the
 /// parser discards.
+/// </para>
 /// </remarks>
 internal sealed class ColumnPropertyBlockBuilder
 {

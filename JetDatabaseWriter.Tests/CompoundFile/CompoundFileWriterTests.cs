@@ -9,13 +9,16 @@ using JetDatabaseWriter.CompoundFile;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Round-trip tests for <see cref="CompoundFileWriter"/> verified by
 /// <see cref="CompoundFileReader"/>. Modelled on OpenMcdf's StreamTests
 /// (WriteThenRead pattern), but using only this assembly's CFB code.
-///
+/// </para>
+/// <para>
 /// <see cref="CompoundFileWriter"/> emits a single root storage and N top-level
 /// streams. The default writer uses CFB v3 (512-byte sectors); the Office-crypto
 /// variant uses CFB v4 (4096-byte sectors).
+/// </para>
 /// </summary>
 public sealed class CompoundFileWriterTests
 {

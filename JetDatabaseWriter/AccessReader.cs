@@ -31,13 +31,16 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
+/// <para>
 /// Pure-managed reader for Microsoft Access JET databases (.mdb / .accdb).
 /// No OleDB, ODBC, or ACE/Jet driver installation required.
-///
+/// </para>
+/// <para>
 /// Supports:
 ///   Jet3  – Access 97 (.mdb)
 ///   Jet4+ – Access 2000-2019 (.mdb / .accdb)
-///
+/// </para>
+/// <para>
 /// Features:
 ///   ✓ All standard data types (Text, Integer, Date, GUID, Currency, etc.)
 ///   ✓ MEMO fields (inline + single-page + multi-page LVAL chains)
@@ -48,18 +51,20 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 ///   ✓ Catalog caching — single MSysObjects scan, reused across calls
 ///   ✓ Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.)
 ///   ✓ Password-protected databases — supports the implemented Jet/ACE encryption formats
-///
+/// </para>
+/// <para>
 /// Limitations:
 ///   ✓ Attachment and multi-value complex fields — decoded via hidden flat tables
 ///   ✓ Access-file linked tables — read-through via trusted source paths
 ///   ✓ CSV/text linked tables — managed string-valued delimited-text read-through via trusted source paths
 ///   ✗ ODBC linked tables — metadata only
 ///   ✗ Overflow rows (span multiple pages) — silently skipped (rare edge case)
-///
+/// </para>
+/// <para>
 /// Based on the mdbtools format specification:
 ///   https://github.com/mdbtools/mdbtools/blob/master/HACKING.md
-///
-/// Original C implementation by mdbtools contributors (see HACKING.md for details).
+/// </para>
+/// <para>Original C implementation by mdbtools contributors (see HACKING.md for details).</para>
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {

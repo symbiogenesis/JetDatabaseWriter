@@ -9,9 +9,11 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Cross-implementation conformance tests against the upstream mdbtools fixture
 /// corpus (https://github.com/mdbtools/mdbtestdata/tree/master/data).
-///
+/// </para>
+/// <para>
 /// Each test mirrors something mdbtools' own test scripts assert against the
 /// same files:
 ///   * test_script.sh — runs every mdb-* utility against nwind.mdb and
@@ -22,10 +24,12 @@ using Xunit;
 ///                      via mdb-sql.
 ///                      https://github.com/mdbtools/mdbtools/blob/dev/test_sql.sh
 ///                      https://github.com/mdbtools/mdbtestdata/blob/master/sql/nwind.sql
-///
+/// </para>
+/// <para>
 /// Tests are skipped (not failed) when the fixture is absent so the suite still
 /// runs in environments where the optional mdbtools/ directory has not been
 /// populated.
+/// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<DatabaseCache>

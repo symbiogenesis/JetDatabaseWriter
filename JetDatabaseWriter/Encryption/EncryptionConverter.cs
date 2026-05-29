@@ -14,14 +14,17 @@ using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
+/// <para>
 /// Implements the read-decrypt-rewrite pipeline used by
 /// <see cref="AccessWriter.ChangePasswordAsync(string, string?, string, AccessWriterOptions?, CancellationToken)"/>,
 /// <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
 /// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>.
-///
+/// </para>
+/// <para>
 /// All public entry points are pure byte-array transforms — they never touch
 /// the filesystem directly, so the caller can decide whether to seek-and-rewrite
 /// an existing stream or write to a temp file and rename atomically.
+/// </para>
 /// </summary>
 internal static class EncryptionConverter
 {

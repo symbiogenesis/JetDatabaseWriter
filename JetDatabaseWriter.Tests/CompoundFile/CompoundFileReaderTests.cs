@@ -9,18 +9,22 @@ using JetDatabaseWriter.CompoundFile;
 using Xunit;
 
 /// <summary>
+/// <para>
 /// Tests for <see cref="CompoundFileReader"/> using fixtures borrowed from
 /// the OpenMcdf project (see <see href="THIRD-PARTY-NOTICES.md" />).
-///
+/// </para>
+/// <para>
 /// The OpenMcdf "TestStream_v{3,4}_{N}.cfs" corpus contains a single
 /// top-level stream named "TestStream" of length N filled with bytes equal
 /// to <c>i % 256</c>. Sizes are chosen to exercise the boundaries of the
 /// mini-stream cutoff (4096) and the regular sector size (512), including
 /// the off-by-one cases on either side.
-///
+/// </para>
+/// <para>
 /// The OpenMcdf v4 fixtures on disk are actually written with major
 /// version 3 / 512-byte sectors (see file headers); we treat them as a
 /// second copy of the v3 corpus.
+/// </para>
 /// </summary>
 public sealed class CompoundFileReaderTests
 {
