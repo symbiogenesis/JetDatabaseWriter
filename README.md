@@ -40,7 +40,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
-| ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
+| ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
 | ✅ **Transactions** | `BeginTransactionAsync()` page-buffered `CommitAsync` / `RollbackAsync` via in-memory journal |
 | ✅ **Storage maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
 | ✅ **Performance** | Configurable LRU page cache, optional parallel page reads, streams millions of rows without loading the file |
@@ -746,7 +746,7 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 The items below are either **not yet implemented** or are important behavioral caveats, and are the most likely places to hit a wall.
 
 ### Thread safety and concurrent access
-- **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. The page byte-range locks are cooperative/advisory: they help protocol-obeying writers serialize page mutations, but they are not a substitute for external coordination with arbitrary tools.
+- **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. Page byte-range locks use `FileStream.Lock` where .NET supports it, such as Windows, Linux, and Android; on unsupported platforms such as iOS, macOS, and tvOS, the option is a no-op and lockfiles or external coordination are the authoritative protection.
 
 ### Transaction durability
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.

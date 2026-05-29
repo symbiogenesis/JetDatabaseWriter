@@ -9,8 +9,9 @@ using Xunit;
 
 /// <summary>
 /// Tests for <see cref="JetByteRangeLock"/> — the cooperative JET page-lock helper.
-/// Lock acquisition uses Win32 <c>LockFileEx</c>; the contention tests are skipped on
-/// non-Windows hosts where the helper degrades to a no-op.
+/// Lock acquisition uses <see cref="FileStream.Lock(long, long)"/> where the BCL
+/// supports byte-range locks. Same-process contention tests remain Windows-only
+/// because POSIX record locks are process-scoped.
 /// </summary>
 public sealed class JetByteRangeLockTests : IDisposable
 {
@@ -66,6 +67,8 @@ public sealed class JetByteRangeLockTests : IDisposable
         using var fs = OpenReadWriteStream(_tempPath);
         JetByteRangeLock helper = JetByteRangeLock.Create(fs, enabled: true, lockTimeoutMilliseconds: 1_000);
 
+        Assert.Equal(JetByteRangeLock.PlatformSupportsByteRangeLocks(), helper.IsEnabled);
+
         using var a = helper.AcquirePageLock(pageNumber: 1, pageSize: 4096);
         using var b = helper.AcquirePageLock(pageNumber: 2, pageSize: 4096);
     }
@@ -75,7 +78,7 @@ public sealed class JetByteRangeLockTests : IDisposable
     {
         if (!IsWindows)
         {
-            return; // No-op on non-Windows; helper is inert there.
+            return;
         }
 
         using var first = OpenReadWriteStream(_tempPath);

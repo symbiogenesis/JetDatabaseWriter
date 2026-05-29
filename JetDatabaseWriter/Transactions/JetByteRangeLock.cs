@@ -3,39 +3,40 @@ namespace JetDatabaseWriter.Transactions;
 using System;
 using System.Diagnostics;
 using System.IO;
+#if NETSTANDARD2_1
 using System.Runtime.InteropServices;
+#endif
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 
 /// <summary>
 /// Cooperative byte-range locking against the database file using the JET
-/// page-lock protocol that Microsoft Access, the OLE DB JET provider, and the
-/// ACE engine all observe.
+/// page-lock protocol.
 /// </summary>
 /// <remarks>
 /// <para>
-/// JET overlays a logical lock map onto the database file via Win32
-/// <c>LockFileEx</c>/<c>UnlockFileEx</c>. Writers acquire an exclusive
-/// page-sized range at <c>pageNumber * pageSize</c> for the duration of a
-/// page mutation. Other openers that follow the same protocol see the lock
-/// and block (or, here, time out). The locks are advisory — they only matter
-/// against cooperating openers — but every Microsoft tool that touches a JET
-/// file does cooperate, so honouring the protocol is what closes the
-/// coexistence gap with Access.
+/// JET overlays a logical lock map onto the database file. Writers acquire an
+/// exclusive page-sized range at <c>pageNumber * pageSize</c> for the duration
+/// of a page mutation. Other openers that follow the same protocol see the lock
+/// and block (or, here, time out). The locks are advisory: they only matter
+/// against cooperating openers.
 /// </para>
 /// <para>
-/// <c>LockFileEx</c> is Windows-only. On non-Windows platforms — and when
-/// the underlying <see cref="Stream"/> is not a <see cref="FileStream"/>
-/// (e.g. <see cref="MemoryStream"/> for in-memory ACCDB rewrap) — every
-/// public method on this type is a no-op and returns a sentinel disposable.
+/// The implementation uses the managed <see cref="FileStream.Lock(long, long)"/>
+/// and <see cref="FileStream.Unlock(long, long)"/> APIs. The runtime maps those
+/// calls to the platform's native byte-range lock where supported, including
+/// Windows, Linux, and Android. On platforms where the BCL marks range locking
+/// unsupported, and when the underlying <see cref="Stream"/> is not a
+/// <see cref="FileStream"/> (e.g. <see cref="MemoryStream"/> for in-memory ACCDB
+/// rewrap), every public method on this type is a no-op and returns a sentinel
+/// disposable.
 /// </para>
 /// <para>
-/// Acquisition uses a poll loop with <c>LOCKFILE_FAIL_IMMEDIATELY</c>: try to
-/// take the lock, sleep <see cref="PollIntervalMilliseconds"/>, retry until
-/// the configured timeout elapses. This keeps the implementation portable to
-/// the synchronous and async call sites in <c>AccessBase</c> without
-/// depending on overlapped I/O completion.
+/// Acquisition uses a poll loop: try to take the lock, sleep
+/// <see cref="PollIntervalMilliseconds"/>, retry until the configured timeout
+/// elapses. This keeps the implementation portable to the synchronous and async
+/// call sites in <c>AccessBase</c>.
 /// </para>
 /// </remarks>
 internal sealed class JetByteRangeLock
@@ -43,49 +44,40 @@ internal sealed class JetByteRangeLock
     /// <summary>How often the acquisition poll loop retries the lock.</summary>
     internal const int PollIntervalMilliseconds = 20;
 
-    private const int ErrorLockViolation = 33;
-    private const int ErrorIoPending = 997;
-
-    private readonly SafeFileHandle? handle;
+    private readonly FileStream? fileStream;
     private readonly int lockTimeoutMs;
 
-    private JetByteRangeLock(SafeFileHandle? handle, bool enabled, int lockTimeoutMs)
+    private JetByteRangeLock(FileStream? fileStream, bool enabled, int lockTimeoutMs)
     {
-        this.handle = handle;
+        this.fileStream = fileStream;
         IsEnabled = enabled;
         this.lockTimeoutMs = lockTimeoutMs;
     }
 
     /// <summary>
-    /// Gets a value indicating whether byte-range locking is active. False on non-Windows
-    /// hosts, when the backing <see cref="Stream"/> has no Win32 file handle, or when the
-    /// caller opted out via options.
+    /// Gets a value indicating whether byte-range locking is active. False on
+    /// unsupported hosts, when the backing <see cref="Stream"/> is not a
+    /// <see cref="FileStream"/>, or when the caller opted out via options.
     /// </summary>
     public bool IsEnabled { get; }
 
     /// <summary>
     /// Creates a <see cref="JetByteRangeLock"/> bound to the supplied database stream.
     /// Returns an inert (disabled) instance when <paramref name="enabled"/> is false,
-    /// the host OS is not Windows, or <paramref name="stream"/> is not a backed by a
-    /// Win32 file handle.
+    /// byte-range locks are not supported by the host OS, or
+    /// <paramref name="stream"/> is not backed by a file.
     /// </summary>
     /// <param name="stream">The database file stream.</param>
     /// <param name="enabled">Caller's opt-in flag from options.</param>
     /// <param name="lockTimeoutMilliseconds">Maximum milliseconds to wait for a contended lock.</param>
     public static JetByteRangeLock Create(Stream stream, bool enabled, int lockTimeoutMilliseconds)
     {
-        if (!enabled || !PlatformIsWindows() || stream is not FileStream fs)
+        if (!enabled || !PlatformSupportsByteRangeLocks() || stream is not FileStream fileStream)
         {
-            return new JetByteRangeLock(handle: null, enabled: false, lockTimeoutMilliseconds);
+            return new JetByteRangeLock(fileStream: null, enabled: false, lockTimeoutMilliseconds);
         }
 
-        var handle = fs.SafeFileHandle;
-        if (handle?.IsInvalid != false || handle.IsClosed)
-        {
-            return new JetByteRangeLock(handle: null, enabled: false, lockTimeoutMilliseconds);
-        }
-
-        return new JetByteRangeLock(handle, enabled: true, lockTimeoutMilliseconds);
+        return new JetByteRangeLock(fileStream, enabled: true, lockTimeoutMilliseconds);
     }
 
     /// <summary>
@@ -94,7 +86,7 @@ internal sealed class JetByteRangeLock
     /// reader/writer constructor has had a chance to bind real options, so callers can
     /// dispatch through a non-nullable field without per-call null checks.
     /// </summary>
-    public static JetByteRangeLock Disabled { get; } = new(handle: null, enabled: false, lockTimeoutMs: 0);
+    public static JetByteRangeLock Disabled { get; } = new(fileStream: null, enabled: false, lockTimeoutMs: 0);
 
     /// <summary>
     /// Acquires an exclusive byte-range lock on the database page at
@@ -163,33 +155,26 @@ internal sealed class JetByteRangeLock
     /// <param name="offset">The offset.</param>
     public void ReleaseCommitLock(long? offset)
     {
-        if (offset.HasValue && IsEnabled && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (offset.HasValue && IsEnabled)
         {
             Release(offset.Value, length: 1);
         }
     }
 
-    private static bool PlatformIsWindows() => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool LockFile(
-        SafeFileHandle hFile,
-        uint dwFileOffsetLow,
-        uint dwFileOffsetHigh,
-        uint nNumberOfBytesToLockLow,
-        uint nNumberOfBytesToLockHigh);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool UnlockFile(
-        SafeFileHandle hFile,
-        uint dwFileOffsetLow,
-        uint dwFileOffsetHigh,
-        uint nNumberOfBytesToUnlockLow,
-        uint nNumberOfBytesToUnlockHigh);
+#if NET5_0_OR_GREATER
+    [SupportedOSPlatformGuard("windows")]
+    [SupportedOSPlatformGuard("linux")]
+    [SupportedOSPlatformGuard("android")]
+    internal static bool PlatformSupportsByteRangeLocks() =>
+           OperatingSystem.IsWindows()
+        || OperatingSystem.IsLinux()
+        || OperatingSystem.IsAndroid();
+#else
+    internal static bool PlatformSupportsByteRangeLocks() =>
+           RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        || RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+        || RuntimeInformation.IsOSPlatform(OSPlatform.Create("ANDROID"));
+#endif
 
     private void AcquireBlocking(long offset, long length)
     {
@@ -236,52 +221,38 @@ internal sealed class JetByteRangeLock
 
     private bool TryAcquire(long offset, long length)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!PlatformSupportsByteRangeLocks())
         {
             return true;
         }
 
-        uint offsetLow = unchecked((uint)(offset & 0xFFFFFFFFL));
-        uint offsetHigh = unchecked((uint)(offset >> 32));
-        uint lengthLow = unchecked((uint)(length & 0xFFFFFFFFL));
-        uint lengthHigh = unchecked((uint)(length >> 32));
-
-        bool ok = LockFile(handle!, offsetLow, offsetHigh, lengthLow, lengthHigh);
-        if (ok)
+        try
         {
+            fileStream!.Lock(offset, length);
             return true;
         }
-
-        int err = Marshal.GetLastWin32Error();
-        if (err == ErrorLockViolation || err == ErrorIoPending)
+        catch (IOException)
         {
             return false;
         }
-
-        throw new IOException(
-            $"LockFile failed at offset 0x{offset:X} length {length} (Win32 error {err}).");
     }
 
     private void Release(long offset, long length)
     {
-        if (!IsEnabled || handle?.IsInvalid != false || handle.IsClosed)
+        if (!IsEnabled || fileStream is null || !PlatformSupportsByteRangeLocks())
         {
             return;
         }
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        try
         {
-            return;
+            fileStream.Unlock(offset, length);
         }
-
-        uint offsetLow = unchecked((uint)(offset & 0xFFFFFFFFL));
-        uint offsetHigh = unchecked((uint)(offset >> 32));
-        uint lengthLow = unchecked((uint)(length & 0xFFFFFFFFL));
-        uint lengthHigh = unchecked((uint)(length >> 32));
-
-        // Release failures are not actionable from a finally block; the handle
-        // will release any outstanding locks when it is closed.
-        _ = UnlockFile(handle, offsetLow, offsetHigh, lengthLow, lengthHigh);
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or PlatformNotSupportedException)
+        {
+            // Release failures are not actionable from a finally block; closing
+            // the stream releases any outstanding native file locks.
+        }
     }
 
     private void ThrowTimeout(long offset, long length)
@@ -304,10 +275,7 @@ internal sealed class JetByteRangeLock
 
             released = true;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                owner.Release(offset, length);
-            }
+            owner.Release(offset, length);
         }
     }
 

@@ -88,11 +88,12 @@ public sealed class AccessReaderOptions : IAccessOptions
 
     /// <summary>
     /// Gets a value indicating whether cooperative byte-range page locks are taken
-    /// against the database file (Win32 <c>LockFileEx</c>). Readers are not required
-    /// to participate in JET page locking; the option exists for symmetry with
+    /// against the database file. Readers are not required to participate in JET
+    /// page locking; the option exists for symmetry with
     /// <see cref="AccessWriterOptions.UseByteRangeLocks"/> for callers that want
     /// fully-consistent reads against a concurrent writer that obeys the protocol.
-    /// Default: <see langword="false"/>. No-op on non-Windows or when the reader
+    /// Default: <see langword="false"/>. No-op where
+    /// <see cref="FileStream.Lock(long, long)"/> is unsupported or when the reader
     /// was opened from a non-<see cref="FileStream"/>.
     /// </summary>
     public bool UseByteRangeLocks { get; init; }

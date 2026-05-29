@@ -1,9 +1,9 @@
 namespace JetDatabaseWriter;
 
 using System;
-using System.Runtime.InteropServices;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
+using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessWriter"/>.
@@ -89,20 +89,20 @@ public sealed class AccessWriterOptions : IAccessOptions
 
     /// <summary>
     /// Gets a value indicating whether cooperative byte-range page locks are taken
-    /// against the database file during writes (Win32 <c>LockFileEx</c>). When
+    /// against the database file during writes. When
     /// enabled, every page-write call exclusively locks the page-sized byte range
     /// at <c>pageNumber * pageSize</c> for the duration of the write, mirroring the
-    /// JET locking protocol that Microsoft Access, the OLE DB JET provider, and the
-    /// ACE engine all observe. This makes concurrent openers (Access included)
-    /// serialise their page mutations against this writer.
+    /// JET locking protocol. On Windows this uses the same byte-range lock facility
+    /// observed by Microsoft Access, the OLE DB JET provider, and the ACE engine.
     /// <para>
-    /// Default: <see langword="true"/> on Windows; <see langword="false"/> on other
-    /// platforms (the call is silently a no-op there). Has no effect when the writer
-    /// was opened from a non-<see cref="System.IO.FileStream"/>, since there is no
-    /// Win32 file handle to lock against.
+    /// Default: <see langword="true"/> on platforms where
+    /// <see cref="System.IO.FileStream.Lock(long, long)"/> is supported, such as
+    /// Windows, Linux, and Android; <see langword="false"/> where the BCL marks
+    /// byte-range locks unsupported. Has no effect when the writer was opened from
+    /// a non-<see cref="System.IO.FileStream"/>.
     /// </para>
     /// </summary>
-    public bool UseByteRangeLocks { get; init; } = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    public bool UseByteRangeLocks { get; init; } = JetByteRangeLock.PlatformSupportsByteRangeLocks();
 
     /// <summary>
     /// Gets the maximum time in milliseconds to wait when acquiring a contended

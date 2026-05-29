@@ -80,7 +80,7 @@ public abstract class AccessBase : IAccessBase
     private volatile List<LinkedTableInfo>? linkedTableCache;
 
     /// <summary>
-    /// Cooperative JET byte-range lock helper (Win32 <c>LockFileEx</c>). Defaults to
+    /// Cooperative JET byte-range lock helper. Defaults to
     /// <see cref="JetByteRangeLock.Disabled"/> so page-write paths can dispatch
     /// without a null check; <see cref="AccessReader"/> / <see cref="AccessWriter"/>
     /// replace it with a stream-bound instance once options are known.
