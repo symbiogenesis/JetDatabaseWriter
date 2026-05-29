@@ -870,7 +870,7 @@ public abstract class AccessBase : IAccessBase
 
         // Detect deleted-column gaps: if ColNum sequence has gaps, flag it
         bool hasDeletedColumns = cols.Count >= 2
-            && cols[cols.Count - 1].ColNum - cols[0].ColNum != cols.Count - 1;
+            && cols[^1].ColNum - cols[0].ColNum != cols.Count - 1;
 
         var tableDef = new TableDef
         {

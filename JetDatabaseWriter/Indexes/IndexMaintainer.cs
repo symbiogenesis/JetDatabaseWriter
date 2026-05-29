@@ -1320,7 +1320,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
 
                 List<IndexEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
-                if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[probe.Count - 1].Key) <= 0)
+                if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
                 {
                     // composite belongs in this leaf (or earlier).
                     break;

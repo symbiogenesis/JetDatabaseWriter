@@ -208,12 +208,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             throw new ArgumentException("splitPages and pageNumbers must have the same nonzero length");
         }
 
-        IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+        IndexEntry leftLast = splitPages[0][^1];
         AddParentOp(parentOps, parentPageNumber, takenIndex, IntermediateOpType.Replace, new(leftLast, pageNumbers[0]));
 
         for (int p = 1; p < splitPages.Count; p++)
         {
-            IndexEntry pLast = splitPages[p][splitPages[p].Count - 1];
+            IndexEntry pLast = splitPages[p][^1];
             AddParentOp(parentOps, parentPageNumber, takenIndex, IntermediateOpType.InsertAfter, new(pLast, pageNumbers[p]));
         }
     }
@@ -323,7 +323,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // Empty tail leaf trivially satisfies the predicate.
         if (existingTail.Count > 0)
         {
-            byte[] tailMax = existingTail[existingTail.Count - 1].Key;
+            byte[] tailMax = existingTail[^1].Key;
             for (int i = 0; i < addEntries.Count; i++)
             {
                 if (IndexHelpers.CompareKeyBytes(addEntries[i].Key, tailMax) <= 0)
@@ -481,14 +481,14 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
         int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
-        byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
+        byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
         // 5. Try to fit the spliced entries on the original leaf page.
         byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
             layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
-            IndexEntry newLast = spliced[spliced.Count - 1];
+            IndexEntry newLast = spliced[^1];
             bool maxUnchanged = IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) == 0;
 
             if (maxUnchanged)
@@ -830,7 +830,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // The right-most new summary became this parent's new max →
         // grandparent's summary entry for this parent must carry the new
         // max key.
-        DecodedIntermediateEntry rightmost = rightSummaries[rightSummaries.Length - 1];
+        DecodedIntermediateEntry rightmost = rightSummaries[^1];
         DecodedIntermediateEntry newAncestor = rightmost with { ChildPage = step.PageNumber };
         List<DescentStep> subPath = path.GetRange(0, level);
         List<(long PageNum, byte[] Bytes)>? more = this.PrepareAncestorReplaceWrites(layout, tdefPage, subPath, newAncestor);
@@ -1062,7 +1062,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 //   - Bail when either leaf-chain neighbour is being
                 //     mutated by another group in this batch (would need
                 //     coordinated pointer/content writes).
-                DescentStep mergeParent = group.Path[group.Path.Count - 1];
+                DescentStep mergeParent = group.Path[^1];
                 if (mergeParent.Entries.Count < 2)
                 {
                     return false;
@@ -1119,9 +1119,9 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 continue;
             }
 
-            byte[] oldMaxKey = existing[existing.Count - 1].Key;
+            byte[] oldMaxKey = existing[^1].Key;
 
-            DescentStep parentStep = group.Path[group.Path.Count - 1];
+            DescentStep parentStep = group.Path[^1];
 
             // ── Try in-place rewrite first ──
             byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
@@ -1137,7 +1137,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
                 existingPageRewrites[group.LeafPage] = rebuilt;
 
-                IndexEntry newLast = spliced[spliced.Count - 1];
+                IndexEntry newLast = spliced[^1];
                 if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
                 {
                     // Parent's summary entry for this leaf must be replaced.
@@ -1714,7 +1714,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             long newTail = origTail;
             if (origTail != 0)
             {
-                long lastChildPage = newEntries[newEntries.Count - 1].ChildPage;
+                long lastChildPage = newEntries[^1].ChildPage;
                 if (parentOfLeaf.Contains(deepest))
                 {
                     newTail = lastChildPage;
@@ -1773,7 +1773,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 {
                     for (int p = 0; p < nSplit; p++)
                     {
-                        DecodedIntermediateEntry lastEntry = splitInts[p][splitInts[p].Count - 1];
+                        DecodedIntermediateEntry lastEntry = splitInts[p][^1];
 
                         // Last split page inherits origTail when non-zero
                         // (preserves the existing rightmost-leaf pointer
@@ -1786,7 +1786,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 {
                     for (int p = 0; p < nSplit; p++)
                     {
-                        DecodedIntermediateEntry lastEntry = splitInts[p][splitInts[p].Count - 1];
+                        DecodedIntermediateEntry lastEntry = splitInts[p][^1];
                         intTails[p] = await this.GetEffectiveTailPageAsync(
                             layout, lastEntry.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
                             .ConfigureAwait(false);
@@ -1871,7 +1871,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     var rootEntries = new List<DecodedIntermediateEntry>(nSplit);
                     for (int p = 0; p < nSplit; p++)
                     {
-                        DecodedIntermediateEntry pLast = splitInts[p][splitInts[p].Count - 1];
+                        DecodedIntermediateEntry pLast = splitInts[p][^1];
                         rootEntries.Add(pLast);
                     }
 
@@ -1909,8 +1909,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
             // Did the page's max key change? Compare new last entry to
             // original last entry's key.
-            DecodedIntermediateEntry newMax = newEntries[newEntries.Count - 1];
-            DecodedIntermediateEntry oldMax = refStep.Entries[refStep.Entries.Count - 1];
+            DecodedIntermediateEntry newMax = newEntries[^1];
+            DecodedIntermediateEntry oldMax = refStep.Entries[^1];
             bool maxChanged = newMax != oldMax;
 
             if (maxChanged && intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gp))

@@ -152,7 +152,7 @@ internal static class IndexBTreeBuilder
                 if (currentSize + entryLen > entryAreaSize)
                 {
                     splitPages.Add(current);
-                    splitPageLastEntries.Add(current[current.Count - 1]);
+                    splitPageLastEntries.Add(current[^1]);
                     current = [];
                     currentSize = 0;
                 }
@@ -162,7 +162,7 @@ internal static class IndexBTreeBuilder
             }
 
             splitPages.Add(current);
-            splitPageLastEntries.Add(current[current.Count - 1]);
+            splitPageLastEntries.Add(current[^1]);
         }
 
         // Step 2: Validate split page-number range. Pages are sequential starting at firstPageNumber,
@@ -339,7 +339,7 @@ internal static class IndexBTreeBuilder
             if (currentSize + len > entryAreaSize)
             {
                 groups.Add(current);
-                lastPerGroup.Add(current[current.Count - 1].Summary);
+                lastPerGroup.Add(current[^1].Summary);
                 current = [];
                 currentSize = 0;
             }
@@ -349,7 +349,7 @@ internal static class IndexBTreeBuilder
         }
 
         groups.Add(current);
-        lastPerGroup.Add(current[current.Count - 1].Summary);
+        lastPerGroup.Add(current[^1].Summary);
         return (groups, lastPerGroup);
     }
 
