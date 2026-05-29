@@ -96,7 +96,7 @@ internal static class OfficeCryptoStandard
         byte[] encryptedVerifierHash = AesCbcZeroIv(verifierHashPadded, key, encrypt: true);
 
         // Build EncryptionInfo binary blob.
-        byte[] encryptionInfo = BuildEncryptionInfo(salt, encryptedVerifier, encryptedVerifierHash, keyBits, spinCount);
+        byte[] encryptionInfo = BuildEncryptionInfo(salt, encryptedVerifier, encryptedVerifierHash, keyBits);
 
         // Build EncryptedPackage: 8-byte LE size prefix + AES-CBC encrypted data.
         byte[] encryptedPackage = EncryptPackage(innerPackage, key);
@@ -384,7 +384,7 @@ internal static class OfficeCryptoStandard
     // EncryptionInfo builder (for Encrypt path)
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] BuildEncryptionInfo(byte[] salt, byte[] encryptedVerifier, byte[] encryptedVerifierHash, int keyBits, int spinCount)
+    private static byte[] BuildEncryptionInfo(byte[] salt, byte[] encryptedVerifier, byte[] encryptedVerifierHash, int keyBits)
     {
         // CSPName: "Microsoft Enhanced RSA and AES Cryptographic Provider\0" in UTF-16LE.
         const string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
