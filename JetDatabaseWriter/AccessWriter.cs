@@ -2535,22 +2535,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        CatalogEntry? entry = await this.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (entry == null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' was not found.");
-        }
+        CatalogEntry? entry = await this.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Table '{tableName}' was not found.");
 
         return entry;
     }
 
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
     {
-        TableDef? tableDef = await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (tableDef == null)
-        {
-            throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
-        }
+        TableDef? tableDef = await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
         return tableDef;
     }
@@ -3200,11 +3194,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
     private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
     {
-        TableDef? msys = await this.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-        }
+        TableDef? msys = await this.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"Table '{tableName}' does not exist.");
 
         int deleted = 0;
         List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);

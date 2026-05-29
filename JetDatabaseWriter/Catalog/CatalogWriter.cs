@@ -550,11 +550,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
     private async ValueTask<int> AllocateNonTableObjectIdAsync(TableDef msys, CancellationToken cancellationToken)
     {
-        ColumnInfo? idColumn = msys.FindColumn("Id");
-        if (idColumn == null)
-        {
-            throw new InvalidDataException("MSysObjects does not expose an 'Id' column.");
-        }
+        ColumnInfo? idColumn = msys.FindColumn("Id")
+            ?? throw new InvalidDataException("MSysObjects does not expose an 'Id' column.");
 
         var usedIds = new HashSet<int>();
         int maxLow24 = 0;

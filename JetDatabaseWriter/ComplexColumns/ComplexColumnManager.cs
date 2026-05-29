@@ -911,11 +911,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
-        TableDef? msys = await this.writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            throw new InvalidOperationException("MSysObjects catalog table is missing.");
-        }
+        TableDef? msys = await this.writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("MSysObjects catalog table is missing.");
 
         List<CatalogRow> rows = await this.writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)

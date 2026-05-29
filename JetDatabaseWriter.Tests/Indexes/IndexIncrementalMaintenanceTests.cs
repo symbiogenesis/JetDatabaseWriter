@@ -399,11 +399,8 @@ public sealed class IndexIncrementalMaintenanceTests
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
-        if (entry is null)
-        {
-            throw new System.InvalidOperationException($"Table '{tableName}' not found in catalog.");
-        }
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
+            ?? throw new System.InvalidOperationException($"Table '{tableName}' not found in catalog.");
 
         return entry.TDefPage;
     }
