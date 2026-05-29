@@ -23,26 +23,30 @@ internal static class Guard
     public static void NotNull<T>([NotNull] T? value, string paramName)
         where T : class
     {
-#if NET6_0_OR_GREATER
-        ArgumentNullException.ThrowIfNull(value, paramName);
-#else
+#if NETSTANDARD2_1
         if (value is null)
         {
             throw new ArgumentNullException(paramName);
         }
+#else
+        ArgumentNullException.ThrowIfNull(value, paramName);
+
+        _ = value;
 #endif
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNullOrEmpty([NotNull] string? value, string paramName)
     {
-#if NET6_0_OR_GREATER
-        ArgumentException.ThrowIfNullOrEmpty(value, paramName);
-#else
+#if NETSTANDARD2_1
         if (string.IsNullOrWhiteSpace(value))
         {
             throw new ArgumentException("Value cannot be null or empty", paramName);
         }
+#else
+        ArgumentException.ThrowIfNullOrEmpty(value, paramName);
+
+        _ = value;
 #endif
     }
 
@@ -73,13 +77,15 @@ internal static class Guard
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Positive(int value, string paramName)
     {
-#if NET8_0_OR_GREATER
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, paramName);
-#else
+#if NETSTANDARD2_1
         if (value <= 0)
         {
             throw new ArgumentOutOfRangeException(paramName, value, "Value must be positive.");
         }
+#else
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, paramName);
+
+        _ = value;
 #endif
     }
 
@@ -94,13 +100,15 @@ internal static class Guard
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ThrowIfDisposed(bool disposed, object instance)
     {
-#if NET7_0_OR_GREATER
-        ObjectDisposedException.ThrowIf(disposed, instance);
-#else
+#if NETSTANDARD2_1
         if (disposed)
         {
             throw new ObjectDisposedException(instance?.GetType().FullName);
         }
+#else
+        ObjectDisposedException.ThrowIf(disposed, instance);
+
+        _ = instance;
 #endif
     }
 
