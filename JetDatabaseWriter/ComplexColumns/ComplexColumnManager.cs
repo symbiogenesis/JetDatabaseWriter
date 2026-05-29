@@ -40,6 +40,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pageAllocator">The page allocator.</param>
 internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
 {
+    private const int ComplexTypeTemplateTextLength = 255;
+
     private readonly AccessWriter writer = writer;
 
     /// <summary>
@@ -214,33 +216,50 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     }
 
     /// <summary>
-    /// per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
-    /// the canonical Access template name to the column schema Access emits for that
-    /// template (verified against <c>ComplexFields.accdb</c> in
+    /// Defines the canonical per-kind <c>MSysComplexType_*</c> template tables.
+    /// Each entry maps the Access template name to the column schema Access emits
+    /// for that template (verified against <c>ComplexFields.accdb</c> in
     /// <see href="docs/format-probe/format-probe-appendix-complex.md" /> §<c>MSysComplexType_*</c>).
     /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
     /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
     /// </summary>
     private static readonly (string Name, ColumnDefinition[] Columns)[] ComplexTypeTemplates =
     [
-        (Constants.ComplexTypeNames.UnsignedByte, new[] { new ColumnDefinition("Value", typeof(byte)) }),
-        (Constants.ComplexTypeNames.Short,        [new ColumnDefinition("Value", typeof(short))]),
-        (Constants.ComplexTypeNames.Long,         [new ColumnDefinition("Value", typeof(int))]),
-        (Constants.ComplexTypeNames.IEEESingle,   [new ColumnDefinition("Value", typeof(float))]),
-        (Constants.ComplexTypeNames.IEEEDouble,   [new ColumnDefinition("Value", typeof(double))]),
-        (Constants.ComplexTypeNames.GUID,         [new ColumnDefinition("Value", typeof(Guid))]),
-        (Constants.ComplexTypeNames.Decimal,      [new ColumnDefinition("Value", typeof(decimal))]),
-        (Constants.ComplexTypeNames.Text,         [new ColumnDefinition("Value", typeof(string), maxLength: 255)]),
-        (Constants.ComplexTypeNames.Attachment,
-        [
-            new ColumnDefinition("FileData",      typeof(byte[])),
-            new ColumnDefinition("FileFlags",     typeof(int)),
-            new ColumnDefinition("FileName",      typeof(string), maxLength: 255),
-            new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
-            new ColumnDefinition("FileType",      typeof(string), maxLength: 255),
-            new ColumnDefinition("FileURL",       typeof(string)),
-        ]),
+        ValueTemplate(Constants.ComplexTypeNames.UnsignedByte, typeof(byte)),
+        ValueTemplate(Constants.ComplexTypeNames.Short, typeof(short)),
+        ValueTemplate(Constants.ComplexTypeNames.Long, typeof(int)),
+        ValueTemplate(Constants.ComplexTypeNames.IEEESingle, typeof(float)),
+        ValueTemplate(Constants.ComplexTypeNames.IEEEDouble, typeof(double)),
+        ValueTemplate(Constants.ComplexTypeNames.GUID, typeof(Guid)),
+        ValueTemplate(Constants.ComplexTypeNames.Decimal, typeof(decimal)),
+        ValueTemplate(Constants.ComplexTypeNames.Text, typeof(string), ComplexTypeTemplateTextLength),
+        AttachmentTemplate(Constants.ComplexTypeNames.Attachment),
     ];
+
+    private static (string Name, ColumnDefinition[] Columns) ValueTemplate(
+        string name,
+        Type valueType,
+        int maxLength = 0)
+        => (name, [Column("Value", valueType, maxLength)]);
+
+    private static (string Name, ColumnDefinition[] Columns) AttachmentTemplate(string name)
+        =>
+        (
+            name,
+            [
+                Column("FileData", typeof(byte[])),
+                Column("FileFlags", typeof(int)),
+                TextColumn("FileName"),
+                Column("FileTimeStamp", typeof(DateTime)),
+                TextColumn("FileType"),
+                Column("FileURL", typeof(string)),
+            ]);
+
+    private static ColumnDefinition TextColumn(string name)
+        => Column(name, typeof(string), ComplexTypeTemplateTextLength);
+
+    private static ColumnDefinition Column(string name, Type clrType, int maxLength = 0)
+        => new(name, clrType, maxLength);
 
     /// <summary>
     /// scaffolds the nine <c>MSysComplexType_*</c> template tables
@@ -257,7 +276,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
-        foreach ((string name, ColumnDefinition[]? cols) in ComplexTypeTemplates)
+        foreach ((string name, ColumnDefinition[] cols) in ComplexTypeTemplates)
         {
             TableDef tableDef = AccessWriter.BuildTableDefinition(cols, writer.Format);
             (byte[] tdefPage, _) = writer.BuildTDefPageWithIndexOffsets(tableDef, []);
