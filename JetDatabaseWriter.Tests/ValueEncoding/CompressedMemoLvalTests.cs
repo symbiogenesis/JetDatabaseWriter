@@ -26,7 +26,7 @@ public sealed class CompressedMemoLvalTests
     [Fact]
     public async Task Memo_ShortLatin1_RoundTripsCompressed()
     {
-        string memoValue = new string('A', 50);
+        string memoValue = new('A', 50);
         await AssertMemoRoundTripAsync(memoValue);
     }
 
@@ -40,7 +40,7 @@ public sealed class CompressedMemoLvalTests
     {
         // 600 Latin-1 chars: uncompressed = 1200 UCS-2 bytes (would exceed
         // inline cap), but Jet4 compression → 600 bytes (fits inline).
-        string memoValue = new string('Z', 600);
+        string memoValue = new('Z', 600);
         await AssertMemoRoundTripAsync(memoValue);
     }
 
@@ -53,7 +53,7 @@ public sealed class CompressedMemoLvalTests
     {
         // 1500 Latin-1 chars → 1500 compressed bytes > 1024-byte inline cap
         // → single-page LVAL form.
-        string memoValue = new string('X', 1500);
+        string memoValue = new('X', 1500);
         await AssertMemoRoundTripAsync(memoValue);
     }
 
@@ -67,7 +67,7 @@ public sealed class CompressedMemoLvalTests
     {
         // 5000 Latin-1 chars → 5000 compressed bytes > single LVAL page cap
         // → chained LVAL pages.
-        string memoValue = new string('Q', 5000);
+        string memoValue = new('Q', 5000);
         await AssertMemoRoundTripAsync(memoValue);
     }
 
@@ -86,7 +86,7 @@ public sealed class CompressedMemoLvalTests
             chars[i] = (i % 10 == 0) ? '\u4E2D' : 'A';
         }
 
-        string memoValue = new string(chars);
+        string memoValue = new(chars);
         await AssertMemoRoundTripAsync(memoValue);
     }
 

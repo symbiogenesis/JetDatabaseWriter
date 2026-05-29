@@ -1351,7 +1351,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
             var addEntries = new List<IndexEntry>(1)
             {
-                new IndexEntry(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
+                new(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
             };
 
             List<IndexEntry>? spliced = IndexLeafIncremental.Splice(

@@ -355,7 +355,7 @@ public sealed class DelimitedTextReaderTests
     private static DelimitedTextReader CreateReader(
         TextReader reader,
         char delimiter = ',',
-        DelimitedTextLimits? limits = null) => new DelimitedTextReader(
+        DelimitedTextLimits? limits = null) => new(
             reader,
             new DelimitedTextFormat(hasHeaderRow: false, delimiter),
             limits ?? DefaultLimits,

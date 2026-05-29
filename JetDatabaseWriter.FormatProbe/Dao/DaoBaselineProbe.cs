@@ -1030,7 +1030,7 @@ internal static class DaoBaselineProbe
             CheckRedundantColNum(wt, wHdr, dt, dHdr),
 
             // ── H25: TDEF[0x18] autonum_flag == 0x01
-            new HypothesisRow(
+            new(
             "H25",
             "TDEF[0x18] autonum_flag == 0x01",
             h25Verdict,

@@ -210,7 +210,7 @@ internal sealed class ConstraintRegistry(
         ValidateCalculatedResults(tableName, list, values);
     }
 
-    private static ColumnConstraint ToConstraint(ColumnDefinition def) => new ColumnConstraint
+    private static ColumnConstraint ToConstraint(ColumnDefinition def) => new()
     {
         Name = def.Name,
         ClrType = def.ClrType,

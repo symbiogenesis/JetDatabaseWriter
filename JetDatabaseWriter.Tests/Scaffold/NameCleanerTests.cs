@@ -87,7 +87,7 @@ public class NameCleanerTests
     public void ToClassName_Long_Input_Uses_Heap_Allocation()
     {
         // Names >= 128 chars exercise the heap-allocated array path
-        string longName = new string('a', 130);
+        string longName = new('a', 130);
         string result = NameCleaner.ToClassName(longName);
         Assert.Equal("A" + new string('a', 129), result);
     }

@@ -48,7 +48,7 @@ public sealed class IndexLongRowEncoderTests
         // an Access-authored fixture for this branch). Single-chunk
         // truncation at MaxTextIndexCharLength preserves the pre-2-chunk
         // behaviour.
-        string text = new string('a', 200);
+        string text = new('a', 200);
         byte[] enc = GeneralLegacyTextIndexEncoder.Encode(text, ascending: true);
 
         Assert.False(ContainsSubsequence(enc, [0x08, 0x07, 0x08, 0x04]));

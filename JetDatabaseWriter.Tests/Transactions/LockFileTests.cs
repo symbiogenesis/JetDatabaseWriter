@@ -573,7 +573,7 @@ public sealed class LockFileTests : IDisposable
         string temp = this.CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
-        string longName = new string('a', 64);
+        string longName = new('a', 64);
         var options = new AccessReaderOptions
         {
             LockFileMachineName = longName,

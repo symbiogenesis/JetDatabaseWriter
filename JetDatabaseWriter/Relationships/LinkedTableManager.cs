@@ -68,7 +68,7 @@ internal static class LinkedTableManager
     /// <param name="hostDatabasePath">The host database path.</param>
     internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
         AccessReaderOptions options,
-        string hostDatabasePath) => new AccessReaderOptions
+        string hostDatabasePath) => new()
         {
             PageCacheSize = options.PageCacheSize,
             DiagnosticsEnabled = options.DiagnosticsEnabled,
