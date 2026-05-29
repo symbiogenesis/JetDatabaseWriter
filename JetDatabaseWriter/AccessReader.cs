@@ -3207,29 +3207,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnInfo col = td.Columns[i];
             ColumnSlice slice = this.ResolveColumnSlice(page, rowStart, rowSize, layout, col);
 
-            switch (slice.Kind)
+            result[i] = slice.Kind switch
             {
-                case ColumnSliceKind.Bool:
-                    result[i] = slice.BoolValue ? "True" : "False";
-                    break;
-
-                case ColumnSliceKind.Null:
-                case ColumnSliceKind.Empty:
-                    result[i] = string.Empty;
-                    break;
-
-                case ColumnSliceKind.Fixed:
-                    result[i] = JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true);
-                    break;
-
-                case ColumnSliceKind.Var:
-                    result[i] = await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false);
-                    break;
-
-                default:
-                    result[i] = string.Empty;
-                    break;
-            }
+                ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+                ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
+                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
+                ColumnSliceKind.Var => await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
+                _ => string.Empty,
+            };
         }
 
         return result;

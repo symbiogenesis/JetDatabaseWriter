@@ -42,22 +42,13 @@ public readonly record struct ColumnSize
     public static ColumnSize FromChars(int count) => new(count, ColumnSizeUnit.Chars);
 
     /// <inheritdoc/>
-    public override string ToString()
+    public override string ToString() => this.Unit switch
     {
-        switch (this.Unit)
-        {
-            case ColumnSizeUnit.Bits:
-                return this.Value == 1 ? "1 bit" : $"{this.Value} bits";
-            case ColumnSizeUnit.Bytes:
-                return this.Value == 1 ? "1 byte" : $"{this.Value} bytes";
-            case ColumnSizeUnit.Chars:
-                return $"{this.Value} chars";
-            case ColumnSizeUnit.Variable:
-                return "variable";
-            case ColumnSizeUnit.Lval:
-                return "LVAL";
-            default:
-                return string.Empty;
-        }
-    }
+        ColumnSizeUnit.Bits => this.Value == 1 ? "1 bit" : $"{this.Value} bits",
+        ColumnSizeUnit.Bytes => this.Value == 1 ? "1 byte" : $"{this.Value} bytes",
+        ColumnSizeUnit.Chars => $"{this.Value} chars",
+        ColumnSizeUnit.Variable => "variable",
+        ColumnSizeUnit.Lval => "LVAL",
+        _ => string.Empty,
+    };
 }

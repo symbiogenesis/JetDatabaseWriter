@@ -28,43 +28,26 @@ internal static class JetExpressionConverter
             return null;
         }
 
-        switch (value)
+        return value switch
         {
-            case string s:
-                return "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
-            case bool b:
-                return b ? "True" : "False";
-            case byte u8:
-                return u8.ToString(CultureInfo.InvariantCulture);
-            case sbyte i8:
-                return i8.ToString(CultureInfo.InvariantCulture);
-            case short i16:
-                return i16.ToString(CultureInfo.InvariantCulture);
-            case ushort u16:
-                return u16.ToString(CultureInfo.InvariantCulture);
-            case int i32:
-                return i32.ToString(CultureInfo.InvariantCulture);
-            case uint u32:
-                return u32.ToString(CultureInfo.InvariantCulture);
-            case long i64:
-                return i64.ToString(CultureInfo.InvariantCulture);
-            case ulong u64:
-                return u64.ToString(CultureInfo.InvariantCulture);
-            case float f:
-                return f.ToString("R", CultureInfo.InvariantCulture);
-            case double d:
-                return d.ToString("R", CultureInfo.InvariantCulture);
-            case decimal m:
-                return m.ToString(CultureInfo.InvariantCulture);
-            case DateTime dt:
-                return "#" + dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "#";
-            case Guid g:
-                return "{guid " + g.ToString("D", CultureInfo.InvariantCulture) + "}";
-            case byte[]:
-                throw new NotSupportedException("byte[] is not a supported DefaultValue type for Jet expression conversion.");
-            default:
-                throw new NotSupportedException($"DefaultValue type '{value.GetType()}' cannot be converted to a Jet expression.");
-        }
+            string s => "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"",
+            bool b => b ? "True" : "False",
+            byte u8 => u8.ToString(CultureInfo.InvariantCulture),
+            sbyte i8 => i8.ToString(CultureInfo.InvariantCulture),
+            short i16 => i16.ToString(CultureInfo.InvariantCulture),
+            ushort u16 => u16.ToString(CultureInfo.InvariantCulture),
+            int i32 => i32.ToString(CultureInfo.InvariantCulture),
+            uint u32 => u32.ToString(CultureInfo.InvariantCulture),
+            long i64 => i64.ToString(CultureInfo.InvariantCulture),
+            ulong u64 => u64.ToString(CultureInfo.InvariantCulture),
+            float f => f.ToString("R", CultureInfo.InvariantCulture),
+            double d => d.ToString("R", CultureInfo.InvariantCulture),
+            decimal m => m.ToString(CultureInfo.InvariantCulture),
+            DateTime dt => "#" + dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "#",
+            Guid g => "{guid " + g.ToString("D", CultureInfo.InvariantCulture) + "}",
+            byte[] => throw new NotSupportedException("byte[] is not a supported DefaultValue type for Jet expression conversion."),
+            _ => throw new NotSupportedException($"DefaultValue type '{value.GetType()}' cannot be converted to a Jet expression."),
+        };
     }
 
     /// <summary>

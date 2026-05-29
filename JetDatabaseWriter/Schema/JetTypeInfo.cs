@@ -199,32 +199,20 @@ internal static class JetTypeInfo
     {
         try
         {
-            switch (type)
+            return type switch
             {
-                case ByteType:
-                    return row[start].ToString(CultureInfo.InvariantCulture);
-                case IntegerType:
-                    return Ri16(row, start).ToString(CultureInfo.InvariantCulture);
-                case LongIntegerType:
-                    return Ri32(row, start).ToString(CultureInfo.InvariantCulture);
-                case FloatType:
-                    return ReadSingleLittleEndian(row.Slice(start, 4)).ToString("G", CultureInfo.InvariantCulture);
-                case DoubleType:
-                    return ReadDoubleLittleEndian(row.Slice(start, 8)).ToString("G", CultureInfo.InvariantCulture);
-                case DateTimeType:
-                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-                case MoneyType:
-                    return decimal.FromOACurrency(Ri64(row, start)).ToString("F4", CultureInfo.InvariantCulture);
-                case GuidType:
-                    return new Guid(row.Slice(start, 16)).ToString("B");
-                case NumericType:
-                    return ReadNumericString(row, start, scale: 0, strictNumeric);
-                case ComplexType:
-                case AttachmentType:
-                    return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
-                default:
-                    return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
-            }
+                ByteType => row[start].ToString(CultureInfo.InvariantCulture),
+                IntegerType => Ri16(row, start).ToString(CultureInfo.InvariantCulture),
+                LongIntegerType => Ri32(row, start).ToString(CultureInfo.InvariantCulture),
+                FloatType => ReadSingleLittleEndian(row.Slice(start, 4)).ToString("G", CultureInfo.InvariantCulture),
+                DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)).ToString("G", CultureInfo.InvariantCulture),
+                DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                MoneyType => decimal.FromOACurrency(Ri64(row, start)).ToString("F4", CultureInfo.InvariantCulture),
+                GuidType => new Guid(row.Slice(start, 16)).ToString("B"),
+                NumericType => ReadNumericString(row, start, scale: 0, strictNumeric),
+                ComplexType or AttachmentType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
+                _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
+            };
         }
         catch (ArgumentException)
         {
@@ -285,38 +273,25 @@ internal static class JetTypeInfo
     {
         try
         {
-            switch (type)
+            return type switch
             {
-                case ByteType:
-                    return row[start];
-                case IntegerType:
-                    // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
-                    // the legacy "(short)Ru16(...)" cast throws OverflowException for
-                    // values with the high bit set and ReadFixedString silently maps
-                    // those to string.Empty → DBNull. The typed path keeps the value.
-                    return Ri16(row, start);
-                case LongIntegerType:
-                    return Ri32(row, start);
-                case FloatType:
-                    return ReadSingleLittleEndian(row.Slice(start, 4));
-                case DoubleType:
-                    return ReadDoubleLittleEndian(row.Slice(start, 8));
-                case DateTimeType:
-                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8)));
-                case MoneyType:
-                    return decimal.FromOACurrency(Ri64(row, start));
-                case GuidType:
-                    return new Guid(row.Slice(start, 16));
-                case NumericType:
-                    return ReadNumericTyped(row, start, scale: 0, strictNumeric);
-                case ComplexType:
-                case AttachmentType:
-                    return size >= 4
-                        ? new ComplexIdRef(Ri32(row, start))
-                        : DBNull.Value;
-                default:
-                    return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
-            }
+                ByteType => row[start],
+                IntegerType => Ri16(row, start),// Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
+                                                // the legacy "(short)Ru16(...)" cast throws OverflowException for
+                                                // values with the high bit set and ReadFixedString silently maps
+                                                // those to string.Empty → DBNull. The typed path keeps the value.
+                LongIntegerType => Ri32(row, start),
+                FloatType => ReadSingleLittleEndian(row.Slice(start, 4)),
+                DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)),
+                DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))),
+                MoneyType => decimal.FromOACurrency(Ri64(row, start)),
+                GuidType => new Guid(row.Slice(start, 16)),
+                NumericType => ReadNumericTyped(row, start, scale: 0, strictNumeric),
+                ComplexType or AttachmentType => size >= 4
+                                        ? new ComplexIdRef(Ri32(row, start))
+                                        : DBNull.Value,
+                _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
+            };
         }
         catch (ArgumentException)
         {

@@ -280,40 +280,22 @@ internal sealed class ConstraintRegistry(
         return value;
     }
 
-    private static Type TdefTypeToClrType(byte type)
+    private static Type TdefTypeToClrType(byte type) => type switch
     {
-        switch (type)
-        {
-            case BooleanType:
-                return typeof(bool);
-            case ByteType:
-                return typeof(byte);
-            case IntegerType:
-                return typeof(short);
-            case LongIntegerType:
-                return typeof(int);
-            case MoneyType:
-                return typeof(decimal);
-            case FloatType:
-                return typeof(float);
-            case DoubleType:
-                return typeof(double);
-            case DateTimeType:
-                return typeof(DateTime);
-            case NumericType:
-                return typeof(decimal);
-            case GuidType:
-                return typeof(Guid);
-            case TextType:
-            case MemoType:
-                return typeof(string);
-            case BinaryType:
-            case OleType:
-                return typeof(byte[]);
-            default:
-                return typeof(object);
-        }
-    }
+        BooleanType => typeof(bool),
+        ByteType => typeof(byte),
+        IntegerType => typeof(short),
+        LongIntegerType => typeof(int),
+        MoneyType => typeof(decimal),
+        FloatType => typeof(float),
+        DoubleType => typeof(double),
+        DateTimeType => typeof(DateTime),
+        NumericType => typeof(decimal),
+        GuidType => typeof(Guid),
+        TextType or MemoType => typeof(string),
+        BinaryType or OleType => typeof(byte[]),
+        _ => typeof(object),
+    };
 
     private static byte ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyBlock? properties)
     {

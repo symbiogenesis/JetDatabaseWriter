@@ -250,27 +250,14 @@ internal sealed class RowDecodePlan
         AccessBase.ColumnSlice slice,
         ColumnInfo column,
         LongValueDecoder longValueDecoder,
-        ref bool needsLongValue)
-    {
-        switch (slice.Kind)
+        ref bool needsLongValue) => slice.Kind switch
         {
-            case AccessBase.ColumnSliceKind.Bool:
-                return slice.BoolValue;
-
-            case AccessBase.ColumnSliceKind.Null:
-            case AccessBase.ColumnSliceKind.Empty:
-                return DBNull.Value;
-
-            case AccessBase.ColumnSliceKind.Fixed:
-                return JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing);
-
-            case AccessBase.ColumnSliceKind.Var:
-                return this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue);
-
-            default:
-                return DBNull.Value;
-        }
-    }
+            AccessBase.ColumnSliceKind.Bool => slice.BoolValue,
+            AccessBase.ColumnSliceKind.Null or AccessBase.ColumnSliceKind.Empty => DBNull.Value,
+            AccessBase.ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
+            AccessBase.ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
+            _ => DBNull.Value,
+        };
 
     private object? DecodeTypedVariableValue(
         AccessBase source,
