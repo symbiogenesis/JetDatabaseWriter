@@ -382,8 +382,14 @@ internal static class CalculatedExpressionNormalizer
                     string inner = this.ParseExpression(0);
                     this.Expect(TokenKind.CloseParen, ")");
                     return "(" + inner + ")";
-                default:
+                case TokenKind.End:
+                case TokenKind.Operator:
+                case TokenKind.Backslash:
+                case TokenKind.CloseParen:
+                case TokenKind.Comma:
                     throw new ArgumentException($"Unexpected token '{token.Text}' in calculated-column expression.");
+                default:
+                    throw new InvalidOperationException($"Unexpected calculated-column token kind '{token.Kind}'.");
             }
         }
 
