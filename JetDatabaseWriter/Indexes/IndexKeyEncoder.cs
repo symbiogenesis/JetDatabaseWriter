@@ -1,4 +1,3 @@
-using JetDatabaseWriter.Enums;
 
 namespace JetDatabaseWriter.Indexes;
 
@@ -6,11 +5,12 @@ using System;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
-using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types.
