@@ -291,6 +291,12 @@ internal static class DirectRowDecoderBuilder
         GuidType => targetUnderlying == typeof(Guid),
         NumericType => targetUnderlying == typeof(decimal),
         TextType => targetUnderlying == typeof(string),
+        BinaryType or
+        OleType or
+        MemoType or
+        AttachmentType or
+        ComplexType or
+        DateTimeExtendedType or
         _ => false,
     };
 }

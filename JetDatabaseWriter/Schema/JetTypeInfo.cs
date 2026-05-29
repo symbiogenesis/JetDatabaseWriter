@@ -51,6 +51,11 @@ internal static class JetTypeInfo
         // ResolveColumnSlice path can size the slot correctly.
         DateTimeExtendedType => 42,
 
+        BooleanType or
+        BinaryType or
+        TextType or
+        OleType or
+        MemoType or
         _ => 0,
     };
 
@@ -296,6 +301,12 @@ internal static class JetTypeInfo
                 ComplexType or AttachmentType => size >= 4
                                         ? new ComplexIdRef(Ri32(row, start))
                                         : DBNull.Value,
+                BooleanType or
+                BinaryType or
+                TextType or
+                OleType or
+                MemoType or
+                DateTimeExtendedType or
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }

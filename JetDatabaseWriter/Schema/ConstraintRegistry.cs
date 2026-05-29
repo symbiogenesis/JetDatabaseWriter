@@ -296,6 +296,9 @@ internal sealed class ConstraintRegistry(
         GuidType => typeof(Guid),
         TextType or MemoType => typeof(string),
         BinaryType or OleType => typeof(byte[]),
+        AttachmentType or
+        ComplexType or
+        DateTimeExtendedType or
         _ => typeof(object),
     };
 
