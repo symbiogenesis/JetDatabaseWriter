@@ -131,7 +131,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             case GuidType:
                 Guid g = value is Guid guid
                         ? guid
-                        : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
+                        : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture));
                 if (!g.TryWriteBytes(dest))
                 {
                     return 0;

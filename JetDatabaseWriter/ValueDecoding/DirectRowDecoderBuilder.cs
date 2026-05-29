@@ -26,27 +26,27 @@ internal static class DirectRowDecoderBuilder
     private static readonly MethodInfo TryParseRowLayoutMethod =
         typeof(AccessReader).GetMethod(
             nameof(AccessReader.TryParseRowLayoutForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static readonly MethodInfo ResolveColumnSliceMethod =
         typeof(AccessReader).GetMethod(
             nameof(AccessReader.ResolveColumnSliceForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static readonly MethodInfo ReadRawNumColsMethod =
         typeof(AccessReader).GetMethod(
             nameof(AccessReader.ReadRawNumCols),
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static readonly MethodInfo DecodeTextMethod =
         typeof(AccessReader).GetMethod(
             nameof(AccessReader.DecodeTextSliceForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static readonly PropertyInfo NumColsFieldSizeProp =
         typeof(AccessReader).GetProperty(
             nameof(AccessReader.NumColsFieldSize),
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
     /// <summary>
     /// Builds a direct decoder for <typeparamref name="T"/> bound against
@@ -158,10 +158,10 @@ internal static class DirectRowDecoderBuilder
             Expression.Return(returnLabel, Expression.Constant(false))),
         };
 
-        PropertyInfo kindProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.Kind))!;
-        PropertyInfo dataStartProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataStart))!;
-        PropertyInfo dataLenProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataLen))!;
-        PropertyInfo boolValueProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.BoolValue))!;
+        PropertyInfo kindProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.Kind));
+        PropertyInfo dataStartProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataStart));
+        PropertyInfo dataLenProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataLen));
+        PropertyInfo boolValueProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.BoolValue));
 
         foreach ((int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col) entry in bound)
         {

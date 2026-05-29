@@ -1342,7 +1342,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         foreach ((int i, object[] rowValues) in pendingNewRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = snapshot.Rows[i].ItemArray!;
+            object[] oldRow = snapshot.Rows[i].ItemArray;
             await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((locations[i], oldRow));
             RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1449,7 +1449,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         foreach (int i in matchingIndices)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = snapshot.Rows[i].ItemArray!;
+            object[] oldRow = snapshot.Rows[i].ItemArray;
             await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             deleteHints.Add((locations[i], oldRow));
             deleted++;

@@ -2685,7 +2685,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         lock (this.ownedDataPagesCacheLock)
         {
-            return this.ownedDataPagesByTdef.TryGetValue(tdefPage, out pageNumbers!);
+            return this.ownedDataPagesByTdef.TryGetValue(tdefPage, out pageNumbers);
         }
     }
 
