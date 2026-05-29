@@ -51,11 +51,11 @@ public sealed class AccessRoundTripTests
 
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 #if NET8_0_OR_GREATER
-    private readonly Lock _relationshipRoundTripSync = new();
+    private readonly Lock relationshipRoundTripSync = new();
 #else
-    private readonly object _relationshipRoundTripSync = new();
+    private readonly object relationshipRoundTripSync = new();
 #endif
-    private static Task<RelationshipRoundTripResult>? _relationshipRoundTripTask;
+    private static Task<RelationshipRoundTripResult>? relationshipRoundTripTask;
 
     [Fact(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -86,10 +86,10 @@ public sealed class AccessRoundTripTests
 
     private static Task<RelationshipRoundTripResult> GetRelationshipRoundTripResultAsync(CancellationToken cancellationToken)
     {
-        lock (_relationshipRoundTripSync)
+        lock (relationshipRoundTripSync)
         {
-            _relationshipRoundTripTask ??= BuildRelationshipRoundTripResultAsync(cancellationToken);
-            return _relationshipRoundTripTask;
+            relationshipRoundTripTask ??= BuildRelationshipRoundTripResultAsync(cancellationToken);
+            return relationshipRoundTripTask;
         }
     }
 

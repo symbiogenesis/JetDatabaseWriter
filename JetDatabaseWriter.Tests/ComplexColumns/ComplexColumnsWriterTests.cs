@@ -297,7 +297,7 @@ public sealed class ComplexColumnsWriterTests
 
     // ── MSysComplexType_* template tables ────────────────────────────────────────
 
-    private static readonly string[] _expectedTemplateNames =
+    private static readonly string[] ExpectedTemplateNames =
     [
         "MSysComplexType_UnsignedByte",
         "MSysComplexType_Short",
@@ -321,7 +321,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        foreach (string template in _expectedTemplateNames)
+        foreach (string template in ExpectedTemplateNames)
         {
             List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.NotEmpty(meta);
@@ -340,7 +340,7 @@ public sealed class ComplexColumnsWriterTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        foreach (string template in _expectedTemplateNames)
+        foreach (string template in ExpectedTemplateNames)
         {
             Assert.DoesNotContain(template, userTables, StringComparer.OrdinalIgnoreCase);
         }
@@ -380,7 +380,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        foreach (string template in _expectedTemplateNames)
+        foreach (string template in ExpectedTemplateNames)
         {
             List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.Empty(meta);

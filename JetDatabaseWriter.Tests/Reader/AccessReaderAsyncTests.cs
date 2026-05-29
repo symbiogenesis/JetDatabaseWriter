@@ -159,8 +159,6 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
     private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
     {
-        private readonly Action<T> _action = action;
-
-        public void Report(T value) => _action(value);
+        public void Report(T value) => action(value);
     }
 }

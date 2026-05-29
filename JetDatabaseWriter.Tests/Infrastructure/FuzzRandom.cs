@@ -9,20 +9,20 @@ using System;
 /// </summary>
 internal sealed class FuzzRandom : Random
 {
-    private readonly byte[]? _bytes;
-    private readonly Random? _fallback;
-    private int _pos;
+    private readonly byte[]? bytes;
+    private readonly Random? fallback;
+    private int pos;
 
     private FuzzRandom(byte[] bytes)
     {
-        _bytes = bytes;
-        _fallback = new Random(CreateFallbackSeed(bytes));
-        _pos = 0;
+        this.bytes = bytes;
+        fallback = new Random(CreateFallbackSeed(bytes));
+        pos = 0;
     }
 
     private FuzzRandom(Random fallback)
     {
-        _fallback = fallback;
+        this.fallback = fallback;
     }
 
     public static FuzzRandom Create(byte[]? fuzzedBytes)
@@ -32,12 +32,12 @@ internal sealed class FuzzRandom : Random
 
     private int NextByte()
     {
-        if (_bytes != null && _pos < _bytes.Length)
+        if (bytes != null && pos < bytes.Length)
         {
-            return _bytes[_pos++];
+            return bytes[pos++];
         }
 
-        return _fallback?.Next(0, 256) ?? 0;
+        return fallback?.Next(0, 256) ?? 0;
     }
 
     public override int Next()

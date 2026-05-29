@@ -552,6 +552,7 @@ internal static class LinkedTableManager
 
         string kindDescription = link.Kind switch
         {
+            LinkedTableKind.Access => "Access-file", // should never reach here due to the if-check above, but included for completeness
             LinkedTableKind.Odbc => "ODBC",
             LinkedTableKind.Text => "text",
             _ => "non-Access",
