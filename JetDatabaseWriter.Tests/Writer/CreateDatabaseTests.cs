@@ -428,7 +428,7 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_FullCatalogSchema_CreateTable_RoundTripsAcrossOpenClose(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        ColumnDefinition[] defs = new[] { new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50) };
+        ColumnDefinition[] defs = [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50)];
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {

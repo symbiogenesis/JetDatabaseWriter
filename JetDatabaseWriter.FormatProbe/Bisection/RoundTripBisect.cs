@@ -116,15 +116,15 @@ internal static class RoundTripBisect
                     EnforceReferentialIntegrity = true,
                     CascadeDeletes = true,
                 });
-                await w.InsertRowsAsync("RT_Customers", new[]
-                {
-                    new object[] { DBNull.Value, "Acme" },
+                await w.InsertRowsAsync("RT_Customers",
+                [
+                    [DBNull.Value, "Acme"],
                     [DBNull.Value, "Beta"],
-                });
-                await w.InsertRowsAsync("RT_Orders", new[]
-                {
-                    new object[] { DBNull.Value, 1, new DateTime(2025, 1, 15) },
-                });
+                ]);
+                await w.InsertRowsAsync("RT_Orders",
+                [
+                    [DBNull.Value, 1, new DateTime(2025, 1, 15)],
+                ]);
             }),
         };
 

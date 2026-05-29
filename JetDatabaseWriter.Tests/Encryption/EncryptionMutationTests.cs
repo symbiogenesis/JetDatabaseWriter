@@ -75,7 +75,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
 
         string blockedPath = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         string blockedLockPath = LockFileSlotWriter.GetLockFilePath(blockedPath);
-        await File.WriteAllBytesAsync(blockedLockPath, new byte[] { 1 }, ct);
+        await File.WriteAllBytesAsync(blockedLockPath, [1], ct);
         _tempFiles.Add(blockedLockPath);
 
         await Assert.ThrowsAsync<IOException>(async () =>

@@ -1895,7 +1895,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
-        WriterPoco[] items = new[] { new WriterPoco { Id = 1, Label = "X" } };
+        WriterPoco[] items = [new WriterPoco { Id = 1, Label = "X" }];
 
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await writer.InsertRowsAsync("AnyTable", items, TestContext.Current.CancellationToken));

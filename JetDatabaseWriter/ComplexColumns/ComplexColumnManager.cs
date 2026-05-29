@@ -355,21 +355,21 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
     {
-        ColumnDefinition[] columns = new[]
-        {
+        ColumnDefinition[] columns =
+        [
             new ColumnDefinition("ColumnName", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
             new ColumnDefinition("ComplexID", typeof(int)) { DescriptorFlagsOverride = 0x17 },
             new ColumnDefinition("ComplexTypeObjectID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
             new ColumnDefinition("ConceptualTableID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
             new ColumnDefinition("FlatTableID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
-        };
+        ];
 
-        IndexDefinition[] indexes = new[]
-        {
+        IndexDefinition[] indexes =
+        [
             new IndexDefinition("IdxConceptualTableID", "ConceptualTableID"),
             new IndexDefinition("IdxFlatTableID", "FlatTableID"),
             new IndexDefinition("IdxID", "ComplexID") { IsPrimaryKey = true },
-        };
+        ];
 
         _ = await _writer.CreateTableInternalAsync(
             Constants.SystemTableNames.ComplexColumns,

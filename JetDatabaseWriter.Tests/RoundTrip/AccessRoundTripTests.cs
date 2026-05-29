@@ -133,22 +133,20 @@ public sealed class AccessRoundTripTests
 
             await writer.InsertRowsAsync(
                 SingleParent,
-                new[]
-                {
-                    new object[] { DBNull.Value, "Acme" },
-                    new object[] { DBNull.Value, "Beta" },
-                    new object[] { DBNull.Value, "Gamma" },
-                },
+                [
+                    [DBNull.Value, "Acme"],
+                    [DBNull.Value, "Beta"],
+                    [DBNull.Value, "Gamma"],
+                ],
                 cancellationToken);
 
             await writer.InsertRowsAsync(
                 SingleChild,
-                new[]
-                {
-                    new object[] { DBNull.Value, 1, new DateTime(2025, 1, 15) },
-                    new object[] { DBNull.Value, 2, new DateTime(2025, 2, 20) },
-                    new object[] { DBNull.Value, 3, new DateTime(2025, 3, 03) },
-                },
+                [
+                    [DBNull.Value, 1, new DateTime(2025, 1, 15)],
+                    [DBNull.Value, 2, new DateTime(2025, 2, 20)],
+                    [DBNull.Value, 3, new DateTime(2025, 3, 03)],
+                ],
                 cancellationToken);
 
             await writer.CreateTableAsync(
@@ -185,21 +183,19 @@ public sealed class AccessRoundTripTests
 
             await writer.InsertRowsAsync(
                 CompositeParent,
-                new[]
-                {
-                    new object[] { 1, "North" },
-                    new object[] { 2, "South" },
-                },
+                [
+                    [1, "North"],
+                    [2, "South"],
+                ],
                 cancellationToken);
 
             await writer.InsertRowsAsync(
                 CompositeChild,
-                new[]
-                {
-                    new object[] { 1, "North", 1, "SKU-A" },
-                    new object[] { 1, "North", 2, "SKU-B" },
-                    new object[] { 2, "South", 1, "SKU-C" },
-                },
+                [
+                    [1, "North", 1, "SKU-A"],
+                    [1, "North", 2, "SKU-B"],
+                    [2, "South", 1, "SKU-C"],
+                ],
                 cancellationToken);
         }
 

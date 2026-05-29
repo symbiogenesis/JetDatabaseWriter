@@ -53,7 +53,7 @@ public sealed class IndexLeafPageBuilderTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // LongInteger=7 → 5 bytes
-        IndexEntry[] entries = new[] { new IndexEntry(key, 0x123456, 9) };
+        IndexEntry[] entries = [new IndexEntry(key, 0x123456, 9)];
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 100, entries, 0, 0, 0, enablePrefixCompression: false);
 
@@ -94,12 +94,12 @@ public sealed class IndexLeafPageBuilderTests
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
         byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
-        IndexEntry[] entries = new[]
-        {
+        IndexEntry[] entries =
+        [
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
             new IndexEntry(k3, 1, 2),
-        };
+        ];
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 100, entries, 0, 0, 0, enablePrefixCompression: false);
 
@@ -145,7 +145,7 @@ public sealed class IndexLeafPageBuilderTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
-        IndexEntry[] entries = new[] { new IndexEntry(key, 0x1_000_000L, 0) };
+        IndexEntry[] entries = [new IndexEntry(key, 0x1_000_000L, 0)];
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false));
@@ -163,11 +163,11 @@ public sealed class IndexLeafPageBuilderTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
-        IndexEntry[] entries = new[]
-        {
+        IndexEntry[] entries =
+        [
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
-        };
+        ];
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 100, entries, 0, 0, 0, enablePrefixCompression: false);
 
@@ -239,7 +239,7 @@ public sealed class IndexLeafPageBuilderTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true);
-        IndexEntry[] entries = new[] { new IndexEntry(key, 1, 0) };
+        IndexEntry[] entries = [new IndexEntry(key, 1, 0)];
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
 
@@ -385,11 +385,11 @@ public sealed class IndexLeafPageBuilderTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
-        IndexEntry[] entries = new[]
-        {
+        IndexEntry[] entries =
+        [
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
-        };
+        ];
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false);

@@ -927,7 +927,7 @@ internal static class LongRowSuffixProbe
             char second = DaoLabAlphabet[pair % DaoLabAlphabet.Length];
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
-                $"| `{EscapeMarkdown(new string(new[] { first, second }))}` | `{row.AccessSuffix:X4}` | `{row.EncoderSuffix:X4}` | {row.FullTail} |");
+                $"| `{EscapeMarkdown(new string([first, second]))}` | `{row.AccessSuffix:X4}` | `{row.EncoderSuffix:X4}` | {row.FullTail} |");
         }
 
         sb.AppendLine();

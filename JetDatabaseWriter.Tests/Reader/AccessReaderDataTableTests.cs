@@ -77,15 +77,14 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         {
             await writer.CreateTableAsync(
                 "BulkData",
-                new ColumnDefinition[]
-                {
+                [
                     new("Id", typeof(int)),
                     new("Name", typeof(string), maxLength: 64),
                     new("Amount", typeof(decimal)),
                     new("SeenOn", typeof(DateTime)),
                     new("Notes", typeof(string)),
                     new("Blob", typeof(byte[])),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             var rows = new List<object[]>

@@ -57,11 +57,10 @@ public sealed class DaoStorageMaintenanceTests
 
             await writer.InsertRowsAsync(
                 "SM_FreshBootstrap",
-                new[]
-                {
-                    new object[] { 1, "fresh-one" },
-                    new object[] { 2, "fresh-two" },
-                },
+                [
+                    [1, "fresh-one"],
+                    [2, "fresh-two"],
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -379,12 +378,11 @@ public sealed class DaoStorageMaintenanceTests
 
             await writer.InsertRowsAsync(
                 "SM_SecureErase",
-                new[]
-                {
-                    new object[] { 1, deletedPayload },
-                    new object[] { 2, originalLargePayload },
-                    new object[] { 3, BuildPayload(96, 0x51) },
-                },
+                [
+                    [1, deletedPayload],
+                    [2, originalLargePayload],
+                    [3, BuildPayload(96, 0x51)],
+                ],
                 TestContext.Current.CancellationToken);
 
             int updated = await writer.UpdateRowsAsync(

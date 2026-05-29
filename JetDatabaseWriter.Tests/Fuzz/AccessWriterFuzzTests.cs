@@ -195,7 +195,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         output.WriteLine("Starting transaction block");
         await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         string txTable = $"TxTable_{random.RandomString(4)}";
-        ColumnDefinition[] txColumns = new[] { new ColumnDefinition("TxCol", typeof(int)) };
+        ColumnDefinition[] txColumns = [new ColumnDefinition("TxCol", typeof(int))];
         await writer.CreateTableAsync(txTable, txColumns, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(txTable, [random.Next()], TestContext.Current.CancellationToken);
         if (random.NextDouble() < 0.5)

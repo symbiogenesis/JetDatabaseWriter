@@ -121,8 +121,7 @@ internal static class SyntheticDatabases
         await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(NumericDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(
             NumericTable,
-            new ColumnDefinition[]
-            {
+            [
                 new("Id", typeof(int)),
                 new("OrderId", typeof(int)),
                 new("ProductId", typeof(int)),
@@ -132,14 +131,14 @@ internal static class SyntheticDatabases
                 new("StatusId", typeof(int)),
                 new("AddedOn", typeof(DateTime)),
                 new("ModifiedOn", typeof(DateTime)),
-            }).ConfigureAwait(false);
+            ]).ConfigureAwait(false);
 
         var rows = new List<object[]>(NumericRows);
         var baseDate = new DateTime(2020, 1, 1);
         for (int i = 0; i < NumericRows; i++)
         {
-            rows.Add(new object[]
-            {
+            rows.Add(
+            [
                 i,
                 i / 5,
                 (i % 200) + 1,
@@ -149,7 +148,7 @@ internal static class SyntheticDatabases
                 (i % 5) + 1,
                 baseDate.AddMinutes(i),
                 baseDate.AddMinutes(i + 30),
-            });
+            ]);
         }
 
         await w.InsertRowsAsync(NumericTable, rows).ConfigureAwait(false);
@@ -165,28 +164,27 @@ internal static class SyntheticDatabases
         await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(TextDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(
             TextTable,
-            new ColumnDefinition[]
-            {
+            [
                 new("Id", typeof(int)),
                 new("FirstName", typeof(string), 64),
                 new("LastName", typeof(string), 64),
                 new("Email", typeof(string), 128),
                 new("City", typeof(string), 64),
                 new("Notes", typeof(string), 255),
-            }).ConfigureAwait(false);
+            ]).ConfigureAwait(false);
 
         var rows = new List<object[]>(TextRows);
         for (int i = 0; i < TextRows; i++)
         {
-            rows.Add(new object[]
-            {
+            rows.Add(
+            [
                 i,
                 "First" + i,
                 "Last" + i,
                 "user" + i + "@example.com",
                 "City" + (i % 100),
                 "Note for row " + i + " — sample sentence with a few words to fill space.",
-            });
+            ]);
         }
 
         await w.InsertRowsAsync(TextTable, rows).ConfigureAwait(false);
@@ -270,17 +268,16 @@ internal static class SyntheticDatabases
     {
         await writer.CreateTableAsync(
             tableName,
-            new ColumnDefinition[]
-            {
+            [
                 new("Id", typeof(int)),
                 new("Body", typeof(string)),
-            }).ConfigureAwait(false);
+            ]).ConfigureAwait(false);
 
         var rows = new List<object[]>(rowCount);
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             int length = getLength(rowIndex);
-            rows.Add(new object[] { rowIndex, MakeMemoBody(rowIndex, length) });
+            rows.Add([rowIndex, MakeMemoBody(rowIndex, length)]);
         }
 
         await writer.InsertRowsAsync(tableName, rows).ConfigureAwait(false);
@@ -290,16 +287,15 @@ internal static class SyntheticDatabases
     {
         await writer.CreateTableAsync(
             tableName,
-            new ColumnDefinition[]
-            {
+            [
                 new("Id", typeof(int)),
                 new("Blob", typeof(byte[])),
-            }).ConfigureAwait(false);
+            ]).ConfigureAwait(false);
 
         var rows = new List<object[]>(rowCount);
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            rows.Add(new object[] { rowIndex, MakeOlePayload(rowIndex, payloadLength) });
+            rows.Add([rowIndex, MakeOlePayload(rowIndex, payloadLength)]);
         }
 
         await writer.InsertRowsAsync(tableName, rows).ConfigureAwait(false);

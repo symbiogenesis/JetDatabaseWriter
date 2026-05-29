@@ -66,7 +66,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // (between 4000 and 4010). Neither is the leaf's max key.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 5 }, [4005] },
+                [[5], [4005]],
                 ct);
         }
 
@@ -128,7 +128,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // change for leaf 1).
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 3991 }, [4005] },
+                [[3991], [4005]],
                 ct);
         }
 
@@ -177,12 +177,11 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // leaf path because two distinct leaves are touched.
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
-                    new object[] { 5 },     // leaf 0
+                [
+                    [5],     // leaf 0
                     [25],    // leaf 0
                     [4005],  // leaf 1
-                },
+                ],
                 ct);
         }
 
@@ -247,7 +246,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // 10005 → leaf 1, stays in-place.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 200 }, [10005] },
+                [[200], [10005]],
                 ct);
         }
 
@@ -300,19 +299,18 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // Batch 1: 3 cross-leaf inserts.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 1 }, [2], [4001] },
+                [[1], [2], [4001]],
                 ct);
 
             // Batch 2: 4 cross-leaf inserts.
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
-                    new object[] { 3 },
+                [
+                    [3],
                     [4],
                     [4002],
                     [4003],
-                },
+                ],
                 ct);
         }
 
