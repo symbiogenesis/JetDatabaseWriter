@@ -40,7 +40,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="columns">Column definitions for the new table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default);
+    public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a new table with the specified columns and the specified
@@ -58,7 +58,7 @@ public interface IAccessSchema : IAccessBase
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default);
+    public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
@@ -67,7 +67,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="tableName">Name of the table to drop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
+    public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously appends a new column to an existing table. Existing rows receive
@@ -78,7 +78,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="column">The new column definition. Its name must not already exist on the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
+    public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously drops the named column from an existing table. The column's data is
@@ -90,7 +90,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="columnName">The column to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+    public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously renames a column on an existing table. Row data is preserved.
@@ -102,7 +102,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="newColumnName">The new column name. Must not already exist on the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
+    public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a linked-table entry (MSysObjects type 6) that references a
@@ -115,7 +115,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="foreignTableName">The name of the table in the source database.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default);
+    public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6)
@@ -129,7 +129,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="connectString">The text-driver connect string, e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default);
+    public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
@@ -148,7 +148,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
+    public ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
@@ -161,7 +161,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="sourceColumns">Column definitions for the remote source table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateLinkedOdbcTableAsync(
+    public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
         string foreignTableName,
@@ -181,7 +181,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask CreateLinkedOdbcTableAsync(
+    public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
         string foreignTableName,
@@ -213,7 +213,7 @@ public interface IAccessSchema : IAccessBase
     /// <exception cref="System.ArgumentException">
     /// Thrown when a referenced column does not exist on its table.
     /// </exception>
-    ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
+    public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously deletes a foreign-key relationship previously created with
@@ -242,7 +242,7 @@ public interface IAccessSchema : IAccessBase
     /// back runtime cascade-update / cascade-delete enforcement that ran inside
     /// the same call before the drop.
     /// </remarks>
-    ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default);
+    public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously renames a foreign-key relationship previously created with
@@ -268,5 +268,5 @@ public interface IAccessSchema : IAccessBase
     /// <exception cref="System.ArgumentException">
     /// Thrown when <paramref name="newName"/> is null or empty.
     /// </exception>
-    ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default);
+    public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default);
 }

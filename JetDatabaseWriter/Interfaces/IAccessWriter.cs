@@ -45,7 +45,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
+    public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
@@ -55,7 +55,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="item">The object whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
+    public ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -65,7 +65,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
-    ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
+    public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
@@ -75,7 +75,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="items">Collection of objects whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
-    ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
+    public ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -87,7 +87,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply. <see langword="null"/> and <see cref="System.DBNull.Value"/> both clear the column to database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
+    public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously deletes rows from the specified table where the predicate column matches the given value.
@@ -97,7 +97,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows deleted.</returns>
-    ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default);
+    public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously appends one file to a parent row's Access 2007+ Attachment
@@ -125,7 +125,7 @@ public interface IAccessWriter : IAccessBase
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
     /// </exception>
-    ValueTask AddAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, AttachmentInput attachment, CancellationToken cancellationToken = default);
+    public ValueTask AddAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, AttachmentInput attachment, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously appends one value to a parent row's Access 2007+ Multi-Value
@@ -147,5 +147,5 @@ public interface IAccessWriter : IAccessBase
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
     /// </exception>
-    ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, object? value, CancellationToken cancellationToken = default);
+    public ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, object? value, CancellationToken cancellationToken = default);
 }

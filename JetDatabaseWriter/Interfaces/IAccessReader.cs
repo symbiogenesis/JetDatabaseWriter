@@ -14,16 +14,16 @@ using JetDatabaseWriter.Models;
 public interface IAccessReader : IAccessBase
 {
     /// <summary>Gets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
-    bool DiagnosticsEnabled { get; }
+    public bool DiagnosticsEnabled { get; }
 
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
-    int PageCacheSize { get; }
+    public int PageCacheSize { get; }
 
     /// <summary>Gets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    bool ParallelPageReadsEnabled { get; }
+    public bool ParallelPageReadsEnabled { get; }
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
-    string LastDiagnostics { get; }
+    public string LastDiagnostics { get; }
 
     /// <summary>
     /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
@@ -32,12 +32,12 @@ public interface IAccessReader : IAccessBase
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited. Use with large tables to avoid long reads or out-of-memory errors.</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with string-typed columns for the first user table, or an empty DataTable if no tables exist.</returns>
-    ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default);
+    public ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
+    public ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns metadata about linked tables (Access-file, text, and ODBC)
@@ -45,7 +45,7 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A list of <see cref="LinkedTableInfo"/> with metadata for each linked table.</returns>
-    ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
+    public ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns name, stored row-count, and column-count for every user table asynchronously.
@@ -53,7 +53,7 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A list of <see cref="TableStat"/> with metadata for each user table.</returns>
-    ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
+    public ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount asynchronously.
@@ -61,7 +61,7 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="DataTable"/> containing table metadata.</returns>
-    ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default);
+    public ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table asynchronously.
@@ -71,7 +71,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>Number of live rows in the specified table.</returns>
-    ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default);
+    public ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
@@ -81,7 +81,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    public ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -92,7 +92,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+    public ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns rich metadata for all columns in the specified table asynchronously.
@@ -100,7 +100,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A list of <see cref="ColumnMetadata"/> objects describing each column in the table.</returns>
-    ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
+    public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
@@ -115,7 +115,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A read-only list of <see cref="IndexMetadata"/> entries in TDEF order.</returns>
-    ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
+    public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Seeks rows through the named index using an exact key tuple and returns matching rows
@@ -131,7 +131,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="keyValues">Exact key tuple, one value per indexed column.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of typed object arrays whose key equals <paramref name="keyValues"/>.</returns>
-    IAsyncEnumerable<object[]> SeekRowsAsync(
+    public IAsyncEnumerable<object[]> SeekRowsAsync(
         string tableName,
         string indexName,
         IReadOnlyList<object?> keyValues,
@@ -150,7 +150,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A read-only list of <see cref="ComplexColumnInfo"/> entries, one per complex column on the table.</returns>
-    ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default);
+    public ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns every attachment row stored in the hidden flat child table backing
@@ -163,7 +163,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="columnName">Attachment column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>One <see cref="AttachmentRecord"/> per flat-table row. Empty when the column is unknown, has no rows, or is not an Attachment column.</returns>
-    ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+    public ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns every value stored in the hidden flat child table backing the
@@ -175,7 +175,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="columnName">Multi-Value column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>Tuples of (ConceptualTableId, value) where value is typed via the flat-table value column. Empty when the column is unknown or has no rows.</returns>
-    ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+    public ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
@@ -189,14 +189,14 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">The progress.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
-    ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+    public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
+    public ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
@@ -207,7 +207,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">The progress.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
+    public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
@@ -218,7 +218,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">The progress.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
+    public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed
@@ -231,7 +231,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of object arrays, each representing a row with typed values.</returns>
-    IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+    public IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>
@@ -243,7 +243,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of <typeparamref name="T"/> instances.</returns>
-    IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -254,5 +254,5 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of string arrays.</returns>
-    IAsyncEnumerable<string[]> RowsAsStrings(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+    public IAsyncEnumerable<string[]> RowsAsStrings(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 }
