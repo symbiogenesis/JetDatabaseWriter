@@ -1203,6 +1203,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// report as JET <c>-1601</c>.
     /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when an unexpected TdefPreambleStatus is encountered.</exception>
     public async ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
         long tdefPage,
         TableDef tableDef,
@@ -1228,7 +1229,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             case TdefPreambleStatus.ColumnNameWalkFailed:
                 return false;
             default:
-                return false;
+                throw new InvalidOperationException($"Unexpected TdefPreambleStatus {preStatus}");
         }
 
         byte[] tdefBuf = preamble.Buffer;
