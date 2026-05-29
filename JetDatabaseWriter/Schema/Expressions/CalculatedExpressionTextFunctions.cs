@@ -10,8 +10,20 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
+#if NETSTANDARD2_1
+internal static class CalculatedExpressionTextFunctions
+#else
 internal static partial class CalculatedExpressionTextFunctions
+#endif
 {
+    private const string ValNumberPrefixPattern = "^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?";
+    private const string WhitespacePattern = "\\s+";
+
+#if NETSTANDARD2_1
+    private static readonly Regex ValNumberPrefixRegexInstance = new(ValNumberPrefixPattern, RegexOptions.CultureInvariant);
+    private static readonly Regex WhitespaceRegexInstance = new(WhitespacePattern);
+#endif
+
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "LEN", 1, 1, static function => ToText(function.Arg(0)).Length));
@@ -240,9 +252,15 @@ internal static partial class CalculatedExpressionTextFunctions
         return result;
     }
 
-    [GeneratedRegex("\\s+")]
+#if NETSTANDARD2_1
+    private static Regex WhitespaceRegex() => WhitespaceRegexInstance;
+
+    private static Regex ValNumberPrefixRegex() => ValNumberPrefixRegexInstance;
+#else
+    [GeneratedRegex(WhitespacePattern)]
     private static partial Regex WhitespaceRegex();
 
-    [GeneratedRegex("^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(ValNumberPrefixPattern, RegexOptions.CultureInvariant)]
     private static partial Regex ValNumberPrefixRegex();
+#endif
 }
