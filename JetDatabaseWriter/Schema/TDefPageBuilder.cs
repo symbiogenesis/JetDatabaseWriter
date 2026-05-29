@@ -443,6 +443,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     /// Access across all Jet/ACE versions). When <see langword="false"/>, the
     /// historical 9-column slim schema is written instead.
     /// </param>
+    /// <exception cref="NotImplementedException">Thrown when an unsupported database format is specified.</exception>
     internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
         int pgSz = AccessBase.GetPageSize(format);
@@ -461,8 +462,9 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         db[0x14] = format switch
         {
             DatabaseFormat.Jet3Mdb => 0x00,
+            DatabaseFormat.Jet4Mdb => 0x01,
             DatabaseFormat.AceAccdb => 0x02,
-            _ => 0x01,
+            _ => throw new NotImplementedException(),
         };
 
         BuildGlobalUsageMapPage(db, pgSz, format);
