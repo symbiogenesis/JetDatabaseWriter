@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -122,6 +123,20 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                                 LongIntegerType => CatalogValueReader.ParseInt32OrZero(raw),
                                 IntegerType => (short)CatalogValueReader.ParseInt32OrZero(raw),
                                 ByteType => (byte)CatalogValueReader.ParseInt32OrZero(raw),
+                                ColumnType.BooleanType or
+                                ColumnType.MoneyType or
+                                ColumnType.FloatType or
+                                ColumnType.DoubleType or
+                                ColumnType.DateTimeType or
+                                ColumnType.BinaryType or
+                                ColumnType.TextType or
+                                ColumnType.OleType or
+                                ColumnType.MemoType or
+                                ColumnType.GuidType or
+                                ColumnType.NumericType or
+                                ColumnType.AttachmentType or
+                                ColumnType.ComplexType or
+                                ColumnType.DateTimeExtendedType or
                                 _ => raw,
                             };
                     }
