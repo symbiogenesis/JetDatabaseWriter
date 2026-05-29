@@ -201,11 +201,20 @@ internal static class IndexKeyEncoder
 
             case BooleanType:
                 throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
-
-            default:
+            case BinaryType:
+            case TextType:
+            case OleType:
+            case MemoType:
+            case GuidType:
+            case NumericType:
+            case AttachmentType:
+            case ComplexType:
+            case DateTimeExtendedType:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{(byte)columnType:X2} is not supported. " +
                     "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
+            default:
+                throw new InvalidOperationException($"Index key encoding for column type 0x{(byte)columnType:X2} is unknown.");
         }
     }
 
