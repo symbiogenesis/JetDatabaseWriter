@@ -1334,7 +1334,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, base.dataPage.TDefOff) != entry.TDefPage)
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, this.dataPage.TDefOff) != entry.TDefPage)
         {
             return null;
         }

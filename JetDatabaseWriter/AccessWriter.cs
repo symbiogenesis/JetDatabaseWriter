@@ -497,7 +497,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
-        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, base.format);
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, this.format);
         var indexes = new IndexDefinition[]
         {
             new("Id", "Id") { IsPrimaryKey = true },
@@ -512,7 +512,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         tdefPages[0][tdef.NumCols - 5] = 0x53;
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(base.format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(this.format);
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
         {
