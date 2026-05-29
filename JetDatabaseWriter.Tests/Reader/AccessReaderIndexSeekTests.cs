@@ -16,9 +16,9 @@ public sealed class AccessReaderIndexSeekTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task SeekRowsAsync_UniqueIndex_ReturnsSingleRowAndEmptyMissingKey(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -39,22 +39,22 @@ public sealed class AccessReaderIndexSeekTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var rows = await SeekAsync(reader, "T", "UQ_Id", [2]);
+        List<object[]> rows = await SeekAsync(reader, "T", "UQ_Id", [2]);
         object[] row = Assert.Single(rows);
         Assert.Equal([2, "beta"], row);
 
-        var missing = await SeekAsync(reader, "T", "UQ_Id", [99]);
+        List<object[]> missing = await SeekAsync(reader, "T", "UQ_Id", [99]);
         Assert.Empty(missing);
     }
 
     [Fact]
     public async Task SeekRowsAsync_CompositeIndex_MatchesFullTableScan()
     {
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Orders",
@@ -78,10 +78,10 @@ public sealed class AccessReaderIndexSeekTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var expected = await ScanAsync(reader, "Orders", row => (int)row[0] == 1 && (string)row[1] == "B");
-        var actual = await SeekAsync(reader, "Orders", "IX_Tenant_Code", [1, "B"]);
+        List<object[]> expected = await ScanAsync(reader, "Orders", row => (int)row[0] == 1 && (string)row[1] == "B");
+        List<object[]> actual = await SeekAsync(reader, "Orders", "IX_Tenant_Code", [1, "B"]);
 
         Assert.Equal(RowIds(expected, 2), RowIds(actual, 2));
     }
@@ -90,9 +90,9 @@ public sealed class AccessReaderIndexSeekTests
     public async Task SeekRowsAsync_NonUniqueIndex_WalksSiblingLeavesAndMatchesFullTableScan()
     {
         const int RowCount = 700;
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Dupes",
@@ -113,10 +113,10 @@ public sealed class AccessReaderIndexSeekTests
             await writer.InsertRowsAsync("Dupes", rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var expected = await ScanAsync(reader, "Dupes", row => (int)row[1] == 7);
-        var actual = await SeekAsync(reader, "Dupes", "IX_Bucket", [7]);
+        List<object[]> expected = await ScanAsync(reader, "Dupes", row => (int)row[1] == 7);
+        List<object[]> actual = await SeekAsync(reader, "Dupes", "IX_Bucket", [7]);
 
         Assert.Equal(RowCount, actual.Count);
         Assert.Equal(RowIds(expected, 0), RowIds(actual, 0));
@@ -126,9 +126,9 @@ public sealed class AccessReaderIndexSeekTests
     public async Task SeekRowsAsync_AppendedTailKey_UsesTailPageFallThrough()
     {
         const int InitialRows = 700;
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -148,13 +148,13 @@ public sealed class AccessReaderIndexSeekTests
             await writer.InsertRowsAsync("T", rows, TestContext.Current.CancellationToken);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.InsertRowAsync("T", [InitialRows, "tail"], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsFound = await SeekAsync(reader, "T", "IX_Id", [InitialRows]);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<object[]> rowsFound = await SeekAsync(reader, "T", "IX_Id", [InitialRows]);
 
         object[] row = Assert.Single(rowsFound);
         Assert.Equal([InitialRows, "tail"], row);
@@ -163,9 +163,9 @@ public sealed class AccessReaderIndexSeekTests
     [Fact]
     public async Task SeekRowsAsync_Jet3Index_ThrowsNotSupported()
     {
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -174,7 +174,7 @@ public sealed class AccessReaderIndexSeekTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
         {
@@ -224,7 +224,7 @@ public sealed class AccessReaderIndexSeekTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var stream = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             format,
             new AccessWriterOptions { UseLockFile = false },

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -103,7 +104,7 @@ public sealed class LvalLengthMismatchTests
     private static async Task<byte[]> WriteDatabaseWithOleAsync(byte[] payload)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -126,13 +127,13 @@ public sealed class LvalLengthMismatchTests
     private static async Task<byte[]> ReadOleBlobAsync(byte[] dbBytes)
     {
         using var ms = new MemoryStream(dbBytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "OleTest",
             cancellationToken: TestContext.Current.CancellationToken);
 

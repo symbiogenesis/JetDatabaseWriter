@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -37,7 +38,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
     public async Task SingleTablePk_RealIdxFirstDp_StampedToValidLeafPage()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -60,7 +61,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
     public async Task ParentChildWithFk_RealIdxFirstDp_StampedToValidLeafPage()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -102,7 +103,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
         byte[] fileBytes = ms.ToArray();
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -113,7 +114,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
 
         foreach (string tableName in tableNames)
         {
-            var indexes = await reader.ListIndexesAsync(tableName, ct);
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
             Assert.NotEmpty(indexes);
 
             // Every non-FK logical index should have a non-zero first_dp
@@ -122,7 +123,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
             // independently and may legitimately be 0 on freshly-created
             // FK entries — they're outside this hypothesis's scope.)
             int checkedCount = 0;
-            foreach (var idx in indexes.Where(i => !i.IsForeignKey))
+            foreach (IndexMetadata? idx in indexes.Where(i => !i.IsForeignKey))
             {
                 string rangeMessage = $"{tableName}.{idx.Name}: FirstDp={idx.FirstDp} out of range (must be > 1 and < {totalPages}). Regression: writer emitted a zero / invalid real-idx first_dp stamp.";
                 Assert.True(idx.FirstDp > 1 && idx.FirstDp < totalPages, rangeMessage);
@@ -144,7 +145,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
         // physical-descriptor offset 38 in the on-disk TDEF. A divergence
         // here would mean the reader is masking a writer-side zero, which
         // would still allow DAO to choke on the same byte.
-        await using var reader2 = await AccessReader.OpenAsync(
+        await using AccessReader reader2 = await AccessReader.OpenAsync(
             new MemoryStream(fileBytes),
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: false,
@@ -152,7 +153,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
 
         foreach (string tableName in tableNames)
         {
-            var entry = await reader2.GetCatalogEntryAsync(tableName, ct);
+            CatalogEntry? entry = await reader2.GetCatalogEntryAsync(tableName, ct);
             Assert.NotNull(entry);
             int tdefPage = (int)entry!.TDefPage;
             int off = tdefPage * pageSize;

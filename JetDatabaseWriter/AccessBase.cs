@@ -1007,7 +1007,7 @@ public abstract class AccessBase : IAccessBase
             }
 
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            var pageLock = await byteRangeLock.AcquirePageLockAsync(pageNumber, pgSz, cancellationToken).ConfigureAwait(false);
+            IDisposable pageLock = await byteRangeLock.AcquirePageLockAsync(pageNumber, pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = stream.Seek(pageNumber * pgSz, SeekOrigin.Begin);
@@ -1039,7 +1039,7 @@ public abstract class AccessBase : IAccessBase
 
             long pageNumber = stream.Length / pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            var pageLock = await byteRangeLock.AcquirePageLockAsync(pageNumber, pgSz, cancellationToken).ConfigureAwait(false);
+            IDisposable pageLock = await byteRangeLock.AcquirePageLockAsync(pageNumber, pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = stream.Seek(pageNumber * pgSz, SeekOrigin.Begin);
@@ -1065,7 +1065,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        var userTables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        List<CatalogEntry> userTables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         return userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -1391,7 +1391,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="page">The page bytes.</param>
     internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
-        foreach (var rb in EnumerateLiveRowBounds(page))
+        foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
             yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
         }
@@ -1414,12 +1414,12 @@ public abstract class AccessBase : IAccessBase
             return string.Empty;
         }
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out var layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
         {
             return string.Empty;
         }
 
-        var slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+        ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
         switch (slice.Kind)
         {
             case ColumnSliceKind.Bool:

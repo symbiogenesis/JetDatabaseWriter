@@ -35,7 +35,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     {
         Directory.CreateDirectory(outputDir);
 
-        var tables = await reader.ListTablesAsync(cancellationToken);
+        List<string> tables = await reader.ListTablesAsync(cancellationToken);
         if (tables.Count == 0)
         {
             await output.WriteLineAsync("No user tables found in the database.");

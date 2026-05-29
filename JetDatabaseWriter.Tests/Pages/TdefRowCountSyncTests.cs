@@ -45,7 +45,7 @@ public sealed class TdefRowCountSyncTests
     {
         var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
             await writer.CreateTableAsync(
@@ -67,7 +67,7 @@ public sealed class TdefRowCountSyncTests
     {
         var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
             await writer.CreateTableAsync(

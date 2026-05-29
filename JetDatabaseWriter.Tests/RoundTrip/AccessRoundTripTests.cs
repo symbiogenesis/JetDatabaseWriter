@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -62,7 +63,7 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
-        var result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
+        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
 
         AssertSchemaSurvived(result.SinglePre, result.SinglePost);
         Assert.Contains(result.SinglePost.Indexes[SingleChild], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID");
@@ -75,7 +76,7 @@ public sealed class AccessRoundTripTests
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
-        var result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
+        RelationshipRoundTripResult result = await GetRelationshipRoundTripResultAsync(TestContext.Current.CancellationToken);
 
         AssertSchemaSurvived(result.CompositePre, result.CompositePost);
         Assert.Contains(result.CompositePost.Indexes[CompositeParent], i => i.Kind == IndexKind.PrimaryKey && i.Columns == "OrderID+Region");
@@ -94,11 +95,11 @@ public sealed class AccessRoundTripTests
 
     private static async Task<RelationshipRoundTripResult> BuildRelationshipRoundTripResultAsync(CancellationToken cancellationToken)
     {
-        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+        await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
             cancellationToken,
             compactTimeout: CompactTimeout);
 
-        await using (var writer = await session.OpenWriterAsync(cancellationToken))
+        await using (AccessWriter writer = await session.OpenWriterAsync(cancellationToken))
         {
             await writer.CreateTableAsync(
                 SingleParent,
@@ -202,14 +203,14 @@ public sealed class AccessRoundTripTests
                 cancellationToken);
         }
 
-        var singlePre = await CaptureSnapshotAsync(
+        Snapshot singlePre = await CaptureSnapshotAsync(
             session.SourcePath,
             [SingleParent, SingleChild],
             [SingleFkName],
             cancellationToken);
         AssertPreCompactConsistency(singlePre, [SingleParent, SingleChild], [SingleFkName], expectedParentRows: 3, expectedChildRows: 3);
 
-        var compositePre = await CaptureSnapshotAsync(
+        Snapshot compositePre = await CaptureSnapshotAsync(
             session.SourcePath,
             [CompositeParent, CompositeChild],
             [CompositeFkName],
@@ -223,12 +224,12 @@ public sealed class AccessRoundTripTests
 
         session.RunDaoCompact();
 
-        var singlePost = await CaptureSnapshotAsync(
+        Snapshot singlePost = await CaptureSnapshotAsync(
             session.CompactedPath,
             [SingleParent, SingleChild],
             [SingleFkName],
             cancellationToken);
-        var compositePost = await CaptureSnapshotAsync(
+        Snapshot compositePost = await CaptureSnapshotAsync(
             session.CompactedPath,
             [CompositeParent, CompositeChild],
             [CompositeFkName],
@@ -244,11 +245,11 @@ public sealed class AccessRoundTripTests
         CancellationToken ct)
     {
         var snap = new Snapshot();
-        await using var reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, ct);
 
         foreach (string t in tables)
         {
-            var idx = await reader.ListIndexesAsync(t, ct);
+            IReadOnlyList<IndexMetadata> idx = await reader.ListIndexesAsync(t, ct);
             snap.Indexes[t] = idx
                 .Select(i => new IndexSummary(
                     i.Name,
@@ -260,11 +261,11 @@ public sealed class AccessRoundTripTests
                 .OrderBy(i => i.Name, StringComparer.Ordinal)
                 .ToList();
 
-            var dt = await reader.ReadDataTableAsync(t, cancellationToken: ct);
+            DataTable dt = await reader.ReadDataTableAsync(t, cancellationToken: ct);
             snap.RowCounts[t] = dt?.Rows.Count ?? -1;
         }
 
-        var rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
+        DataTable rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
         if (rel?.Columns.Contains("szRelationship") == true)
         {
             int n = 0;
@@ -285,7 +286,7 @@ public sealed class AccessRoundTripTests
 
     private static void AssertSchemaSurvived(Snapshot pre, Snapshot post)
     {
-        foreach (var (table, preIdx) in pre.Indexes)
+        foreach ((string? table, List<IndexSummary>? preIdx) in pre.Indexes)
         {
             Assert.True(post.Indexes.ContainsKey(table), $"table {table} disappeared after compact.");
             Assert.Equal(pre.RowCounts[table], post.RowCounts[table]);
@@ -349,10 +350,10 @@ public sealed class AccessRoundTripTests
         CancellationToken ct)
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, ct);
-        await using var reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, ct);
         foreach (string tableName in tableNames)
         {
-            var entry = await reader.GetCatalogEntryAsync(tableName, ct);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, ct);
             Assert.True(entry is not null, $"{tableName}: catalog entry not found.");
             int tdefPage = (int)entry.TDefPage;
 

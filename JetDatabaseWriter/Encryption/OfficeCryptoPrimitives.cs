@@ -26,7 +26,7 @@ internal static class OfficeCryptoPrimitives
 #if NET6_0_OR_GREATER
         bool ok = SHA1.TryHashData(source, destination, out int bytesWritten);
 #else
-        using SHA1 sha = SHA1.Create();
+        using var sha = SHA1.Create();
         bool ok = sha.TryComputeHash(source, destination, out int bytesWritten);
 #endif
 #pragma warning restore RS0030 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
@@ -48,7 +48,7 @@ internal static class OfficeCryptoPrimitives
 #if NET6_0_OR_GREATER
         bool ok = SHA512.TryHashData(source, destination, out int bytesWritten);
 #else
-        using SHA512 sha = SHA512.Create();
+        using var sha = SHA512.Create();
         bool ok = sha.TryComputeHash(source, destination, out int bytesWritten);
 #endif
         if (!ok || bytesWritten != Sha512HashBytes)
@@ -62,7 +62,7 @@ internal static class OfficeCryptoPrimitives
 #if NET6_0_OR_GREATER
         bool ok = SHA256.TryHashData(source, destination, out int bytesWritten);
 #else
-        using SHA256 sha = SHA256.Create();
+        using var sha = SHA256.Create();
         bool ok = sha.TryComputeHash(source, destination, out int bytesWritten);
 #endif
         if (!ok || bytesWritten != Sha256HashBytes)

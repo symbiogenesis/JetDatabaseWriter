@@ -51,7 +51,7 @@ internal static class DaoBaselineProbe
             return 1;
         }
 
-        var hostProbe = DaoPowerShellHostResolver.Probe();
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             await Console.Error.WriteLineAsync($"[dao-baseline] {hostProbe.FailureReason}");
@@ -77,7 +77,7 @@ internal static class DaoBaselineProbe
         string writerErr = string.Empty;
         try
         {
-            await using var w = await AccessWriter.OpenAsync(writerPath, new AccessWriterOptions { UseLockFile = false });
+            await using AccessWriter w = await AccessWriter.OpenAsync(writerPath, new AccessWriterOptions { UseLockFile = false });
             await w.CreateTableAsync(
                 "RT_Customers",
                 [
@@ -101,7 +101,7 @@ internal static class DaoBaselineProbe
 
         string writerCompactPath = FormatProbeArtifacts.GetFilePath(writerDir, $"{ProbeSlug}-source-compacted.accdb");
         string daoCompactPath = FormatProbeArtifacts.GetFilePath(daoDir, $"{ProbeSlug}-source-compacted.accdb");
-        var daoResults = RunDaoProbeBatch(
+        DaoProbeResults daoResults = RunDaoProbeBatch(
             powerShellPath,
             writerPath,
             writerCompactPath,
@@ -159,9 +159,9 @@ internal static class DaoBaselineProbe
 
         _ = sb.AppendLine();
 
-        await using (var basReader = await AccessReader.OpenAsync(baselinePath, ProbeReaderOptions))
+        await using (AccessReader basReader = await AccessReader.OpenAsync(baselinePath, ProbeReaderOptions))
         {
-            var baselinePages = await BaselinePageCache.LoadAsync(basReader);
+            BaselinePageCache baselinePages = await BaselinePageCache.LoadAsync(basReader);
             int pgSz = baselinePages.PageSize;
             long basPageCount = baselinePages.PageCount;
 
@@ -170,13 +170,13 @@ internal static class DaoBaselineProbe
 
             if (string.IsNullOrEmpty(writerErr))
             {
-                await using var r = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
+                await using AccessReader r = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
                 writerSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "writer", pagesDir, writePageBins);
             }
 
             if (daoCreateCode == 0)
             {
-                await using var r = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
+                await using AccessReader r = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
                 daoSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "dao", pagesDir, writePageBins);
             }
 
@@ -257,8 +257,8 @@ internal static class DaoBaselineProbe
             powerShellPath,
             script,
             FormatProbeArtifacts.GetFilePath(Path.GetDirectoryName(daoPath)!, $"{ProbeSlug}-dao-probe-batch.ps1"));
-        var results = ParseDaoStepResults(stdout);
-        var missing = code == 0
+        Dictionary<string, DaoStepResult> results = ParseDaoStepResults(stdout);
+        DaoStepResult missing = code == 0
             ? new DaoStepResult(1, "PowerShell batch did not emit a result for this step.")
             : new DaoStepResult(code, stderr);
 
@@ -413,7 +413,7 @@ internal static class DaoBaselineProbe
         Dictionary<string, DaoStepResult> results,
         string name,
         DaoStepResult fallback) =>
-        results.TryGetValue(name, out var result) ? result : fallback;
+        results.TryGetValue(name, out DaoStepResult result) ? result : fallback;
 
     private static (int Code, string StdOut, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
@@ -431,7 +431,7 @@ internal static class DaoBaselineProbe
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add(scriptPath);
 
-        using var p = Process.Start(psi)!;
+        using Process p = Process.Start(psi)!;
         string stdout = p.StandardOutput.ReadToEnd();
         string err = p.StandardError.ReadToEnd();
         _ = p.WaitForExit(120_000);
@@ -447,7 +447,7 @@ internal static class DaoBaselineProbe
             return false;
         }
 
-        var encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
+        AccessEncryptionFormat encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
         return encryption is AccessEncryptionFormat.None or AccessEncryptionFormat.AccdbLegacyPassword;
     }
 
@@ -482,7 +482,7 @@ internal static class DaoBaselineProbe
     private static async Task<byte[][]> LoadPagesDirectAsync(string path, int pageSize, int pageCount)
     {
         var pages = new byte[pageCount][];
-        await using var stream = OpenPageReadStream(path, pageSize);
+        await using FileStream stream = OpenPageReadStream(path, pageSize);
         for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
         {
             pages[pageNumber] = await ReadPageDirectAsync(stream, pageSize, pageNumber);
@@ -587,7 +587,7 @@ internal static class DaoBaselineProbe
             var pageBytes = new Dictionary<long, byte[]>();
             if (directFilePages)
             {
-                await using var stream = OpenPageReadStream(r.HostDatabasePath, pgSz);
+                await using FileStream stream = OpenPageReadStream(r.HostDatabasePath, pgSz);
                 for (long p = 0; p < shared; p++)
                 {
                     byte[] page = await ReadPageDirectAsync(stream, pgSz, p);
@@ -639,8 +639,8 @@ internal static class DaoBaselineProbe
                 }
             }
 
-            var catalog = await ReadCatalogAsync(r);
-            var rt = catalog.FirstOrDefault(c => string.Equals(c.Name, "RT_Customers", StringComparison.Ordinal));
+            List<CatalogEntry> catalog = await ReadCatalogAsync(r);
+            CatalogEntry? rt = catalog.FirstOrDefault(c => string.Equals(c.Name, "RT_Customers", StringComparison.Ordinal));
 
             byte[] tdefBytes = Array.Empty<byte>();
             if (rt?.TdefPage > 0)
@@ -861,7 +861,7 @@ internal static class DaoBaselineProbe
         const int NumRowsOff = 12;
         const int RowsStartOff = 14;
 
-        var candidates = snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline);
+        IEnumerable<long> candidates = snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline);
         foreach (long p in candidates)
         {
             if (!snap.PageTypes.TryGetValue(p, out byte pt) || pt != 0x01)
@@ -1013,8 +1013,8 @@ internal static class DaoBaselineProbe
         //   0x2D (45) = num_cols (u16)      0x2F (47) = num_logical_idx (i32)
         //   0x33 (51) = num_real_idx (i32)  0x37 (55) = owned_pages (4)
         //   0x3B (59) = free_space_pages (4)0x3F (63) = index_def_block start (12 × num_real_idx)
-        var wHdr = ParseTDefHeader(wt);
-        var dHdr = ParseTDefHeader(dt);
+        TDefHeader wHdr = ParseTDefHeader(wt);
+        TDefHeader dHdr = ParseTDefHeader(dt);
         byte wAutoNumberFlag = wt[0x18];
         byte dAutoNumberFlag = dt[0x18];
         string h25Verdict = (wAutoNumberFlag, dAutoNumberFlag) switch
@@ -1084,9 +1084,9 @@ internal static class DaoBaselineProbe
         // ── H26: per-table usage-map row 0 type byte == 0x01 (MAP_TYPE_REFERENCE)
         if (w.RtCustomers is { TdefPage: > 0 } wRt && d.RtCustomers is { TdefPage: > 0 } dRt)
         {
-            await using var wr = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
-            await using var dr = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
-            (var h26, var h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
+            await using AccessReader wr = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
+            await using AccessReader dr = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
+            (HypothesisRow? h26, HypothesisRow? h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
             rows.Add(h26);
             rows.Add(h45);
         }
@@ -1098,7 +1098,7 @@ internal static class DaoBaselineProbe
 
         _ = sb.AppendLine("| ID | Hypothesis | Verdict | Writer | DAO | Notes |");
         _ = sb.AppendLine("|---|---|:---:|---|---|---|");
-        foreach (var r in rows)
+        foreach (HypothesisRow r in rows)
         {
             _ = sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -1108,7 +1108,7 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine();
         int pass = 0;
         int fail = 0;
-        foreach (var row in rows)
+        foreach (HypothesisRow row in rows)
         {
             if (row.Verdict.Contains("PASS", StringComparison.Ordinal))
             {
@@ -1751,7 +1751,7 @@ internal static class DaoBaselineProbe
             return;
         }
 
-        var writerDiff = w is null
+        HashSet<long> writerDiff = w is null
             ? []
             : new HashSet<long>(w.PagesDifferingFromBaseline);
 
@@ -1921,7 +1921,7 @@ internal static class DaoBaselineProbe
 
     private static async Task<List<CatalogEntry>> ReadCatalogAsync(AccessReader r)
     {
-        var msys = await r.GetMSysObjectsTableDefAsync(default)
+        Catalog.Models.TableDef msys = await r.GetMSysObjectsTableDefAsync(default)
             ?? throw new InvalidOperationException("MSysObjects TDEF missing");
         int idxId = msys.Columns.FindIndex(c => c.Name.Equals("Id", StringComparison.OrdinalIgnoreCase));
         int idxName = msys.Columns.FindIndex(c => c.Name.Equals("Name", StringComparison.OrdinalIgnoreCase));

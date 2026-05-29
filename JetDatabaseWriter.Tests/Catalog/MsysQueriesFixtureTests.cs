@@ -5,6 +5,7 @@ using System.Data;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -29,11 +30,11 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ReadMSysQueries_ReturnsNonEmptyRowSet()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -49,15 +50,15 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task ParameterisedQuery_HasParameterAttributeRows()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var paramRows = dt.AsEnumerable()
+        DataRow[] paramRows = dt.AsEnumerable()
             .Where(r =>
             {
                 object attr = r["Attribute"];
@@ -83,16 +84,16 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task AllQueries_HaveTypeAttributeRows()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Attribute == 0 marks TYPE rows (Jackcess TYPE_ATTRIBUTE).
-        var typeRows = dt.AsEnumerable()
+        DataRow[] typeRows = dt.AsEnumerable()
             .Where(r =>
             {
                 object attr = r["Attribute"];

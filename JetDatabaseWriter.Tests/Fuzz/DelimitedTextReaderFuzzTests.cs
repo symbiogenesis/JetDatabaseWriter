@@ -44,7 +44,7 @@ public sealed class DelimitedTextReaderFuzzTests
 
     private static void RunFuzzIteration(byte[] fuzzedBytes)
     {
-        FuzzRandom random = FuzzRandom.Create(fuzzedBytes);
+        var random = FuzzRandom.Create(fuzzedBytes);
         char delimiter = Delimiters[random.Next(Delimiters.Length)];
 
         TryParseRawInput(fuzzedBytes, delimiter);
@@ -101,7 +101,7 @@ public sealed class DelimitedTextReaderFuzzTests
             }
         }
 
-        var actualRows = ReadAll(source.ToString(), delimiter);
+        List<string[]> actualRows = ReadAll(source.ToString(), delimiter);
         if (actualRows.Count != expectedRows.Count)
         {
             throw new InvalidDataException("Delimited text fuzz round-trip returned an unexpected row count.");
@@ -128,7 +128,7 @@ public sealed class DelimitedTextReaderFuzzTests
         var records = new List<string[]>();
         while (true)
         {
-            var record = reader.ReadRecordAsync(default).AsTask().GetAwaiter().GetResult();
+            DelimitedTextRecord? record = reader.ReadRecordAsync(default).AsTask().GetAwaiter().GetResult();
             if (record is not { } current)
             {
                 return records;

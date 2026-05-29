@@ -22,6 +22,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 
 internal static class LongRowBisect
@@ -33,8 +34,8 @@ internal static class LongRowBisect
         sb.AppendLine();
 
         // Build inline-only encoders over the existing per-codepoint tables.
-        var genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
-        var genEncoder = LoadEncoder("GeneralTextIndexEncoder");
+        InlineEncoder genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
+        InlineEncoder genEncoder = LoadEncoder("GeneralTextIndexEncoder");
 
         var tasks = new (string Path, byte[] Sep, InlineEncoder Encoder)[]
         {
@@ -44,7 +45,7 @@ internal static class LongRowBisect
             (Path.Combine(fixturesDir, "Jackcess", "V2010", "testIndexCodesV2010.accdb"), [0x07, 0x09, 0x07, 0x06], genEncoder),
         };
 
-        foreach (var t in tasks)
+        foreach ((string Path, byte[] Sep, InlineEncoder Encoder) t in tasks)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})");
             sb.AppendLine();
@@ -78,11 +79,11 @@ internal static class LongRowBisect
             return;
         }
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
-        var columns = await reader.GetColumnMetadataAsync("Table11");
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
         int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();
         await foreach (string[] row in reader.RowsAsStrings("Table11", cancellationToken: CancellationToken.None))
@@ -90,8 +91,8 @@ internal static class LongRowBisect
             rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
         }
 
-        var indexes = await reader.ListIndexesAsync("Table11");
-        var idx = indexes.First(i => i.Columns.Count == 1 && i.Columns[0].Name == "data" && i.FirstDp > 0);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table11");
+        IndexMetadata idx = indexes.First(i => i.Columns.Count == 1 && i.Columns[0].Name == "data" && i.FirstDp > 0);
         bool asc = idx.Columns[0].IsAscending;
 
         // Collect leaves
@@ -104,7 +105,7 @@ internal static class LongRowBisect
                 break;
             }
 
-            var iEntries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, reader.PageSize);
+            List<DecodedIntermediateEntry> iEntries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, reader.PageSize);
             current = iEntries[0].ChildPage;
         }
 
@@ -112,8 +113,8 @@ internal static class LongRowBisect
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, CancellationToken.None);
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize);
-            foreach (var e in entries)
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize);
+            foreach (IndexEntry e in entries)
             {
                 allKeys.Add(e.Key);
             }
@@ -135,10 +136,10 @@ internal static class LongRowBisect
         sb.AppendLine(CultureInfo.InvariantCulture, $"Long rows: {longRows.Count}; long leaves: {allKeys.Count(k => k.Length > 50)}");
         sb.AppendLine();
 
-        foreach (var (rowIdx, val) in longRows)
+        foreach ((int rowIdx, string? val) in longRows)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{rowIdx}] len={val.Length}");
-            var inlineCache = encoder.Encode(val);
+            InlineEncodingCache inlineCache = encoder.Encode(val);
 
             // Show some specific source chars to diagnose chunk-boundary rule.
             for (int probe = 175; probe <= 185 && probe < val.Length; probe++)
@@ -300,7 +301,7 @@ internal static class LongRowBisect
 
         public void AppendInline(char c, List<byte> output)
         {
-            var getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
+            Func<char, byte[]?> getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
             byte[]? inline = getInlineBytes(c);
             if (inline is not null)
             {
@@ -315,8 +316,8 @@ internal static class LongRowBisect
             for (int i = 0; i < handlers.Length; i++)
             {
                 object handler = handlers[i];
-                var handlerType = handler.GetType();
-                if (!methodCache.TryGetValue(handlerType, out var method))
+                Type handlerType = handler.GetType();
+                if (!methodCache.TryGetValue(handlerType, out MethodInfo? method))
                 {
                     method = handlerType.GetMethod("GetInlineBytes")
                         ?? throw new MissingMethodException(handlerType.FullName, "GetInlineBytes");

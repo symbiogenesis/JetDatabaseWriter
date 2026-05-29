@@ -16,7 +16,7 @@ public sealed class RelationshipRuntimePolicyTests
     [Fact]
     public void CascadeDepthPolicy_RejectsBeyondConfiguredLimit()
     {
-        var exception = Assert.Throws<InvalidOperationException>(
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
             () => RelationshipCascadePolicy.ThrowIfDepthExceeded(AccessWriter.CascadeMaxDepth + 1));
 
         Assert.Contains("cascade depth", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -35,8 +35,8 @@ public sealed class RelationshipRuntimePolicyTests
 
         int[] relationshipColumns = [0, 1];
 
-        var projectedRows = RelationshipKeyBuilder.ProjectNonNullKeys(sourceRows, relationshipColumns);
-        var keys = RelationshipKeyBuilder.BuildSetFromProjectedKeys(projectedRows);
+        List<object?[]> projectedRows = RelationshipKeyBuilder.ProjectNonNullKeys(sourceRows, relationshipColumns);
+        HashSet<string> keys = RelationshipKeyBuilder.BuildSetFromProjectedKeys(projectedRows);
         string? expectedKey = RelationshipKeyBuilder.Build(
             ["ALPHA", 5],
             RelationshipKeyBuilder.CreateIdentityOrdinals(2));

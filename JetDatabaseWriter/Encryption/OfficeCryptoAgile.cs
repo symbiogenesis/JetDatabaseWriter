@@ -106,7 +106,7 @@ internal static class OfficeCryptoAgile
                 "EncryptionInfo header is not in Agile (version 4.4) format.");
         }
 
-        var descriptor = ParseDescriptor(encryptionInfo);
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] passwordUtf16 = PasswordToUtf16(password);
         try
         {
@@ -305,7 +305,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException("ACCDB header EncryptionInfo is not in Agile format.");
         }
 
-        var descriptor = ParseDescriptor(encryptionInfo);
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] headerPage = GetUnmaskedHeaderPage(encryptedDatabase);
         byte[] encodingKey = new byte[4];
         Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
@@ -659,7 +659,7 @@ internal static class OfficeCryptoAgile
         Guard.NotNull(key, nameof(key));
         Guard.NotNull(iv, nameof(iv));
 
-        Aes? aes = Aes.Create();
+        var aes = Aes.Create();
 #pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
         if (aes is null)
         {
@@ -682,7 +682,7 @@ internal static class OfficeCryptoAgile
             aes.Key = key;
             aes.IV = iv;
 
-            var transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
             if (transform is null)
             {
                 throw new CryptographicException("AES transform creation failed.");
@@ -855,7 +855,7 @@ internal static class OfficeCryptoAgile
             }
         }
 
-        Aes? aes = Aes.Create();
+        var aes = Aes.Create();
 #pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
         if (aes is null)
         {
@@ -888,7 +888,7 @@ internal static class OfficeCryptoAgile
                 byte[] cipher = aes.EncryptCbc(block, iv, PaddingMode.None);
 #else
                 aes.IV = iv;
-                using var t = aes.CreateEncryptor();
+                using ICryptoTransform t = aes.CreateEncryptor();
                 byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
 #endif
                 Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);

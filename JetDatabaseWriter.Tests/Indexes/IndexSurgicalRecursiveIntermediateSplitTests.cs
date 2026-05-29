@@ -37,11 +37,11 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // non-indexed Tag column may trigger leaf-merge plus mid-level
         // intermediate updates that require the recursive split path
         // (which the plain parent-of-leaf split cannot reach).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int rowCount = 600;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -62,15 +62,15 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Cross-leaf delete of ~120 rows spread across many leaves.
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, ct);
             Assert.Equal(rowCount / 5, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - (rowCount / 5), dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)
@@ -89,9 +89,9 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // own split → propagated summary insert into the mid-level
         // intermediate. The plain parent-of-leaf split bails at the
         // mid-level overflow; the recursive path handles it in place.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -128,8 +128,8 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(560, dt!.Rows.Count);
 
@@ -149,11 +149,11 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // the tree in a consistent state across multiple round-trips.
         // Uses composite keys so trees grow past root capacity at
         // manageable row counts.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int initialRows = 700;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -174,7 +174,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         }
 
         // Cycle: delete every 11th key, reinsert different ones.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             for (int i = 0; i < initialRows; i += 11)
             {
@@ -194,8 +194,8 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
             await writer.InsertRowsAsync("T", fresh, ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
 
         const int deletedCount = (initialRows + 10) / 11; // ceil(700/11) = 64
@@ -234,7 +234,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

@@ -27,9 +27,9 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     [Fact]
     public async Task AddColumnAsync_OnTableWithAttachmentColumn_PreservesAttachmentData()
     {
-        var ms = await CreateDbWithAttachmentAndOneFileAsync();
+        MemoryStream ms = await CreateDbWithAttachmentAndOneFileAsync();
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -43,12 +43,12 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await AssertAttachmentSurvivesAsync(ms, expectedColumn: "Files", expectedFileName: "notes.txt");
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Note", StringComparison.OrdinalIgnoreCase));
 
-        var raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
-        var complexRef = Assert.IsType<ComplexIdRef>(raw.Rows[0]["Files"]);
+        DataTable raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
+        ComplexIdRef complexRef = Assert.IsType<ComplexIdRef>(raw.Rows[0]["Files"]);
         Assert.True(complexRef.Id > 0);
     }
 
@@ -56,7 +56,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     public async Task DropColumnAsync_NonComplexColumn_OnTableWithAttachment_PreservesAttachmentData()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -89,8 +89,8 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await AssertAttachmentSurvivesAsync(ms, expectedColumn: "Files", expectedFileName: "notes.txt");
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Title", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
     }
@@ -98,21 +98,21 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     [Fact]
     public async Task DropColumnAsync_TheAttachmentColumnItself_RemovesMSysComplexColumnsRow()
     {
-        var ms = await CreateDbWithAttachmentAndOneFileAsync();
+        MemoryStream ms = await CreateDbWithAttachmentAndOneFileAsync();
 
         long originalFlatId;
         ms.Position = 0;
-        await using (var probe = await AccessReader.OpenAsync(
+        await using (AccessReader probe = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
         {
-            var info = await probe.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+            IReadOnlyList<ComplexColumnInfo> info = await probe.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
             originalFlatId = Assert.Single(info).FlatTableId;
             Assert.True(originalFlatId > 0);
         }
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -121,18 +121,18 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent column descriptor is gone.
-        var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
 
         // Complex column metadata is gone for the parent.
-        var infoAfter = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> infoAfter = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Empty(infoAfter);
 
         // MSysComplexColumns no longer has the row for this column.
-        var cx = await reader.ReadDataTableAsync(
+        DataTable cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -150,7 +150,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     public async Task RenameColumnAsync_NonComplexColumn_OnTableWithAttachment_PreservesAttachmentData()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -183,8 +183,8 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await AssertAttachmentSurvivesAsync(ms, expectedColumn: "Files", expectedFileName: "notes.txt");
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Heading", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Title", StringComparison.OrdinalIgnoreCase));
     }
@@ -192,9 +192,9 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     [Fact]
     public async Task RenameColumnAsync_TheAttachmentColumnItself_UpdatesMSysComplexColumnsRow()
     {
-        var ms = await CreateDbWithAttachmentAndOneFileAsync();
+        MemoryStream ms = await CreateDbWithAttachmentAndOneFileAsync();
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -203,21 +203,21 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent column descriptor reflects the new name.
-        var meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Attachments", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
 
         // GetComplexColumnsAsync surfaces the new name.
-        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        var only = Assert.Single(info);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        ComplexColumnInfo only = Assert.Single(info);
         Assert.Equal("Attachments", only.ColumnName);
 
         // GetAttachmentsAsync still returns the original payload — joined under the new column name.
-        var attachments = await reader.GetAttachmentsAsync("Documents", "Attachments", TestContext.Current.CancellationToken);
-        var single = Assert.Single(attachments);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Attachments", TestContext.Current.CancellationToken);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("notes.txt", single.FileName);
         Assert.Equal(Encoding.UTF8.GetBytes("hi"), single.FileData);
     }
@@ -226,7 +226,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     public async Task DropColumnAsync_TheMultiValueColumnItself_RemovesMSysComplexColumnsRow()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -260,12 +260,12 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
         Assert.Empty(info);
 
-        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         Assert.DoesNotContain(
             cx!.Rows.Cast<DataRow>(),
@@ -275,22 +275,22 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     [Fact]
     public async Task AddColumnAsync_NewAttachmentColumn_OnTableThatAlreadyHasAttachment_AllocatesFreshComplexId()
     {
-        var ms = await CreateDbWithAttachmentAndOneFileAsync();
+        MemoryStream ms = await CreateDbWithAttachmentAndOneFileAsync();
 
         // Capture the existing column's ComplexId so we can assert the new one differs.
         int existingComplexId;
         ms.Position = 0;
-        await using (var probe = await AccessReader.OpenAsync(
+        await using (AccessReader probe = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
         {
-            var info = await probe.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+            IReadOnlyList<ComplexColumnInfo> info = await probe.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
             existingComplexId = Assert.Single(info).ComplexId;
             Assert.True(existingComplexId > 0);
         }
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -305,10 +305,10 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await AssertAttachmentSurvivesAsync(ms, expectedColumn: "Files", expectedFileName: "notes.txt");
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Both columns are complex now, with distinct ComplexIds.
-        var info2 = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> info2 = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Equal(2, info2.Count);
         Assert.Contains(info2, c => string.Equals(c.ColumnName, "Files", StringComparison.OrdinalIgnoreCase) && c.ComplexId == existingComplexId);
         Assert.Contains(info2, c => string.Equals(c.ColumnName, "Backup", StringComparison.OrdinalIgnoreCase) && c.ComplexId != existingComplexId);
@@ -317,7 +317,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     private static async Task<MemoryStream> CreateDbWithAttachmentAndOneFileAsync()
     {
         var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -349,9 +349,9 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     private static async Task AssertAttachmentSurvivesAsync(MemoryStream ms, string expectedColumn, string expectedFileName)
     {
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var attachments = await reader.GetAttachmentsAsync("Documents", expectedColumn, TestContext.Current.CancellationToken);
-        var single = Assert.Single(attachments);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", expectedColumn, TestContext.Current.CancellationToken);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal(expectedFileName, single.FileName);
         Assert.Equal(Encoding.UTF8.GetBytes("hi"), single.FileData);
     }

@@ -57,14 +57,14 @@ internal sealed class ColumnPropertyBlockBuilder
     {
         Guard.NotNull(block, nameof(block));
         var b = new ColumnPropertyBlockBuilder();
-        foreach (var t in block.Targets)
+        foreach (ColumnPropertyTarget t in block.Targets)
         {
             var tb = new TargetBuilder
             {
                 Name = t.Name,
                 ChunkType = t.ChunkType,
             };
-            foreach (var e in t.Entries)
+            foreach (ColumnPropertyEntry e in t.Entries)
             {
                 tb.Entries.Add(new EntryBuilder
                 {
@@ -78,7 +78,7 @@ internal sealed class ColumnPropertyBlockBuilder
             b.Targets.Add(tb);
         }
 
-        foreach (var u in block.UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk u in block.UnknownChunks)
         {
             b.UnknownChunks.Add(new ColumnPropertyUnknownChunk(u.ChunkType, (byte[])u.Payload.Clone()));
         }
@@ -94,7 +94,7 @@ internal sealed class ColumnPropertyBlockBuilder
     public TargetBuilder GetOrAddTarget(string name)
     {
         Guard.NotNullOrEmpty(name, nameof(name));
-        foreach (var t in Targets)
+        foreach (TargetBuilder t in Targets)
         {
             if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {
@@ -135,7 +135,7 @@ internal sealed class ColumnPropertyBlockBuilder
     public void RenameTarget(string oldName, string newName)
     {
         Guard.NotNullOrEmpty(newName, nameof(newName));
-        foreach (var t in Targets)
+        foreach (TargetBuilder t in Targets)
         {
             if (string.Equals(t.Name, oldName, StringComparison.OrdinalIgnoreCase))
             {
@@ -159,15 +159,15 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         bool isJet3 = format == DatabaseFormat.Jet3Mdb;
-        var stringEncoding = isJet3 ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding stringEncoding = isJet3 ? Encoding.GetEncoding(1252) : Encoding.Unicode;
 
         // Build the name pool from every distinct entry name encountered, in stable
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
         var nameToIndex = new Dictionary<string, ushort>(StringComparer.Ordinal);
         var nameOrder = new List<string>();
-        foreach (var t in Targets)
+        foreach (TargetBuilder t in Targets)
         {
-            foreach (var e in t.Entries)
+            foreach (EntryBuilder e in t.Entries)
             {
                 if (!nameToIndex.ContainsKey(e.Name))
                 {
@@ -194,7 +194,7 @@ internal sealed class ColumnPropertyBlockBuilder
             totalLength = AddChunkLength(totalLength, propertyBlockPayloads[targetIndex].Length);
         }
 
-        foreach (var unknownChunk in UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
         {
             totalLength = AddChunkLength(totalLength, unknownChunk.Payload.Length);
         }
@@ -214,7 +214,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
         // the name pool the parser depends on).
-        foreach (var unknownChunk in UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
         {
             WriteChunk(blob, ref offset, (ColumnPropertyChunkType)unknownChunk.ChunkType, unknownChunk.Payload);
         }
@@ -254,7 +254,7 @@ internal sealed class ColumnPropertyBlockBuilder
         var entryLengths = new int[target.Entries.Count];
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            var entry = target.Entries[entryIndex];
+            EntryBuilder entry = target.Entries[entryIndex];
             int valueLength = entry.Value.Length;
             int entryLength = PropertyEntryHeaderLength + valueLength;
             if (entryLength > ushort.MaxValue)
@@ -277,7 +277,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            var entry = target.Entries[entryIndex];
+            EntryBuilder entry = target.Entries[entryIndex];
             if (!nameToIndex.TryGetValue(entry.Name, out ushort nameIndex))
             {
                 throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
@@ -350,7 +350,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
     private static void WriteMagic(byte[] blob, ref int offset, bool isJet3)
     {
-        var magic = isJet3 ? "KKD\0"u8 : "MR2\0"u8;
+        ReadOnlySpan<byte> magic = isJet3 ? "KKD\0"u8 : "MR2\0"u8;
         WriteBytes(blob, ref offset, magic);
     }
 
@@ -408,7 +408,7 @@ internal sealed class ColumnPropertyBlockBuilder
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
             Guard.NotNull(value, nameof(value));
-            var enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+            Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
@@ -426,7 +426,7 @@ internal sealed class ColumnPropertyBlockBuilder
         {
             Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
             Guard.NotNull(value, nameof(value));
-            var enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+            Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
             Entries.Add(new EntryBuilder
             {
                 Name = propertyName,

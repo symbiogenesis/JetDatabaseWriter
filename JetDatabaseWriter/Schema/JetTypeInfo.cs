@@ -450,7 +450,7 @@ internal static class JetTypeInfo
 #if NET8_0_OR_GREATER
         // .NET 8 JIT emits efficient code for uint endianness reversal; process
         // full 4-byte words first, then handle any trailing bytes defensively.
-        var words = MemoryMarshal.Cast<byte, uint>(bytes);
+        Span<uint> words = MemoryMarshal.Cast<byte, uint>(bytes);
         for (int i = 0; i < words.Length; i++)
         {
             words[i] = BinaryPrimitives.ReverseEndianness(words[i]);

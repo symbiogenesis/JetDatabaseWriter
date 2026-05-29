@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -41,7 +42,7 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
     }
@@ -51,7 +52,7 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
     }
@@ -66,14 +67,14 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             // No tables created — dispose writer.
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(tables);
     }
@@ -121,19 +122,19 @@ public sealed class CreateDatabaseTests
             new("Active", typeof(bool)),
         };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal(tableName, tables[0]);
 
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(3, meta.Count);
     }
 
@@ -153,7 +154,7 @@ public sealed class CreateDatabaseTests
             new("Label", typeof(string), maxLength: 100),
         };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(tableName, [1, "Alpha"], TestContext.Current.CancellationToken);
@@ -161,7 +162,7 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, count);
@@ -177,15 +178,15 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("TableA", [new("X", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync("TableB", [new("Y", typeof(string), 50)], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, tables.Count);
         Assert.Contains("TableA", tables);
@@ -203,7 +204,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await using (var writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(writer);
             }
@@ -226,14 +227,14 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await using (var writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync("T1", [new("Col", typeof(int))], TestContext.Current.CancellationToken);
                 await writer.InsertRowAsync("T1", [42], TestContext.Current.CancellationToken);
             }
 
-            await using var reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
+            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Single(tables);
             Assert.Equal("T1", tables[0]);
         }
@@ -281,7 +282,7 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
         Assert.Equal(DatabaseFormat.Jet3Mdb, writer.DatabaseFormat);
@@ -294,7 +295,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await using (var writer = await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet3Mdb, cancellationToken: TestContext.Current.CancellationToken))
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet3Mdb, cancellationToken: TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(writer);
                 Assert.Equal(DatabaseFormat.Jet3Mdb, writer.DatabaseFormat);
@@ -342,15 +343,15 @@ public sealed class CreateDatabaseTests
             new("ByteCol", typeof(byte)),
         };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(tableName, [99, (short)7, 3.14, 1.5f, new DateTime(2025, 6, 15), true, "Hello", (byte)42], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(8, meta.Count);
         Assert.Equal(1, await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken));
@@ -366,15 +367,15 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("ToDrop", [new("X", typeof(int))], TestContext.Current.CancellationToken);
             await writer.DropTableAsync("ToDrop", TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(tables);
     }
@@ -391,14 +392,14 @@ public sealed class CreateDatabaseTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             // Default: WriteFullCatalogSchema = true
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(FullCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
@@ -413,14 +414,14 @@ public sealed class CreateDatabaseTests
         await using var ms = new MemoryStream();
         var opts = new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = false };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, opts, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, opts, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             // Opt-out: WriteFullCatalogSchema = false retains the historical layout.
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(SlimCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
@@ -433,9 +434,9 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_FullCatalogSchema_CreateTable_RoundTripsAcrossOpenClose(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        var defs = new[] { new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50) };
+        ColumnDefinition[] defs = new[] { new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50) };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("People", defs, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("People", [1, "Alice"], TestContext.Current.CancellationToken);
@@ -443,12 +444,12 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(["People"], tables);
 
-        var meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
         Assert.Equal(["Id", "Name"], meta.ConvertAll(c => c.Name));
 
         // None of the new property fields are populated yet.

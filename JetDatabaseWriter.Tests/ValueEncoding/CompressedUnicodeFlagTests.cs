@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Data;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -39,7 +40,7 @@ public sealed class CompressedUnicodeFlagTests
         const string sentinel = "CompressMe_SENTINEL";
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -82,7 +83,7 @@ public sealed class CompressedUnicodeFlagTests
         const string sentinel = "MemoCompressSentinel_ABC";
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -117,7 +118,7 @@ public sealed class CompressedUnicodeFlagTests
         const string value = "Hello\u4E16\u754C"; // "Hello世界"
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -296,7 +297,7 @@ public sealed class CompressedUnicodeFlagTests
         const string value = "RoundTrip_Compressed_Test";
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },
@@ -315,13 +316,13 @@ public sealed class CompressedUnicodeFlagTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync("RTText", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync("RTText", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(value, Assert.IsType<string>(dt.Rows[0]["Val"]));
     }
@@ -335,7 +336,7 @@ public sealed class CompressedUnicodeFlagTests
     public async Task Writer_TextColumn_SetsCompressedUnicodeExtFlag()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

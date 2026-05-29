@@ -24,7 +24,7 @@ public sealed class IndexLeafPageBuilderTests
     public void EmptyPage_HasCorrectHeaderAndFreeSpace(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 42, [], 0, 0, 0, enablePrefixCompression: false);
 
         Assert.Equal(pageSize, page.Length);
@@ -51,9 +51,9 @@ public sealed class IndexLeafPageBuilderTests
     {
         // §4.3: first entry is implicit (no bit in §4.2 bitmask).
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // LongInteger=7 → 5 bytes
-        var entries = new[] { new IndexEntry(key, 0x123456, 9) };
+        IndexEntry[] entries = new[] { new IndexEntry(key, 0x123456, 9) };
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, parentTdefPage: 100, entries, 0, 0, 0, enablePrefixCompression: false);
 
@@ -90,11 +90,11 @@ public sealed class IndexLeafPageBuilderTests
     public void MultipleEntries_SetsBitmaskBitForEachAfterFirst(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
         byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
-        var entries = new[]
+        IndexEntry[] entries = new[]
         {
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
@@ -121,7 +121,7 @@ public sealed class IndexLeafPageBuilderTests
     public void EntriesExceedingPage_Throws(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] bigKey = new byte[200];
         var entry = new IndexEntry(bigKey, 1, 0);
 
@@ -143,9 +143,9 @@ public sealed class IndexLeafPageBuilderTests
     public void DataPageOverflow24Bit_Throws(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
-        var entries = new[] { new IndexEntry(key, 0x1_000_000L, 0) };
+        IndexEntry[] entries = new[] { new IndexEntry(key, 0x1_000_000L, 0) };
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false));
@@ -160,10 +160,10 @@ public sealed class IndexLeafPageBuilderTests
         // entries share leading bytes — preserves the leaf-page emission byte layout
         // for callers that haven't opted in.
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
-        var entries = new[]
+        IndexEntry[] entries = new[]
         {
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
@@ -184,7 +184,7 @@ public sealed class IndexLeafPageBuilderTests
         // two 0x00 bytes). Compressed entries beyond the first carry only the
         // single trailing differing byte.
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
         byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
@@ -237,9 +237,9 @@ public sealed class IndexLeafPageBuilderTests
     public void PrefixCompressionEnabled_SingleEntry_LeavesPrefLenAtZero(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true);
-        var entries = new[] { new IndexEntry(key, 1, 0) };
+        IndexEntry[] entries = new[] { new IndexEntry(key, 1, 0) };
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
 
@@ -252,7 +252,7 @@ public sealed class IndexLeafPageBuilderTests
     public void PrefixCompressionEnabled_NoCommonPrefix_LeavesPrefLenAtZero(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = [0x10, 0x20];
         byte[] k2 = [0x30, 0x40];
         IndexEntry[] entries =
@@ -272,7 +272,7 @@ public sealed class IndexLeafPageBuilderTests
     public void PrefixCompressionEnabled_MaxPrefixLengthCapsComputedPrefix(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         IndexEntry[] entries =
         [
             new(CreateSharedPrefixKey(1), 1, 0),
@@ -304,7 +304,7 @@ public sealed class IndexLeafPageBuilderTests
         Assert.True(ReadU16(uncapped, layout.PrefLenOffset) > 2);
         Assert.Equal(2, ReadU16(capped, layout.PrefLenOffset));
 
-        var decoded = IndexLeafIncremental.DecodeEntries(layout, capped, pageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, capped, pageSize);
         Assert.Equal(entries.Length, decoded.Count);
         for (int i = 0; i < entries.Length; i++)
         {
@@ -320,7 +320,7 @@ public sealed class IndexLeafPageBuilderTests
     public void SplitLeafPages_MaxPrefixLengthCap_PreservesKeysAcrossAllSplitPages(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         const int maxPrefixLength = 2;
 
         var entries = new List<IndexEntry>(300);
@@ -329,7 +329,7 @@ public sealed class IndexLeafPageBuilderTests
             entries.Add(new(CreateSharedPrefixKey(i), i + 1, (byte)(i % 255)));
         }
 
-        var splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, pageSize, entries);
+        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, pageSize, entries);
         Assert.NotNull(splitPages);
         Assert.True(splitPages!.Count >= 2);
 
@@ -382,10 +382,10 @@ public sealed class IndexLeafPageBuilderTests
         // set bits beyond the payload end. DecodeEntries must return the
         // entries it can safely parse without reading past payloadEnd.
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
-        var entries = new[]
+        IndexEntry[] entries = new[]
         {
             new IndexEntry(k1, 1, 0),
             new IndexEntry(k2, 1, 1),
@@ -413,11 +413,11 @@ public sealed class IndexLeafPageBuilderTests
     {
         // An empty leaf page should decode zero entries (payloadEnd == firstEntryOffset).
         int pageSize = PageSizeOf(format);
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, 100, [], 0, 0, 0, enablePrefixCompression: false);
 
-        var decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
         Assert.Empty(decoded);
     }
 

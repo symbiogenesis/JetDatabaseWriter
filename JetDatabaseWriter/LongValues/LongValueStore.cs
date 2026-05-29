@@ -115,7 +115,7 @@ internal static class LongValueStore
             return new LvalRowLocation(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
 
-        foreach (var rowBound in liveRows)
+        foreach (AccessBase.RowBound rowBound in liveRows)
         {
             if (rowBound.RowIndex != lvalRow)
             {
@@ -156,7 +156,7 @@ internal static class LongValueStore
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var location = await locateRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
+                LvalRowLocation location = await locateRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
                 if (location.Failed)
                 {
                     return LvalChainResult.Failure(location.Error!);

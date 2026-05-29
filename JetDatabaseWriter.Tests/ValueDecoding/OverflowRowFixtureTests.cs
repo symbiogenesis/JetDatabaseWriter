@@ -1,6 +1,9 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
+using System.Collections.Generic;
+using System.Data;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -22,11 +25,11 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task OverflowTestV2010_OpensAndListsTable()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains("Table1", tables);
     }
@@ -38,11 +41,11 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Table1_ReadsAllRows_WithoutThrowing()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -56,7 +59,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Table1_AllRows_HaveValidData()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -89,11 +92,11 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             .GetField(fieldName)!
             .GetValue(null)!;
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         foreach (string table in tables)

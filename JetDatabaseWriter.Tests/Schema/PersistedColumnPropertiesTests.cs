@@ -77,7 +77,7 @@ public sealed class PersistedColumnPropertiesTests
     public void Builder_RoundTrips_Via_Parser_SingleColumn()
     {
         var b = new ColumnPropertyBlockBuilder();
-        var t = b.GetOrAddTarget("Qty");
+        ColumnPropertyBlockBuilder.TargetBuilder t = b.GetOrAddTarget("Qty");
         t.AddText(Constants.ColumnPropertyNames.DefaultValue, "0", DatabaseFormat.Jet4Mdb);
         t.AddText(Constants.ColumnPropertyNames.ValidationRule, ">=0", DatabaseFormat.Jet4Mdb);
         t.AddText(Constants.ColumnPropertyNames.ValidationText, "must be non-negative", DatabaseFormat.Jet4Mdb);
@@ -85,8 +85,8 @@ public sealed class PersistedColumnPropertiesTests
 
         byte[]? blob = b.ToBytes(DatabaseFormat.Jet4Mdb);
 
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
-        var tgt = parsed.FindTarget("Qty")!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyTarget tgt = parsed.FindTarget("Qty")!;
         Assert.Equal("0", tgt.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
         Assert.Equal(">=0", tgt.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, DatabaseFormat.Jet4Mdb));
         Assert.Equal("must be non-negative", tgt.GetTextValue(Constants.ColumnPropertyNames.ValidationText, DatabaseFormat.Jet4Mdb));
@@ -107,11 +107,11 @@ public sealed class PersistedColumnPropertiesTests
         srcBuilder.UnknownChunks.Add(new ColumnPropertyUnknownChunk(0xABCD, [0xDE, 0xAD, 0xBE, 0xEF]));
 
         byte[] blob = srcBuilder.ToBytes(DatabaseFormat.Jet4Mdb)!;
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
 
-        ColumnPropertyBlockBuilder copy = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        var copy = ColumnPropertyBlockBuilder.FromBlock(parsed);
         byte[] reblob = copy.ToBytes(DatabaseFormat.Jet4Mdb)!;
-        var reparsed = ColumnPropertyBlock.Parse(reblob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock reparsed = ColumnPropertyBlock.Parse(reblob, DatabaseFormat.Jet4Mdb)!;
 
         Assert.Single(reparsed.UnknownChunks);
         Assert.Equal((ushort)0xABCD, reparsed.UnknownChunks[0].ChunkType);
@@ -139,8 +139,8 @@ public sealed class PersistedColumnPropertiesTests
         };
 
         byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
-        var target = parsed.FindTarget("Y")!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyTarget target = parsed.FindTarget("Y")!;
 
         Assert.False(target.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength));
         Assert.False(target.GetBooleanValue(Constants.ColumnPropertyNames.Required));
@@ -155,7 +155,7 @@ public sealed class PersistedColumnPropertiesTests
         };
 
         byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
         Assert.Equal("42", parsed.FindTarget("X")!.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
     }
 
@@ -172,7 +172,7 @@ public sealed class PersistedColumnPropertiesTests
         };
 
         byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
         Assert.Equal("=Now()", parsed.FindTarget("X")!.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
     }
 
@@ -193,7 +193,7 @@ public sealed class PersistedColumnPropertiesTests
         };
 
         byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
 
         Assert.True(parsed.FindTarget("Name")!.GetBooleanValue(Constants.ColumnPropertyNames.Required));
 
@@ -229,28 +229,28 @@ public sealed class PersistedColumnPropertiesTests
     public async Task CreateTableAsync_PersistsLvProp_Visible_Via_GetColumnMetadataAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("Items", SampleColumnsWithProperties(), TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("Items", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Items", TestContext.Current.CancellationToken);
 
-        var qty = meta.Single(m => m.Name == "Qty");
+        ColumnMetadata qty = meta.Single(m => m.Name == "Qty");
         Assert.Equal("0", qty.DefaultValueExpression);
         Assert.Equal(">=0", qty.ValidationRuleExpression);
         Assert.Equal("too low", qty.ValidationText);
         Assert.Equal("qty", qty.Description);
 
-        var name = meta.Single(m => m.Name == "N");
+        ColumnMetadata name = meta.Single(m => m.Name == "N");
         Assert.Null(name.DefaultValueExpression);
         Assert.Equal("name", name.Description);
     }
@@ -261,7 +261,7 @@ public sealed class PersistedColumnPropertiesTests
     public async Task AddColumnAsync_PreservesExistingLvProp()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("T", SampleColumnsWithProperties(), TestContext.Current.CancellationToken);
@@ -269,16 +269,16 @@ public sealed class PersistedColumnPropertiesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
         Assert.Equal(3, meta.Count);
 
-        var qty = meta.Single(m => m.Name == "Qty");
+        ColumnMetadata qty = meta.Single(m => m.Name == "Qty");
         Assert.Equal("0", qty.DefaultValueExpression);
         Assert.Equal("too low", qty.ValidationText);
         Assert.Equal("qty", qty.Description);
@@ -290,7 +290,7 @@ public sealed class PersistedColumnPropertiesTests
     public async Task DropColumnAsync_RemovesDroppedColumnLvProp_PreservesOthers()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("T", SampleColumnsWithProperties(), TestContext.Current.CancellationToken);
@@ -298,13 +298,13 @@ public sealed class PersistedColumnPropertiesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
 
         Assert.Single(meta);
         Assert.Equal("Qty", meta[0].Name);
@@ -316,7 +316,7 @@ public sealed class PersistedColumnPropertiesTests
     public async Task RenameColumnAsync_RetargetsLvProp_To_NewColumnName()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("T", SampleColumnsWithProperties(), TestContext.Current.CancellationToken);
@@ -324,15 +324,15 @@ public sealed class PersistedColumnPropertiesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
 
-        var renamed = meta.Single(m => m.Name == "Quantity");
+        ColumnMetadata renamed = meta.Single(m => m.Name == "Quantity");
         Assert.Equal("0", renamed.DefaultValueExpression);
         Assert.Equal(">=0", renamed.ValidationRuleExpression);
         Assert.Equal("too low", renamed.ValidationText);
@@ -346,7 +346,7 @@ public sealed class PersistedColumnPropertiesTests
     public async Task CreateTableAsync_NoPersistedProps_DoesNotEmitLvProp()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
@@ -356,13 +356,13 @@ public sealed class PersistedColumnPropertiesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var col = (await reader.GetColumnMetadataAsync("Plain", TestContext.Current.CancellationToken)).Single();
+        ColumnMetadata col = (await reader.GetColumnMetadataAsync("Plain", TestContext.Current.CancellationToken)).Single();
         Assert.Null(col.DefaultValueExpression);
         Assert.Null(col.ValidationRuleExpression);
         Assert.Null(col.ValidationText);

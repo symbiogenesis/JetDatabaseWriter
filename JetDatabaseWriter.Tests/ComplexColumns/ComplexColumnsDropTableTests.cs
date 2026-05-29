@@ -25,7 +25,7 @@ public sealed class ComplexColumnsDropTableTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -55,18 +55,18 @@ public sealed class ComplexColumnsDropTableTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent gone from user listing.
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Documents", tables, StringComparer.OrdinalIgnoreCase);
 
         // The MSysComplexColumns row that joined the parent column to its flat
         // table must be gone.
-        var cx = await reader.ReadDataTableAsync(
+        DataTable cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -81,7 +81,7 @@ public sealed class ComplexColumnsDropTableTests
         await using var ms = new MemoryStream();
         long? flatTdefPage = null;
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -103,13 +103,13 @@ public sealed class ComplexColumnsDropTableTests
         // Capture the flat table's TDEF page before the drop so we can verify
         // it's been removed from MSysObjects after.
         ms.Position = 0;
-        await using (var probe = await AccessReader.OpenAsync(
+        await using (AccessReader probe = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
         {
-            var info = await probe.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
-            var only = Assert.Single(info);
+            IReadOnlyList<ComplexColumnInfo> info = await probe.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
+            ComplexColumnInfo only = Assert.Single(info);
             flatTdefPage = only.FlatTableId;
         }
 
@@ -117,7 +117,7 @@ public sealed class ComplexColumnsDropTableTests
         Assert.True(flatTdefPage > 0);
 
         ms.Position = 0;
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -126,13 +126,13 @@ public sealed class ComplexColumnsDropTableTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         // The flat table should no longer appear as a live row in MSysObjects.
-        var msys = await reader.ReadDataTableAsync(
+        DataTable msys = await reader.ReadDataTableAsync(
             "MSysObjects",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(msys);
@@ -150,7 +150,7 @@ public sealed class ComplexColumnsDropTableTests
         });
         Assert.False(flatStillThere, "Hidden flat-table catalog row for the dropped parent's complex column was not removed.");
 
-        var cx = await reader.ReadDataTableAsync(
+        DataTable cx = await reader.ReadDataTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -163,7 +163,7 @@ public sealed class ComplexColumnsDropTableTests
         // Regression: the cascade must be a silent no-op for ordinary tables.
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -186,12 +186,12 @@ public sealed class ComplexColumnsDropTableTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Plain", tables, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -202,7 +202,7 @@ public sealed class ComplexColumnsDropTableTests
         // (the helper has to tolerate the missing system table).
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.Jet4Mdb,
             leaveOpen: true,
@@ -220,12 +220,12 @@ public sealed class ComplexColumnsDropTableTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Plain", tables, StringComparer.OrdinalIgnoreCase);
     }
 }

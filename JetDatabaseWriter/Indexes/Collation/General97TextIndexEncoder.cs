@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
@@ -70,7 +71,7 @@ internal static class General97TextIndexEncoder
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same
         // truncation/trim rule used for all sort orders (TEXT_FIELD_MAX_LENGTH
         // / TEXT_FIELD_UNIT_SIZE = 127 chars).
-        var chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
         int extraByteCapacity = GetExtraByteCapacity(chars.Length);
 
         var bytes = new List<byte>(chars.Length + extraByteCapacity + 2)
@@ -83,14 +84,14 @@ internal static class General97TextIndexEncoder
         Span<byte> extraBytes = stackalloc byte[extraByteCapacity];
         int extraNibbleCount = 0;
         int significantCharCount = 0;
-        var codes = Codes.Value;
+        GeneralLegacyTextIndexEncoder.CharHandler[] codes = Codes.Value;
         short[]? extMappings = null;
 
         foreach (char currentChar in chars)
         {
-            var handler = GetCharHandler(currentChar, codes, ref extMappings);
+            GeneralLegacyTextIndexEncoder.CharHandler handler = GetCharHandler(currentChar, codes, ref extMappings);
 
-            var inline = handler.GetInlineBytes(currentChar);
+            ReadOnlySpan<byte> inline = handler.GetInlineBytes(currentChar);
             if (!inline.IsEmpty)
             {
                 AppendBytes(bytes, inline);
@@ -107,7 +108,7 @@ internal static class General97TextIndexEncoder
                 continue;
             }
 
-            var extra = handler.ExtraBytes;
+            ReadOnlySpan<byte> extra = handler.ExtraBytes;
             if (!extra.IsEmpty)
             {
                 if (extraNibbleCount == 0)
@@ -213,8 +214,8 @@ internal static class General97TextIndexEncoder
         int numMappings = lastChar - firstChar + 1;
         var values = new short[numMappings];
 
-        var asm = typeof(General97TextIndexEncoder).Assembly;
-        using var raw = asm.GetManifestResourceStream(resourceName)
+        Assembly asm = typeof(General97TextIndexEncoder).Assembly;
+        using Stream raw = asm.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found.");
         using var gz = new GZipStream(raw, CompressionMode.Decompress);
         using var reader = new StreamReader(gz, Encoding.ASCII);
@@ -224,7 +225,7 @@ internal static class General97TextIndexEncoder
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
-            var trimmedLine = line.AsSpan().Trim();
+            ReadOnlySpan<char> trimmedLine = line.AsSpan().Trim();
             if (trimmedLine.IsEmpty)
             {
                 continue;

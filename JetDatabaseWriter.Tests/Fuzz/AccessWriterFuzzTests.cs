@@ -28,7 +28,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     [Fact(Explicit = true)]
     public async Task FuzzAccessWriter()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         Fuzzer.Run(async stream =>
         {
             output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
@@ -80,13 +80,13 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes, CancellationToken ct)
     {
         await using var ms = new MemoryStream();
-        FuzzRandom random = FuzzRandom.Create(fuzzedBytes);
+        var random = FuzzRandom.Create(fuzzedBytes);
 
-        var options = RandomOptions(random);
-        var format = Formats[random.Next(Formats.Length)];
+        AccessWriterOptions options = RandomOptions(random);
+        DatabaseFormat format = Formats[random.Next(Formats.Length)];
 
         output.WriteLine($"Creating database with format: {format}, options: {{ UseLockFile={options.UseLockFile}, UseTransactionalWrites={options.UseTransactionalWrites} }}");
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, format, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         int tableCount = random.Next(1, 4);
         for (int t = 0; t < tableCount; t++)
@@ -107,8 +107,8 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         try
         {
             ms.Position = 0;
-            await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
-            var tableNames = await reader.ListTablesAsync(ct);
+            await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
+            List<string> tableNames = await reader.ListTablesAsync(ct);
             output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
             foreach (var tableName in tableNames)
             {
@@ -138,7 +138,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     {
         string tableName = $"FuzzTable_{tableIndex}_{random.RandomString(4)}";
         int colCount = random.Next(1, 6);
-        var columns = CreateRandomColumns(random, colCount);
+        ColumnDefinition[] columns = CreateRandomColumns(random, colCount);
 
         output.WriteLine($"Creating table: {tableName} with {colCount} columns");
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
@@ -164,7 +164,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         string predicateColumn = columns[0].Name;
         object? predicateValue = random.RandomValue(columns[0].ClrType);
         var updatedValues = new Dictionary<string, object?>(columns.Length);
-        foreach (var col in columns)
+        foreach (ColumnDefinition col in columns)
         {
             updatedValues[col.Name] = random.RandomValue(col.ClrType) ?? DBNull.Value;
         }
@@ -193,9 +193,9 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     private static async Task FuzzTransactionAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random)
     {
         output.WriteLine("Starting transaction block");
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         string txTable = $"TxTable_{random.RandomString(4)}";
-        var txColumns = new[] { new ColumnDefinition("TxCol", typeof(int)) };
+        ColumnDefinition[] txColumns = new[] { new ColumnDefinition("TxCol", typeof(int)) };
         await writer.CreateTableAsync(txTable, txColumns, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(txTable, [random.Next()], TestContext.Current.CancellationToken);
         if (random.NextDouble() < 0.5)

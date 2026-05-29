@@ -90,9 +90,9 @@ internal sealed class DelimitedTextReader : IDisposable
         ThrowIfDisposed();
 
         recordVersion++;
-        var fields = this.fields;
+        List<DelimitedTextField> fields = this.fields;
         fields.Clear();
-        var field = ResetFieldBuilder();
+        StringBuilder field = ResetFieldBuilder();
         int bufferedFieldStart = -1;
         int bufferedFieldLength = 0;
         int recordLength = 0;
@@ -387,7 +387,7 @@ internal sealed class DelimitedTextReader : IDisposable
         var result = new string[fieldCount];
         for (int i = 0; i < result.Length; i++)
         {
-            var field = fields[i];
+            DelimitedTextField field = fields[i];
             result[i] = field.IsBuffered
                 ? MaterializeBufferedField(field.BufferStart, field.BufferLength)
                 : field.Value!;
@@ -437,7 +437,7 @@ internal sealed class DelimitedTextReader : IDisposable
     {
         for (int i = 0; i < fields.Count; i++)
         {
-            var field = fields[i];
+            DelimitedTextField field = fields[i];
             if (field.IsBuffered)
             {
                 fields[i] = DelimitedTextField.FromString(MaterializeBufferedField(field.BufferStart, field.BufferLength));

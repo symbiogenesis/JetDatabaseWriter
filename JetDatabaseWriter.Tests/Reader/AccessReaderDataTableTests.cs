@@ -22,10 +22,10 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadDataTable_ReturnsNonNullWithColumns(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.True(dt.Columns.Count > 0);
@@ -35,11 +35,11 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadDataTable_MaxRows_LimitsRowCount(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int max = 5;
 
-        var dt = await reader.ReadDataTableAsync(table, max, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(table, max, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count <= max);
@@ -49,11 +49,11 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadDataTable_ColumnMetadata_MatchesGetColumnMetadata(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = await reader.ReadDataTableAsync(table, 1, cancellationToken: TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(table, 1, cancellationToken: TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.Equal(meta.Count, dt.Columns.Count);
@@ -69,7 +69,7 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
     {
         await using var stream = new MemoryStream();
         DateTime seenOn = new(2026, 5, 24, 9, 30, 0, DateTimeKind.Unspecified);
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -99,13 +99,13 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         stream.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var table = await reader.ReadDataTableAsync(
+        DataTable table = await reader.ReadDataTableAsync(
             "BulkData",
             maxRows: 2,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -119,7 +119,7 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         Assert.Equal(typeof(string), table.Columns["Notes"]!.DataType);
         Assert.Equal(typeof(byte[]), table.Columns["Blob"]!.DataType);
 
-        var first = table.Rows[0];
+        DataRow first = table.Rows[0];
         Assert.Equal(DataRowState.Added, first.RowState);
         Assert.Equal(1, first["Id"]);
         Assert.Equal("Alpha", first["Name"]);
@@ -128,7 +128,7 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         Assert.Equal(new string('A', 1200), first["Notes"]);
         Assert.Equal(new byte[] { 0x01, 0x02, 0x03 }, Assert.IsType<byte[]>(first["Blob"]));
 
-        var second = table.Rows[1];
+        DataRow second = table.Rows[1];
         Assert.Equal(DBNull.Value, second["Name"]);
         Assert.Equal(DBNull.Value, second["Notes"]);
         Assert.Equal(DBNull.Value, second["Blob"]);
@@ -140,10 +140,10 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsStrings_AllColumnsAreStringType(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(dt.Columns.Count > 0);
         foreach (DataColumn col in dt.Columns)

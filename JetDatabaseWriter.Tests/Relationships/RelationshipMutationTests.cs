@@ -25,13 +25,13 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_RemovesAllCatalogRows()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DPar");
         string child = MakeTableName("DChi");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("KeyA", typeof(int)), new("KeyB", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("RefA", typeof(int)), new("RefB", typeof(int))], TestContext.Current.CancellationToken);
@@ -43,9 +43,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.DropRelationshipAsync(relName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
-        var matching = rels.AsEnumerable()
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
         Assert.Empty(matching);
@@ -54,13 +54,13 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_RemovesFkLogicalIdxEntriesFromBothSides()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DXP");
         string child = MakeTableName("DXC");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -70,7 +70,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
                 TestContext.Current.CancellationToken);
 
             // Sanity: FK entries should exist before the drop.
-            await using (var preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+            await using (AccessReader preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
             {
                 Assert.Single(await preReader.ListIndexesAsync(parent, TestContext.Current.CancellationToken), ix => ix.Kind == IndexKind.ForeignKey);
                 Assert.Single(await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken), ix => ix.Kind == IndexKind.ForeignKey);
@@ -79,9 +79,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.DropRelationshipAsync(relName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        var childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(parentIdx, ix => ix.Kind == IndexKind.ForeignKey);
         Assert.DoesNotContain(childIdx, ix => ix.Kind == IndexKind.ForeignKey);
@@ -90,9 +90,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_NotFound_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.DropRelationshipAsync("FK_Definitely_Not_Present_" + Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken));
     }
@@ -100,9 +100,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_EmptyName_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.DropRelationshipAsync(string.Empty, TestContext.Current.CancellationToken));
     }
@@ -110,14 +110,14 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_UpdatesEveryCatalogRow()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RPar");
         string child = MakeTableName("RChi");
         string oldName = $"FK_{child}_{parent}";
         string newName = $"FK2_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("KeyA", typeof(int)), new("KeyB", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("RefA", typeof(int)), new("RefB", typeof(int))], TestContext.Current.CancellationToken);
@@ -129,12 +129,12 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.RenameRelationshipAsync(oldName, newName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.DoesNotContain(rels.AsEnumerable(), r => string.Equals(SafeString(r, "szRelationship"), oldName, StringComparison.Ordinal));
 
-        var renamed = rels.AsEnumerable()
+        DataRow[] renamed = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), newName, StringComparison.Ordinal))
             .ToArray();
         Assert.Equal(2, renamed.Length);
@@ -145,14 +145,14 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_DuplicateNewName_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RDP");
         string child = MakeTableName("RDC");
         string nameA = $"FKA_{child}_{parent}";
         string nameB = $"FKB_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("PA", typeof(int)), new("PB", typeof(int))], TestContext.Current.CancellationToken);
@@ -172,9 +172,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_NotFound_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.RenameRelationshipAsync("FK_Missing_" + Guid.NewGuid().ToString("N"), "FK_New", TestContext.Current.CancellationToken));
     }
@@ -182,9 +182,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_SameName_IsNoOp()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         // Should not throw even if the name does not exist, because the early
         // exit short-circuits before the lookup.
@@ -194,14 +194,14 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_UpdatesTDefLogicalIdxNameCookies()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RNP");
         string child = MakeTableName("RNC");
         string oldName = $"FK_{child}_{parent}";
         string newName = $"FK2_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -213,9 +213,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.RenameRelationshipAsync(oldName, newName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        var childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
         // The TDEF logical-idx name cookie should now reflect the new name on
         // both sides — neither the old name nor the auto-renamed catalog row
@@ -229,14 +229,14 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_ReclaimsTrailingRealIdxSlot()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DRP");
         string child = MakeTableName("DRC");
         string firstRel = $"FK1_{child}_{parent}";
         string secondRel = $"FK2_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -246,9 +246,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
                 TestContext.Current.CancellationToken);
 
             int childRealIdxBefore;
-            await using (var preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+            await using (AccessReader preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
             {
-                var fkBefore = (await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+                IndexMetadata fkBefore = (await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
                     .Single(ix => ix.Kind == IndexKind.ForeignKey);
                 childRealIdxBefore = fkBefore.RealIndexNumber;
             }
@@ -263,8 +263,8 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
                 new RelationshipDefinition(secondRel, parent, "Id", child, "ParentId"),
                 TestContext.Current.CancellationToken);
 
-            await using var postReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-            var fkAfter = (await postReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+            await using AccessReader postReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+            IndexMetadata fkAfter = (await postReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
                 .Single(ix => ix.Kind == IndexKind.ForeignKey);
             Assert.Equal(childRealIdxBefore, fkAfter.RealIndexNumber);
         }
@@ -275,13 +275,13 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [InlineData(false)]
     public async Task DropRelationshipAsync_MultiPageEndpointTDef_RemovesFkLogicalIdxEntries(bool parentIsWide)
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName(parentIsWide ? "WDP" : "NDP");
         string child = MakeTableName(parentIsWide ? "NDC" : "WDC");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await CreateRelationshipEndpointTablesAsync(writer, parent, child, parentIsWide, TestContext.Current.CancellationToken);
 
@@ -292,11 +292,11 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.DropRelationshipAsync(relName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
         Assert.DoesNotContain(await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
         Assert.DoesNotContain(await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
 
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.DoesNotContain(rels.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), relName, StringComparison.Ordinal));
     }
 
@@ -305,14 +305,14 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [InlineData(false)]
     public async Task RenameRelationshipAsync_MultiPageEndpointTDef_UpdatesTDefLogicalIdxNameCookies(bool parentIsWide)
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName(parentIsWide ? "WRP" : "NRP");
         string child = MakeTableName(parentIsWide ? "NRC" : "WRC");
         string oldName = $"FK_{child}_{parent}";
         string newName = $"FK2_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await CreateRelationshipEndpointTablesAsync(writer, parent, child, parentIsWide, TestContext.Current.CancellationToken);
 
@@ -323,9 +323,9 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
             await writer.RenameRelationshipAsync(oldName, newName, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
         Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
         Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);

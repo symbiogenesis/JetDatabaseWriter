@@ -2,10 +2,12 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -53,14 +55,14 @@ public sealed class WriterTDefAutoNumFlagTests
             TestContext.Current.CancellationToken);
 
         await using var ms = new MemoryStream(fileBytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int tablesWithAutonum = 0;
         int tablesWithoutAutonum = 0;
@@ -71,7 +73,7 @@ public sealed class WriterTDefAutoNumFlagTests
 
         foreach (string tableName in tables)
         {
-            var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             int tdefOff = (int)entry!.TDefPage * pageSize;
@@ -167,7 +169,7 @@ public sealed class WriterTDefAutoNumFlagTests
     private static async Task<byte> BuildAndReadAutoNumByteAsync(string tableName, ColumnDefinition[] columns)
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -179,14 +181,14 @@ public sealed class WriterTDefAutoNumFlagTests
 
         byte[] fileBytes = ms.ToArray();
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
         int tdefOff = (int)entry!.TDefPage * pageSize;
         return fileBytes[tdefOff + TDefAutoNumFlagOffset];

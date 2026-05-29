@@ -130,7 +130,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             _sessions.Clear();
         }
 
-        foreach (var session in sessions)
+        foreach (AccessRoundTripSession session in sessions)
         {
             await session.DisposeAsync().ConfigureAwait(false);
         }
@@ -139,16 +139,16 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<CoreValidationResult> BuildCoreResultAsync(CancellationToken cancellationToken)
     {
-        var session = await CreateDaoSessionAsync(cancellationToken).ConfigureAwait(false);
+        AccessRoundTripSession session = await CreateDaoSessionAsync(cancellationToken).ConfigureAwait(false);
         await PrepareCoreValidationDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
-        var result = session.RunDaoDatabaseScript(
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScript(
             session.SourcePath,
             BuildCoreValidationScript(),
             DaoTimeout);
         EnsureDaoSuccess(result, "DAO validation script failed.");
 
-        var values = ParseKeyValueOutput(result.StdOut);
+        Dictionary<string, string> values = ParseKeyValueOutput(result.StdOut);
         return new CoreValidationResult(
             ParseInt(values, "ROWCOUNT"),
             GetRequired(values, "SEEK_LABEL"),
@@ -165,11 +165,11 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     {
         // The MEMO payload is authored by DAO so the reader assertion compares
         // against engine-written bytes, not bytes produced by this library.
-        AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
+        var session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
         Track(session);
 
         string databasePath = session.CreateDatabasePath("dao_memo");
-        var result = session.RunDaoCreateDatabaseScript(
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoCreateDatabaseScript(
             databasePath,
             CreateDatabaseAttributes,
             BuildDaoMemoCreateScript(),
@@ -183,11 +183,11 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<EncryptedCompactResult> BuildEncryptedCompactResultAsync(CancellationToken cancellationToken)
     {
-        var session = await CreateNorthwindSessionAsync(cancellationToken).ConfigureAwait(false);
+        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken).ConfigureAwait(false);
         await PrepareEncryptedDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         string compactedPath = session.CreateDatabasePath("compacted");
-        var result = session.RunDaoEngineScript(
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(
             BuildEncryptedCompactScript(session.SourcePath, compactedPath),
             DaoTimeout);
         EnsureDaoSuccess(result, "DAO CompactDatabase on encrypted file failed.");
@@ -198,7 +198,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         string encryptedLastValue = string.Empty;
         if (File.Exists(compactedPath))
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 compactedPath,
                 new AccessReaderOptions
                 {
@@ -207,17 +207,17 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 },
                 cancellationToken).ConfigureAwait(false);
 
-            var tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+            List<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
             tableCount = tables.Count;
             encryptedTableExists = tables.Contains(EncryptedCompactTable, StringComparer.OrdinalIgnoreCase);
 
             if (encryptedTableExists)
             {
-                var table = await reader.ReadDataTableAsync(
+                DataTable? table = await reader.ReadDataTableAsync(
                     EncryptedCompactTable,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 encryptedRowCount = table?.Rows.Count ?? -1;
-                var lastRow = table?.AsEnumerable()
+                DataRow? lastRow = table?.AsEnumerable()
                     .SingleOrDefault(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == EncryptedCompactRowCount);
                 encryptedLastValue = lastRow is null
                     ? string.Empty
@@ -236,12 +236,12 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<ComplexCompactResult> BuildComplexCompactResultAsync(CancellationToken cancellationToken)
     {
-        var session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
+        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
         await PrepareComplexCompactDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         session.RunDaoCompact();
 
-        await using var postReader = await AccessReader.OpenAsync(
+        await using AccessReader postReader = await AccessReader.OpenAsync(
             session.CompactedPath,
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
@@ -253,26 +253,26 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         AccessReader postReader,
         CancellationToken cancellationToken)
     {
-        var parentTable = await postReader.ReadDataTableAsync(
+        DataTable? parentTable = await postReader.ReadDataTableAsync(
             ComplexTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         int parentRowCount = parentTable?.Rows.Count ?? -1;
         bool hasInitialSchemaEvolutionColumn = parentTable?.Columns.Contains(ComplexSchemaEvolutionInitialColumn) == true;
         bool hasSchemaEvolutionColumn = parentTable?.Columns.Contains(ComplexSchemaEvolutionColumn) == true;
 
-        var complexColumns = await postReader.GetComplexColumnsAsync(
+        IReadOnlyList<ComplexColumnInfo> complexColumns = await postReader.GetComplexColumnsAsync(
             ComplexTable,
             cancellationToken).ConfigureAwait(false);
-        var attachments = await postReader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await postReader.GetAttachmentsAsync(
             ComplexTable,
             ComplexAttachmentColumn,
             cancellationToken).ConfigureAwait(false);
-        var multiValueItems = await postReader.GetMultiValueItemsAsync(
+        IReadOnlyList<(int ConceptualTableId, object? Value)> multiValueItems = await postReader.GetMultiValueItemsAsync(
             ComplexTable,
             ComplexTagsColumn,
             cancellationToken).ConfigureAwait(false);
 
-        var attachment = attachments.SingleOrDefault();
+        AttachmentRecord? attachment = attachments.SingleOrDefault();
         byte[] expectedPayload = BuildDeterministicPayload(ComplexAttachmentPayloadLength);
         string[] tagValues = multiValueItems
             .Select(item => Convert.ToString(item.Value, CultureInfo.InvariantCulture) ?? string.Empty)
@@ -294,14 +294,14 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
     private async Task<StressCompactResult> BuildStressCompactResultAsync(CancellationToken cancellationToken)
     {
-        var session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
+        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
         await PrepareStressDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         int preCompactTableCount = await CountTablesAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
 
         session.RunDaoCompact();
 
-        await using var postReader = await AccessReader.OpenAsync(
+        await using AccessReader postReader = await AccessReader.OpenAsync(
             session.CompactedPath,
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
@@ -317,7 +317,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         int preCompactTableCount,
         CancellationToken cancellationToken)
     {
-        var postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+        List<string> postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         var rowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var foreignKeyIndexNames = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         for (int tableOrdinal = 0; tableOrdinal < StressTableCount; tableOrdinal++)
@@ -325,12 +325,12 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             string tableName = GetStressTableName(tableOrdinal);
             if (postTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
             {
-                var table = await postReader.ReadDataTableAsync(
+                DataTable table = await postReader.ReadDataTableAsync(
                     tableName,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 rowCounts[tableName] = table?.Rows.Count ?? -1;
 
-                var indexes = await postReader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<IndexMetadata> indexes = await postReader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
                 foreignKeyIndexNames[tableName] = indexes
                     .Where(index => index.Kind == IndexKind.ForeignKey)
                     .Select(index => index.Name)
@@ -339,7 +339,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             }
         }
 
-        var relationships = await postReader.ReadDataTableAsync("MSysRelationships", cancellationToken: cancellationToken).ConfigureAwait(false);
+        DataTable relationships = await postReader.ReadDataTableAsync("MSysRelationships", cancellationToken: cancellationToken).ConfigureAwait(false);
         string[] relationshipNames = relationships.AsEnumerable()
             .Select(row => Convert.ToString(row["szRelationship"], CultureInfo.InvariantCulture) ?? string.Empty)
             .Where(name => name.StartsWith("StressFK_", StringComparison.Ordinal))
@@ -355,7 +355,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     {
         // Access-authored Northwind is the trusted host for compact scenarios
         // whose behavior depends on catalog and system-table shape.
-        var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+        AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
             cancellationToken,
             TempDirectoryName,
             compactTimeout).ConfigureAwait(false);
@@ -369,7 +369,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     {
         // DAO-created scratch databases are trusted engine-authored hosts for
         // small direct DAO probes. They are intentionally not writer-created.
-        var session = await AccessRoundTripSession.CreateDaoAccdbAsync(
+        AccessRoundTripSession session = await AccessRoundTripSession.CreateDaoAccdbAsync(
             cancellationToken,
             TempDirectoryName,
             compactTimeout).ConfigureAwait(false);
@@ -387,7 +387,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task PrepareCoreValidationDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using var writer = await AccessWriter.OpenAsync(
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
             dbPath,
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
@@ -490,7 +490,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task PrepareEncryptedDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             dbPath,
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false))
@@ -522,7 +522,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task PrepareComplexCompactDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using var writer = await AccessWriter.OpenAsync(
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
             dbPath,
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
@@ -568,7 +568,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task PrepareStressDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using var writer = await AccessWriter.OpenAsync(
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
             dbPath,
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
@@ -639,23 +639,23 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task<int> CountTablesAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             dbPath,
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
-        var tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+        List<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         return tables.Count;
     }
 
     private static async Task<string> ReadDaoAuthoredMemoAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             dbPath,
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
-        var table = await reader.ReadDataTableAsync(
+        DataTable? table = await reader.ReadDataTableAsync(
             MemoNulsTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         if (table is null || table.Rows.Count != 1)

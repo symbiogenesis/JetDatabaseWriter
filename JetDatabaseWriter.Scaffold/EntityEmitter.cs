@@ -63,7 +63,7 @@ internal static class EntityEmitter
 
         var usedNames = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var col in columns)
+        foreach (ColumnMetadata col in columns)
         {
             string propName = DeduplicateName(NameCleaner.ToPropertyName(col.Name), usedNames);
 
@@ -76,11 +76,11 @@ internal static class EntityEmitter
             typeDecl = typeDecl.AddMembers(BuildProperty(propName, col, nullable));
         }
 
-        var nsDecl = FileScopedNamespaceDeclaration(ParseName(ns))
+        FileScopedNamespaceDeclarationSyntax nsDecl = FileScopedNamespaceDeclaration(ParseName(ns))
             .AddUsings(UsingDirective(ParseName("System")))
             .AddMembers(typeDecl);
 
-        var compilationUnit = CompilationUnit()
+        CompilationUnitSyntax compilationUnit = CompilationUnit()
             .AddMembers(nsDecl)
             .WithLeadingTrivia(nullable ? FileTriviaWithNullable : FileTriviaPlain);
 
@@ -100,7 +100,7 @@ internal static class EntityEmitter
 
     private static PropertyDeclarationSyntax BuildProperty(string name, ColumnMetadata col, bool nullable)
     {
-        var property = PropertyDeclaration(ParseTypeName(MapClrType(col.ClrType, col.IsNullable, nullable)), name)
+        PropertyDeclarationSyntax property = PropertyDeclaration(ParseTypeName(MapClrType(col.ClrType, col.IsNullable, nullable)), name)
             .AddModifiers(Token(SyntaxKind.PublicKeyword))
             .AddAccessorListAccessors(
                 AccessorDeclaration(SyntaxKind.GetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)),

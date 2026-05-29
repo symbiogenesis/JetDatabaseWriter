@@ -117,7 +117,7 @@ internal sealed class LockFileSlotWriter : IDisposable
         disposed = true;
         DecrementActiveCount(LockFilePath);
 
-        var stream = this.stream;
+        FileStream? stream = this.stream;
         this.stream = null;
         if (stream != null)
         {
@@ -255,7 +255,7 @@ internal sealed class LockFileSlotWriter : IDisposable
         GC.SuppressFinalize(this);
         DecrementActiveCount(LockFilePath);
 
-        var stream = this.stream;
+        FileStream? stream = this.stream;
         this.stream = null;
 
         bool fileLooksEmpty = false;

@@ -110,7 +110,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -139,10 +139,10 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("notes.txt", single.FileName);
         Assert.Equal("txt", single.FileType);
         Assert.True(single.ConceptualTableId > 0);
@@ -154,7 +154,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -179,8 +179,8 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, attachments.Count);
         Assert.Equal(attachments[0].ConceptualTableId, attachments[1].ConceptualTableId);
@@ -193,7 +193,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -217,8 +217,8 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, attachments.Count);
         Assert.NotEqual(attachments[0].ConceptualTableId, attachments[1].ConceptualTableId);
@@ -228,7 +228,7 @@ public sealed class ComplexColumnsRowApiTests
     public async Task AddAttachmentAsync_NoMatchingRow_Throws()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -255,7 +255,7 @@ public sealed class ComplexColumnsRowApiTests
     public async Task AddAttachmentAsync_OnMultiValueColumn_Throws()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -289,7 +289,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -316,8 +316,8 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var items = await reader.GetMultiValueItemsAsync("Tags", "Labels", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync("Tags", "Labels", TestContext.Current.CancellationToken);
 
         Assert.Equal(3, items.Count);
         Assert.All(items, t => Assert.Equal(items[0].ConceptualTableId, t.ConceptualTableId));
@@ -331,7 +331,7 @@ public sealed class ComplexColumnsRowApiTests
     public async Task AddMultiValueItemAsync_OnAttachmentColumn_Throws()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -366,7 +366,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -394,17 +394,17 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Documents",
             "Files",
             TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("empty.dat", single.FileName);
         Assert.NotNull(single.FileData);
         Assert.Empty(single.FileData);
@@ -422,7 +422,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -455,12 +455,12 @@ public sealed class ComplexColumnsRowApiTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var items = await reader.GetMultiValueItemsAsync(
+        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync(
             "Products",
             "Tags",
             TestContext.Current.CancellationToken);

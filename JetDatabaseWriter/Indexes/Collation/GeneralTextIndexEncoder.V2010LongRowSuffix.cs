@@ -235,7 +235,7 @@ internal static partial class GeneralTextIndexEncoder
             return null;
         }
 
-        var table = TryGetV2010LongRowSuffixTable(
+        V2010LongRowSuffixTable? table = TryGetV2010LongRowSuffixTable(
             text,
             fullEntry,
             ascending,
@@ -260,7 +260,7 @@ internal static partial class GeneralTextIndexEncoder
         char previousBoundaryChar,
         char boundaryChar)
     {
-        var remainderTable = ascending
+        V2010LongRowSuffixTable? remainderTable = ascending
             ? TryGetAscendingRemainderTable(fullEntry)
             : TryGetDescendingRemainderTable(fullEntry);
         return remainderTable ?? (IsPlainV2010DaoContext(text, previousBoundaryChar, boundaryChar)

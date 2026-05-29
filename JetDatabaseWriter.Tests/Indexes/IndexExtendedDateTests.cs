@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -29,17 +30,17 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int totalIndexes = 0;
         foreach (string table in tables)
         {
-            var indexes = await reader.ListIndexesAsync(
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
             totalIndexes += indexes.Count;
         }
@@ -59,16 +60,16 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundExtDateIndexColumn = false;
         foreach (string table in tables)
         {
-            var indexes = await reader.ListIndexesAsync(
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(
                 table, TestContext.Current.CancellationToken);
             IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(
                 table, TestContext.Current.CancellationToken);
@@ -78,7 +79,7 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
                 .Select(c => c.Name)
                 .ToHashSet();
 
-            foreach (var idx in indexes)
+            foreach (IndexMetadata idx in indexes)
             {
                 if (idx.Columns.Any(c => extDateColumnNames.Contains(c.Name)))
                 {
@@ -108,11 +109,11 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         int totalRows = 0;
 
         foreach (string table in tables)

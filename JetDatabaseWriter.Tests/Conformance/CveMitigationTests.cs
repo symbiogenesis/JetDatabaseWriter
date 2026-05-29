@@ -2,7 +2,9 @@ namespace JetDatabaseWriter.Tests.Conformance;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -39,7 +41,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -56,9 +58,9 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         BinaryPrimitives.WriteUInt16LittleEndian(corrupted.AsSpan(numColsOffset, 2), 0xFFFF);
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
@@ -87,7 +89,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -102,9 +104,9 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         BinaryPrimitives.WriteUInt16LittleEndian(corrupted.AsSpan(numColsOffset, 2), 4097);
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
@@ -135,7 +137,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -150,9 +152,9 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         BinaryPrimitives.WriteInt32LittleEndian(corrupted.AsSpan(numRealIdxOffset, 4), int.MaxValue);
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
@@ -184,7 +186,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -209,15 +211,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -255,7 +257,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -275,13 +277,13 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             ct);
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string table in tables)
         {
             int count = 0;
@@ -312,7 +314,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -362,15 +364,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -410,7 +412,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -463,15 +465,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -527,7 +529,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -546,15 +548,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -592,7 +594,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -636,15 +638,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -681,7 +683,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -746,15 +748,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -792,7 +794,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -852,15 +854,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -899,7 +901,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -935,13 +937,13 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             ct);
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         int totalRows = 0;
         foreach (string table in tables)
         {
@@ -971,7 +973,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] original = await db.GetFileAsync(path, ct);
         byte[] corrupted = (byte[])original.Clone();
 
@@ -991,15 +993,15 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
 
         await using var stream = new MemoryStream(corrupted, writable: false);
-        var ex = await Record.ExceptionAsync(async () =>
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
                 ct);
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;

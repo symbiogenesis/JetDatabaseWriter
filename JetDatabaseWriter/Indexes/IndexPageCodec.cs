@@ -111,7 +111,7 @@ internal static class IndexPageCodec
             return false;
         }
 
-        var (previousPage, nextPage, tailPage) = ReadSiblingPointers(layout, page);
+        (long previousPage, long nextPage, long tailPage) = ReadSiblingPointers(layout, page);
         return previousPage == 0 && nextPage == 0 && tailPage == 0;
     }
 

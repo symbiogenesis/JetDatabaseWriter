@@ -43,12 +43,12 @@ public sealed class IndexRebalanceBorrowPathTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task ScatteredDeletes_ThenInserts_InMultiLevelTree_DataRoundTrips(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         const int initialRows = 1500;
 
         // Phase 1: Build a multi-level B-tree.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -76,7 +76,7 @@ public sealed class IndexRebalanceBorrowPathTests
             .Where(i => i % 3 == 0)
             .Select(i => i * 10)
             .ToHashSet();
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "DeleteBucket", 0, ct);
             Assert.Equal(deletedIds.Count, deleted);
@@ -87,7 +87,7 @@ public sealed class IndexRebalanceBorrowPathTests
         // surgical path may have already thinned.
         const int insertCount = 200;
         var insertedIds = new HashSet<int>();
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             var rows = new object[insertCount][];
             for (int i = 0; i < insertCount; i++)
@@ -102,8 +102,8 @@ public sealed class IndexRebalanceBorrowPathTests
         }
 
         // Verify: all survivors + new inserts are present.
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
 
         int expectedCount = initialRows - deletedIds.Count + insertCount;
         Assert.Equal(expectedCount, dt.Rows.Count);
@@ -135,11 +135,11 @@ public sealed class IndexRebalanceBorrowPathTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task MultipleRounds_DeleteInsert_IntermediateRestructure_DataRoundTrips(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         const int initialRows = 1200;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -167,7 +167,7 @@ public sealed class IndexRebalanceBorrowPathTests
         {
             // Delete every 5th remaining row.
             var toDelete = expected.Where(id => id % (5 * round) == 0).ToList();
-            await using (var writer = await OpenWriterAsync(stream))
+            await using (AccessWriter writer = await OpenWriterAsync(stream))
             {
                 foreach (int id in toDelete)
                 {
@@ -178,7 +178,7 @@ public sealed class IndexRebalanceBorrowPathTests
 
             // Insert half as many new rows.
             int toInsert = toDelete.Count / 2;
-            await using (var writer = await OpenWriterAsync(stream))
+            await using (AccessWriter writer = await OpenWriterAsync(stream))
             {
                 var rows = new object[toInsert][];
                 for (int i = 0; i < toInsert; i++)
@@ -192,8 +192,8 @@ public sealed class IndexRebalanceBorrowPathTests
             }
 
             // Verify after each round.
-            await using var reader = await OpenReaderAsync(stream);
-            var dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+            await using AccessReader reader = await OpenReaderAsync(stream);
+            DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
             Assert.Equal(expected.Count, dt.Rows.Count);
 
             var actual = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
@@ -216,12 +216,12 @@ public sealed class IndexRebalanceBorrowPathTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DeleteFromBothExtremes_TailPageRecomputes_DataRoundTrips(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         const int rowCount = 1500;
         const int deletePerSide = 100;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -256,19 +256,19 @@ public sealed class IndexRebalanceBorrowPathTests
         }
 
         // Delete low-end rows.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.DeleteRowsAsync("T", "Zone", "low", ct);
         }
 
         // Delete high-end rows.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.DeleteRowsAsync("T", "Zone", "high", ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: ct))!;
 
         const int expectedCount = rowCount - (2 * deletePerSide);
         Assert.Equal(expectedCount, dt.Rows.Count);
@@ -293,7 +293,7 @@ public sealed class IndexRebalanceBorrowPathTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -26,13 +27,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SingleColumn_AppendsOneMSysRelationshipsRow()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("Parent");
         string child = MakeTableName("Child");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -42,15 +43,15 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        var matching = rels.AsEnumerable()
+        DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
 
         Assert.Single(matching);
-        var row = matching[0];
+        DataRow row = matching[0];
         Assert.Equal(1, (int)row["ccolumn"]);
         Assert.Equal(0, (int)row["icolumn"]);
         Assert.Equal(0, (int)row["grbit"]);
@@ -63,13 +64,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_MultiColumn_AppendsOneRowPerColumn()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("MParent");
         string child = MakeTableName("MChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 parent,
@@ -85,10 +86,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        var matching = rels.AsEnumerable()
+        DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .OrderBy(r => (int)r["icolumn"])
             .ToArray();
@@ -106,13 +107,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_CascadeAndNoEnforce_EncodesGrbitFlags()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("CParent");
         string child = MakeTableName("CChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -127,10 +128,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        var row = rels.AsEnumerable()
+        DataRow row = rels.AsEnumerable()
             .Single(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal));
 
         // 0x02 (NoRefIntegrity) | 0x100 (CascadeUpdates) | 0x1000 (CascadeDeletes) = 0x1102
@@ -140,13 +141,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_DuplicateName_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DParent");
         string child = MakeTableName("DChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
 
@@ -160,10 +161,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_UnknownTable_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("UParent");
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -175,12 +176,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_UnknownColumn_Throws()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("EParent");
         string child = MakeTableName("EChild");
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
 
@@ -194,7 +195,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     public async Task CreateRelationshipAsync_FreshDatabaseWithScaffoldedMSysRelationships_Succeeds()
     {
         var ms = new MemoryStream();
-        await using (var w = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter w = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -205,7 +206,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         ms.Position = 0;
-        await using var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("P", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("C", [new("Id", typeof(int)), new("PId", typeof(int))], TestContext.Current.CancellationToken);
 
@@ -214,8 +215,8 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
             TestContext.Current.CancellationToken);
 
         ms.Position = 0;
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        var rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Contains(
             rels.AsEnumerable(),
             row => string.Equals(SafeString(row, "szRelationship"), "FK_C_P", StringComparison.Ordinal));
@@ -242,13 +243,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SingleColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("BParent");
         string child = MakeTableName("BChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -258,13 +259,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        var parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
-        var childFk = Assert.Single(childIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        IndexMetadata parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        IndexMetadata childFk = Assert.Single(childIndexes, ix => ix.Kind == IndexKind.ForeignKey);
 
         Assert.True(parentFk.IsForeignKey);
         Assert.True(childFk.IsForeignKey);
@@ -284,13 +285,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_CascadeFlags_OnFkSideOnly()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("CFParent");
         string child = MakeTableName("CFChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -304,12 +305,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        var parentFk = Assert.Single(
+        IndexMetadata parentFk = Assert.Single(
             await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
-        var childFk = Assert.Single(
+        IndexMetadata childFk = Assert.Single(
             await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
 
@@ -323,13 +324,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SingleColumn_EmitsDaoCompatibleFkCrossReferences()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("XRParent");
         string child = MakeTableName("XRChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 parent,
@@ -345,15 +346,15 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentEntry = await reader.GetCatalogEntryAsync(parent, TestContext.Current.CancellationToken);
-        var childEntry = await reader.GetCatalogEntryAsync(child, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        CatalogEntry? parentEntry = await reader.GetCatalogEntryAsync(parent, TestContext.Current.CancellationToken);
+        CatalogEntry? childEntry = await reader.GetCatalogEntryAsync(child, TestContext.Current.CancellationToken);
         Assert.NotNull(parentEntry);
         Assert.NotNull(childEntry);
 
         byte[] fileBytes = temp.ToArray();
-        var parentFk = ReadSingleFkLogicalEntry(fileBytes, parentEntry.TDefPage, childEntry.TDefPage);
-        var childFk = ReadSingleFkLogicalEntry(fileBytes, childEntry.TDefPage, parentEntry.TDefPage);
+        RawLogicalIdxEntry parentFk = ReadSingleFkLogicalEntry(fileBytes, parentEntry.TDefPage, childEntry.TDefPage);
+        RawLogicalIdxEntry childFk = ReadSingleFkLogicalEntry(fileBytes, childEntry.TDefPage, parentEntry.TDefPage);
 
         Assert.Equal(0x01, parentFk.RelTblType);
         Assert.Equal(0x02, childFk.RelTblType);
@@ -365,13 +366,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_MultiColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("MBParent");
         string child = MakeTableName("MBChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 parent,
@@ -387,12 +388,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
 
-        var parentFk = Assert.Single(
+        IndexMetadata parentFk = Assert.Single(
             await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
-        var childFk = Assert.Single(
+        IndexMetadata childFk = Assert.Single(
             await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
 
@@ -405,13 +406,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_RealIdxSharing_ReusesExistingPkIndex()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("SParent");
         string child = MakeTableName("SChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             // Parent declares an explicit PK on Id — the per-TDEF FK emission emitter should
             // share that real-idx slot for the PK-side FK logical-idx entry
@@ -427,11 +428,11 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
 
-        var pk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.PrimaryKey);
-        var parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
+        IndexMetadata pk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.PrimaryKey);
+        IndexMetadata parentFk = Assert.Single(parentIndexes, ix => ix.Kind == IndexKind.ForeignKey);
 
         // Sharing per §3.3: PK and the FK logical-idx entry share the same real-idx slot.
         Assert.Equal(pk.RealIndexNumber, parentFk.RealIndexNumber);
@@ -440,12 +441,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SelfReferential_DistinctIndexNames()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string table = MakeTableName("SelfRef");
         string relName = $"FK_{table}_{table}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 table,
@@ -457,12 +458,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
 
         // Two FK logical-idx entries land on the same TDEF (one per side of the
         // self-referential relationship); their names must be distinct.
-        var fks = indexes.Where(ix => ix.Kind == IndexKind.ForeignKey).ToArray();
+        IndexMetadata[] fks = indexes.Where(ix => ix.Kind == IndexKind.ForeignKey).ToArray();
         Assert.Equal(2, fks.Length);
         Assert.NotEqual(fks[0].Name, fks[1].Name);
     }
@@ -472,13 +473,13 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [InlineData(false)]
     public async Task CreateRelationshipAsync_MultiPageEndpointTDef_EmitsFkLogicalIdxEntries(bool parentIsWide)
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName(parentIsWide ? "WParent" : "NParent");
         string child = MakeTableName(parentIsWide ? "NChild" : "WChild");
         string relName = $"FK_{child}_{parent}";
 
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             if (parentIsWide)
             {
@@ -510,12 +511,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
-        var childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        var parentFk = Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
-        var childFk = Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey);
+        IndexMetadata parentFk = Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
+        IndexMetadata childFk = Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey);
 
         Assert.Equal("Id", Assert.Single(parentFk.Columns).Name);
         Assert.Equal("ParentId", Assert.Single(childFk.Columns).Name);

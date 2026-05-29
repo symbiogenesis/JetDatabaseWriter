@@ -123,7 +123,7 @@ internal static partial class CalculatedExpressionTextFunctions
         string replacement = ToText(function.Arg(2));
         int start = function.Count > 3 ? Math.Max(1, checked((int)ToDecimal(function.Arg(3)))) : 1;
         int count = function.Count > 4 ? checked((int)ToDecimal(function.Arg(4))) : -1;
-        var comparison = function.Count > 5 ? CompareOptions(function.Arg(5)) : StringComparison.OrdinalIgnoreCase;
+        StringComparison comparison = function.Count > 5 ? CompareOptions(function.Arg(5)) : StringComparison.OrdinalIgnoreCase;
         if (start > text.Length || search.Length == 0 || count == 0)
         {
             return start > text.Length ? string.Empty : text.Substring(start - 1);
@@ -192,7 +192,7 @@ internal static partial class CalculatedExpressionTextFunctions
     private static double Val(string text)
     {
         string compact = WhitespaceRegex().Replace(text, string.Empty);
-        var match = ValNumberPrefixRegex().Match(compact);
+        Match match = ValNumberPrefixRegex().Match(compact);
         return match.Success && double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             ? parsed
             : 0d;

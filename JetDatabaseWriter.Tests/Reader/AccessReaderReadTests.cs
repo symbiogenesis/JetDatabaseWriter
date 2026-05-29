@@ -1,9 +1,13 @@
 namespace JetDatabaseWriter.Tests.Reader;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -23,10 +27,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_ReturnsNonNullDataTable(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
     }
@@ -35,10 +39,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_TableNameMatchesRequest(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(table, dt.TableName);
     }
@@ -47,11 +51,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_ColumnCount_MatchesGetColumnMetadata(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.Equal(meta.Count, dt.Columns.Count);
     }
@@ -60,11 +64,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_ColumnTypes_MatchGetColumnMetadataClrTypes(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         for (int i = 0; i < meta.Count; i++)
         {
@@ -76,10 +80,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_WithNullTableName_ReadsFirstTable(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string first = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = (await reader.ReadDataTableAsync(tableName: null, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(tableName: null, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Equal(first, dt.TableName);
@@ -89,13 +93,13 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_ForAllTables_ReturnsNonNullDataTables(string path)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var reader = await db.GetReaderAsync(path, ct);
+        AccessReader reader = await db.GetReaderAsync(path, ct);
 
         foreach (var table in await reader.ListTablesAsync(ct))
         {
-            var dt = await reader.ReadDataTableAsync(table, cancellationToken: ct);
+            DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: ct);
             Assert.NotNull(dt);
         }
     }
@@ -106,10 +110,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsStringsAsync_AllColumnsAreStringType(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (DataColumn col in dt.Columns)
         {
@@ -121,11 +125,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsStringsAsync_RowCount_MatchesReadTable(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        var string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(typed.Rows.Count, string_.Rows.Count);
     }
@@ -134,11 +138,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsStringsAsync_ColumnCount_MatchesReadTable(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        var string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(typed.Columns.Count, string_.Columns.Count);
     }
@@ -149,10 +153,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTables_ContainsAllTableNames(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        var expected = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<string> expected = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        var all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equivalent(expected, all.Keys);
     }
@@ -161,9 +165,9 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTables_EachDataTable_HasTypedColumns(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        var all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // At least one table must have a non-string column to prove typing
         bool anyTypedColumn = all.Values
@@ -179,11 +183,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsStrings_AllColumns_AreStringType(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        var all = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        foreach (var (tableName, dt) in all)
+        foreach ((string? tableName, DataTable? dt) in all)
         {
             foreach (DataColumn col in dt.Columns)
             {
@@ -196,10 +200,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsStrings_RowCounts_MatchReadAllTables(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        var typed = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
-        var strings = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> typed = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> strings = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (string name in typed.Keys)
         {
@@ -220,11 +224,11 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableGeneric_RowCount_MatchesReadTableTyped(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var typed = await reader.ReadDataTableAsync(table, 100, cancellationToken: TestContext.Current.CancellationToken);
-        var generic = await reader.ReadTableAsync<GenericRow>(table, 100, TestContext.Current.CancellationToken);
+        DataTable typed = await reader.ReadDataTableAsync(table, 100, cancellationToken: TestContext.Current.CancellationToken);
+        List<GenericRow> generic = await reader.ReadTableAsync<GenericRow>(table, 100, TestContext.Current.CancellationToken);
 
         Assert.NotNull(typed);
         Assert.Equal(typed.Rows.Count, generic.Count);
@@ -234,10 +238,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var items = await reader.ReadTableAsync<GenericRow>(table, 10, TestContext.Current.CancellationToken);
+        List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 10, TestContext.Current.CancellationToken);
 
         Assert.All(items, item => Assert.NotNull(item));
     }
@@ -246,10 +250,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableGeneric_WithMaxRows_LimitsResults(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        var items = await reader.ReadTableAsync<GenericRow>(table, 2, TestContext.Current.CancellationToken);
+        List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 2, TestContext.Current.CancellationToken);
 
         Assert.True(items.Count <= 2);
     }
@@ -260,7 +264,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_WithProgress_ReportsIncreasingRowCounts(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var reported = new System.Collections.Concurrent.ConcurrentQueue<long>();
 

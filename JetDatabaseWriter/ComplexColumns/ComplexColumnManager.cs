@@ -257,9 +257,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
-        foreach ((string name, var cols) in _complexTypeTemplates)
+        foreach ((string name, ColumnDefinition[]? cols) in _complexTypeTemplates)
         {
-            var tableDef = AccessWriter.BuildTableDefinition(cols, _writer.format);
+            TableDef tableDef = AccessWriter.BuildTableDefinition(cols, _writer.format);
             (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
             long tdefPageNumber = await pageAllocator.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -292,7 +292,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return null;
         }
 
-        var t = col.MultiValueElementType;
+        Type? t = col.MultiValueElementType;
         if (t is null)
         {
             return null;
@@ -355,7 +355,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
     {
-        var columns = new[]
+        ColumnDefinition[] columns = new[]
         {
             new ColumnDefinition("ColumnName", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
             new ColumnDefinition("ComplexID", typeof(int)) { DescriptorFlagsOverride = 0x17 },
@@ -364,7 +364,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             new ColumnDefinition("FlatTableID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
         };
 
-        var indexes = new[]
+        IndexDefinition[] indexes = new[]
         {
             new IndexDefinition("IdxConceptualTableID", "ConceptualTableID"),
             new IndexDefinition("IdxFlatTableID", "FlatTableID"),
@@ -411,7 +411,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         List<int>? indices = null;
         for (int i = 0; i < columns.Count; i++)
         {
-            var def = columns[i];
+            ColumnDefinition def = columns[i];
             if ((def.IsAttachment || def.IsMultiValue) && def.ComplexId == 0)
             {
                 indices ??= new List<int>(2);
@@ -465,8 +465,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
-        var msysComplex = await _writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var idCol = msysComplex.FindColumn("ComplexID");
+        TableDef msysComplex = await _writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
         int maxId = 0;
         long total = _writer.stream.Length / _writer.pgSz;
@@ -487,7 +487,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     if (idCol != null)
                     {
@@ -535,11 +535,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     {
         for (int i = 0; i < allocations.Count; i++)
         {
-            var alloc = allocations[i];
-            var col = columns[alloc.ColumnIndex];
+            ComplexColumnAllocation alloc = allocations[i];
+            ColumnDefinition col = columns[alloc.ColumnIndex];
 
             string flatTableName = BuildFlatTableName(col.Name);
-            (var flatCols, var flatIndexes) =
+            (ColumnDefinition[]? flatCols, IndexDefinition[]? flatIndexes) =
                 BuildFlatTableSchema(parentTableName, col);
 
             long flatTdefPage = await _writer.CreateTableInternalAsync(
@@ -686,7 +686,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // MultiValue: a single `value` column whose CLR type is the user-declared element type.
-        var elementType = parentColumn.MultiValueElementType
+        Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("Value", elementType, maxLength: parentColumn.MaxLength)
         {
@@ -728,7 +728,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             throw new InvalidOperationException("MSysComplexColumns table is missing.");
         }
 
-        var msysComplex = await _writer.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await _writer.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         object[] values = msysComplex.CreateNullValueRow();
 
         msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
@@ -769,10 +769,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Resolve parent table + complex column.
-        var parentEntry = await _writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var parentDef = await _writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry parentEntry = await _writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef parentDef = await _writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
-        var complexCol = parentDef.FindColumn(columnName)
+        ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
 
         bool isComplexCol = complexCol.Type == AttachmentType || complexCol.Type == ComplexType;
@@ -790,8 +790,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.");
         }
 
-        var flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-        var kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
+        TableDef flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+        ComplexColumnKind kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
         if (kind == ComplexColumnKind.Unknown)
         {
             throw new NotSupportedException(
@@ -814,7 +814,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var predIndexes = new int[parentRowKey.Count];
         var predValues = new string[parentRowKey.Count];
         int pi = 0;
-        foreach (var kvp in parentRowKey)
+        foreach (KeyValuePair<string, object?> kvp in parentRowKey)
         {
             int idx = parentDef.FindColumnIndex(kvp.Key);
             if (idx < 0)
@@ -894,14 +894,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
-        var msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             throw new InvalidOperationException("MSysObjects catalog table is missing.");
         }
 
-        var rows = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (var row in rows)
+        List<CatalogRow> rows = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
         {
             if (row.TDefPage == flatTdefPage)
             {
@@ -929,10 +929,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return 0;
         }
 
-        var msys = await _writer.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var nameCol = msys.FindColumn("ColumnName");
-        var flatIdCol = msys.FindColumn("FlatTableID");
-        var complexIdCol = msys.FindColumn("ComplexID");
+        TableDef msys = await _writer.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? nameCol = msys.FindColumn("ColumnName");
+        ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
+        ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
         if (nameCol == null || flatIdCol == null || complexIdCol == null)
         {
             return 0;
@@ -956,7 +956,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string rowName = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
@@ -1015,12 +1015,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     bool ok = true;
                     for (int p = 0; p < predIndexes.Length; p++)
                     {
-                        var c = parentDef.Columns[predIndexes[p]];
+                        ColumnInfo c = parentDef.Columns[predIndexes[p]];
                         string actual = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
                         if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
                         {
@@ -1149,7 +1149,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
     {
-        var fkCol = flatDef.FindFlatTableForeignKeyColumn();
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
 
         int maxId = 0;
         long total = _writer.stream.Length / _writer.pgSz;
@@ -1170,7 +1170,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string text = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                     if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
@@ -1193,7 +1193,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         object[] values = flatDef.CreateNullValueRow();
 
         // FK back-ref: the single LongInteger column starting with "_".
-        var fkCol = flatDef.FindFlatTableForeignKeyColumn();
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
 
         string ext = input.FileType ?? DeriveExtension(input.FileName);
@@ -1210,7 +1210,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     private static object[] BuildMultiValueFlatRow(TableDef flatDef, int conceptualTableId, object? value)
     {
         object[] values = flatDef.CreateNullValueRow();
-        var fkCol = flatDef.FindFlatTableForeignKeyColumn();
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
         flatDef.SetValueByName(values, "value", value ?? DBNull.Value);
         return values;
@@ -1273,7 +1273,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         // Identify complex columns on the parent.
         var complexCols = new List<ColumnInfo>();
-        foreach (var col in parentDef.Columns)
+        foreach (ColumnInfo col in parentDef.Columns)
         {
             if (col.Type == AttachmentType || col.Type == ComplexType)
             {
@@ -1290,7 +1290,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // any column whose MSysComplexColumns row is missing — same
         // tolerance as the row-add path).
         var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
-        foreach (var col in complexCols)
+        foreach (ColumnInfo col in complexCols)
         {
             long flatPg = await ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
             if (flatPg > 0)
@@ -1308,7 +1308,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // complex column. Rows whose complex slot is null contribute
         // nothing to cascade.
         var idsByCol = new Dictionary<int, HashSet<int>>(complexCols.Count);
-        foreach (var col in complexCols)
+        foreach (ColumnInfo col in complexCols)
         {
             if (flatPagesByCol.ContainsKey(col.ColNum))
             {
@@ -1316,7 +1316,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
         }
 
-        foreach (var loc in deletedParentLocations)
+        foreach (RowLocation loc in deletedParentLocations)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -1327,9 +1327,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 int nullMaskSz = (numCols + 7) / 8;
                 int nullMaskPos = loc.RowSize - nullMaskSz;
 
-                foreach (var col in complexCols)
+                foreach (ColumnInfo col in complexCols)
                 {
-                    if (!idsByCol.TryGetValue(col.ColNum, out var ids))
+                    if (!idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids))
                     {
                         continue;
                     }
@@ -1365,7 +1365,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // For each complex column with collected IDs, scan the flat
         // child table once and delete every row whose FK back-reference
         // is in the set. Adjust the flat TDEF row count once.
-        foreach (var col in complexCols)
+        foreach (ColumnInfo col in complexCols)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -1374,14 +1374,15 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            var ids = idsByCol[col.ColNum];
+            HashSet<int> ids = idsByCol[col.ColNum];
             if (ids.Count == 0)
             {
                 continue;
             }
 
-            var flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-            var fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+            TableDef flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+
+            ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
                 ?? flatDef.Columns.Find(c => c.Type == LongIntegerType);
             if (fkCol == null)
             {
@@ -1408,7 +1409,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                    foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                     {
                         string fkText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                         if (CatalogValueReader.TryParseInt32(fkText, out int fk)
@@ -1456,10 +1457,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var nameCol = msysCxDef.FindColumn("ColumnName");
-        var flatIdCol = msysCxDef.FindColumn("FlatTableID");
-        var cxIdCol = msysCxDef.FindColumn("ComplexID");
+        TableDef msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
+        ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
+        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || flatIdCol == null || cxIdCol == null)
         {
             return;
@@ -1486,7 +1487,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string rowName = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
@@ -1533,14 +1534,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         // Drop the hidden flat-table catalog row. Same model as
         // DropComplexChildrenForTableAsync — orphaned data pages are reclaimed
         // by Access on the next Compact &amp; Repair pass.
-        var msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;
         }
 
-        var catalog = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (var row in catalog)
+        List<CatalogRow> catalog = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in catalog)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
@@ -1575,9 +1576,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var nameCol = msysCxDef.FindColumn("ColumnName");
-        var cxIdCol = msysCxDef.FindColumn("ComplexID");
+        TableDef msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
+        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || cxIdCol == null)
         {
             return;
@@ -1602,7 +1603,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string rowName = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
@@ -1658,8 +1659,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var cxIdCol = msysCxDef.FindColumn("ComplexID");
+        TableDef msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (cxIdCol == null)
         {
             return;
@@ -1684,7 +1685,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
@@ -1739,14 +1740,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
     {
-        var parentDef = await _writer.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? parentDef = await _writer.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         if (parentDef == null)
         {
             return;
         }
 
         var complexCols = new List<ColumnInfo>();
-        foreach (var col in parentDef.Columns)
+        foreach (ColumnInfo col in parentDef.Columns)
         {
             if (col.Type == AttachmentType || col.Type == ComplexType)
             {
@@ -1765,19 +1766,19 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        var nameCol = msysCxDef.FindColumn("ColumnName");
-        var flatIdCol = msysCxDef.FindColumn("FlatTableID");
-        var cxIdCol = msysCxDef.FindColumn("ComplexID");
+        TableDef msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
+        ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
+        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || flatIdCol == null || cxIdCol == null)
         {
             return;
         }
 
         var lookup = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var col in complexCols)
+        foreach (ColumnInfo col in complexCols)
         {
-            if (!lookup.TryGetValue(col.Name, out var ids))
+            if (!lookup.TryGetValue(col.Name, out HashSet<int>? ids))
             {
                 ids = [];
                 lookup[col.Name] = ids;
@@ -1807,7 +1808,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                foreach (var row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string rowName = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
@@ -1816,7 +1817,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    if (!lookup.TryGetValue(rowName, out var expectedIds) || !expectedIds.Contains(rid))
+                    if (!lookup.TryGetValue(rowName, out HashSet<int>? expectedIds) || !expectedIds.Contains(rid))
                     {
                         continue;
                     }
@@ -1853,14 +1854,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         // Drop the hidden flat-table catalog rows (system-flag tables —
         // public DropTableAsync would skip them).
-        var msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await _writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;
         }
 
-        var catalog = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (var row in catalog)
+        List<CatalogRow> catalog = await _writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in catalog)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {

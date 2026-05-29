@@ -23,21 +23,21 @@ public class AccessReaderOpenBenchmarks
     [Benchmark]
     public async Task<long> Open_Northwind()
     {
-        await using var r = await AccessReader.OpenAsync(NorthwindPath).ConfigureAwait(false);
+        await using AccessReader r = await AccessReader.OpenAsync(NorthwindPath).ConfigureAwait(false);
         return r.PageSize;
     }
 
     [Benchmark]
     public async Task<long> Open_Synthetic_Numeric()
     {
-        await using var r = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
+        await using AccessReader r = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
         return r.PageSize;
     }
 
     [Benchmark]
     public async Task<long> Open_Synthetic_Wide()
     {
-        await using var r = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
+        await using AccessReader r = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
         return r.PageSize;
     }
 }

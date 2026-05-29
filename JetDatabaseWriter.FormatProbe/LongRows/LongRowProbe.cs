@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 
 internal static class LongRowProbe
@@ -61,12 +62,12 @@ internal static class LongRowProbe
             return;
         }
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, ct);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
 
         foreach (string tableName in new[] { "Table11", "Table11_desc" })
         {
@@ -78,7 +79,7 @@ internal static class LongRowProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}");
             sb.AppendLine();
 
-            var columns = await reader.GetColumnMetadataAsync(tableName, ct);
+            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
             int dataOrdinal = FindColumnOrdinal(columns, "data");
             var rowValues = new List<string?>();
             await foreach (string[] row in reader.RowsAsStrings(tableName, cancellationToken: ct))
@@ -86,8 +87,8 @@ internal static class LongRowProbe
                 rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
             }
 
-            var indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (var idx in indexes)
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (IndexMetadata idx in indexes)
             {
                 if (idx.Columns.Count != 1 || idx.Columns[0].Name != "data" || idx.FirstDp <= 0)
                 {
@@ -96,7 +97,7 @@ internal static class LongRowProbe
 
                 bool asc = idx.Columns[0].IsAscending;
                 sb.AppendLine(CultureInfo.InvariantCulture, $"- index `{idx.Name}` ascending={asc} firstDp={idx.FirstDp}");
-                var keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
+                List<byte[]> keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
                 sb.AppendLine(CultureInfo.InvariantCulture, $"- leaf entries: {keys.Count}");
                 sb.AppendLine();
 
@@ -141,7 +142,7 @@ internal static class LongRowProbe
                 break;
             }
 
-            var entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             current = entries[0].ChildPage;
         }
 
@@ -150,8 +151,8 @@ internal static class LongRowProbe
         while (current != 0 && ++guard < 100_000)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (var e in entries)
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (IndexEntry e in entries)
             {
                 result.Add(e.Key);
             }

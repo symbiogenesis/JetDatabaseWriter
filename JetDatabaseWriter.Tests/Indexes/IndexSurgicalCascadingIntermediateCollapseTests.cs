@@ -31,12 +31,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
     [Fact]
     public async Task DeepTree_DeleteEmptiesEntireMidIntermediateSubtree_DataRoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int rowCount = 600;
         const int leftSubtreeRows = 60;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -58,14 +58,14 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 9, ct);
             Assert.Equal(leftSubtreeRows, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows, dt!.Rows.Count);
 
@@ -94,9 +94,9 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         // its entries, so the surgical maintenance path needs to either
         // collapse entire subtrees in-place or fall back to the bulk
         // rebuild — either way the resulting index must be readable.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -118,13 +118,13 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.DeleteRowsAsync("T", "Tag", 1, ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(25, dt!.Rows.Count);
 
@@ -140,13 +140,13 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
     [Fact]
     public async Task DeepTree_DeleteThenReinsertAcrossCollapsedSubtree_DataRoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int rowCount = 600;
         const int leftSubtreeRows = 60;
         const int reinsertCount = 25;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -168,12 +168,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.DeleteRowsAsync("T", "Tag", 9, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             var reins = new object[reinsertCount][];
             for (int i = 0; i < reinsertCount; i++)
@@ -184,8 +184,8 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
             await writer.InsertRowsAsync("T", reins, ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt!.Rows.Count);
 
@@ -220,7 +220,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

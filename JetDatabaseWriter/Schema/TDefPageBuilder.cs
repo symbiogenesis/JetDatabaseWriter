@@ -31,7 +31,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         for (int i = 0; i < columns.Count; i++)
         {
-            var definition = columns[i];
+            ColumnDefinition definition = columns[i];
             AccessWriter.ValidateCalculatedColumn(definition, format);
             byte type = AccessWriter.TypeCodeFromDefinition(definition);
             bool isCalculated = definition.IsCalculated;
@@ -123,7 +123,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
     public (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
-        var (pages, firstDpOffsets, _) = BuildTDefPagesWithIndexOffsets(tableDef, indexes);
+        (byte[][]? pages, int[]? firstDpOffsets, int[] _) = BuildTDefPagesWithIndexOffsets(tableDef, indexes);
         if (pages.Length != 1)
         {
             throw new NotSupportedException(
@@ -158,7 +158,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
-            var col = tableDef.Columns[i];
+            ColumnInfo col = tableDef.Columns[i];
             int o = colStart + (i * writer.colDesc.Size);
 
             if (!col.IsFixed)
@@ -273,7 +273,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            var (_, logIdxStart, logIdxNameStart, _, _) = writer.indexLayout.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            (int _, int logIdxStart, int logIdxNameStart, int _, int _) = writer.indexLayout.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
             int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
@@ -284,7 +284,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
             for (int i = 0; i < numIdx; i++)
             {
-                var ri = indexes[i];
+                ResolvedIndex ri = indexes[i];
                 int phys = writer.indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (jet4)
                 {
@@ -411,7 +411,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             Wu16(page, 2, Math.Max(0, writer.pgSz - tdefLen - 8));
         }
 
-        var (pages, logicalFirstDpOffsets) = SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
+        (byte[][]? pages, int[]? logicalFirstDpOffsets) = SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
         return (pages, logicalFirstDpOffsets, usedPagesOffsets);
     }
 
@@ -508,7 +508,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
     private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, DatabaseFormat format)
     {
-        DataPageLayout dataPage = DataPageLayout.For(format);
+        var dataPage = DataPageLayout.For(format);
         int pageOffset = pgSz;
         int rowStart = pgSz - 69;
         int row1Start = rowStart - 69;
@@ -587,7 +587,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int colSzOff = isJet3 ? 16 : 23;
         int textColSize = isJet3 ? 255 : 510;
 
-        var columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
+        (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
 
         int numCols = columns.Length;
         int numVarCols = 0;
@@ -612,7 +612,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         for (int i = 0; i < numCols; i++)
         {
-            var col = columns[i];
+            (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags) col = columns[i];
             int o = colStart + (i * colDescSz);
 
             db[o + colTypeOff] = col.Type;

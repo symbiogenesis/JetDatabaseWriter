@@ -64,7 +64,7 @@ internal static class Program
 
         rootCommand.SetAction(async (parseResult, cancellationToken) =>
         {
-            var dbFile = parseResult.GetValue(databaseOption) ?? parseResult.GetValue(databaseArgument);
+            FileInfo? dbFile = parseResult.GetValue(databaseOption) ?? parseResult.GetValue(databaseArgument);
 
             if (dbFile is null)
             {
@@ -100,14 +100,14 @@ internal static class Program
                 };
             }
 
-            await using var reader = await AccessReader.OpenAsync(dbFile.FullName, options, cancellationToken);
+            await using AccessReader reader = await AccessReader.OpenAsync(dbFile.FullName, options, cancellationToken);
 
             var runner = new ScaffoldRunner(reader, Console.Out, Console.Error);
             int generated = await runner.RunAsync(outputDir, ns, useRecords, nullable, cancellationToken);
             return generated >= 0 ? 0 : 1;
         });
 
-        var parseResult = rootCommand.Parse(args);
+        ParseResult parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync(cancellationToken: CancellationToken.None);
     }
 }

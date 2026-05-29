@@ -1,10 +1,12 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
@@ -31,7 +33,7 @@ public sealed class NonAsciiNamesTests
         const string ColumnName = "Beträge";
 
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             leaveOpen: true,
@@ -50,19 +52,19 @@ public sealed class NonAsciiNamesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(TableName, tables);
 
-        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == ColumnName);
 
-        var rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(rows);
         Assert.Equal(2, rows!.Rows.Count);
         Assert.Equal("Größe", rows.Rows[0][ColumnName]);
@@ -77,7 +79,7 @@ public sealed class NonAsciiNamesTests
         const string ColumnName = "Crêpe";
 
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             leaveOpen: true,
@@ -95,19 +97,19 @@ public sealed class NonAsciiNamesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(TableName, tables);
 
-        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == ColumnName);
 
-        var rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("Océ", rows!.Rows[0][ColumnName]);
     }
 
@@ -123,7 +125,7 @@ public sealed class NonAsciiNamesTests
         const string ColumnName = "氏名";
 
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             leaveOpen: true,
@@ -141,19 +143,19 @@ public sealed class NonAsciiNamesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(TableName, tables);
 
-        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == ColumnName);
 
-        var rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("山田太郎", rows!.Rows[0][ColumnName]);
     }
 
@@ -166,7 +168,7 @@ public sealed class NonAsciiNamesTests
         const string TableName = "Umsätze";
 
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             leaveOpen: true,
@@ -190,7 +192,7 @@ public sealed class NonAsciiNamesTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,

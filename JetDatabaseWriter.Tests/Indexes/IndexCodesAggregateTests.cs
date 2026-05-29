@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -57,41 +58,41 @@ public sealed class IndexCodesAggregateTests
     [MemberData(nameof(Fixtures))]
     public async Task AllSingleColumnTextIndexes_AggregateMatch(string fixturePath)
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         var report = new List<IndexReport>();
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            var cols = await reader.GetColumnMetadataAsync(tableName, ct);
+            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-            var indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (var index in indexes)
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (IndexMetadata index in indexes)
             {
                 if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
                 {
                     continue;
                 }
 
-                var keyCol = index.Columns[0];
-                if (!colByName.TryGetValue(keyCol.Name, out var colMeta)
+                IndexColumnReference keyCol = index.Columns[0];
+                if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
                     || colMeta.ClrType != typeof(string))
                 {
                     continue;
                 }
 
-                var onDiskKeys = await CollectAllLeafKeysAsync(reader, layout, pageSize, index.FirstDp, ct);
+                List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(reader, layout, pageSize, index.FirstDp, ct);
 
-                var dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {
@@ -184,13 +185,13 @@ public sealed class IndexCodesAggregateTests
         sb.Append(CultureInfo.InvariantCulture, $"  fully matched: {report.Count(r => r.Mismatched == 0 && r.OnDiskCount == r.EncodedCount)}\n");
         sb.Append(CultureInfo.InvariantCulture, $"  with byte mismatches: {report.Count(r => r.Mismatched > 0)}\n");
         sb.Append(CultureInfo.InvariantCulture, $"  with count mismatch: {report.Count(r => r.OnDiskCount != r.EncodedCount)}\n");
-        foreach (var r in report.OrderByDescending(x => x.Mismatched).ThenBy(x => x.Table, StringComparer.Ordinal))
+        foreach (IndexReport? r in report.OrderByDescending(x => x.Mismatched).ThenBy(x => x.Table, StringComparer.Ordinal))
         {
             string maxLen = r.ColumnMaxLength?.ToString(CultureInfo.InvariantCulture) ?? "-";
             string indexLine = FormattableString.Invariant(
                 $"  - {r.Table}.{r.Index} (col '{r.Column}' {r.ColumnTypeName} max={maxLen}, asc={r.Ascending}): matched={r.Matched} mismatched={r.Mismatched} (len-mismatch={r.LengthMismatched}) onDisk={r.OnDiskCount} encoded={r.EncodedCount}\n");
             sb.Append(indexLine);
-            foreach (var d in r.Details)
+            foreach (MismatchDetail d in r.Details)
             {
                 string preview = d.Value is null ? "<null>" : Truncate(d.Value, 40);
                 string expHex = Convert.ToHexString(d.Expected);
@@ -230,7 +231,7 @@ public sealed class IndexCodesAggregateTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -256,8 +257,8 @@ public sealed class IndexCodesAggregateTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (var e in entries)
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (IndexEntry e in entries)
             {
                 result.Add(e.Key);
             }

@@ -268,7 +268,7 @@ internal static class AccessRoundTripEnvironment
             psi.ArgumentList.Add("-File");
             psi.ArgumentList.Add(scriptPath);
 
-            using var p = Process.Start(psi)!;
+            using Process p = Process.Start(psi)!;
             string stdout = p.StandardOutput.ReadToEnd();
             string stderr = p.StandardError.ReadToEnd();
             if (!p.WaitForExit((int)timeout.TotalMilliseconds))
@@ -319,7 +319,7 @@ internal static class AccessRoundTripEnvironment
             psi.ArgumentList.Add("-File");
             psi.ArgumentList.Add(scriptPath);
 
-            using var p = Process.Start(psi)!;
+            using Process p = Process.Start(psi)!;
             string stdout = p.StandardOutput.ReadToEnd();
             string stderr = p.StandardError.ReadToEnd();
             if (!p.WaitForExit((int)timeout.TotalMilliseconds))
@@ -356,7 +356,7 @@ internal static class AccessRoundTripEnvironment
             return new ProbeResult(null, null, "MSACCESS.EXE not found in any standard install location.");
         }
 
-        var hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
         return new ProbeResult(msaccess, hostProbe.HostPath, hostProbe.FailureReason);
     }
 

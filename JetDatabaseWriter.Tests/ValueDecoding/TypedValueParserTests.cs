@@ -66,7 +66,7 @@ public sealed class TypedValueParserTests
     [Fact]
     public void ParseValue_ByteArray_MalformedDashSeparatedHexThrowsInStrictMode()
     {
-        var exception = Assert.Throws<FormatException>(() =>
+        FormatException exception = Assert.Throws<FormatException>(() =>
             TypedValueParser.ParseValue("CA--FE", typeof(byte[])));
 
         Assert.Contains("dash-separated hex", exception.Message, StringComparison.Ordinal);
@@ -88,7 +88,7 @@ public sealed class TypedValueParserTests
     {
         ArgumentNullException.ThrowIfNull(targetType);
 
-        var exception = Assert.Throws<FormatException>(() =>
+        FormatException exception = Assert.Throws<FormatException>(() =>
             TypedValueParser.ParseValue(value, targetType));
 
         Assert.Contains(targetType.FullName!, exception.Message, StringComparison.Ordinal);
@@ -109,7 +109,7 @@ public sealed class TypedValueParserTests
     [InlineData("(memo on LVAL page)")]
     public void ParseValue_ByteArray_LongValueDiagnosticThrowsInStrictMode(string value)
     {
-        var exception = Assert.Throws<FormatException>(() =>
+        FormatException exception = Assert.Throws<FormatException>(() =>
             TypedValueParser.ParseValue(value, typeof(byte[])));
 
         Assert.Contains("long-value decoder", exception.Message, StringComparison.Ordinal);

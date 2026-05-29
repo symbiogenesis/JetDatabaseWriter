@@ -1,13 +1,16 @@
 namespace JetDatabaseWriter.Tests.ComplexColumns;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 /// <summary>
@@ -34,9 +37,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         var names = meta.Select(m => m.Name).ToArray();
 
         Assert.Contains("ColumnName", names);
@@ -55,9 +58,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // The scaffold must set the system flag (0x80000000) so MSysComplexColumns
         // does not appear in the user-table listing.
@@ -75,9 +78,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         Assert.Empty(meta);
     }
 
@@ -91,9 +94,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         Assert.Empty(meta);
     }
 
@@ -135,7 +138,7 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_AttachmentColumn_C3_RoundTripsViaGetComplexColumns()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Documents",
@@ -147,10 +150,10 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        var attachment = Assert.Single(info);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        ComplexColumnInfo attachment = Assert.Single(info);
         Assert.Equal("Files", attachment.ColumnName);
         Assert.Equal(ComplexColumnKind.Attachment, attachment.Kind);
         Assert.True(attachment.ComplexId > 0);
@@ -158,11 +161,11 @@ public sealed class ComplexColumnsWriterTests
         Assert.StartsWith("f_", attachment.FlatTableName, StringComparison.Ordinal);
         Assert.EndsWith("_Files", attachment.FlatTableName, StringComparison.Ordinal);
 
-        var entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        var tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
+        TableDef? tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
         Assert.NotNull(tableDef);
-        var files = tableDef!.FindColumn("Files");
+        ColumnInfo? files = tableDef!.FindColumn("Files");
         Assert.NotNull(files);
         Assert.Equal(Constants.ColumnTypes.ComplexType, files!.Type);
     }
@@ -171,7 +174,7 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_MultiValueColumn_C3_RoundTripsViaGetComplexColumns()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Things",
@@ -187,10 +190,10 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var info = await reader.GetComplexColumnsAsync("Things", TestContext.Current.CancellationToken);
-        var mv = Assert.Single(info);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Things", TestContext.Current.CancellationToken);
+        ComplexColumnInfo mv = Assert.Single(info);
         Assert.Equal("Tags", mv.ColumnName);
         Assert.True(mv.ComplexId > 0);
         Assert.True(mv.FlatTableId > 0);
@@ -200,9 +203,9 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_AttachmentColumn_C3_RejectedOnJet4Mdb()
     {
         var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "Documents",
                 [
@@ -218,7 +221,7 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_MultiValueColumn_C3_RejectsMissingElementType()
     {
         var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -236,7 +239,7 @@ public sealed class ComplexColumnsWriterTests
         // The hidden flat child table must carry MSysObjects.Flags = 0x800A0000 so
         // it is excluded from the user-table listing but reachable via direct lookup.
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Documents",
@@ -248,16 +251,16 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("Documents", userTables, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain(userTables, t => t.StartsWith("f_", StringComparison.Ordinal));
 
         // The flat table has the per-kind value columns from the design doc §2.4.1.
-        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
-        var attachment = Assert.Single(info);
-        var flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        ComplexColumnInfo attachment = Assert.Single(info);
+        List<ColumnMetadata> flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
         var names = flatMeta.Select(m => m.Name).ToArray();
         Assert.Contains("FileURL", names);
         Assert.Contains("FileName", names);
@@ -278,8 +281,8 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        await using var writer = await AccessWriter.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         await writer.CreateTableAsync(
             "Plain",
@@ -288,7 +291,7 @@ public sealed class ComplexColumnsWriterTests
             ],
             TestContext.Current.CancellationToken);
 
-        var info = await reader.GetComplexColumnsAsync("Plain", TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Plain", TestContext.Current.CancellationToken);
         Assert.Empty(info);
     }
 
@@ -316,11 +319,11 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (string template in _expectedTemplateNames)
         {
-            var meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.NotEmpty(meta);
         }
     }
@@ -334,9 +337,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         foreach (string template in _expectedTemplateNames)
         {
             Assert.DoesNotContain(template, userTables, StringComparer.OrdinalIgnoreCase);
@@ -354,9 +357,9 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
         var names = meta.Select(m => m.Name).ToArray();
         Assert.Contains("FileData", names);
         Assert.Contains("FileFlags", names);
@@ -375,11 +378,11 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (string template in _expectedTemplateNames)
         {
-            var meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.Empty(meta);
         }
     }
@@ -388,7 +391,7 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_AttachmentColumn_C10_ComplexTypeObjectIdIsNonZero()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Documents",
@@ -400,13 +403,13 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // The MSysComplexColumns row for "Files" must reference a real template id
         // (>0) instead of a placeholder 0.
-        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        var row = Assert.Single(
+        DataRow row = Assert.Single(
             cx!.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),
@@ -418,7 +421,7 @@ public sealed class ComplexColumnsWriterTests
         // The id is a TDEF page; verify the page belongs to MSysComplexType_Attachment
         // by hitting the table by name (only matches if the template table exists at
         // that page).
-        var tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
         Assert.NotEmpty(tplMeta);
     }
 
@@ -426,7 +429,7 @@ public sealed class ComplexColumnsWriterTests
     public async Task CreateTableAsync_MultiValueStringColumn_C10_ComplexTypeObjectIdIsNonZero()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Things",
@@ -442,11 +445,11 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        var cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        var row = Assert.Single(
+        DataRow row = Assert.Single(
             cx!.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),
@@ -455,7 +458,7 @@ public sealed class ComplexColumnsWriterTests
         int actual = Convert.ToInt32(row["ComplexTypeObjectID"], CultureInfo.InvariantCulture);
         Assert.True(actual > 0, $"Expected ComplexTypeObjectID > 0, got {actual}.");
 
-        var tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Text", TestContext.Current.CancellationToken);
+        List<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Text", TestContext.Current.CancellationToken);
         Assert.NotEmpty(tplMeta);
     }
 }

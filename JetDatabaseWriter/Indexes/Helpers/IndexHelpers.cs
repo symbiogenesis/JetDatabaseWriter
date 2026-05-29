@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -101,7 +102,7 @@ internal static class IndexHelpers
         IReadOnlyList<IndexDefinition> indexes)
     {
         bool anyColumnPk = false;
-        foreach (var c in columns)
+        foreach (ColumnDefinition c in columns)
         {
             if (c.IsPrimaryKey)
             {
@@ -111,7 +112,7 @@ internal static class IndexHelpers
         }
 
         bool anyIndexPk = false;
-        foreach (var idx in indexes)
+        foreach (IndexDefinition idx in indexes)
         {
             if (idx.IsPrimaryKey)
             {
@@ -133,7 +134,7 @@ internal static class IndexHelpers
         {
             pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var pkColList = new List<string>();
-            foreach (var c in columns)
+            foreach (ColumnDefinition c in columns)
             {
                 if (c.IsPrimaryKey)
                 {
@@ -150,7 +151,7 @@ internal static class IndexHelpers
         else if (anyIndexPk)
         {
             pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var idx in indexes)
+            foreach (IndexDefinition idx in indexes)
             {
                 if (idx.IsPrimaryKey)
                 {
@@ -167,7 +168,7 @@ internal static class IndexHelpers
             var newCols = new ColumnDefinition[columns.Count];
             for (int i = 0; i < columns.Count; i++)
             {
-                var c = columns[i];
+                ColumnDefinition c = columns[i];
                 if (pkColumnNames.Contains(c.Name) && c.IsNullable)
                 {
                     c = c with { IsNullable = false };
@@ -203,7 +204,7 @@ internal static class IndexHelpers
         bool sawPk = false;
         for (int i = 0; i < indexes.Count; i++)
         {
-            var def = indexes[i];
+            IndexDefinition def = indexes[i];
             if (string.IsNullOrEmpty(def.Name))
             {
                 throw new ArgumentException($"IndexDefinition at position {i} has an empty name.", nameof(indexes));
@@ -247,7 +248,7 @@ internal static class IndexHelpers
                     throw new ArgumentException($"IndexDefinition '{def.Name}' references column '{columnName}' more than once.", nameof(indexes));
                 }
 
-                var column = tableDef.FindColumn(columnName)
+                ColumnInfo column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
                 // match Microsoft Access — neither the UI
@@ -337,12 +338,12 @@ internal static class IndexHelpers
     {
         var result = new List<IndexDefinition>(existing.Count);
         var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var c in newDefs)
+        foreach (ColumnDefinition c in newDefs)
         {
             newColumnNames.Add(c.Name);
         }
 
-        foreach (var idx in existing)
+        foreach (IndexMetadata idx in existing)
         {
             if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
             {
@@ -355,7 +356,7 @@ internal static class IndexHelpers
             }
 
             bool allSurvive = true;
-            foreach (var ic in idx.Columns)
+            foreach (IndexColumnReference ic in idx.Columns)
             {
                 if (string.IsNullOrEmpty(ic.Name) || !newColumnNames.Contains(ic.Name))
                 {
@@ -491,7 +492,7 @@ internal static class IndexHelpers
         {
             for (int i = 0; i < idx.KeyColumns.Count; i++)
             {
-                var col = idx.KeyColumns[i];
+                ParentSeekKeyColumn col = idx.KeyColumns[i];
                 if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
                 {
                     return null;
@@ -566,7 +567,7 @@ internal static class IndexHelpers
         {
             for (int i = 0; i < idx.KeyColumns.Count; i++)
             {
-                var col = idx.KeyColumns[i];
+                ChildSeekKeyColumn col = idx.KeyColumns[i];
                 object? v = parentPkValues[i];
                 if (v is DBNull)
                 {
@@ -753,7 +754,7 @@ internal static class IndexHelpers
 
             while (end < entries.Count)
             {
-                var probe = entries.GetRange(i, end - i + 1);
+                List<DecodedIntermediateEntry> probe = entries.GetRange(i, end - i + 1);
                 byte[]? probeBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
                     layout, pageSize, parentTdefPage, probe, prevPage: 0, nextPage: 0, tailPage: 0);
                 if (probeBytes is null)
@@ -790,7 +791,7 @@ internal static class IndexHelpers
     {
         for (int level = 0; level < path.Count; level++)
         {
-            var step = path[level];
+            DescentStep step = path[level];
             int idx = SelectChildIndexFromDecoded(step.Entries, searchKey);
             if (idx != step.TakenIndex)
             {
@@ -814,7 +815,7 @@ internal static class IndexHelpers
         long pageNumber,
         IntermediateOp op)
     {
-        if (!ops.TryGetValue(pageNumber, out var list))
+        if (!ops.TryGetValue(pageNumber, out List<IntermediateOp>? list))
         {
             list = [];
             ops[pageNumber] = list;
@@ -857,7 +858,7 @@ internal static class IndexHelpers
             bool removed = false;
             while (opCursor < indexed.Length && indexed[opCursor].Op.OriginalIndex == origIdx)
             {
-                var op = indexed[opCursor].Op;
+                IntermediateOp op = indexed[opCursor].Op;
                 opCursor++;
                 switch (op.Type)
                 {

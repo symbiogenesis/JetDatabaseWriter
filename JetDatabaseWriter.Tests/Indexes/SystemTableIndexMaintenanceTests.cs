@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -14,11 +15,11 @@ public sealed class SystemTableIndexMaintenanceTests
     [Fact]
     public async Task InsertSystemRowAndMaintainAsync_MSysACEs_UsesIncrementalMaintenance()
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var writer = await CreateFreshAceWriterAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
         long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        var tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_001);
         tableDef.SetValueByName(row, "SID", Constants.Aces.UsersSid);
@@ -38,11 +39,11 @@ public sealed class SystemTableIndexMaintenanceTests
     [Fact]
     public async Task InsertSystemRowAndMaintainAsync_MSysComplexColumns_UsesIncrementalMaintenance()
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var writer = await CreateFreshAceWriterAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
         long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
-        var tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
+        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ColumnName", "SyntheticComplexColumn");
         tableDef.SetValueByName(row, "ComplexID", 70_001);
@@ -63,11 +64,11 @@ public sealed class SystemTableIndexMaintenanceTests
     [Fact]
     public async Task InsertSystemRowAndMaintainAsync_Throws_WhenSystemTableIncrementalMaintenanceBails()
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var writer = await CreateFreshAceWriterAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
         long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        var tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         await CorruptFirstIndexRootPageTypeAsync(writer, tdefPage, ct);
 
         object[] row = tableDef.CreateNullValueRow();
@@ -76,7 +77,7 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
         tableDef.SetValueByName(row, "FInheritable", false);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.InsertSystemRowAndMaintainAsync(
                 tdefPage,
                 tableDef,
@@ -91,8 +92,8 @@ public sealed class SystemTableIndexMaintenanceTests
     [Fact]
     public async Task DropTableAsync_Throws_WhenMsysAcesDeleteIncrementalMaintenanceBails()
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var writer = await CreateFreshAceWriterAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
         await writer.CreateTableAsync(
             "Victim",
@@ -102,7 +103,7 @@ public sealed class SystemTableIndexMaintenanceTests
         long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         await CorruptFirstIndexRootPageTypeAsync(writer, acesTdefPage, ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.DropTableAsync("Victim", ct).AsTask());
 
         Assert.Contains("Could not maintain MSysACEs system-table indexes incrementally", ex.Message, StringComparison.Ordinal);

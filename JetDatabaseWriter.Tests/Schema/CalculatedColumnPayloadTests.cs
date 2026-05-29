@@ -3,10 +3,13 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -27,15 +30,15 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task JackcessFixture_CalculatedColumns_HaveExpectedCachedPayloadBytes()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
-        var table = await reader.ReadDataTableAsync(
+        DataTable table = await reader.ReadDataTableAsync(
             JackcessTableName,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var rawRows = await ReadCalculatedPayloadRowsAsync(
+        List<Dictionary<string, byte[]>> rawRows = await ReadCalculatedPayloadRowsAsync(
             reader,
             JackcessTableName,
             ["LastFirst", "LastFirstLen"],
@@ -45,8 +48,8 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
 
         for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
         {
-            var decodedRow = table.Rows[rowIndex];
-            var rawRow = rawRows[rowIndex];
+            DataRow decodedRow = table.Rows[rowIndex];
+            Dictionary<string, byte[]> rawRow = rawRows[rowIndex];
 
             Assert.Equal(TextPayload(Convert.ToString(decodedRow["LastFirst"], CultureInfo.InvariantCulture)!), rawRow["LastFirst"]);
             Assert.Equal(Int32Payload(decodedRow["LastFirstLen"]), rawRow["LastFirstLen"]);
@@ -62,22 +65,22 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CalculatedColumns");
         string dbPath = session.CreateDatabasePath("calc_builtin_payloads");
 
-        var result = session.RunDaoEngineScript(BuildDaoCalculatedBuiltinAuthoringScript(dbPath), DaoTimeout);
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(BuildDaoCalculatedBuiltinAuthoringScript(dbPath), DaoTimeout);
         Assert.True(
             result.ExitCode == 0 && File.Exists(dbPath),
             $"DAO calculated-column authoring failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             dbPath,
             new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
 
-        var metadata = await reader.GetColumnMetadataAsync(
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
             DaoTableName,
             TestContext.Current.CancellationToken);
 
-        var iifBand = Assert.Single(metadata, column => column.Name == "IIfBand");
-        var isHigh = Assert.Single(metadata, column => column.Name == "IsHigh");
+        ColumnMetadata iifBand = Assert.Single(metadata, column => column.Name == "IIfBand");
+        ColumnMetadata isHigh = Assert.Single(metadata, column => column.Name == "IsHigh");
         Assert.DoesNotContain(metadata, column => column.Name == "SwitchBand");
 
         Assert.True(iifBand.IsCalculated);
@@ -90,7 +93,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
             Assert.Contains($"DOMAIN_AGGREGATE_REJECTED {functionName}=", result.StdOut, StringComparison.Ordinal);
         }
 
-        var table = await reader.ReadDataTableAsync(
+        DataTable table = await reader.ReadDataTableAsync(
             DaoTableName,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -99,7 +102,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
 
         Assert.Equal(expectedIIfBands.Length, table.Rows.Count);
 
-        var rawRows = await ReadCalculatedPayloadRowsAsync(
+        List<Dictionary<string, byte[]>> rawRows = await ReadCalculatedPayloadRowsAsync(
             reader,
             DaoTableName,
             ["IIfBand", "IsHigh"],
@@ -109,8 +112,8 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
 
         for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
         {
-            var decodedRow = table.Rows[rowIndex];
-            var rawRow = rawRows[rowIndex];
+            DataRow decodedRow = table.Rows[rowIndex];
+            Dictionary<string, byte[]> rawRow = rawRows[rowIndex];
 
             Assert.Equal(rowIndex + 1, Convert.ToInt32(decodedRow["Id"], CultureInfo.InvariantCulture));
             Assert.Equal(expectedIIfBands[rowIndex], decodedRow["IIfBand"]);
@@ -126,24 +129,24 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        var entry = await reader.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         Assert.NotNull(entry);
 
-        var tableDef = await reader.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? tableDef = await reader.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         Assert.NotNull(tableDef);
 
         var columns = new ColumnInfo[columnNames.Count];
         for (int i = 0; i < columnNames.Count; i++)
         {
-            var column = tableDef.FindColumn(columnNames[i]);
+            ColumnInfo? column = tableDef.FindColumn(columnNames[i]);
             Assert.NotNull(column);
             Assert.True(column.IsCalculated, $"Column '{column.Name}' should be calculated.");
             columns[i] = column;
         }
 
         var rows = new List<Dictionary<string, byte[]>>();
-        DataPageLayout dataPage = DataPageLayout.For(reader.DatabaseFormat);
-        RowFieldSizes rowSizes = RowFieldSizes.For(reader.DatabaseFormat);
+        var dataPage = DataPageLayout.For(reader.DatabaseFormat);
+        var rowSizes = RowFieldSizes.For(reader.DatabaseFormat);
         long pageCount = new FileInfo(reader.HostDatabasePath).Length / reader.PageSize;
 
         for (long pageNumber = 1; pageNumber < pageCount; pageNumber++)
@@ -154,14 +157,14 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
                 continue;
             }
 
-            foreach (var rowBound in reader.EnumerateLiveRowBounds(page))
+            foreach (AccessBase.RowBound rowBound in reader.EnumerateLiveRowBounds(page))
             {
                 Assert.True(
-                    TryParseRawRowLayout(page, rowBound.RowStart, rowBound.RowSize, tableDef.HasVarColumns, rowSizes, out var layout),
+                    TryParseRawRowLayout(page, rowBound.RowStart, rowBound.RowSize, tableDef.HasVarColumns, rowSizes, out RawRowLayout layout),
                     $"Could not parse row layout for page {pageNumber}, row {rowBound.RowIndex}.");
 
                 var payloads = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-                foreach (var column in columns)
+                foreach (ColumnInfo column in columns)
                 {
                     Assert.True(
                         TryReadColumnBytes(page, rowBound.RowStart, rowBound.RowSize, layout, rowSizes, column, out byte[]? wrapped),

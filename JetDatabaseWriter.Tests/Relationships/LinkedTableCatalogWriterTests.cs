@@ -10,6 +10,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
@@ -35,11 +36,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedTableAsync_AllocatesCatalogIdAndSplicesMsysObjectsIndexes()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedCatalogSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync(
                 "Products",
@@ -49,7 +50,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.AceAccdb, ct);
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedTableAsync("LinkedProducts", sourcePath, "Products", ct);
         }
@@ -59,7 +60,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             catalogLeafEntriesAfter > catalogLeafEntriesBefore,
             $"Expected MSysObjects index leaves to gain entries for the linked-table catalog row. Before={catalogLeafEntriesBefore}, after={catalogLeafEntriesAfter}.");
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedProducts", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedProducts", ct);
         Assert.True(catalogObject.Id < 0, $"Expected linked-table MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedTableFlags, catalogObject.Flags);
         Assert.Equal(0, catalogObject.LvPropLength);
@@ -70,7 +71,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedTableAsync_AccessSourceLeavesDaoCacheColumnsNull()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (!File.Exists(TestDatabases.LinkeeTest))
         {
             Assert.Skip("Linkee fixture is unavailable on this machine.");
@@ -78,7 +79,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogCacheNulls");
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -90,7 +91,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             await writer.CreateLinkedTableAsync("LinkedTable1", TestDatabases.LinkeeTest, "Table1", ct);
         }
 
-        var cacheColumns = await GetLinkedCacheColumnSnapshotAsync(frontEndPath, "LinkedTable1", ct);
+        LinkedCacheColumnSnapshot cacheColumns = await GetLinkedCacheColumnSnapshotAsync(frontEndPath, "LinkedTable1", ct);
         Assert.Equal(TestDatabases.LinkeeTest, cacheColumns.Database);
         Assert.Equal("Table1", cacheColumns.ForeignName);
         Assert.False(cacheColumns.HasLv);
@@ -105,14 +106,14 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CreateLinkedTableAsync_AccessSource_DaoCompactAndOpenRecordsetSucceed()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (!File.Exists(TestDatabases.LinkeeTest))
         {
             Assert.Skip("Linkee fixture is unavailable on this machine.");
         }
 
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogDao");
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -141,10 +142,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedOdbcTableAsync_MetadataOnly_GeneratesRealTableLvProp()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCatalog");
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedOrders",
@@ -153,16 +154,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
         Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
         Assert.NotNull(block);
-        var tableTarget = Assert.Single(block.Targets);
+        ColumnPropertyTarget tableTarget = Assert.Single(block.Targets);
         Assert.Equal(string.Empty, tableTarget.Name);
-        var nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
+        ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
         Assert.Equal(Constants.ColumnTypes.OleType, nameMap.DataType);
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
         Assert.True(catalogObject.AceCount >= 2, $"Expected ODBC-linked object ACE rows, got {catalogObject.AceCount}.");
@@ -172,7 +173,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedOdbcTableAsync_SourceColumnsGeneratesRealSchemaLvProp()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchema");
         ColumnDefinition[] sourceColumns =
         [
@@ -181,7 +182,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             new("Total", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 },
         ];
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedOrders",
@@ -191,29 +192,29 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
 
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
         Assert.NotNull(block);
         Assert.Equal(sourceColumns.Length + 1, block.Targets.Count);
 
-        var tableTarget = Assert.Single(block.Targets, target => target.Name.Length == 0);
-        var nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
+        ColumnPropertyTarget tableTarget = Assert.Single(block.Targets, target => target.Name.Length == 0);
+        ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
         Assert.Equal(Constants.ColumnTypes.OleType, nameMap.DataType);
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
         Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("CustomerName")));
 
-        var orderId = block.FindTarget("OrderId")!;
+        ColumnPropertyTarget orderId = block.FindTarget("OrderId")!;
         Assert.NotNull(orderId.Find("GUID"));
         Assert.True(orderId.GetBooleanValue(Constants.ColumnPropertyNames.Required));
 
-        var customerName = block.FindTarget("CustomerName")!;
+        ColumnPropertyTarget customerName = block.FindTarget("CustomerName")!;
         Assert.NotNull(customerName.Find("GUID"));
         Assert.True(customerName.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength));
 
-        var total = block.FindTarget("Total")!;
+        ColumnPropertyTarget total = block.FindTarget("Total")!;
         Assert.NotNull(total.Find("GUID"));
         Assert.NotNull(total.Find("CurrencyLCID"));
     }
@@ -221,11 +222,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedOdbcTableAsync_SourceColumnsRejectsEmptySchema()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchemaReject");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             writer.CreateLinkedOdbcTableAsync(
                 "LinkedOrders",
                 "ODBC;DSN=Sales",
@@ -239,16 +240,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvPropStoresRealPayload()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (!File.Exists(TestDatabases.OdbcLinkerTestV2007))
         {
             Assert.Skip("ODBC linker fixture is unavailable on this machine.");
         }
 
-        var fixture = await GetOdbcFixtureSnapshotAsync(ct);
+        LinkedOdbcFixtureSnapshot fixture = await GetOdbcFixtureSnapshotAsync(ct);
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchema");
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedOrders",
@@ -258,13 +259,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(fixture.LvProp.SequenceEqual(catalogObject.LvProp ?? []));
         Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, catalogObject.LvProp);
 
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected cached ODBC LvProp to contain property targets.");
     }
@@ -272,11 +273,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvPropRejectsPlaceholder()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaReject");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             writer.CreateLinkedOdbcTableAsync(
                 "LinkedOrders",
                 "ODBC;DSN=Sales",
@@ -293,16 +294,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvProp_DaoCompactSucceeds()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (!File.Exists(TestDatabases.OdbcLinkerTestV2007))
         {
             Assert.Skip("ODBC linker fixture is unavailable on this machine.");
         }
 
-        var fixture = await GetOdbcFixtureSnapshotAsync(ct);
+        LinkedOdbcFixtureSnapshot fixture = await GetOdbcFixtureSnapshotAsync(ct);
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaDao");
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -326,8 +327,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
             "DAO CompactDatabase cached-schema ODBC linked table");
 
-        var compactedObject = await GetCatalogObjectAsync(compactedPath, "LinkedOrders", ct);
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(compactedObject.LvProp, DatabaseFormat.AceAccdb);
+        CatalogObjectSnapshot compactedObject = await GetCatalogObjectAsync(compactedPath, "LinkedOrders", ct);
+        var block = ColumnPropertyBlock.Parse(compactedObject.LvProp, DatabaseFormat.AceAccdb);
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected compacted ODBC LvProp to retain property targets.");
         Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, compactedObject.LvProp);
@@ -336,10 +337,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedTextTableAsync_AllocatesCatalogId()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextCatalog");
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedTextTableAsync(
                 "LinkedCsv",
@@ -349,7 +350,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedCsv", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedCsv", ct);
         Assert.True(catalogObject.Id < 0, $"Expected text-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedTextTableFlags, catalogObject.Flags);
         Assert.Equal(0, catalogObject.LvPropLength);
@@ -364,14 +365,14 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CreateLinkedTextTableAsync_TextSource_DaoCompactAndOpenRecordsetSucceed()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextSource_{Guid.NewGuid():N}");
         Directory.CreateDirectory(sourceDirectory);
         tempDirs.Add(sourceDirectory);
         await File.WriteAllTextAsync(Path.Combine(sourceDirectory, "data.csv"), "ID,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
 
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextDao");
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -389,16 +390,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        var catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedCsv", ct);
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedCsv", ct);
         Assert.Equal(Constants.SystemObjects.LinkedTextTableFlags, catalogObject.Flags);
         Assert.Equal(sourceDirectory, catalogObject.Database);
         Assert.Equal("data#csv", catalogObject.ForeignName);
         Assert.Equal(0, catalogObject.LvPropLength);
 
-        await using (var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct))
         {
-            var links = await reader.ListLinkedTablesAsync(ct);
-            var link = Assert.Single(links, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
+            List<LinkedTableInfo> links = await reader.ListLinkedTablesAsync(ct);
+            LinkedTableInfo link = Assert.Single(links, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
             Assert.Equal("data.csv", link.SourceObjectName);
         }
 
@@ -421,7 +422,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CreateLinkedTextTableAsync_TextSource_DaoOpenRecordsetTrimsValueWhitespace()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceSource_{Guid.NewGuid():N}");
         Directory.CreateDirectory(sourceDirectory);
         tempDirs.Add(sourceDirectory);
@@ -434,7 +435,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             ct);
 
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextWhitespaceDao");
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -468,10 +469,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedTableAsync_DuplicateLinkedTableName_Throws()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedDupFE");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -481,7 +482,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateTableAsync_AccessAuthoredJet3Mdb_SplicesMsysObjectsIndexes()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (!File.Exists(TestDatabases.IndexTestV1997))
         {
             Assert.Skip("Jet3 index fixture is unavailable on this machine.");
@@ -491,7 +492,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.Jet3Mdb, ct);
         Assert.True(catalogLeafEntriesBefore > 0, "Expected the Access-authored Jet3 fixture to have indexed MSysObjects leaves.");
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -507,17 +508,17 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             catalogLeafEntriesAfter > catalogLeafEntriesBefore,
             $"Expected Jet3 MSysObjects index leaves to gain entries for the new catalog row. Before={catalogLeafEntriesBefore}, after={catalogLeafEntriesAfter}.");
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
         Assert.Contains("SplicedJet3Catalog", await reader.ListTablesAsync(ct));
     }
 
     [Fact]
     public async Task CreateLinkedTableApis_Jet3Mdb_CreateCatalogRows()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempMdbDatabaseAsync("Jet3LinkedCatalog");
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             frontEndPath,
             new AccessWriterOptions { UseLockFile = false },
             ct))
@@ -527,8 +528,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             await writer.CreateLinkedTextTableAsync("LinkedCsv", @"C:\Data", "data.csv", "Text;HDR=YES", ct);
         }
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        var linkedTables = await reader.ListLinkedTablesAsync(ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        List<LinkedTableInfo> linkedTables = await reader.ListLinkedTablesAsync(ct);
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedAccess", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedOdbc", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
@@ -537,10 +538,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task InsertCatalogObjectAsync_DuplicateParentIdName_ThrowsBeforeSplice()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.InsertCatalogObjectAsync(
             objectId: -500,
             parentId: Constants.SystemObjects.TablesParentId,
@@ -553,7 +554,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.InsertCatalogObjectAsync(
                 objectId: -501,
                 parentId: Constants.SystemObjects.TablesParentId,
@@ -571,10 +572,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task InsertCatalogObjectAsync_ManyRows_PromotesFreshMsysObjectsIndexesToIntermediateRoots()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
 
         string lastName = string.Empty;
@@ -602,13 +603,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task CreateLinkedTableAsync_Throws_WhenMsysObjectsCatalogSpliceCannotMaintainIndexes()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
         Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
         Assert.False(
@@ -619,17 +620,17 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     [Fact]
     public async Task DropTableAsync_Throws_WhenMsysObjectsCatalogDeleteCannotMaintainIndexes()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogDeleteSpliceFail");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.CreateTableAsync(
             "Victim",
             [new ColumnDefinition("Id", typeof(int))],
             ct);
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.DropTableAsync("Victim", ct).AsTask());
         Assert.Contains("Could not maintain MSysObjects catalog indexes while dropping table 'Victim'", ex.Message, StringComparison.Ordinal);
     }
@@ -673,9 +674,9 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask<CatalogObjectSnapshot> GetCatalogObjectAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
-        await using var reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        var objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
-        var row = objects.AsEnumerable().Single(r => string.Equals(
+        await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataRow row = objects.AsEnumerable().Single(r => string.Equals(
             Convert.ToString(r["Name"], CultureInfo.InvariantCulture),
             objectName,
             StringComparison.OrdinalIgnoreCase));
@@ -688,7 +689,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             return id != objectId && id != 0 && (id & 0x00FFFFFF) == objectLow24;
         });
 
-        var aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: cancellationToken);
+        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: cancellationToken);
         int aceCount = aces.AsEnumerable().Count(r => Convert.ToInt32(r["ObjectId"], CultureInfo.InvariantCulture) == objectId);
         byte[]? lvProp = row["LvProp"] is byte[] lvPropBytes ? (byte[])lvPropBytes.Clone() : null;
 
@@ -705,13 +706,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask<LinkedOdbcFixtureSnapshot> GetOdbcFixtureSnapshotAsync(CancellationToken cancellationToken)
     {
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.OdbcLinkerTestV2007, cancellationToken: cancellationToken);
-        var objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
-        var row = objects.AsEnumerable().Single(r =>
+        await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.OdbcLinkerTestV2007, cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataRow row = objects.AsEnumerable().Single(r =>
             Convert.ToInt32(r["Type"], CultureInfo.InvariantCulture) == Constants.SystemObjects.LinkedOdbcType);
 
         byte[] lvProp = Assert.IsType<byte[]>(row["LvProp"]);
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(lvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(lvProp, DatabaseFormat.AceAccdb);
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected fixture ODBC LvProp to contain property targets.");
 
@@ -723,16 +724,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask<bool> CatalogObjectExistsAsync(AccessWriter writer, string objectName, CancellationToken cancellationToken)
     {
-        var msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
-        var rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
+        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
+        List<CatalogRow> rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask<LinkedCacheColumnSnapshot> GetLinkedCacheColumnSnapshotAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
-        await using var reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        var objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
-        var row = objects.AsEnumerable().Single(r => string.Equals(
+        await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataRow row = objects.AsEnumerable().Single(r => string.Equals(
             Convert.ToString(r["Name"], CultureInfo.InvariantCulture),
             objectName,
             StringComparison.OrdinalIgnoreCase));
@@ -858,7 +859,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
 
             int realIdxDescStart = namePos;
-            var layout = writer.indexLayout;
+            IndexLayout layout = writer.indexLayout;
             int intermediateRoots = 0;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
@@ -909,7 +910,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
 
             int realIdxDescStart = namePos;
-            var layout = writer.indexLayout;
+            IndexLayout layout = writer.indexLayout;
             int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
             int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");
@@ -938,7 +939,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, cancellationToken);
         int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
-        var layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         int count = 0;
         for (int pageNumber = 0; pageNumber < fileBytes.Length / pageSize; pageNumber++)
         {
@@ -1004,8 +1005,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private async ValueTask<string> CopyTempDatabaseAsync(string sourcePath, string prefix, string extension, CancellationToken cancellationToken)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}{extension}");
-        await using (var source = File.OpenRead(sourcePath))
-        await using (var destination = File.Create(temp))
+        await using (FileStream source = File.OpenRead(sourcePath))
+        await using (FileStream destination = File.Create(temp))
         {
             await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
         }

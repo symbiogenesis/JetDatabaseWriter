@@ -6,6 +6,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -42,10 +43,10 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkeeTest, TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -62,14 +63,14 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkeeTest, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         long totalRows = 0;
         foreach (string table in tables)
         {
-            var dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadDataTableAsync(
                 table,
                 cancellationToken: TestContext.Current.CancellationToken);
             totalRows += dt.Rows.Count;
@@ -94,10 +95,10 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(linked);
@@ -118,12 +119,12 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        foreach (var entry in linked)
+        foreach (LinkedTableInfo entry in linked)
         {
             Assert.False(
                 string.IsNullOrWhiteSpace(entry.Name),
@@ -148,19 +149,19 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var linkerReader = await db.GetReaderAsync(
+        AccessReader linkerReader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
-        var linked =
+        List<LinkedTableInfo> linked =
             await linkerReader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var linkeeReader = await db.GetReaderAsync(
+        AccessReader linkeeReader = await db.GetReaderAsync(
             TestDatabases.LinkeeTest, TestContext.Current.CancellationToken);
-        var linkeeTables =
+        List<string> linkeeTables =
             await linkeeReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // At least one linked entry's SourceObjectName should match a table in linkee.
         bool foundMatch = false;
-        foreach (var entry in linked)
+        foreach (LinkedTableInfo entry in linked)
         {
             if (linkeeTables.Contains(entry.SourceObjectName))
             {
@@ -188,15 +189,15 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // ListTables returns only local tables (type 1); linked tables are
         // excluded. Read whatever is local.
         foreach (string table in tables)
         {
-            var dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadDataTableAsync(
                 table,
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
@@ -212,14 +213,14 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             return;
         }
 
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(linked);
 
-        var objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
-        foreach (var table in linked)
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        foreach (LinkedTableInfo table in linked)
         {
-            var row = objects.AsEnumerable().Single(r => string.Equals(
+            DataRow row = objects.AsEnumerable().Single(r => string.Equals(
                 Convert.ToString(r["Name"], System.Globalization.CultureInfo.InvariantCulture),
                 table.Name,
                 StringComparison.OrdinalIgnoreCase));

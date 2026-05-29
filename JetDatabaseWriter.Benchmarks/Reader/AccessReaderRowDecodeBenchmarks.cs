@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Benchmarks.Reader;
 
+using System.Data;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
@@ -66,7 +67,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_Typed()
     {
         int count = 0;
-        await foreach (var row in _numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+        await foreach (NumericRow? row in _numericReader.Rows<NumericRow>(SyntheticDatabases.NumericTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -91,7 +92,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Numeric_DataTable()
     {
-        var dt = await _numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        DataTable dt = await _numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -114,7 +115,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_Typed()
     {
         int count = 0;
-        await foreach (var row in _textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
+        await foreach (TextRow? row in _textReader.Rows<TextRow>(SyntheticDatabases.TextTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -139,7 +140,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Text_DataTable()
     {
-        var dt = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        DataTable dt = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -162,7 +163,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Wide_Typed_NarrowProjection()
     {
         int count = 0;
-        await foreach (var row in _wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
+        await foreach (WideRowNarrowProjection? row in _wideReader.Rows<WideRowNarrowProjection>(SyntheticDatabases.WideTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -252,7 +253,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_Typed()
     {
         int count = 0;
-        await foreach (var row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        await foreach (MemoRow? row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -264,7 +265,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Memo_DataTable()
     {
-        var dt = await _memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
+        DataTable dt = await _memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
         return dt!.Rows.Count;
     }
 
@@ -310,7 +311,7 @@ public class AccessReaderRowDecodeBenchmarks
 
     private static async Task<int> CountColdUntypedRowsAsync(string databasePath, string tableName, AccessReaderOptions? options)
     {
-        await using var reader = await AccessReader.OpenAsync(databasePath, options).ConfigureAwait(false);
+        await using AccessReader reader = await AccessReader.OpenAsync(databasePath, options).ConfigureAwait(false);
         return await CountUntypedRowsAsync(reader, tableName).ConfigureAwait(false);
     }
 }

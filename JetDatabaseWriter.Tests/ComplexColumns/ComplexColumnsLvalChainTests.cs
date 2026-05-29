@@ -58,7 +58,7 @@ public sealed class ComplexColumnsLvalChainTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -86,17 +86,17 @@ public sealed class ComplexColumnsLvalChainTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Documents",
             "Files",
             TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal(fileName, single.FileName);
         Assert.Equal(payload, single.FileData);
     }

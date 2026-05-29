@@ -1,8 +1,11 @@
 namespace JetDatabaseWriter.Tests.ComplexColumns;
 
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -25,11 +28,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task ComplexDataFixture_ListTables_ReturnsSingleTable(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal("Table1", tables[0]);
@@ -45,11 +48,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task Table1_HasAttachmentComplexColumn(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var complex = await reader.GetComplexColumnsAsync(
+        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
@@ -67,11 +70,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task Table1_HasMultiValueComplexColumn(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var complex = await reader.GetComplexColumnsAsync(
+        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
@@ -92,11 +95,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task AttachData_ReturnsThreeDeflateCompressedTxtFiles(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Table1",
             "attach-data",
             TestContext.Current.CancellationToken);
@@ -119,11 +122,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task AttachData_HasExpectedFileNames(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Table1",
             "attach-data",
             TestContext.Current.CancellationToken);
@@ -144,11 +147,11 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task MultiValueData_ReturnsAtLeastFiveItems(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 
-        var items =
+        IReadOnlyList<(int ConceptualTableId, object? Value)> items =
             await reader.GetMultiValueItemsAsync(
                 "Table1",
                 "multi-value-data",
@@ -172,7 +175,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task Table1_StreamsAllRows_WithoutThrowing(string path)
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             path,
             TestContext.Current.CancellationToken);
 

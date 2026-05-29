@@ -24,7 +24,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -74,17 +74,17 @@ public sealed class ComplexColumnsCascadeDeleteTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Documents",
             "Files",
             TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("survivor.txt", single.FileName);
     }
 
@@ -93,7 +93,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
     {
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -134,17 +134,17 @@ public sealed class ComplexColumnsCascadeDeleteTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var items = await reader.GetMultiValueItemsAsync(
+        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync(
             "Tags",
             "Labels",
             TestContext.Current.CancellationToken);
 
-        var only = Assert.Single(items);
+        (int ConceptualTableId, object? Value) only = Assert.Single(items);
         Assert.Equal(21, Convert.ToInt32(only.Value, System.Globalization.CultureInfo.InvariantCulture));
     }
 
@@ -156,7 +156,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // (or even inspecting beyond the null bit) the flat table.
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -195,17 +195,17 @@ public sealed class ComplexColumnsCascadeDeleteTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "Documents",
             "Files",
             TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("keep.txt", single.FileName);
     }
 
@@ -231,7 +231,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         await fixtureMs.WriteAsync(fixture, TestContext.Current.CancellationToken);
         fixtureMs.Position = 0;
 
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             fixtureMs,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
@@ -307,17 +307,17 @@ public sealed class ComplexColumnsCascadeDeleteTests
         }
 
         fixtureMs.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixtureMs,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var attachments = await reader.GetAttachmentsAsync(
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(
             "C5_Documents",
             "Files",
             TestContext.Current.CancellationToken);
 
-        var single = Assert.Single(attachments);
+        AttachmentRecord single = Assert.Single(attachments);
         Assert.Equal("bob.txt", single.FileName);
     }
 
@@ -329,7 +329,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // into both flat child tables.
         await using var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -383,19 +383,19 @@ public sealed class ComplexColumnsCascadeDeleteTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Attachment flat table: only row 2's attachment survives.
-        var attachments = await reader.GetAttachmentsAsync("Items", "Photos", TestContext.Current.CancellationToken);
-        var singleAttachment = Assert.Single(attachments);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Items", "Photos", TestContext.Current.CancellationToken);
+        AttachmentRecord singleAttachment = Assert.Single(attachments);
         Assert.Equal("survivor.jpg", singleAttachment.FileName);
 
         // MultiValue flat table: only row 2's item survives.
-        var mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
-        var singleMv = Assert.Single(mvItems);
+        IReadOnlyList<(int ConceptualTableId, object? Value)> mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
+        (int ConceptualTableId, object? Value) singleMv = Assert.Single(mvItems);
         Assert.Equal(300, Convert.ToInt32(singleMv.Value, System.Globalization.CultureInfo.InvariantCulture));
     }
 }

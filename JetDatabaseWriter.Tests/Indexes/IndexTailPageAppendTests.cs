@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,10 +53,10 @@ public sealed class IndexTailPageAppendTests
         // byte[] maps to Ole (0x0B). Microsoft Access does not permit
         // CREATE INDEX on OLE Object columns; the writer must surface that
         // up-front instead of silently emitting an empty schema-only leaf.
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        await using var writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "OleIdxRejected",
                 [
@@ -76,8 +77,8 @@ public sealed class IndexTailPageAppendTests
         // whole index must be rejected — the engine cannot encode a sort
         // key for the OLE column, so a partial composite key would sort
         // incorrectly.
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        await using var writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
@@ -95,8 +96,8 @@ public sealed class IndexTailPageAppendTests
     {
         // The rejection must be scoped to IndexDefinition validation; OLE
         // columns themselves remain a fully supported column type.
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        await using (var writer = await OpenWriterAsync(stream))
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "OleColumnSupported",
@@ -107,8 +108,8 @@ public sealed class IndexTailPageAppendTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var cols = await reader.GetColumnMetadataAsync(
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(
             "OleColumnSupported", TestContext.Current.CancellationToken);
         Assert.Equal(2, cols.Count);
         Assert.Equal("Blob", cols[1].Name);
@@ -133,7 +134,7 @@ public sealed class IndexTailPageAppendTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        var r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         // Layout assumed by IndexBTreeBuilderTests: 3 leaves at pages 50..52,
         // 1 intermediate root at page 53.
@@ -159,7 +160,7 @@ public sealed class IndexTailPageAppendTests
             new([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
         };
 
-        var r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, r.Pages[0][0]);
@@ -178,9 +179,9 @@ public sealed class IndexTailPageAppendTests
         // regression to bulk rebuild would allocate ~50 fresh leaf + intermediate
         // pages, growing the file by hundreds of KB.
         const int InitialRows = 700;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -199,7 +200,7 @@ public sealed class IndexTailPageAppendTests
 
         long sizeAfterBulk = stream.Length;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Strictly-greater-than current tree max. Triggers the tail-page append
             // append-only fast path.
@@ -219,8 +220,8 @@ public sealed class IndexTailPageAppendTests
             $"Expected append-only fast path to grow the file by ≤ 4 pages; grew by {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         // Row count must still be correct after the append.
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -235,9 +236,9 @@ public sealed class IndexTailPageAppendTests
         // fall-back path (single-leaf splice single-leaf splice, multi-level rebuild
         // bulk rebuild) can fire depending on tree shape.
         const int InitialRows = 1400;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -256,7 +257,7 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Falls into a gap (id = 5 is well below the tree max) — fails
             // the tail-page append append predicate and routes through the existing
@@ -264,8 +265,8 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowAsync("T", [5], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal((InitialRows / 2) + 1, rowsRead.Rows.Count);
     }
 
@@ -278,9 +279,9 @@ public sealed class IndexTailPageAppendTests
         // generous bound: 16 fresh data pages + 16 misc = 32 pages.
         const int InitialRows = 700;
         const int Appends = 50;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -299,7 +300,7 @@ public sealed class IndexTailPageAppendTests
 
         long sizeAfterBulk = stream.Length;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             for (int j = 0; j < Appends; j++)
             {
@@ -312,8 +313,8 @@ public sealed class IndexTailPageAppendTests
             growth <= 32 * Constants.PageSizes.Jet4,
             $"Expected {Appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows + Appends, rowsRead.Rows.Count);
     }
 
@@ -325,9 +326,9 @@ public sealed class IndexTailPageAppendTests
         // value (i.e. they ended up in the correct on-disk row, not lost
         // or duplicated).
         const int InitialRows = 700;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -349,8 +350,8 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowAsync("T", [InitialRows + 2], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows + 3, rowsRead.Rows.Count);
 
         // The three appended values must be present at least once each.
@@ -371,7 +372,7 @@ public sealed class IndexTailPageAppendTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

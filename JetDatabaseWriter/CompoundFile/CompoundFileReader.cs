@@ -39,7 +39,7 @@ internal static class CompoundFileReader
         Guard.NotNull(stream, nameof(stream));
 
         byte[] header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var hdr = ParseHeader(header);
+        CfbHeader hdr = ParseHeader(header);
 
         byte[] scratch = ArrayPool<byte>.Shared.Rent(hdr.SectorSize);
         try

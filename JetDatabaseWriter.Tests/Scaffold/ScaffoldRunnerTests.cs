@@ -413,12 +413,12 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_failingTables.TryGetValue(tableName, out var ex))
+            if (_failingTables.TryGetValue(tableName, out Exception? ex))
             {
                 throw ex;
             }
 
-            if (_columnsByTable.TryGetValue(tableName, out var cols))
+            if (_columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
             {
                 return new ValueTask<List<ColumnMetadata>>(cols);
             }

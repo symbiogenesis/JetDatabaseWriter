@@ -74,7 +74,7 @@ internal static class DirectRowDecoderBuilder
         var bound = new List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)>();
         for (int i = 0; i < columnCount; i++)
         {
-            var acc = RowMapper<T>.TryGetAccessor(headers[i]);
+            RowMapper<T>.Accessor? acc = RowMapper<T>.TryGetAccessor(headers[i]);
             if (acc == null)
             {
                 continue;
@@ -87,7 +87,7 @@ internal static class DirectRowDecoderBuilder
                 return null;
             }
 
-            var col = columns[i];
+            ColumnInfo col = columns[i];
             if (col.IsCalculated)
             {
                 return null;
@@ -115,16 +115,16 @@ internal static class DirectRowDecoderBuilder
         List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound)
         where T : class, new()
     {
-        var readerParam = Expression.Parameter(typeof(AccessReader), "reader");
-        var pageParam = Expression.Parameter(typeof(byte[]), "page");
-        var rowStartParam = Expression.Parameter(typeof(int), "rowStart");
-        var rowSizeParam = Expression.Parameter(typeof(int), "rowSize");
-        var hasVarParam = Expression.Parameter(typeof(bool), "hasVarColumns");
-        var targetParam = Expression.Parameter(typeof(T), "target");
+        ParameterExpression readerParam = Expression.Parameter(typeof(AccessReader), "reader");
+        ParameterExpression pageParam = Expression.Parameter(typeof(byte[]), "page");
+        ParameterExpression rowStartParam = Expression.Parameter(typeof(int), "rowStart");
+        ParameterExpression rowSizeParam = Expression.Parameter(typeof(int), "rowSize");
+        ParameterExpression hasVarParam = Expression.Parameter(typeof(bool), "hasVarColumns");
+        ParameterExpression targetParam = Expression.Parameter(typeof(T), "target");
 
-        var layoutLocal = Expression.Variable(typeof(AccessBase.RowLayout), "layout");
-        var sliceLocal = Expression.Variable(typeof(AccessBase.ColumnSlice), "slice");
-        var returnLabel = Expression.Label(typeof(bool), "ret");
+        ParameterExpression layoutLocal = Expression.Variable(typeof(AccessBase.RowLayout), "layout");
+        ParameterExpression sliceLocal = Expression.Variable(typeof(AccessBase.ColumnSlice), "slice");
+        LabelTarget returnLabel = Expression.Label(typeof(bool), "ret");
 
         var statements = new List<Expression>(8 + (bound.Count * 3))
         {
@@ -156,15 +156,15 @@ internal static class DirectRowDecoderBuilder
             Expression.Return(returnLabel, Expression.Constant(false))),
         };
 
-        var kindProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.Kind))!;
-        var dataStartProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataStart))!;
-        var dataLenProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataLen))!;
-        var boolValueProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.BoolValue))!;
+        PropertyInfo kindProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.Kind))!;
+        PropertyInfo dataStartProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataStart))!;
+        PropertyInfo dataLenProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataLen))!;
+        PropertyInfo boolValueProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.BoolValue))!;
 
-        foreach (var entry in bound)
+        foreach ((int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col) entry in bound)
         {
-            var col = entry.Col;
-            var colExpr = Expression.Constant(col, typeof(ColumnInfo));
+            ColumnInfo col = entry.Col;
+            ConstantExpression colExpr = Expression.Constant(col, typeof(ColumnInfo));
 
             // slice = reader.ResolveColumnSliceForDirectDecode(page, rowStart, rowSize, layout, col);
             statements.Add(Expression.Assign(
@@ -178,15 +178,15 @@ internal static class DirectRowDecoderBuilder
                     layoutLocal,
                     colExpr)));
 
-            var kindExpr = Expression.Property(sliceLocal, kindProp);
-            var dataStartExpr = Expression.Property(sliceLocal, dataStartProp);
-            var dataLenExpr = Expression.Property(sliceLocal, dataLenProp);
-            var boolValueExpr = Expression.Property(sliceLocal, boolValueProp);
+            MemberExpression kindExpr = Expression.Property(sliceLocal, kindProp);
+            MemberExpression dataStartExpr = Expression.Property(sliceLocal, dataStartProp);
+            MemberExpression dataLenExpr = Expression.Property(sliceLocal, dataLenProp);
+            MemberExpression boolValueExpr = Expression.Property(sliceLocal, boolValueProp);
 
             // Compute the absolute offset once (rowStart + slice.DataStart).
-            var offsetExpr = Expression.Add(rowStartParam, dataStartExpr);
+            BinaryExpression offsetExpr = Expression.Add(rowStartParam, dataStartExpr);
 
-            var readExpr = BuildReadExpression(
+            Expression readExpr = BuildReadExpression(
                 col,
                 pageParam,
                 offsetExpr,
@@ -218,7 +218,7 @@ internal static class DirectRowDecoderBuilder
         statements.Add(Expression.Return(returnLabel, Expression.Constant(true)));
         statements.Add(Expression.Label(returnLabel, Expression.Constant(false)));
 
-        var body = Expression.Block(
+        BlockExpression body = Expression.Block(
             typeof(bool),
             [layoutLocal, sliceLocal],
             statements);

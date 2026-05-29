@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -28,7 +29,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task Table1_HasCalculatedColumns()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -49,7 +50,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task LastFirst_HasExpression_ReferencingNonCalcColumns()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -57,7 +58,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             "Table1",
             TestContext.Current.CancellationToken);
 
-        var lastFirst = Assert.Single(meta, c => c.Name == "LastFirst");
+        ColumnMetadata lastFirst = Assert.Single(meta, c => c.Name == "LastFirst");
         Assert.True(lastFirst.IsCalculated);
         Assert.NotNull(lastFirst.CalculationExpression);
         Assert.Contains("LastName", lastFirst.CalculationExpression, StringComparison.Ordinal);
@@ -75,7 +76,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task LastFirstLen_ReferencesAnotherCalculatedColumn()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -83,13 +84,13 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             "Table1",
             TestContext.Current.CancellationToken);
 
-        var lastFirstLen = Assert.Single(meta, c => c.Name == "LastFirstLen");
+        ColumnMetadata lastFirstLen = Assert.Single(meta, c => c.Name == "LastFirstLen");
         Assert.True(lastFirstLen.IsCalculated);
         Assert.NotNull(lastFirstLen.CalculationExpression);
         Assert.Contains("LastFirst", lastFirstLen.CalculationExpression, StringComparison.Ordinal);
 
         // Confirm the referenced column is itself calculated.
-        var lastFirst = Assert.Single(meta, c => c.Name == "LastFirst");
+        ColumnMetadata lastFirst = Assert.Single(meta, c => c.Name == "LastFirst");
         Assert.True(lastFirst.IsCalculated);
     }
 
@@ -101,7 +102,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AllCalculatedColumns_HaveExpressionAndResultType()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -109,10 +110,10 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             "Table1",
             TestContext.Current.CancellationToken);
 
-        var calcCols = meta.Where(c => c.IsCalculated);
+        IEnumerable<ColumnMetadata> calcCols = meta.Where(c => c.IsCalculated);
         Assert.NotEmpty(calcCols);
 
-        foreach (var col in calcCols)
+        foreach (ColumnMetadata? col in calcCols)
         {
             Assert.False(
                 string.IsNullOrEmpty(col.CalculationExpression),
@@ -132,11 +133,11 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task Table1_ReadDataTable_DecodesAllRows()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -154,7 +155,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         Assert.Contains("John", firstNames);
         Assert.Contains("Test", firstNames);
 
-        var lastFirstColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "LastFirst");
+        DataColumn lastFirstColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "LastFirst");
         Assert.Equal(typeof(string), lastFirstColumn.DataType);
 
         var lastFirstValues = dt.AsEnumerable()
@@ -174,7 +175,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task IsRich_IsReportedAsCalculatedAndDecodesTypedValues()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
@@ -182,16 +183,16 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             "Table1",
             TestContext.Current.CancellationToken);
 
-        var isRich = Assert.Single(meta, c => c.Name == "IsRich");
+        ColumnMetadata isRich = Assert.Single(meta, c => c.Name == "IsRich");
         Assert.True(isRich.IsCalculated);
         Assert.NotNull(isRich.CalculationExpression);
         Assert.True(isRich.CalculatedResultType > 0);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var isRichColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "IsRich");
+        DataColumn isRichColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "IsRich");
         Assert.Equal(isRich.ClrType, isRichColumn.DataType);
         Assert.NotEqual(typeof(byte[]), isRichColumn.DataType);
         Assert.All(

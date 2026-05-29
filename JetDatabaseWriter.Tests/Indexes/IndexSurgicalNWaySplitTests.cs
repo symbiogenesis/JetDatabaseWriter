@@ -37,10 +37,10 @@ public sealed class IndexSurgicalNWaySplitTests
         // payload (~4_080 bytes each on a 4_096-byte page). With the
         // 2-way splitter this would bail to bulk rebuild; with the N-way splitter
         // the splice succeeds surgically.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         const int rowCount = 40;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -70,10 +70,10 @@ public sealed class IndexSurgicalNWaySplitTests
         // 200 rows in a single batch — splice runs to ~10 pages worth of
         // leaf entries. Exercises the N-way splitter at scale; the cap
         // matches Access default behaviour (no artificial bail floor).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         const int rowCount = 200;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -106,9 +106,9 @@ public sealed class IndexSurgicalNWaySplitTests
         // grouping routes the whole batch onto the rightmost leaf; the
         // resulting splice spans 3+ pages and engages the N-way split with
         // tail_page cascade up every captured ancestor.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -129,7 +129,7 @@ public sealed class IndexSurgicalNWaySplitTests
             await writer.InsertRowsAsync("T", seed, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // 60 ascending-key rows whose values all sort AFTER the seed.
             var batch = new object[60][];
@@ -154,9 +154,9 @@ public sealed class IndexSurgicalNWaySplitTests
         // per batch). Step 2: a single batch into one of those leaves
         // produces a 3-way leaf split → pushes 2 new summaries into the
         // (already-full) parent → parent itself splits N-way.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -181,7 +181,7 @@ public sealed class IndexSurgicalNWaySplitTests
             await writer.InsertRowsAsync("T", seed, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Drip feed 30 small inserts whose keys are interleaved across
             // many leaves (each batch hits ~5 leaves). Forces parent-of-
@@ -199,7 +199,7 @@ public sealed class IndexSurgicalNWaySplitTests
             }
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Final BIG batch of 50 rows clustered into one narrow key range
             // → all land on one leaf → splice runs to multiple pages →
@@ -226,10 +226,10 @@ public sealed class IndexSurgicalNWaySplitTests
         // searchable via the index — including via the new pages. This
         // test stresses the index by enforcing uniqueness; a duplicate
         // insertion against any of the post-split keys must throw.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         const int rowCount = 80;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -251,7 +251,7 @@ public sealed class IndexSurgicalNWaySplitTests
 
         // Reopen and try to insert a duplicate key from each of the now
         // multi-page leaf groups — must throw.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             foreach (int i in (int[])[0, 7, 13, 25, 41, 67, rowCount - 1])
             {
@@ -268,8 +268,8 @@ public sealed class IndexSurgicalNWaySplitTests
 
     private static async Task AssertAllRowsPresentAsync(MemoryStream stream, int expectedRows, System.Threading.CancellationToken ct)
     {
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(expectedRows, dt!.Rows.Count);
 
@@ -300,7 +300,7 @@ public sealed class IndexSurgicalNWaySplitTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

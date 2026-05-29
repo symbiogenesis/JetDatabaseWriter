@@ -1,6 +1,10 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
+using System.Collections.Generic;
+using System.Data;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -25,9 +29,9 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_ListTables_ReturnsNonEmpty(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -41,12 +45,12 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_HaveColumns(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            var cols =
+            List<ColumnMetadata> cols =
                 await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.NotEmpty(cols);
         }
@@ -61,13 +65,13 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_StreamAllRows_WithoutThrowing(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         long totalRows = 0;
         foreach (string table in tables)
         {
-            var dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadDataTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
             totalRows += dt.Rows.Count;
         }

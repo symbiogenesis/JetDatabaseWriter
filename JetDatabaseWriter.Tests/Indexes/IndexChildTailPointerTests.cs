@@ -2,8 +2,10 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -44,13 +46,13 @@ public sealed class IndexChildTailPointerTests
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
         long fileLength = new FileInfo(fixturePath).Length;
         long maxPageNumber = fileLength / pageSize;
@@ -58,7 +60,7 @@ public sealed class IndexChildTailPointerTests
         int intermediatesChecked = 0;
         int nonZeroTails = 0;
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;
@@ -71,7 +73,7 @@ public sealed class IndexChildTailPointerTests
                 continue;
             }
 
-            foreach (var index in indexes)
+            foreach (IndexMetadata index in indexes)
             {
                 if (index.IsForeignKey || index.FirstDp <= 0)
                 {
@@ -106,7 +108,7 @@ public sealed class IndexChildTailPointerTests
                     }
 
                     // Descend to first child.
-                    var entries =
+                    List<DecodedIntermediateEntry> entries =
                         IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
                     if (entries.Count == 0)
                     {

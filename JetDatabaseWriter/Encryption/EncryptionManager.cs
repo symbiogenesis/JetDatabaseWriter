@@ -185,7 +185,7 @@ internal static class EncryptionManager
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
-        await using var fs = FileStreamFactory.Open(
+        await using FileStream fs = FileStreamFactory.Open(
             path,
             FileMode.Open,
             FileAccess.Read,
@@ -219,11 +219,11 @@ internal static class EncryptionManager
                 throwOnEndOfStream: false,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            var headerFormat = EncryptionConverter.Detect(sniff);
+            AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
             if (headerFormat == AccessEncryptionFormat.AccdbAgileCfb)
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
-                var cfbFormat = await TryDetectCompoundFileFormatAsync(stream, cancellationToken)
+                AccessEncryptionFormat cfbFormat = await TryDetectCompoundFileFormatAsync(stream, cancellationToken)
                     .ConfigureAwait(false);
                 if (cfbFormat != AccessEncryptionFormat.None)
                 {
@@ -688,7 +688,7 @@ internal static class EncryptionManager
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
-        var lockSlot = AcquireReencryptLockSlot(path, options);
+        LockFileSlotWriter? lockSlot = AcquireReencryptLockSlot(path, options);
         try
         {
             byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
@@ -728,7 +728,7 @@ internal static class EncryptionManager
     private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)
     {
         string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-        await using (var fs = FileStreamFactory.Open(
+        await using (FileStream fs = FileStreamFactory.Open(
             tempPath,
             FileMode.CreateNew,
             FileAccess.Write,
@@ -788,11 +788,11 @@ internal static class EncryptionManager
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
     {
-        var oldPwd = oldPassword.AsMemory();
-        var newPwd = newPassword.AsMemory();
+        ReadOnlyMemory<char> oldPwd = oldPassword.AsMemory();
+        ReadOnlyMemory<char> newPwd = newPassword.AsMemory();
 
         long origPos = source.Position;
-        var detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
+        AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
         _ = source.Seek(origPos, SeekOrigin.Begin);
 
         if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
@@ -807,11 +807,11 @@ internal static class EncryptionManager
                 $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
         }
 
-        (byte[] plaintext, var sourceFormat) = await EncryptionConverter
+        (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
             .ReadDecryptedAsync(source, oldPwd, cancellationToken)
             .ConfigureAwait(false);
 
-        var effectiveTarget = targetFormat ?? sourceFormat;
+        AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
         return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 
@@ -1055,7 +1055,7 @@ internal static class EncryptionManager
         int maxBytes = Encoding.UTF8.GetMaxByteCount(password.Length);
         Span<byte> stackBuf = stackalloc byte[256];
         byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
-        var utf8 = rented ?? stackBuf;
+        Span<byte> utf8 = rented ?? stackBuf;
 
         try
         {

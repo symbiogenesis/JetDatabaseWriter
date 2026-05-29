@@ -179,7 +179,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
             async (tableName, ct) =>
             {
-                var entry = await GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
+                CatalogEntry? entry = await GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
                 if (entry is null)
                 {
                     return null;
@@ -233,7 +233,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         options ??= new AccessWriterOptions();
         await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
 
-        var fs = CreateStream(path);
+        FileStream fs = CreateStream(path);
         return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
     }
 
@@ -266,7 +266,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             if (EncryptionManager.IsCompoundFileEncrypted(header))
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
-                (byte[]? decryptedPackage, var outerFormat) = await EncryptionManager
+                (byte[]? decryptedPackage, AccessEncryptionFormat outerFormat) = await EncryptionManager
                     .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, cancellationToken)
                     .ConfigureAwait(false);
 
@@ -335,7 +335,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
 
-        await using (var fs = FileStreamFactory.Open(
+        await using (FileStream fs = FileStreamFactory.Open(
             path,
             FileMode.CreateNew,
             FileAccess.Write,
@@ -349,7 +349,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         try
         {
-            var writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+            AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
             long coreSystemTableStartPage = await writer.ReserveFreshCoreSystemTablePagesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             await writer.InitializeFreshCatalogIndexesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
@@ -395,7 +395,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
 
-        var writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
+        AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
             long coreSystemTableStartPage = await writer.ReserveFreshCoreSystemTablePagesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
@@ -450,7 +450,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // flat child table + MSysComplexColumns row per column AFTER the parent TDEF
         // is on disk. The round-trip preservation path on RewriteTableAsync supplies a
         // non-zero ComplexId from the original TDEF and is left untouched here.
-        var complexAllocs =
+        IReadOnlyList<ComplexColumnManager.ComplexColumnAllocation>? complexAllocs =
             await ComplexColumns.PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
         if (complexAllocs is { Count: > 0 })
         {
@@ -459,7 +459,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             var rewritten = new List<ColumnDefinition>(columns);
             for (int i = 0; i < complexAllocs.Count; i++)
             {
-                var a = complexAllocs[i];
+                ComplexColumnManager.ComplexColumnAllocation a = complexAllocs[i];
                 rewritten[a.ColumnIndex] = rewritten[a.ColumnIndex] with { ComplexId = a.ComplexId };
             }
 
@@ -496,15 +496,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        var columns = BuildFullCatalogColumnDefinitions();
-        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, base.format);
+        IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, base.format);
         var indexes = new IndexDefinition[]
         {
             new("Id", "Id") { IsPrimaryKey = true },
             new("ParentIdName", ["ParentId", "Name"]) { IsUnique = true },
         };
 
-        var resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
+        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tdefPages.Length != 1)
         {
@@ -512,7 +512,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         tdefPages[0][tdef.NumCols - 5] = 0x53;
-        var layout = IndexLeafPageBuilder.GetLayout(base.format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(base.format);
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
         {
@@ -603,8 +603,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool emitLvProp = true,
         bool markSystemTableTdef = true)
     {
-        var tableDef = TDefPageBuilder.BuildTableDefinition(columns, format);
-        var resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, format);
+        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (reservedTdefPageNumber > 0 && tdefPages.Length != 1)
         {
@@ -649,7 +649,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
-            var layout = IndexLeafPageBuilder.GetLayout(format);
+            IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
             leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int i = 0; i < resolvedIndexes.Count; i++)
@@ -881,7 +881,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
                 var next = new List<ColumnDefinition>(existing);
-                var src = next[idx];
+                ColumnDefinition src = next[idx];
                 next[idx] = new ColumnDefinition(newColumnName, src.ClrType, src.MaxLength)
                 {
                     IsNullable = src.IsNullable,
@@ -910,13 +910,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             projectIndexes: (existingIndexes, newDefs) =>
             {
                 var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var c in newDefs)
+                foreach (ColumnDefinition c in newDefs)
                 {
                     newColumnNames.Add(c.Name);
                 }
 
                 var result = new List<IndexDefinition>(existingIndexes.Count);
-                foreach (var idx in existingIndexes)
+                foreach (IndexMetadata idx in existingIndexes)
                 {
                     // Forward Normal (1..N column) and PrimaryKey indexes;
                     // FK indexes are reconstructed from MSysRelationships.
@@ -928,7 +928,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     var remappedCols = new List<string>(idx.Columns.Count);
                     var descendingCols = new List<string>();
                     bool allSurvive = true;
-                    foreach (var ic in idx.Columns)
+                    foreach (IndexColumnReference ic in idx.Columns)
                     {
                         string keyColumn = ic.Name;
                         string remapped = string.Equals(keyColumn, oldColumnName, StringComparison.OrdinalIgnoreCase)
@@ -988,10 +988,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(values, nameof(values));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        var rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
     }
@@ -1006,10 +1006,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(rows, nameof(rows));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        var rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         // Track every row written so far + every auto-counter advance so we can
         // roll the entire batch back if the bulk MaintainIndexesAsync at the end
@@ -1031,7 +1031,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken.ThrowIfCancellationRequested();
                 Guard.NotNull(row, nameof(rows));
                 object[] normalizedRow = NormalizePublicRow(row, nameof(rows));
-                var rowCp =
+                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
                     await Constraints.ApplyAsync(tableName, tableDef, normalizedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
@@ -1053,7 +1053,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
-                var loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+                RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
                 batchLocations.Add(loc);
                 batchHintRows.Add((loc, row));
                 if (fkCtx != null)
@@ -1102,12 +1102,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(item, nameof(item));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
 
-        var relsT = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
+        IReadOnlyList<FkRelationship> relsT = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, mappedRow, fkCtxT, cancellationToken).ConfigureAwait(false);
     }
@@ -1124,10 +1124,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(items, nameof(items));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        var rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         var batchLocations = new List<RowLocation>();
         var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
@@ -1139,12 +1139,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var pendingRows = new List<object[]>();
         try
         {
-            foreach (var item in items)
+            foreach (T item in items)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Guard.NotNull(item, nameof(items));
                 object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
-                var rowCp =
+                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
                     await Constraints.ApplyAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
@@ -1166,7 +1166,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
-                var loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
+                RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
                 batchLocations.Add(loc);
                 batchHintRows.Add((loc, mappedRow));
                 if (fkCtx != null)
@@ -1219,8 +1219,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return 0;
         }
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         int predicateIndex = tableDef.FindColumnIndex(predicateColumn);
         if (predicateIndex < 0)
         {
@@ -1228,7 +1228,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         var updateIndexes = new Dictionary<int, object?>();
-        foreach (var kvp in updatedValues)
+        foreach (KeyValuePair<string, object?> kvp in updatedValues)
         {
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
             if (columnIndex < 0)
@@ -1239,16 +1239,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             updateIndexes[columnIndex] = kvp.Value;
         }
 
-        using var snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
-        var locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
         // FK enforcement: build the list of new-row payloads up front so we
         // can validate FK constraints (FK-side parent presence, PK-side
         // cascade-or-reject) before mutating any disk page.
-        var rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         var pendingNewRows = new List<(int Index, object[] NewRow)>();
         for (int i = 0; i < total; i++)
@@ -1262,7 +1262,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             object[] rowValues = snapshot.Rows[i].ItemArray;
-            foreach (var update in updateIndexes)
+            foreach (KeyValuePair<int, object?> update in updateIndexes)
             {
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
             }
@@ -1285,7 +1285,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // by a child table, gather (oldKey, newPkValues) pairs per affected
             // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
             var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingNewRows.Count);
-            foreach (var rel in rels)
+            foreach (FkRelationship rel in rels)
             {
                 if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1345,7 +1345,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             object[] oldRow = snapshot.Rows[i].ItemArray!;
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((locations[i], oldRow));
-            var newLoc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            RowLocation newLoc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, rowValues));
             updated++;
         }
@@ -1377,17 +1377,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         ThrowIfDisposedOrCancelled(cancellationToken);
 
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         int predicateIndex = tableDef.FindColumnIndex(predicateColumn);
         if (predicateIndex < 0)
         {
             throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
         }
 
-        using var snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
-        var locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
         // FK enforcement: identify the rows we are about to delete; if any
@@ -1406,7 +1406,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        var rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0 && matchingIndices.Count > 0)
         {
             var fkCtx = new FkContext(rels);
@@ -1641,7 +1641,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
         }
 
-        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(copy, format);
+        var block = ColumnPropertyBlock.Parse(copy, format);
         if (block is null || block.Targets.Count == 0)
         {
             throw new ArgumentException("Cached schema LvProp must contain at least one property target.", paramName);
@@ -1983,7 +1983,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="InvalidOperationException">Thrown when the encrypted writer does not have the required in-memory backing stream.</exception>
     private async ValueTask RewrapAgileOnDisposeAsync()
     {
-        var memory = stream as MemoryStream
+        MemoryStream memory = stream as MemoryStream
             ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
 
         byte[] inner = memory.ToArray();
@@ -2032,7 +2032,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         FkContext? fkCtx,
         CancellationToken cancellationToken)
     {
-        var autoCheckpoints =
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints =
             await Constraints.ApplyAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
 
         if (fkCtx != null)
@@ -2117,7 +2117,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         long highWater = 0;
         for (int colIndex = 0; colIndex < tableDef.Columns.Count; colIndex++)
         {
-            var column = tableDef.Columns[colIndex];
+            ColumnInfo column = tableDef.Columns[colIndex];
             if ((column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
             {
                 continue;
@@ -2190,7 +2190,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        foreach (var loc in locations)
+        foreach (RowLocation loc in locations)
         {
             await MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
         }
@@ -2235,7 +2235,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return ComplexType;
         }
 
-        var clrType = column.ClrType;
+        Type clrType = column.ClrType;
 
         switch (Type.GetTypeCode(clrType))
         {
@@ -2387,7 +2387,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         try
         {
-            await using var reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
+            await using AccessReader reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
         {
@@ -2499,13 +2499,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default)
     {
-        var cached = GetCatalogCache();
+        List<CatalogEntry>? cached = GetCatalogCache();
         if (cached != null)
         {
             return cached;
         }
 
-        var msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             var empty = new List<CatalogEntry>();
@@ -2513,9 +2513,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return empty;
         }
 
-        var rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var result = new List<CatalogEntry>();
-        foreach (var row in rows)
+        foreach (CatalogRow row in rows)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
@@ -2541,7 +2541,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        var entry = await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry? entry = await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
         {
             throw new InvalidOperationException($"Table '{tableName}' was not found.");
@@ -2552,7 +2552,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
     {
-        var tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (tableDef == null)
         {
             throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
@@ -2594,29 +2594,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken,
         Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
-        var entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         // Carry forward any client-side constraints registered for the original schema so
         // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
-        Constraints.TryGet(tableName, out var existingConstraints);
+        Constraints.TryGet(tableName, out List<ColumnConstraint>? existingConstraints);
 
         // Hydrate persisted-property fields from MSysObjects.LvProp so that
         // DefaultValueExpression / ValidationRuleExpression / ValidationText / Description
         // round-trip through Add/Drop/Rename semantically. Forward-compat note: unknown
         // chunks and table-level property targets are intentionally not preserved by this path.
-        var originalProperties =
+        ColumnPropertyBlock? originalProperties =
             await ReadLvPropBlockAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         var existingDefs = new List<ColumnDefinition>(tableDef.Columns.Count);
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            var col = tableDef.Columns[i];
-            var baseDef = BuildColumnDefinitionFromInfo(col, originalProperties);
+            ColumnInfo col = tableDef.Columns[i];
+            ColumnDefinition baseDef = BuildColumnDefinitionFromInfo(col, originalProperties);
             if (existingConstraints != null && i < existingConstraints.Count
                 && string.Equals(existingConstraints[i].Name, col.Name, StringComparison.OrdinalIgnoreCase))
             {
-                var c = existingConstraints[i];
+                ColumnConstraint c = existingConstraints[i];
                 baseDef = baseDef with
                 {
                     IsNullable = c.IsNullable,
@@ -2626,7 +2626,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 };
             }
 
-            var target = originalProperties?.FindTarget(col.Name);
+            ColumnPropertyTarget? target = originalProperties?.FindTarget(col.Name);
             if (target is not null)
             {
                 baseDef = baseDef with
@@ -2645,7 +2645,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             existingDefs.Add(baseDef);
         }
 
-        var newDefs = projectColumns(existingDefs, tableDef);
+        List<ColumnDefinition> newDefs = projectColumns(existingDefs, tableDef);
         if (newDefs.Count == 0)
         {
             throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
@@ -2654,22 +2654,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
         // so the snapshot reader sees the original schema and we can forward
         // surviving index definitions to the rebuilt table.
-        using var snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var existingIndexes = await ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<IndexMetadata> existingIndexes = await ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
         // Default index projection: keep every existing index whose single key
         // column survives in the new schema (matched by case-insensitive name).
         // AddColumn / DropColumn use this default; RenameColumn supplies a custom
         // projection that rewrites references to the renamed column.
-        var projectedIndexes = projectIndexes != null
+        List<IndexDefinition> projectedIndexes = projectIndexes != null
             ? projectIndexes(existingIndexes, newDefs)
             : IndexHelpers.DefaultIndexProjection(existingIndexes, newDefs);
 
         string tempName = $"~tmp_{Guid.NewGuid():N}".Substring(0, 18);
         await CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
-        var tempEntry = await GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
-        var tempDef = await ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry tempEntry = await GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
+        TableDef tempDef = await ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
 
         foreach (DataRow row in snapshot.Rows)
         {
@@ -2707,7 +2707,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // + catalog row removed surgically; renamed complex columns get their
         // MSysComplexColumns row rewritten with the new ColumnName.
         Dictionary<int, ColumnDefinition> newComplexById = [];
-        foreach (var c in newDefs)
+        foreach (ColumnDefinition c in newDefs)
         {
             if ((c.IsAttachment || c.IsMultiValue) && c.ComplexId != 0)
             {
@@ -2717,14 +2717,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         var droppedComplex = new List<(string Name, int ComplexId)>();
         var renamedComplex = new List<(string OldName, string NewName, int ComplexId)>();
-        foreach (var c in existingDefs)
+        foreach (ColumnDefinition c in existingDefs)
         {
             if (!(c.IsAttachment || c.IsMultiValue) || c.ComplexId == 0)
             {
                 continue;
             }
 
-            if (!newComplexById.TryGetValue(c.ComplexId, out var survivor))
+            if (!newComplexById.TryGetValue(c.ComplexId, out ColumnDefinition? survivor))
             {
                 droppedComplex.Add((c.Name, c.ComplexId));
             }
@@ -2750,7 +2750,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
         await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
 
-        foreach (var survivor in newComplexById.Values)
+        foreach (ColumnDefinition survivor in newComplexById.Values)
         {
             await ComplexColumns.UpdateComplexColumnParentTableIdAsync(
                 survivor.ComplexId,
@@ -2831,12 +2831,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private async ValueTask ReplaceCatalogEntryAsync(string tableName, long tdefPage, byte[]? lvProp, CancellationToken cancellationToken)
     {
-        var msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        var rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         uint catalogFlags = 0;
         bool replaced = false;
         var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (var row in rows)
+        foreach (CatalogRow row in rows)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType
                 || row.TDefPage != tdefPage
@@ -2877,10 +2877,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private async ValueTask DeleteCatalogRowsForTDefPageAsync(string tableName, long tdefPage, CancellationToken cancellationToken)
     {
-        var msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        var rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (var row in rows)
+        foreach (CatalogRow row in rows)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType
                 || row.TDefPage != tdefPage
@@ -2956,7 +2956,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     ComplexId = column.Misc,
                 };
             default:
-                var clrType = JetTypeInfo.GetClrType(column.Type)
+                Type clrType = JetTypeInfo.GetClrType(column.Type)
                     ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
                 baseDef = new ColumnDefinition(column.Name, clrType);
                 break;
@@ -2974,7 +2974,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 ? !req
                 : (column.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0);
 
-        var def = baseDef with
+        ColumnDefinition def = baseDef with
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
@@ -2993,9 +2993,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (column.IsCalculated)
         {
-            var target = properties?.FindTarget(column.Name);
+            ColumnPropertyTarget? target = properties?.FindTarget(column.Name);
             byte resultType = column.Type;
-            var resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
+            ColumnPropertyEntry? resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
             if (resultTypeEntry?.Value.Length >= 1)
             {
                 resultType = resultTypeEntry.Value[0];
@@ -3206,17 +3206,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
     private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
     {
-        var msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             throw new InvalidOperationException($"Table '{tableName}' does not exist.");
         }
 
         int deleted = 0;
-        var rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();
         var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (var row in rows)
+        foreach (CatalogRow row in rows)
         {
             if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
             {
@@ -3291,7 +3291,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var pagesToFree = new SortedSet<long>();
         var longValueRoots = new List<LongValueDescriptor>();
 
-        var tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         long totalPages = stream.Length / pgSz;
         if (tableDef is not null)
         {
@@ -3307,7 +3307,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     }
 
                     _ = pagesToFree.Add(pageNumber);
-                    foreach (var rowBound in EnumerateLiveRowBounds(page))
+                    foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
                     {
                         longValueRoots.AddRange(CollectLongValueRoots(page, rowBound, tableDef));
                     }
@@ -3357,7 +3357,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        foreach (var root in longValueRoots)
+        foreach (LongValueDescriptor root in longValueRoots)
         {
             await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
@@ -3387,7 +3387,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return;
             }
 
-            foreach (var rowBound in EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
             {
                 if (rowBound.RowIndex < 2)
                 {
@@ -3435,8 +3435,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        var acesDef = await ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        var objectIdColumn = acesDef.FindColumn("ObjectId");
+        TableDef acesDef = await ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
         if (objectIdColumn is null)
         {
             return;
@@ -3462,7 +3462,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     continue;
                 }
 
-                foreach (var row in EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string objectIdText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objectIdColumn);
                     if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
@@ -3480,7 +3480,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        foreach ((var row, _) in deletedRows)
+        foreach ((RowLocation row, _) in deletedRows)
         {
             await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
@@ -3532,7 +3532,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken = default)
     {
         LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
-        var loc = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
         var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
         LastSystemTableIndexMaintenancePath = await MaintainSystemTableIndexesIncrementallyAsync(
@@ -3628,7 +3628,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             long totalPages = stream.Length / pgSz;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
-                if (!indexLayout.TryReadRealIdxSlot(page, realIdxDescStart, ri, out var slot))
+                if (!indexLayout.TryReadRealIdxSlot(page, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot))
                 {
                     return false;
                 }
@@ -3676,7 +3676,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         values = await longValueEncoder.PreEncodeLongValuesAsync(tdefPage, tableDef, values, cancellationToken).ConfigureAwait(false);
 
         byte[] rowBytes = rowEncoder.SerializeRow(tableDef, values);
-        var target = await dataPageInserter.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
+        PageInsertTarget target = await dataPageInserter.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
         int rowIndex;
         int rowStart;
         try
@@ -3910,7 +3910,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return null;
             }
 
-            RowDecodePlan decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
+            var decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
             var result = new object?[columnOrdinals.Length];
             return decodePlan.TryDecodePartialColumns(this, pageBytes, loc.RowStart, loc.RowSize, result)
                 ? result
@@ -3941,14 +3941,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return false;
         }
 
-        var msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys is null)
         {
             return false;
         }
 
-        var rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (var row in rows)
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
         {
             if (row.TDefPage != tdefPageNumber || row.ObjectType != Constants.SystemObjects.UserTableType)
             {
@@ -4018,7 +4018,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (clearRowData || Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
-            foreach (var rowBound in EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
             {
                 if (rowBound.RowIndex != rowIndex)
                 {
@@ -4044,7 +4044,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        foreach (var root in longValueRoots)
+        foreach (LongValueDescriptor root in longValueRoots)
         {
             await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
@@ -4054,7 +4054,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         var roots = new List<LongValueDescriptor>();
         bool hasVarColumns = false;
-        foreach (var column in tableDef.Columns)
+        foreach (ColumnInfo column in tableDef.Columns)
         {
             if (!column.IsFixed)
             {
@@ -4063,26 +4063,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        if (!TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out var layout))
+        if (!TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
         {
             return roots;
         }
 
-        foreach (var column in tableDef.Columns)
+        foreach (ColumnInfo column in tableDef.Columns)
         {
             if (column.Type != MemoType && column.Type != OleType)
             {
                 continue;
             }
 
-            var slice = ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            ColumnSlice slice = ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
             if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
             {
                 continue;
             }
 
             int valueStart = rowBound.RowStart + slice.DataStart;
-            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out var descriptor)
+            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out LongValueDescriptor descriptor)
                 || !descriptor.IsExternal
                 || descriptor.FirstDp == 0)
             {
@@ -4115,7 +4115,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return 0;
             }
 
-            foreach (var rowBound in EnumerateLiveRowBounds(lvalPage))
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(lvalPage))
             {
                 if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
                 {

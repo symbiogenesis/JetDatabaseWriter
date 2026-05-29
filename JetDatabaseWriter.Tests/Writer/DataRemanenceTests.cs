@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -22,9 +23,9 @@ public sealed class DataRemanenceTests
     {
         byte[] deletedPayload = BuildPayload(64, 0x31);
         byte[] deletedMarker = MarkerOf(deletedPayload);
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await CreateInlinePayloadTableAsync(writer, "DeleteRows", TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
@@ -34,9 +35,9 @@ public sealed class DataRemanenceTests
         }
 
         byte[] beforeDelete = stream.ToArray();
-        var originalSlot = AssertSingleLiveRowContaining(beforeDelete, format, deletedMarker);
+        RowSnapshot originalSlot = AssertSingleLiveRowContaining(beforeDelete, format, deletedMarker);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync(
                 "DeleteRows",
@@ -48,7 +49,7 @@ public sealed class DataRemanenceTests
         }
 
         byte[] afterDelete = stream.ToArray();
-        var deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
+        RowSnapshot deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
 
         Assert.True(deletedSlot.IsDeleted);
         Assert.Equal(originalSlot.Start, deletedSlot.Start);
@@ -66,9 +67,9 @@ public sealed class DataRemanenceTests
         byte[] replacementPayload = BuildPayload(64, 0x52);
         byte[] originalMarker = MarkerOf(originalPayload);
         byte[] replacementMarker = MarkerOf(replacementPayload);
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await CreateInlinePayloadTableAsync(writer, "UpdateRows", TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
@@ -78,9 +79,9 @@ public sealed class DataRemanenceTests
         }
 
         byte[] beforeUpdate = stream.ToArray();
-        var originalSlot = AssertSingleLiveRowContaining(beforeUpdate, format, originalMarker);
+        RowSnapshot originalSlot = AssertSingleLiveRowContaining(beforeUpdate, format, originalMarker);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int updated = await writer.UpdateRowsAsync(
                 "UpdateRows",
@@ -93,8 +94,8 @@ public sealed class DataRemanenceTests
         }
 
         byte[] afterUpdate = stream.ToArray();
-        var oldSlot = ReadRowSnapshot(afterUpdate, format, originalSlot.PageNumber, originalSlot.RowIndex);
-        var replacementSlot = AssertSingleLiveRowContaining(afterUpdate, format, replacementMarker);
+        RowSnapshot oldSlot = ReadRowSnapshot(afterUpdate, format, originalSlot.PageNumber, originalSlot.RowIndex);
+        RowSnapshot replacementSlot = AssertSingleLiveRowContaining(afterUpdate, format, replacementMarker);
 
         Assert.True(oldSlot.IsDeleted);
         Assert.Equal(originalSlot.Start, oldSlot.Start);
@@ -112,9 +113,9 @@ public sealed class DataRemanenceTests
         byte[] replacementPayload = BuildPayload(9000, 0x72);
         byte[] originalMarker = MarkerOf(originalPayload);
         byte[] replacementMarker = MarkerOf(replacementPayload);
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "LongValues",
@@ -135,7 +136,7 @@ public sealed class DataRemanenceTests
         Assert.True(lvalPagesAfterInsert >= 2);
         Assert.True(ContainsSequence(afterInsert, originalMarker));
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int updated = await writer.UpdateRowsAsync(
                 "LongValues",
@@ -153,18 +154,18 @@ public sealed class DataRemanenceTests
         Assert.True(ContainsSequence(afterUpdate, originalMarker));
         Assert.True(ContainsSequence(afterUpdate, replacementMarker));
 
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            var table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadDataTableAsync(
                 "LongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(1, table.Rows.Count);
-            var row = table.Rows[0];
+            DataRow row = table.Rows[0];
             byte[] actual = Assert.IsType<byte[]>(row["Blob"]);
             Assert.Equal(replacementPayload, actual);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync(
                 "LongValues",
@@ -180,9 +181,9 @@ public sealed class DataRemanenceTests
         Assert.True(ContainsSequence(afterDelete, originalMarker));
         Assert.True(ContainsSequence(afterDelete, replacementMarker));
 
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            var table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadDataTableAsync(
                 "LongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, table.Rows.Count);
@@ -197,9 +198,9 @@ public sealed class DataRemanenceTests
     {
         byte[] deletedPayload = BuildPayload(64, 0x51);
         byte[] deletedMarker = MarkerOf(deletedPayload);
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await CreateInlinePayloadTableAsync(writer, "SecureDeleteRows", TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
@@ -209,9 +210,9 @@ public sealed class DataRemanenceTests
         }
 
         byte[] beforeDelete = stream.ToArray();
-        var originalSlot = AssertSingleLiveRowContaining(beforeDelete, format, deletedMarker);
+        RowSnapshot originalSlot = AssertSingleLiveRowContaining(beforeDelete, format, deletedMarker);
 
-        await using (var writer = await OpenWriterAsync(
+        await using (AccessWriter writer = await OpenWriterAsync(
             stream,
             new AccessWriterOptions
             {
@@ -229,7 +230,7 @@ public sealed class DataRemanenceTests
         }
 
         byte[] afterDelete = stream.ToArray();
-        var deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
+        RowSnapshot deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
 
         Assert.True(deletedSlot.IsDeleted);
         Assert.False(ContainsSequence(deletedSlot.Bytes, deletedMarker));
@@ -243,9 +244,9 @@ public sealed class DataRemanenceTests
     {
         byte[] payload = BuildPayload(9000, 0x33);
         byte[] marker = MarkerOf(payload);
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "SecureLongValues",
@@ -265,7 +266,7 @@ public sealed class DataRemanenceTests
         Assert.True(CountLvalPages(afterInsert, format) >= 2);
         Assert.True(ContainsSequence(afterInsert, marker));
 
-        await using (var writer = await OpenWriterAsync(
+        await using (AccessWriter writer = await OpenWriterAsync(
             stream,
             new AccessWriterOptions
             {
@@ -286,9 +287,9 @@ public sealed class DataRemanenceTests
         Assert.Equal(0, CountLvalPages(afterDelete, format));
         Assert.False(ContainsSequence(afterDelete, marker));
 
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            var table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadDataTableAsync(
                 "SecureLongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, table.Rows.Count);
@@ -344,14 +345,14 @@ public sealed class DataRemanenceTests
 
     private static RowSnapshot AssertSingleLiveRowContaining(byte[] fileBytes, DatabaseFormat format, byte[] marker)
     {
-        var matches = FindRowsContaining(fileBytes, format, marker, liveOnly: true);
+        List<RowSnapshot> matches = FindRowsContaining(fileBytes, format, marker, liveOnly: true);
         return Assert.Single(matches);
     }
 
     private static List<RowSnapshot> FindRowsContaining(byte[] fileBytes, DatabaseFormat format, byte[] marker, bool liveOnly)
     {
         int pageSize = PageSizeOf(format);
-        DataPageLayout layout = DataPageLayout.For(format);
+        var layout = DataPageLayout.For(format);
         int pageCount = fileBytes.Length / pageSize;
         var matches = new List<RowSnapshot>();
 
@@ -373,7 +374,7 @@ public sealed class DataRemanenceTests
             int maxRowCount = Math.Min(rowCount, (pageSize - layout.RowsStart) / 2);
             for (int rowIndex = 0; rowIndex < maxRowCount; rowIndex++)
             {
-                var snapshot = ReadRowSnapshot(fileBytes, format, pageNumber, rowIndex);
+                RowSnapshot snapshot = ReadRowSnapshot(fileBytes, format, pageNumber, rowIndex);
                 if (liveOnly && !snapshot.IsLive)
                 {
                     continue;
@@ -392,7 +393,7 @@ public sealed class DataRemanenceTests
     private static RowSnapshot ReadRowSnapshot(byte[] fileBytes, DatabaseFormat format, int pageNumber, int rowIndex)
     {
         int pageSize = PageSizeOf(format);
-        DataPageLayout layout = DataPageLayout.For(format);
+        var layout = DataPageLayout.For(format);
         ReadOnlySpan<byte> page = fileBytes.AsSpan(pageNumber * pageSize, pageSize);
         int rowCount = ReadUInt16(page, layout.NumRows);
 

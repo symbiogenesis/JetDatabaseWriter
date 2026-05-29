@@ -63,7 +63,7 @@ public class DelimitedTextReaderBenchmarks
 
         while (true)
         {
-            var record = await reader.ReadRecordAsync(CancellationToken.None).ConfigureAwait(false);
+            DelimitedTextRecord? record = await reader.ReadRecordAsync(CancellationToken.None).ConfigureAwait(false);
             if (!record.HasValue)
             {
                 return rowCount;
@@ -94,7 +94,7 @@ public class DelimitedTextReaderBenchmarks
 
         while (true)
         {
-            var record = await reader.ReadRecordAsync(CancellationToken.None).ConfigureAwait(false);
+            DelimitedTextRecord? record = await reader.ReadRecordAsync(CancellationToken.None).ConfigureAwait(false);
             if (record is not { } current)
             {
                 return rows.Count;

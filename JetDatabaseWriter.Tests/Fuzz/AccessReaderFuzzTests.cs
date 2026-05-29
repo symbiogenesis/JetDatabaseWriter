@@ -1,9 +1,13 @@
 namespace JetDatabaseWriter.Tests.Fuzz;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using SharpFuzz;
 using Xunit;
@@ -23,7 +27,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
     [Fact(Explicit = true)]
     public async Task FuzzAccessReader()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         Fuzzer.Run(async stream =>
         {
             output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
@@ -40,9 +44,9 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 output.WriteLine($"[Fuzzing] FuzzRandom bytes: {fuzzedBytes.Length}");
 
                 // Preprocess fuzzed input: overlay onto a valid MDB file if needed
-                var processedStream = await PreprocessFuzzedInputAsync(new System.IO.MemoryStream(fuzzedBytes), random);
+                Stream processedStream = await PreprocessFuzzedInputAsync(new System.IO.MemoryStream(fuzzedBytes), random);
                 var options = new AccessReaderOptions();
-                await using var reader = await AccessReader.OpenAsync(processedStream, options, cancellationToken: ct);
+                await using AccessReader reader = await AccessReader.OpenAsync(processedStream, options, cancellationToken: ct);
 
                 // Try accessing more properties/methods for broader coverage
                 try
@@ -68,7 +72,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 }
 
                 // Try reading all tables
-                var tables = await reader.GetTablesAsDataTableAsync(ct);
+                DataTable tables = await reader.GetTablesAsDataTableAsync(ct);
                 foreach (DataRow row in tables.Rows)
                 {
                     string? tableName = row["TableName"] as string;
@@ -95,7 +99,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Try reading schema and columns
                         try
                         {
-                            var columns = await reader.GetColumnMetadataAsync(tableName!, ct);
+                            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName!, ct);
                             output.WriteLine($"Schema columns: {columns?.Count}");
                         }
                         catch (Exception ex)
@@ -109,7 +113,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Try reading indexes
                         try
                         {
-                            var indexes = await reader.ListIndexesAsync(tableName!, ct);
+                            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName!, ct);
                             output.WriteLine($"Index count: {indexes?.Count}");
                         }
                         catch (Exception ex)

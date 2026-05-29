@@ -1,8 +1,11 @@
 namespace JetDatabaseWriter.Tests.Conformance;
 
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -33,8 +36,8 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -51,13 +54,13 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundExtended = false;
         foreach (string table in tables)
         {
-            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             if (meta.Any(c => c.TypeName == "Date/Time Extended"))
             {
                 foundExtended = true;
@@ -80,8 +83,8 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {

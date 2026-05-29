@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -35,9 +36,9 @@ public sealed class LinkedTableTests : IDisposable
     {
         // ListTables returns only local tables; verify that every entry it
         // returns is reachable via the standard reader API.
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.NorthwindTraders, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.NorthwindTraders, cancellationToken: TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // All returned tables should be readable (local)
         foreach (string t in tables)
@@ -53,9 +54,9 @@ public sealed class LinkedTableTests : IDisposable
     {
         // ListLinkedTables() returns metadata about tables that reference
         // external databases (MSysObjects Type = 4 or 6).
-        await using var reader = await AccessReader.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
 
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         // The test databases don't have linked tables, so the result should be empty.
         Assert.NotNull(linked);
@@ -71,7 +72,7 @@ public sealed class LinkedTableTests : IDisposable
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedFE");
 
         // Add a table to the source database
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "RemoteData",
@@ -83,8 +84,8 @@ public sealed class LinkedTableTests : IDisposable
             await writer.InsertRowAsync("RemoteData", [1, "Hello from source"], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(linked);
         Assert.Empty(linked);
@@ -96,7 +97,7 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedSrcAsync");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedFEAsync");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "RemoteData",
@@ -118,10 +119,10 @@ public sealed class LinkedTableTests : IDisposable
             "RemoteData",
             TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var entry = linked.FirstOrDefault(l =>
+        LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedRemoteData", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
         Assert.Equal(LinkedTableKind.Access, entry.Kind);
@@ -135,7 +136,7 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedCacheSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCacheFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "RemoteData",
@@ -150,15 +151,15 @@ public sealed class LinkedTableTests : IDisposable
             "RemoteData",
             TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var first = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
-        var firstEntry = Assert.Single(first);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> first = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        LinkedTableInfo firstEntry = Assert.Single(first);
         firstEntry.Name = "MutatedName";
         firstEntry.SourceObjectName = "MutatedSource";
         first.Clear();
 
-        var second = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
-        var secondEntry = Assert.Single(second);
+        List<LinkedTableInfo> second = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        LinkedTableInfo secondEntry = Assert.Single(second);
 
         Assert.Equal("LinkedRemoteData", secondEntry.Name);
         Assert.Equal("RemoteData", secondEntry.SourceObjectName);
@@ -171,7 +172,7 @@ public sealed class LinkedTableTests : IDisposable
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcFE");
         const string connect = "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes";
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedSalesOrders",
@@ -180,10 +181,10 @@ public sealed class LinkedTableTests : IDisposable
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var entry = linked.FirstOrDefault(l =>
+        LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedSalesOrders", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
         Assert.Equal(LinkedTableKind.Odbc, entry.Kind);
@@ -198,7 +199,7 @@ public sealed class LinkedTableTests : IDisposable
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcPrefix");
         const string connect = "DSN=Sales;UID=app;PWD=secret";
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedSales",
@@ -207,8 +208,8 @@ public sealed class LinkedTableTests : IDisposable
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var entry = (await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken))
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        LinkedTableInfo entry = (await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken))
             .First(l => string.Equals(l.Name, "LinkedSales", StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(LinkedTableKind.Odbc, entry.Kind);
@@ -222,7 +223,7 @@ public sealed class LinkedTableTests : IDisposable
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             writer.CreateLinkedOdbcTableAsync("LinkedOdbcCanceled", "ODBC;DSN=X", "T", cts.Token).AsTask());
     }
@@ -232,7 +233,7 @@ public sealed class LinkedTableTests : IDisposable
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcDup");
 
-        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "LocalTable",
             [new("Id", typeof(int))],
@@ -247,7 +248,7 @@ public sealed class LinkedTableTests : IDisposable
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcRead");
 
-        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateLinkedOdbcTableAsync(
                 "LinkedSales",
@@ -256,9 +257,9 @@ public sealed class LinkedTableTests : IDisposable
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await reader.ReadDataTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("ODBC", exception.Message, StringComparison.Ordinal);
     }
@@ -281,7 +282,7 @@ public sealed class LinkedTableTests : IDisposable
         // opens the referenced database and reads the foreign table.
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSrc2");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Products",
@@ -294,8 +295,8 @@ public sealed class LinkedTableTests : IDisposable
         }
 
         // Verify the source data is readable directly
-        await using var sourceReader = await AccessReader.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken);
-        var dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader sourceReader = await AccessReader.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["ProductID"]);
@@ -320,7 +321,7 @@ public sealed class LinkedTableTests : IDisposable
 
         const string sourceTableName = "Products";
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 sourceTableName,
@@ -344,18 +345,18 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedProducts", sourcePath, sourceTableName, TestContext.Current.CancellationToken);
 
         // Reading "LinkedProducts" from the front-end should follow the link
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         // Verify the linked table metadata is present
-        var entry = linked.FirstOrDefault(l =>
+        LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedProducts", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
         Assert.Equal(sourceTableName, entry.SourceObjectName);
         Assert.Equal(sourcePath, entry.SourcePath);
 
         // Reading through the link should return source data
-        var dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
         Assert.Equal("Widget", dt.Rows[0]["Name"]);
@@ -368,7 +369,7 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkStrSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkStrFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Items",
@@ -388,7 +389,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedItems", sourcePath, "Items", TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         int count = await reader.Rows("LinkedItems", cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, count);
@@ -401,15 +402,15 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkExSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkExFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("Data", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedData", sourcePath, "Data", TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // Linked tables should not appear in ListTables
         Assert.DoesNotContain("LinkedData", tables);
@@ -430,10 +431,10 @@ public sealed class LinkedTableTests : IDisposable
             "MissingTable",
             TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var entry = linked.FirstOrDefault(l =>
+        LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedMissing", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
 
@@ -454,7 +455,7 @@ public sealed class LinkedTableTests : IDisposable
             "SensitiveData",
             TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadDataTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
     }
@@ -462,9 +463,9 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_AbsolutePathOutsideHostDirectory_IsBlockedByDefault()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkAbsSrc");
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync("TrustedData", [new("Id", typeof(int))], ct);
             await writer.InsertRowAsync("TrustedData", [1], ct);
@@ -477,7 +478,7 @@ public sealed class LinkedTableTests : IDisposable
         string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkAbsFE", hostDirectory);
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedAbsolute", sourcePath, "TrustedData", ct);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadDataTableAsync("LinkedAbsolute", cancellationToken: ct));
@@ -486,9 +487,9 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_StreamHostWithoutPathPolicy_IsBlockedByDefault()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkStreamSrc");
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync("TrustedData", [new("Id", typeof(int))], ct);
             await writer.InsertRowAsync("TrustedData", [1], ct);
@@ -505,7 +506,7 @@ public sealed class LinkedTableTests : IDisposable
         }
 
         stream.Position = 0;
-        await using (var writer = await AccessWriter.OpenAsync(
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
             stream,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
@@ -515,7 +516,7 @@ public sealed class LinkedTableTests : IDisposable
         }
 
         stream.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -531,7 +532,7 @@ public sealed class LinkedTableTests : IDisposable
         // Trusted callers can explicitly allow an escaped relative path via callback.
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkPolicySrc");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
             "TrustedData",
@@ -559,8 +560,8 @@ public sealed class LinkedTableTests : IDisposable
                 string.Equals(resolvedPath, sourcePath, StringComparison.OrdinalIgnoreCase),
         };
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -574,7 +575,7 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkAllowSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkAllowFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Data",
@@ -596,7 +597,7 @@ public sealed class LinkedTableTests : IDisposable
             LinkedSourcePathAllowlist = [allowlistedDir],
         };
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadDataTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
     }
@@ -604,7 +605,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_AllowlistRejectsSiblingDirectoryWithSharedPrefix()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         string parentDirectory = Path.Combine(Path.GetTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
         string allowlistedDirectory = Path.Combine(parentDirectory, "Allowed");
         string siblingDirectory = Path.Combine(parentDirectory, "AllowedSibling");
@@ -617,7 +618,7 @@ public sealed class LinkedTableTests : IDisposable
         string sourcePath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixSrc", siblingDirectory);
         string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixFE", hostDirectory);
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync("Data", [new("Id", typeof(int))], ct);
             await writer.InsertRowAsync("Data", [1], ct);
@@ -629,7 +630,7 @@ public sealed class LinkedTableTests : IDisposable
         {
             LinkedSourcePathAllowlist = [allowlistedDirectory],
         };
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadDataTableAsync("LinkedSibling", cancellationToken: ct));
@@ -644,10 +645,10 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedMeta", sourcePath, "SourceTable", TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        var linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var entry = linked.FirstOrDefault(l =>
+        LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedMeta", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
         Assert.Equal(LinkedTableKind.Access, entry.Kind);
@@ -658,13 +659,13 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_GetColumnMetadata_ReturnsSourceSchema()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // GetColumnMetadata on a linked table should return the source table's schema.
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSchSrc");
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkSchFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync(
                 "Customers",
@@ -678,8 +679,8 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedCustomers", sourcePath, "Customers", ct);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        var meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
 
         Assert.Equal(3, meta.Count);
         Assert.Equal("CustID", meta[0].Name);
@@ -740,7 +741,7 @@ public sealed class LinkedTableTests : IDisposable
         string foreignTableName,
         CancellationToken cancellationToken = default)
     {
-        await using var writer = await AccessWriter.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(dbPath, cancellationToken: cancellationToken);
         await writer.CreateLinkedTableAsync(linkedTableName, sourceDbPath, foreignTableName, cancellationToken);
     }
 

@@ -31,7 +31,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         };
 
         using var stream = new MemoryStream(bytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
@@ -54,7 +54,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         };
 
         using var cachedStream = new MemoryStream(bytes, writable: false);
-        await using (var cachedReader = await AccessReader.OpenAsync(
+        await using (AccessReader cachedReader = await AccessReader.OpenAsync(
             cachedStream,
             options,
             leaveOpen: true,
@@ -65,7 +65,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         }
 
         using var uncachedStream = new MemoryStream(bytes, writable: false);
-        await using var uncachedReader = await AccessReader.OpenUncachedAsync(
+        await using AccessReader uncachedReader = await AccessReader.OpenUncachedAsync(
             uncachedStream,
             options,
             leaveOpen: true,
@@ -82,7 +82,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "LargeRows";
         const int rowCount = 320;
-        await using var stream = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "L"),
@@ -94,7 +94,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
@@ -102,8 +102,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        var pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
-        var rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, "_rowBoundsCache");
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
+        LruCache<long, AccessBase.RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, "_rowBoundsCache");
         Assert.Equal(rowCount, actualRows);
         Assert.Equal(options.PageCacheSize, pageCache.Count);
         Assert.True(pageCache.Misses > pageCache.Count);
@@ -116,7 +116,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const int alphaRows = 48;
         const int betaRows = 52;
-        await using var stream = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (AlphaRowsTable, alphaRows, "A"),
@@ -129,21 +129,21 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        var pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
-        var rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, "_rowBoundsCache");
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
+        LruCache<long, AccessBase.RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, "_rowBoundsCache");
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
         Assert.Contains(BetaRowsTable, tables);
         Assert.NotNull(ReadPrivateField(reader, "_catalogCache"));
 
         long catalogMisses = pageCache.Misses;
-        var repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(tables, repeatedTables);
         Assert.Equal(catalogMisses, pageCache.Misses);
 
@@ -165,7 +165,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "MappedRows";
         const int rowCount = 96;
-        await using var stream = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "M"),
@@ -177,7 +177,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
@@ -196,7 +196,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     {
         const string tableName = "ReferenceMappedRows";
         const int rowCount = 96;
-        await using var stream = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (tableName, rowCount, "R"),
@@ -209,7 +209,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
@@ -226,7 +226,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     [Fact]
     public async Task OpenUncachedAsync_ReturnsEquivalentRowsWithoutAllocatingPageCaches()
     {
-        await using var source = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream source = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 (AlphaRowsTable, 72, "A"),
@@ -242,12 +242,12 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         using var cachedStream = new MemoryStream(bytes, writable: false);
         using var uncachedStream = new MemoryStream(bytes, writable: false);
-        await using var cachedReader = await AccessReader.OpenAsync(
+        await using AccessReader cachedReader = await AccessReader.OpenAsync(
             cachedStream,
             options,
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        await using var uncachedReader = await AccessReader.OpenUncachedAsync(
+        await using AccessReader uncachedReader = await AccessReader.OpenUncachedAsync(
             uncachedStream,
             options,
             leaveOpen: true,
@@ -261,8 +261,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         string[] tableNames = [AlphaRowsTable, BetaRowsTable];
         foreach (string tableName in tableNames)
         {
-            var cachedRows = await ReadRowSignaturesAsync(cachedReader, tableName, TestContext.Current.CancellationToken);
-            var uncachedRows = await ReadRowSignaturesAsync(uncachedReader, tableName, TestContext.Current.CancellationToken);
+            List<string> cachedRows = await ReadRowSignaturesAsync(cachedReader, tableName, TestContext.Current.CancellationToken);
+            List<string> uncachedRows = await ReadRowSignaturesAsync(uncachedReader, tableName, TestContext.Current.CancellationToken);
             Assert.Equal(cachedRows, uncachedRows);
         }
     }
@@ -270,7 +270,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     [Fact]
     public async Task ReadPageCachedAsync_WithActiveJournal_BypassesCachedPageBytes()
     {
-        await using var stream = await CreateCacheExerciseDatabaseAsync(
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
             {
                 ("JournalRows", 4, "J"),
@@ -282,14 +282,14 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
         byte[] cachedPage = await reader.ReadPageCachedAsync(0, TestContext.Current.CancellationToken);
-        var pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, "_pageCache");
         Assert.Equal(1, pageCache.Count);
 
         var journaledPage = new byte[reader.PageSize];
@@ -324,7 +324,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseByteRangeLocks = false,
         };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             writerOptions,
@@ -401,7 +401,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         long tdefPage;
         int pageSize;
         stream.Position = 0;
-        await using (var reader = await AccessReader.OpenAsync(
+        await using (AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -420,7 +420,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static async ValueTask<long> ResolveTdefPageAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
-        var metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
         int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
         int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
         Assert.True(idIndex >= 0);
@@ -495,10 +495,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static object? ReadPrivateField(object instance, string fieldName)
     {
-        var currentType = instance.GetType();
+        Type? currentType = instance.GetType();
         while (currentType is not null)
         {
-            var field = currentType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? field = currentType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             if (field is not null)
             {
                 return field.GetValue(instance);

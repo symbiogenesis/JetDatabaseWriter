@@ -148,7 +148,7 @@ internal sealed class RowDecodePlan
         out bool needsLongValue)
     {
         needsLongValue = false;
-        if (!TryParseLayout(source, page, rowStart, rowSize, out var layout))
+        if (!TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
         {
             return false;
         }
@@ -161,8 +161,8 @@ internal sealed class RowDecodePlan
                 continue;
             }
 
-            var column = columns[columnIndex];
-            var slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            ColumnInfo column = columns[columnIndex];
+            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
             buffer[columnIndex] = DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -176,7 +176,7 @@ internal sealed class RowDecodePlan
             throw new InvalidOperationException("Partial row decoding requires a partial-column plan and a result buffer large enough for every ordinal.");
         }
 
-        if (!TryParseLayout(source, page, rowStart, rowSize, out var layout))
+        if (!TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
         {
             return false;
         }
@@ -189,8 +189,8 @@ internal sealed class RowDecodePlan
                 return false;
             }
 
-            var column = columns[columnOrdinal];
-            var slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            ColumnInfo column = columns[columnOrdinal];
+            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
             switch (slice.Kind)
             {
                 case AccessBase.ColumnSliceKind.Bool:

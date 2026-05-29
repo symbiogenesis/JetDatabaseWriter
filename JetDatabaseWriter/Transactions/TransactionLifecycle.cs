@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -68,7 +69,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             return;
         }
 
-        var tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await work(cancellationToken).ConfigureAwait(false);
@@ -109,10 +110,10 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             return await work(cancellationToken).ConfigureAwait(false);
         }
 
-        var tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var result = await work(cancellationToken).ConfigureAwait(false);
+            TResult? result = await work(cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }
@@ -188,7 +189,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
 
         try
         {
-            foreach (var entry in journal.EnumerateInOrder())
+            foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await writer.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);

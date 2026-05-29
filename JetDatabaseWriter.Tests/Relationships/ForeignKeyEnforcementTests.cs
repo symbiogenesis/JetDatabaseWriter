@@ -6,7 +6,9 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -24,11 +26,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithEnforce_RejectsRowReferencingMissingParent()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
@@ -36,7 +38,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
 
         // Parent is empty; child insert with ParentId=42 must be rejected.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync(child, [1, 42], TestContext.Current.CancellationToken));
         Assert.Contains("FK_Missing", ex.Message, StringComparison.Ordinal);
     }
@@ -44,11 +46,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithEnforce_AllowsRowWhenParentExists()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -59,19 +61,19 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, 7], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
     [Fact]
     public async Task Insert_WithNullForeignKey_IsAllowed()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -81,19 +83,19 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
     [Fact]
     public async Task Insert_WithEnforceDisabled_AllowsAnyValue()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -108,18 +110,18 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, 99], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
     [Fact]
     public async Task Insert_BulkSelfReferential_LaterRowsCanReferenceEarlierRows()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("Tree");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(table, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
 
@@ -140,19 +142,19 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(3, t.Rows.Count);
     }
 
     [Fact]
     public async Task Update_FkSide_RejectsChangeToMissingParent()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
@@ -161,7 +163,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.UpdateRowsAsync(
                 child,
                 "Id",
@@ -174,11 +176,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithoutCascade_RejectsWhenChildrenExist()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
@@ -187,7 +189,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.DeleteRowsAsync(parent, "Id", 5, TestContext.Current.CancellationToken));
         Assert.Contains("FK_DelNoCasc", ex.Message, StringComparison.Ordinal);
     }
@@ -195,11 +197,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithCascade_DeletesChildren()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -222,19 +224,19 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Empty(t.Rows);
     }
 
     [Fact]
     public async Task Update_PkSide_WithoutCascade_RejectsKeyChangeWhenChildrenReference()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
@@ -243,7 +245,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.UpdateRowsAsync(
                 parent,
                 "Id",
@@ -256,11 +258,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithCascade_PropagatesNewKeyToChildren()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -288,8 +290,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, t.Rows.Count);
         Assert.All(t.AsEnumerable(), r => Assert.Equal(99, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
 
@@ -297,8 +299,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // disk, not only repoint the children. Reopen the parent table
         // and assert the row carries the new PK value (and the old one
         // is gone).
-        var p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
-        var parentRow = Assert.Single(p.AsEnumerable());
+        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow parentRow = Assert.Single(p.AsEnumerable());
         Assert.Equal(99, Convert.ToInt32(parentRow["Id"], System.Globalization.CultureInfo.InvariantCulture));
     }
 
@@ -309,11 +311,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // repoint; this test isolates the parent-side observation: after
         // updating the parent row's PK, reopen the file and assert the
         // parent table now exposes only the new PK value.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("UPP");
         string child = MakeTableName("UPC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(
                 parent,
@@ -357,8 +359,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Parent side: row that had Id=2 now reports Id=222; the other
         // rows are unchanged; no row carries the old key value any more.
@@ -368,11 +370,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.DoesNotContain(2, parentIds);
 
         // The non-PK columns must travel with the rewritten row.
-        var renamed = Assert.Single(p.AsEnumerable(), r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 222);
+        DataRow renamed = Assert.Single(p.AsEnumerable(), r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 222);
         Assert.Equal("two", (string)renamed["Label"]);
 
         // Sanity: child-side cascade still landed (existing coverage).
-        var c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, c.Rows.Count);
         Assert.All(c.AsEnumerable(), r => Assert.Equal(222, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
     }
@@ -380,11 +382,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_MultiColumnFk_EnforcesAllColumns()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("MP");
         string child = MakeTableName("MC");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("A", typeof(int)), new("B", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("RefA", typeof(int)), new("RefB", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [1, 2], TestContext.Current.CancellationToken);
@@ -418,11 +420,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("AP");
         string child = MakeTableName("AC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -468,9 +470,9 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         // Reopen and assert the child table contains ONLY the seed row;
         // none of the partial-batch rows survived the rollback.
-        await using var reader = await OpenReaderAsync(temp);
-        var c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
-        var only = Assert.Single(c.AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow only = Assert.Single(c.AsEnumerable());
         Assert.Equal(1, Convert.ToInt32(only["Id"], System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal(1, Convert.ToInt32(only["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
 
@@ -489,12 +491,12 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // a child row whose FK matches a parent key buried deep in the
         // table. The seek path must find it without loading every parent
         // row into memory; functional verification only.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("BP");
         string child = MakeTableName("BC");
 
         const int parentRowCount = 5_000;
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -514,13 +516,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, parentRowCount - 7], TestContext.Current.CancellationToken);
 
             // Missing parent key → must throw.
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await writer.InsertRowAsync(child, [2, parentRowCount + 100], TestContext.Current.CancellationToken));
             Assert.Contains("FK_Seek_Big", ex.Message, StringComparison.Ordinal);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
         Assert.Equal(parentRowCount - 7, Convert.ToInt32(t.Rows[0]["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
     }
@@ -534,11 +536,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // string equality (BuildCompositeKey/AppendNormalized); the seeker
         // path now relies on the byte-identical encoding round-trip that
         // the writer uses when building the leaf.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("TP");
         string child = MakeTableName("TC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Code", typeof(string), maxLength: 32)], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("Code", typeof(string), maxLength: 32)], TestContext.Current.CancellationToken);
@@ -554,8 +556,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 await writer.InsertRowAsync(child, [2, "delta"], TestContext.Current.CancellationToken));
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Single(t.Rows);
     }
 
@@ -567,11 +569,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // (FkContext.SeekIndexes) is reused across rows and (2) self-ref
         // pending tracking does not accidentally reject a real parent key
         // that is also the FK column of a previously-inserted child.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("BP");
         string child = MakeTableName("BC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -596,8 +598,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowsAsync(child, cRows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(200, t.Rows.Count);
     }
 
@@ -610,11 +612,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // O(N) child snapshot scan. Functional verification only — proves the
         // post-state is correct at scale; the snapshot fallback would also
         // pass this test.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("DP");
         string child = MakeTableName("DC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -647,8 +649,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(196, t.Rows.Count);
         foreach (DataRow r in t.Rows)
         {
@@ -662,11 +664,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // cascade-update via child-side index-seek. Move PK 7 → 999 and
         // assert all children that referenced 7 now reference 999, and the
         // rest are unchanged.
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("UP");
         string child = MakeTableName("UC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -702,8 +704,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         int repointed = 0;
         foreach (DataRow r in t.Rows)
         {
@@ -721,11 +723,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithCascade_NumericKey_DecodesChildRowsOnSeekPath()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("NP");
         string child = MakeTableName("NC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(
                 parent,
@@ -765,11 +767,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(3, t.Rows.Count);
 
-        var moved = t.AsEnumerable()
+        DataRow[] moved = t.AsEnumerable()
             .Where(static row => Convert.ToDecimal(row["ParentAmount"], System.Globalization.CultureInfo.InvariantCulture) == 3.75m)
             .ToArray();
         Assert.Equal(2, moved.Length);
@@ -780,20 +782,20 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task TryReadColumnValuesTyped_DecodesDescriptorScaleNumericColumns()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("NR");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(
             table,
             [new("Id", typeof(int)), new("Amount", typeof(decimal)) { NumericScale = 3 }],
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
 
-        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        var loc = Assert.Single(locations);
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation loc = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
 
@@ -805,13 +807,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task TryReadColumnValuesTyped_DecodesInlinePlanSupportedColumns()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("IP");
         byte[] payload = [0x10, 0x20, 0x30];
         var stamp = new DateTime(2026, 5, 27, 9, 30, 0, DateTimeKind.Unspecified);
-        Guid rowGuid = Guid.NewGuid();
+        var rowGuid = Guid.NewGuid();
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(
             table,
             [
@@ -829,10 +831,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             [42, true, "Alpha", payload, 12.345m, stamp, rowGuid],
             TestContext.Current.CancellationToken);
 
-        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        var location = Assert.Single(locations);
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation location = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(
             location,
@@ -853,20 +855,20 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task TryReadColumnValuesTyped_MemoColumn_ReturnsNullForSnapshotFallback()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("MF");
 
-        await using var writer = await OpenWriterAsync(temp);
+        await using AccessWriter writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(
             table,
             [new("Id", typeof(int)), new("Notes", typeof(string))],
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
 
-        var entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        var def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        var locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
-        var location = Assert.Single(locations);
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation location = Assert.Single(locations);
 
         object?[]? values = await writer.TryReadColumnValuesTypedAsync(
             location,
@@ -892,10 +894,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_SelfReferentialFk_WithCascade_PropagatesToChildRowsInSameTable()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string tbl = MakeTableName("SR");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             // Mirror the proven-working shape used by
             // Update_PkSide_WithCascade_BulkSeeksChildIndex — same table on
@@ -948,8 +950,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var t = (await reader.ReadDataTableAsync(tbl, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(tbl, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Count children that were repointed to the new Id and ensure no
         // child still references the old Id.
@@ -985,7 +987,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_ManyToMany_CascadesJunctionRows()
     {
-        var temp = await db.CopyToStreamAsync(
+        MemoryStream temp = await db.CopyToStreamAsync(
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
@@ -993,7 +995,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         string courses = MakeTableName("Cr");
         string junction = MakeTableName("SC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(
                 students,
@@ -1065,25 +1067,25 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
+        await using AccessReader reader = await OpenReaderAsync(temp);
 
         // Student table: only student 2 remains.
-        var s = (await reader.ReadDataTableAsync(
+        DataTable s = (await reader.ReadDataTableAsync(
             students,
             cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(1, s.Rows.Count);
         Assert.Equal(2, (int)s.Rows[0]["StudentId"]);
 
         // Junction table: only the student-2 / course-10 row survives.
-        var j = (await reader.ReadDataTableAsync(
+        DataTable j = (await reader.ReadDataTableAsync(
             junction,
             cancellationToken: TestContext.Current.CancellationToken))!;
-        var only = Assert.Single(j.AsEnumerable());
+        DataRow only = Assert.Single(j.AsEnumerable());
         Assert.Equal(2, (int)only["StudentId"]);
         Assert.Equal(10, (int)only["CourseId"]);
 
         // Courses table: both courses still exist (no cascade from junction→course).
-        var c = (await reader.ReadDataTableAsync(
+        DataTable c = (await reader.ReadDataTableAsync(
             courses,
             cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, c.Rows.Count);
@@ -1092,11 +1094,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithCascade_WhenSeekCannotReadMemoChildRows_FallsBackToSnapshot()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("FDP");
         string child = MakeTableName("FDC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(
@@ -1128,19 +1130,19 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             Assert.Equal(1, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Empty(childRows.Rows);
     }
 
     [Fact]
     public async Task Insert_MalformedRelationshipCatalogRowWithMissingColumn_IsIgnored()
     {
-        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("MRP");
         string child = MakeTableName("MRC");
 
-        await using (var writer = await OpenWriterAsync(temp))
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
@@ -1148,7 +1150,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             long relationshipsTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
-            var relationshipsDef = await writer.ReadRequiredTableDefAsync(
+            TableDef relationshipsDef = await writer.ReadRequiredTableDefAsync(
                 relationshipsTdefPage,
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
@@ -1173,9 +1175,9 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, 999], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp);
-        var childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
-        var childRow = Assert.Single(childRows.AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(temp);
+        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow childRow = Assert.Single(childRows.AsEnumerable());
         Assert.Equal(999, Convert.ToInt32(childRow["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
     }
 

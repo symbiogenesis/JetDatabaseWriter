@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Indexes.Collation;
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -58,7 +59,7 @@ public sealed class GeneralLegacyEncoderFixtureTests
     [MemberData(nameof(Fixtures))]
     public Task TextSingleColumnIndexes_OnDiskLeavesMatchEncoderOutput(string fixturePath)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         return TextIndexEncoderFixtureHarness.ValidateAsync(
             fixturePath,
             GeneralLegacyTextIndexEncoder.Encode,

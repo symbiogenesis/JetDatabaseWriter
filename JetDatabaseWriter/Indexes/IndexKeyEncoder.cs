@@ -190,7 +190,7 @@ internal static class IndexKeyEncoder
 
             case DateTimeType:
             {
-                var dt = ToDateTime(value);
+                DateTime dt = ToDateTime(value);
                 byte[] r = new byte[8];
                 BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
                 TwiddleIeeeBigEndianInPlace(r);
@@ -235,7 +235,7 @@ internal static class IndexKeyEncoder
     /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a <see cref="GuidType"/>.</exception>
     private static byte[] EncodeGuidEntry(object value, bool ascending)
     {
-        var g = value switch
+        Guid g = value switch
         {
             Guid guid => guid,
             string s => Guid.Parse(s),
@@ -449,7 +449,7 @@ internal static class IndexKeyEncoder
                 nameof(targetScale));
         }
 
-        BigInteger mag = new BigInteger(leMantissa);
+        var mag = new BigInteger(leMantissa);
 
         if (targetScale > scale)
         {

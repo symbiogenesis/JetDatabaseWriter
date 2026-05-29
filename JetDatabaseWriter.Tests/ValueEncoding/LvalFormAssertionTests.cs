@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -100,7 +101,7 @@ public sealed class LvalFormAssertionTests
     {
         var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -121,13 +122,13 @@ public sealed class LvalFormAssertionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "LvalTest",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -141,7 +142,7 @@ public sealed class LvalFormAssertionTests
     {
         var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -162,13 +163,13 @@ public sealed class LvalFormAssertionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "OleTest",
             cancellationToken: TestContext.Current.CancellationToken);
 

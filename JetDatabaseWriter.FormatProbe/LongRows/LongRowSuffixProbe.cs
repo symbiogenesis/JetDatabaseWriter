@@ -24,6 +24,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
@@ -195,7 +196,7 @@ internal static class LongRowSuffixProbe
             return 1;
         }
 
-        var hostProbe = DaoPowerShellHostResolver.Probe();
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"DAO unavailable: {hostProbe.FailureReason}");
@@ -267,14 +268,14 @@ internal static class LongRowSuffixProbe
         sb.AppendLine(CultureInfo.InvariantCulture, $"Lab database: `{labPath}`");
         sb.AppendLine();
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             labPath,
             new AccessReaderOptions { UseLockFile = false },
             CancellationToken.None);
 
         foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
         {
-            var table = await BuildSuffixPatternTableAsync(
+            SuffixPatternTable table = await BuildSuffixPatternTableAsync(
                 reader,
                 tableName,
                 seedBase,
@@ -333,7 +334,7 @@ internal static class LongRowSuffixProbe
         int matrixStart,
         int doubleSpaceContext)
     {
-        List<SuffixPatternRow> matrixRows = table.Rows
+        var matrixRows = table.Rows
             .Where(row => row.Seed is not null && row.Seed.Value >= matrixStart && row.Seed.Value < matrixStart + DaoLabPairMatrixRowCount)
             .OrderBy(row => row.Seed)
             .ToList();
@@ -427,7 +428,7 @@ internal static class LongRowSuffixProbe
 
         ushort? tripleSpaceSuffix = TryGetDoubleSpaceSuffix(table, doubleSpaceContext, spaceIndex);
         int matrixMismatches = matrixRows.Count(row => row.AccessSuffix != row.EncoderSuffix);
-        var doubleSpaceRows = GetDoubleSpaceRows(table, doubleSpaceContext);
+        List<SuffixPatternRow> doubleSpaceRows = GetDoubleSpaceRows(table, doubleSpaceContext);
         int doubleSpaceMismatches = doubleSpaceRows.Count(row => row.AccessSuffix != row.EncoderSuffix);
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"### {contextName}");
@@ -496,7 +497,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Full length | Remainder | Rows | Examples | First suffixes |");
         sb.AppendLine("|---:|---|---:|---|---|");
 
-        foreach (var group in rows
+        foreach (IGrouping<string, SuffixPatternRow>? group in rows
             .GroupBy(row => string.Concat(
                 row.FullLength?.ToString(CultureInfo.InvariantCulture) ?? "-",
                 ":",
@@ -538,7 +539,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task AppendDaoLabPatternSummaryAsync(string labPath, StringBuilder sb, CancellationToken ct)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             labPath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
@@ -550,7 +551,7 @@ internal static class LongRowSuffixProbe
 
         foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
         {
-            var table = await BuildSuffixPatternTableAsync(reader, tableName, seedBase, ct);
+            SuffixPatternTable table = await BuildSuffixPatternTableAsync(reader, tableName, seedBase, ct);
             AppendSyntheticGroupSummary(sb, table);
             AppendDuplicateValueSummary(sb, table);
             AppendSuffixOrderSummary(sb, table);
@@ -566,28 +567,28 @@ internal static class LongRowSuffixProbe
         int seedBase,
         CancellationToken ct)
     {
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
-        var indexes = await reader.ListIndexesAsync(tableName, ct);
-        var index = indexes.First(idx => idx.Columns.Count == 1 && idx.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
-        var keyColumn = index.Columns[0];
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        IndexMetadata index = indexes.First(idx => idx.Columns.Count == 1 && idx.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
+        IndexColumnReference keyColumn = index.Columns[0];
 
-        var leafEntries = await CollectDetailedLeafEntriesFromRootAsync(
+        List<LeafEntryDetail> leafEntries = await CollectDetailedLeafEntriesFromRootAsync(
             reader,
             layout,
             pageSize,
             index.FirstDp,
             ct);
-        var rawLeafPages = await CollectRawLeafPageSummariesAsync(reader, layout, pageSize, index.FirstDp, ct);
-        var rowByPointer = await BuildPhysicalRowSnapshotMapAsync(reader, tableName, ct);
+        List<RawLeafPageSummary> rawLeafPages = await CollectRawLeafPageSummariesAsync(reader, layout, pageSize, index.FirstDp, ct);
+        Dictionary<long, PhysicalRowSnapshot> rowByPointer = await BuildPhysicalRowSnapshotMapAsync(reader, tableName, ct);
 
         var rows = new List<SuffixPatternRow>();
-        foreach (var leafEntry in leafEntries)
+        foreach (LeafEntryDetail leafEntry in leafEntries)
         {
-            var entry = leafEntry.Entry;
+            IndexEntry entry = leafEntry.Entry;
             if (entry.Key.Length != LongRowEntryLength
-                || !rowByPointer.TryGetValue(EncodeDataPointer(entry.DataPage, entry.DataRow), out var rowSnapshot)
+                || !rowByPointer.TryGetValue(EncodeDataPointer(entry.DataPage, entry.DataRow), out PhysicalRowSnapshot rowSnapshot)
                 || rowSnapshot.Value is not string text)
             {
                 continue;
@@ -661,7 +662,7 @@ internal static class LongRowSuffixProbe
         {
             int minSeed = group * 64;
             int maxSeed = minSeed + 63;
-            List<SuffixPatternRow> rows = table.Rows
+            var rows = table.Rows
                 .Where(row => row.Seed is >= 0 && row.Seed >= minSeed && row.Seed <= maxSeed)
                 .OrderBy(row => row.Seed)
                 .ToList();
@@ -683,7 +684,7 @@ internal static class LongRowSuffixProbe
         {
             int minSeed = group * 64;
             int maxSeed = minSeed + 63;
-            List<SuffixPatternRow> rows = table.Rows
+            var rows = table.Rows
                 .Where(row => row.Seed is >= 0 && row.Seed >= minSeed && row.Seed <= maxSeed)
                 .OrderBy(row => row.Seed)
                 .ToList();
@@ -696,7 +697,7 @@ internal static class LongRowSuffixProbe
             sb.AppendLine();
             sb.AppendLine("| Seed | Access suffix | Encoder suffix | Prefix | Data ptr | Leaf entry | pref_len | raw len | raw start | Full tail |");
             sb.AppendLine("|---:|:---:|:---:|:---:|---:|---|---:|---:|---:|---|");
-            foreach (var row in rows)
+            foreach (SuffixPatternRow row in rows)
             {
                 sb.AppendLine(
                     CultureInfo.InvariantCulture,
@@ -720,7 +721,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendTemplateSampleSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        List<SuffixPatternRow> rows = table.Rows
+        var rows = table.Rows
             .Where(row => row.Seed is not null && row.Seed.Value >= DaoLabTemplateSampleStart && row.Seed.Value < DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount)
             .OrderBy(row => row.Seed)
             .ToList();
@@ -733,7 +734,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Seed | Template | Variant | Access suffix | Encoder suffix | Full tail |");
         sb.AppendLine("|---:|---|---|:---:|:---:|---|");
-        foreach (var row in rows)
+        foreach (SuffixPatternRow row in rows)
         {
             int sample = row.Seed!.Value - DaoLabTemplateSampleStart;
             string template = (sample / 4) switch
@@ -757,7 +758,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendDoubleTrailingSpaceSweepSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        List<SuffixPatternRow> rows = table.Rows
+        var rows = table.Rows
             .Where(row => row.Seed is not null && row.Seed.Value >= DaoLabDoubleSpaceSweepStart && row.Seed.Value < DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount)
             .OrderBy(row => row.Seed)
             .ToList();
@@ -775,7 +776,7 @@ internal static class LongRowSuffixProbe
 
         for (int contextIndex = 0; contextIndex < DaoLabDoubleSpaceSweepContextCount; contextIndex++)
         {
-            List<SuffixPatternRow> contextRows = rows
+            var contextRows = rows
                 .Where(row => GetDoubleSpaceSweepContext(row.Seed!.Value) == contextIndex)
                 .OrderBy(row => row.Seed)
                 .ToList();
@@ -814,7 +815,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendSuffixOrderSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        List<SuffixPatternRow[]> sharedPrefixGroups = table.Rows
+        var sharedPrefixGroups = table.Rows
             .Where(row => row.Text is not null && row.FullKey.Length >= PrefixMatchLength)
             .GroupBy(row => row.FullKey, LongRowPrefixEqualityComparer.Instance)
             .Select(group => group.ToArray())
@@ -826,14 +827,14 @@ internal static class LongRowSuffixProbe
         int orderMismatchGroups = 0;
         var examples = new List<(SuffixPatternRow[] FullOrder, SuffixPatternRow[] LeafOrder)>();
 
-        foreach (var group in sharedPrefixGroups)
+        foreach (SuffixPatternRow[] group in sharedPrefixGroups)
         {
-            var fullOrder = group
+            SuffixPatternRow[] fullOrder = group
                 .OrderBy(row => row.FullKey, BytePrefixComparer.Instance)
                 .ThenBy(row => row.DataPage)
                 .ThenBy(row => row.DataRow)
                 .ToArray();
-            var leafOrder = group
+            SuffixPatternRow[] leafOrder = group
                 .OrderBy(row => row.Position)
                 .ToArray();
 
@@ -881,7 +882,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Rows | Full-key order | Leaf order |");
         sb.AppendLine("|---:|---|---|");
-        foreach ((var fullOrder, var leafOrder) in examples)
+        foreach ((SuffixPatternRow[]? fullOrder, SuffixPatternRow[]? leafOrder) in examples)
         {
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -893,7 +894,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendPairMatrixSummary(StringBuilder sb, SuffixPatternTable table, int matrixStart, string title, bool includeCrc16)
     {
-        List<SuffixPatternRow> rows = table.Rows
+        var rows = table.Rows
             .Where(row => row.Seed is not null && row.Seed.Value >= matrixStart && row.Seed.Value < matrixStart + DaoLabPairMatrixRowCount)
             .OrderBy(row => row.Seed)
             .ToList();
@@ -919,7 +920,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Pair | Access suffix | Encoder suffix | Full tail |");
         sb.AppendLine("|---|:---:|:---:|---|");
 
-        foreach (var row in rows.Take(8).Concat(rows.Skip(Math.Max(0, rows.Count - 8))))
+        foreach (SuffixPatternRow row in rows.Take(8).Concat(rows.Skip(Math.Max(0, rows.Count - 8))))
         {
             int pair = row.Seed!.Value - matrixStart;
             char first = DaoLabAlphabet[pair / DaoLabAlphabet.Length];
@@ -938,7 +939,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Access suffix | Rows | First pairs | First seeds |");
         sb.AppendLine("|:---:|---:|---|---|");
-        foreach (var group in rows
+        foreach (IGrouping<ushort, SuffixPatternRow>? group in rows
             .GroupBy(row => row.AccessSuffix)
             .OrderByDescending(group => group.Count())
             .ThenBy(group => group.Key)
@@ -964,7 +965,7 @@ internal static class LongRowSuffixProbe
         var suffixes = new ushort[size * size];
         var present = new bool[size * size];
         var rowByOffset = new SuffixPatternRow?[size * size];
-        foreach (var row in rows)
+        foreach (SuffixPatternRow row in rows)
         {
             int pair = row.Seed!.Value - matrixStart;
             int first = pair / size;
@@ -1150,7 +1151,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Second char | Failures | First chars | Full tails | Trimmed tails |");
         sb.AppendLine("|---|---:|---|---|---|");
-        foreach (var group in failures
+        foreach (IGrouping<char, PairMatrixXorFailure>? group in failures
             .GroupBy(failure => failure.SecondChar)
             .OrderByDescending(group => group.Count())
             .ThenBy(group => group.Key)
@@ -1178,7 +1179,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Pair | Actual | Predicted | Residual | Row | full[508..512] | trimmed[508..512] |");
         sb.AppendLine("|---|:---:|:---:|:---:|---|---|---|");
-        foreach (var failure in failures.Take(12))
+        foreach (PairMatrixXorFailure failure in failures.Take(12))
         {
             ushort residual = (ushort)(failure.Actual ^ failure.Predicted);
             string pair = string.Concat(FormatMatrixChar(failure.FirstChar), FormatMatrixChar(failure.SecondChar));
@@ -1340,7 +1341,7 @@ internal static class LongRowSuffixProbe
         suffixes = new ushort[size * size];
         present = new bool[size * size];
 
-        foreach (var row in table.Rows)
+        foreach (SuffixPatternRow row in table.Rows)
         {
             if (row.Seed is not int seed || seed < matrixStart || seed >= matrixStart + DaoLabPairMatrixRowCount)
             {
@@ -1370,7 +1371,7 @@ internal static class LongRowSuffixProbe
         int maxHits)
     {
         _ = table;
-        var constraints = rows
+        RollingConstraint[] constraints = rows
             .Where(row => row.Text is not null)
             .Select(row => new RollingConstraint(
                 getInput(row),
@@ -1384,7 +1385,7 @@ internal static class LongRowSuffixProbe
             return hits;
         }
 
-        var searchConstraints = BuildCrcSearchSample(constraints, maxCount: 64);
+        RollingConstraint[] searchConstraints = BuildCrcSearchSample(constraints, maxCount: 64);
         var normalTable = new ushort[256];
         var reflectedTable = new ushort[256];
 
@@ -1460,7 +1461,7 @@ internal static class LongRowSuffixProbe
         string label,
         Func<SuffixPatternRow, byte[]> getInput)
     {
-        var crcHits = FindCrc16AffineHits(table, rows, getInput, maxHits: 8);
+        List<Crc16AffineHit> crcHits = FindCrc16AffineHits(table, rows, getInput, maxHits: 8);
         string crcHitText = crcHits.Count == 0
             ? "-"
             : "`" + string.Join(" ", crcHits.Select(hit => $"poly={hit.Polynomial:X4}/xor={hit.XorConstant:X4}/refIn={hit.RefIn}/refOut={hit.RefOut}")) + "`";
@@ -1473,7 +1474,7 @@ internal static class LongRowSuffixProbe
         List<SuffixPatternRow> rows,
         int matrixStart)
     {
-        var usableRows = rows.Where(row => row.Text is not null).ToArray();
+        SuffixPatternRow[] usableRows = rows.Where(row => row.Text is not null).ToArray();
         ushort[] targets = usableRows.Select(row => row.AccessSuffix).ToArray();
 
         sb.AppendLine("- Affine bit models:");
@@ -1559,7 +1560,7 @@ internal static class LongRowSuffixProbe
 
         int evaluated = 0;
         int exact = 0;
-        foreach (var row in table.Rows.Where(row => row.Text is not null))
+        foreach (SuffixPatternRow row in table.Rows.Where(row => row.Text is not null))
         {
             ulong? feature = buildFeature(row, table, bitCount);
             if (!feature.HasValue)
@@ -1588,8 +1589,8 @@ internal static class LongRowSuffixProbe
         int bitCount,
         Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
     {
-        var normalRows = pairRows.Where(row => !IsMatrixSecondSpace(row, matrixStart)).ToArray();
-        var secondSpaceRows = pairRows.Where(row => IsMatrixSecondSpace(row, matrixStart)).ToArray();
+        SuffixPatternRow[] normalRows = pairRows.Where(row => !IsMatrixSecondSpace(row, matrixStart)).ToArray();
+        SuffixPatternRow[] secondSpaceRows = pairRows.Where(row => IsMatrixSecondSpace(row, matrixStart)).ToArray();
         if (!TryTrainAffineRows(normalRows, table, bitCount, buildFeature, out ulong[] normalCoefficients)
             || !TryTrainAffineRows(secondSpaceRows, table, bitCount, buildFeature, out ulong[] secondSpaceCoefficients))
         {
@@ -1599,7 +1600,7 @@ internal static class LongRowSuffixProbe
 
         int evaluated = 0;
         int exact = 0;
-        foreach (var row in table.Rows.Where(row => row.Text is not null))
+        foreach (SuffixPatternRow row in table.Rows.Where(row => row.Text is not null))
         {
             ulong? feature = buildFeature(row, table, bitCount);
             if (!feature.HasValue)
@@ -1790,7 +1791,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendDuplicateValueSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        List<IGrouping<string, SuffixPatternRow>> duplicateGroups = table.Rows
+        var duplicateGroups = table.Rows
             .Where(row => row.Text is not null)
             .GroupBy(row => row.Text!, StringComparer.Ordinal)
             .Where(group => group.Count() > 1)
@@ -1814,9 +1815,9 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Rows | Access suffixes | Seeds | Data ptrs |");
         sb.AppendLine("|---:|---|---|---|");
-        foreach (var group in duplicateGroups.Take(8))
+        foreach (IGrouping<string, SuffixPatternRow>? group in duplicateGroups.Take(8))
         {
-            var rows = group.OrderBy(row => row.Position).ToArray();
+            SuffixPatternRow[] rows = group.OrderBy(row => row.Position).ToArray();
             string suffixes = string.Join(" ", rows.Select(row => row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
             string seeds = string.Join(" ", rows.Select(row => row.Seed?.ToString(CultureInfo.InvariantCulture) ?? row.RowLabel));
             string ptrs = string.Join(" ", rows.Select(row => string.Create(CultureInfo.InvariantCulture, $"{row.DataPage}:{row.DataRow}")));
@@ -1828,7 +1829,7 @@ internal static class LongRowSuffixProbe
 
     private static string FormatOrderSample(IReadOnlyList<SuffixPatternRow> rows)
     {
-        var parts = rows
+        IEnumerable<string> parts = rows
             .Take(8)
             .Select(row =>
             {
@@ -1846,7 +1847,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendSuffixCandidateSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        var contexts = table.Rows
+        SuffixCandidateContext[] contexts = table.Rows
             .Where(row => row.Text is not null)
             .Select(row => new SuffixCandidateContext(row, table.Ascending))
             .ToArray();
@@ -1860,10 +1861,10 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        var rules = SuffixCandidateRules.Value;
+        List<CandidateRule> rules = SuffixCandidateRules.Value;
         var xorCounts = new CountAccumulator();
         var addCounts = new CountAccumulator();
-        List<CandidateScore> scores = rules
+        var scores = rules
             .Select(rule => ScoreCandidate(rule, contexts, xorCounts, addCounts))
             .Where(score => score.Evaluated > 0)
             .OrderByDescending(score => Math.Max(score.Exact, Math.Max(score.BestXorCount, score.BestAddCount)))
@@ -1879,7 +1880,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
         sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
-        foreach (var score in scores)
+        foreach (CandidateScore score in scores)
         {
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -1904,7 +1905,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendAuxSignatureSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        var cp1252 = Cp1252Encoding;
+        Encoding cp1252 = Cp1252Encoding;
         var groups = contexts
             .Select(context =>
             {
@@ -1946,7 +1947,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendTruncationPhaseSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        var cp1252 = Cp1252Encoding;
+        Encoding cp1252 = Cp1252Encoding;
         var allGroups = contexts
             .Select(context =>
             {
@@ -2011,8 +2012,8 @@ internal static class LongRowSuffixProbe
 
     private static void AppendTruncationWindowSweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        var cp1252 = Cp1252Encoding;
-        var rows = contexts
+        Encoding cp1252 = Cp1252Encoding;
+        WindowSweepRow[] rows = contexts
             .Select(context =>
             {
                 byte[][] inputs = context.GetNormalizedInputCandidates(cp1252);
@@ -2031,7 +2032,7 @@ internal static class LongRowSuffixProbe
             {
                 for (int length = 2; length <= 20; length++)
                 {
-                    var groupCounts = CountTruncationWindowConflicts(rows, start, length, includeAux);
+                    WindowConflictCounts groupCounts = CountTruncationWindowConflicts(rows, start, length, includeAux);
 
                     candidates.Add(new WindowSweepResult(
                         start,
@@ -2046,7 +2047,7 @@ internal static class LongRowSuffixProbe
 
         sb.AppendLine("Truncation local-window sweep:");
         sb.AppendLine();
-        foreach (var result in candidates
+        foreach (WindowSweepResult result in candidates
             .GroupBy(result => result.IncludeAux)
             .Select(group => group
                 .OrderBy(result => result.ConflictingRows)
@@ -2064,7 +2065,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Start | Length | Aux | Groups | Conflicting groups | Conflicting rows |");
         sb.AppendLine("|---:|---:|:---:|---:|---:|---:|");
-        foreach (var result in candidates
+        foreach (WindowSweepResult result in candidates
             .OrderBy(result => result.ConflictingRows)
             .ThenBy(result => result.ConflictingGroups)
             .ThenBy(result => result.Length)
@@ -2087,12 +2088,12 @@ internal static class LongRowSuffixProbe
         bool includeAux)
     {
         var groups = new Dictionary<TruncationWindowKey, WindowGroupAccumulator>(TruncationWindowKeyComparer.Instance);
-        foreach (var row in rows)
+        foreach (WindowSweepRow row in rows)
         {
             int windowLength = GetSliceLength(row.NormalizedFullKey, start, length);
             string? auxSignature = includeAux ? row.AuxSignature : null;
             var key = new TruncationWindowKey(row.Phase, auxSignature, row.NormalizedFullKey, start, windowLength);
-            if (!groups.TryGetValue(key, out var group))
+            if (!groups.TryGetValue(key, out WindowGroupAccumulator? group))
             {
                 groups.Add(key, new WindowGroupAccumulator(row.AccessSuffix));
                 continue;
@@ -2103,7 +2104,7 @@ internal static class LongRowSuffixProbe
 
         int conflictingGroups = 0;
         int conflictingRows = 0;
-        foreach (var group in groups.Values)
+        foreach (WindowGroupAccumulator group in groups.Values)
         {
             if (!group.HasConflict)
             {
@@ -2153,7 +2154,7 @@ internal static class LongRowSuffixProbe
         var hits = new List<CandidateScore>();
         var xorCounts = new CountAccumulator();
         var addCounts = new CountAccumulator();
-        foreach ((string inputLabel, var getText) in BuildTextInputs())
+        foreach ((string inputLabel, Func<SuffixCandidateContext, string>? getText) in BuildTextInputs())
         {
             foreach ((string label, uint flags) in new[]
             {
@@ -2176,7 +2177,7 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        List<CandidateScore> best = hits
+        var best = hits
             .Where(score => score.Evaluated > 0)
             .OrderByDescending(score => score.Exact)
             .ThenByDescending(score => score.BestXorCount)
@@ -2190,7 +2191,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
         sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
-        foreach (var score in best)
+        foreach (CandidateScore score in best)
         {
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -2240,13 +2241,13 @@ internal static class LongRowSuffixProbe
 
     private static void AppendWideAffineTailSummary(StringBuilder sb, SuffixPatternTable table)
     {
-        var trainRows = table.Rows
+        SuffixPatternRow[] trainRows = table.Rows
             .Where(row => row is { Text: not null, Seed: not null })
             .ToArray();
-        var allRows = table.Rows
+        SuffixPatternRow[] allRows = table.Rows
             .Where(row => row.Text is not null)
             .ToArray();
-        var originalRows = allRows.Where(row => row.Seed is null).ToArray();
+        SuffixPatternRow[] originalRows = allRows.Where(row => row.Seed is null).ToArray();
         if (trainRows.Length == 0 || allRows.Length == 0)
         {
             return;
@@ -2281,12 +2282,12 @@ internal static class LongRowSuffixProbe
             .Max();
         int featureBytes = byteCount + (includeLength ? 1 : 0);
         int variableCount = (featureBytes * 8) + 1;
-        var trainFeatures = trainRows
+        BigInteger[] trainFeatures = trainRows
             .Select(row => BuildWideTailFeature(row, table, start, byteCount, includeLength))
             .ToArray();
         ushort[] trainTargets = trainRows.Select(row => row.AccessSuffix).ToArray();
 
-        bool fits = TryFitWideAffineBinaryModel(trainFeatures, trainTargets, variableCount, out var coefficients);
+        bool fits = TryFitWideAffineBinaryModel(trainFeatures, trainTargets, variableCount, out BigInteger[]? coefficients);
         string label = includeLength
             ? $"full[{start}..]+len"
             : $"full[{start}..]";
@@ -2314,9 +2315,9 @@ internal static class LongRowSuffixProbe
         bool includeLength)
     {
         int exact = 0;
-        foreach (var row in rows)
+        foreach (SuffixPatternRow row in rows)
         {
-            var feature = BuildWideTailFeature(row, table, start, byteCount, includeLength);
+            BigInteger feature = BuildWideTailFeature(row, table, start, byteCount, includeLength);
             ushort predicted = PredictWideAffineBinary(feature, coefficients);
             if (predicted == row.AccessSuffix)
             {
@@ -2367,7 +2368,7 @@ internal static class LongRowSuffixProbe
             var basisRhs = new int[variableCount];
             for (int row = 0; row < features.Length; row++)
             {
-                var mask = features[row];
+                BigInteger mask = features[row];
                 int rhs = (targets[row] >> targetBit) & 1;
                 while (!mask.IsZero)
                 {
@@ -2390,7 +2391,7 @@ internal static class LongRowSuffixProbe
                 }
             }
 
-            var solution = BigInteger.Zero;
+            BigInteger solution = BigInteger.Zero;
             for (int pivot = 0; pivot < variableCount; pivot++)
             {
                 if (basis[pivot].IsZero)
@@ -2398,7 +2399,7 @@ internal static class LongRowSuffixProbe
                     continue;
                 }
 
-                var dependencyMask = pivot == 0 ? BigInteger.Zero : basis[pivot] & ((BigInteger.One << pivot) - BigInteger.One);
+                BigInteger dependencyMask = pivot == 0 ? BigInteger.Zero : basis[pivot] & ((BigInteger.One << pivot) - BigInteger.One);
                 int value = basisRhs[pivot] ^ Parity(solution & dependencyMask);
                 if (value != 0)
                 {
@@ -2446,7 +2447,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendRollingPolynomialSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        var cp1252 = Cp1252Encoding;
+        Encoding cp1252 = Cp1252Encoding;
 
         sb.AppendLine("Rolling polynomial solver:");
         sb.AppendLine();
@@ -2457,7 +2458,7 @@ internal static class LongRowSuffixProbe
 
         foreach (int inputIndex in RollingInputIndexes)
         {
-            var constraints = contexts
+            RollingConstraint[] constraints = contexts
                 .Select(context =>
                 {
                     byte[][] inputs = context.GetInputCandidates(cp1252);
@@ -2466,7 +2467,7 @@ internal static class LongRowSuffixProbe
                 .Where(constraint => constraint.Input.Length > 0)
                 .ToArray();
 
-            var hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
             string hitText = hits.Count == 0
                 ? "-"
                 : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
@@ -2477,14 +2478,14 @@ internal static class LongRowSuffixProbe
         foreach (int offset in new[] { 2, 4, 6, 8, 10, 12 })
         {
             int absoluteStart = 508 + offset;
-            var constraints = contexts
+            RollingConstraint[] constraints = contexts
                 .Select(context => new RollingConstraint(
                     SliceOrEmpty(context.FullKey, absoluteStart),
                     context.Row.AccessSuffix))
                 .Where(constraint => constraint.Input.Length > 0)
                 .ToArray();
 
-            var hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
             string hitText = hits.Count == 0
                 ? "-"
                 : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
@@ -2495,14 +2496,14 @@ internal static class LongRowSuffixProbe
         foreach (int offset in new[] { 1, 3, 5, 7, 9, 11 })
         {
             int absoluteStart = 508 + offset;
-            var constraints = contexts
+            RollingConstraint[] constraints = contexts
                 .Select(context => new RollingConstraint(
                     SliceOrEmpty(context.FullKey, absoluteStart),
                     context.Row.AccessSuffix))
                 .Where(constraint => constraint.Input.Length > 0)
                 .ToArray();
 
-            var hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
             string hitText = hits.Count == 0
                 ? "-"
                 : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
@@ -2559,9 +2560,9 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Slice | Hits | Details |");
         sb.AppendLine("|---|---:|---|");
 
-        foreach ((string label, var extract) in sliceDefs)
+        foreach ((string label, Func<SuffixCandidateContext, byte[]>? extract) in sliceDefs)
         {
-            var constraints = contexts
+            RollingConstraint[] constraints = contexts
                 .Select(context => new RollingConstraint(
                     extract(context),
                     context.Row.AccessSuffix))
@@ -2573,7 +2574,7 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            var searchConstraints = constraints
+            RollingConstraint[] searchConstraints = constraints
                 .OrderBy(static constraint => constraint.Input.Length)
                 .ThenBy(static constraint => constraint.Target)
                 .Take(3)
@@ -2713,7 +2714,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Slice | Hits | Details |");
         sb.AppendLine("|---|---:|---|");
 
-        foreach ((string sliceLabel, var extract) in sliceDefs)
+        foreach ((string sliceLabel, Func<SuffixCandidateContext, byte[]>? extract) in sliceDefs)
         {
             byte[][] inputs = contexts.Select(extract).ToArray();
             if (inputs.Any(i => i.Length == 0))
@@ -2855,7 +2856,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("Contradictions (same (pos, byte-pair) producing different deltas) are direct evidence of nonlinearity at that position.");
         sb.AppendLine();
 
-        var cp1252 = Cp1252Encoding;
+        Encoding cp1252 = Cp1252Encoding;
         var rows = contexts
             .Where(c => c.NormalizedFullKey.Length >= WindowStart + WindowLength)
             .Select(c =>
@@ -2920,10 +2921,10 @@ internal static class LongRowSuffixProbe
                     ushort delta = (ushort)(si ^ groupRows[j].Suffix);
                     byte ba = wi[diffPos];
                     byte bb = wj[diffPos];
-                    var key = ba < bb
+                    (int diffPos, byte, byte) key = ba < bb
                         ? (diffPos, ba, bb)
                         : (diffPos, bb, ba);
-                    if (!observations.TryGetValue(key, out var set))
+                    if (!observations.TryGetValue(key, out HashSet<ushort>? set))
                     {
                         set = [];
                         observations[key] = set;
@@ -2941,7 +2942,7 @@ internal static class LongRowSuffixProbe
             positionStats[p] = new int[3];
         }
 
-        foreach (var kv in observations)
+        foreach (KeyValuePair<(int Position, byte ByteLo, byte ByteHi), HashSet<ushort>> kv in observations)
         {
             int pos = kv.Key.Position;
             positionStats[pos][0]++;
@@ -2974,7 +2975,7 @@ internal static class LongRowSuffixProbe
             sb.AppendLine("Sample contradictions (first 20, sorted by position):");
             sb.AppendLine("| Pos | ByteLo | ByteHi | Observed deltas |");
             sb.AppendLine("|---:|:---:|:---:|---|");
-            foreach (var kv in observations
+            foreach (KeyValuePair<(int Position, byte ByteLo, byte ByteHi), HashSet<ushort>> kv in observations
                 .Where(o => o.Value.Count > 1)
                 .OrderBy(o => o.Key.Position)
                 .ThenBy(o => o.Key.ByteLo)
@@ -3018,7 +3019,7 @@ internal static class LongRowSuffixProbe
         }
 
         // Build constraint data: for each context, the input is full[508..end].
-        var constraints = contexts
+        (byte[] Input, ushort Target)[] constraints = contexts
             .Select(c => (Input: SliceOrEmpty(c.FullKey, 508), Target: c.Row.AccessSuffix))
             .Where(c => c.Input.Length > 0)
             .ToArray();
@@ -3177,7 +3178,7 @@ internal static class LongRowSuffixProbe
         }
 
         // Build the byte-at-position data from the full[508..] inputs.
-        var inputs = contexts
+        (byte[] Input, ushort Target)[] inputs = contexts
             .Select(c => (Input: SliceOrEmpty(c.FullKey, 508), Target: c.Row.AccessSuffix))
             .Where(c => c.Input.Length >= 5)
             .ToArray();
@@ -3230,7 +3231,7 @@ internal static class LongRowSuffixProbe
         var pos12Change = new List<(byte B1, byte B2, ushort Suffix)>();
         var pos012Change = new List<(byte B0, byte B1, byte B2, ushort Suffix)>();
 
-        foreach (var (input, target) in inputs)
+        foreach ((byte[]? input, ushort target) in inputs)
         {
             if (input.Length < 5 || input[3] != 0x01 || input[4] != 0x00)
             {
@@ -3286,19 +3287,19 @@ internal static class LongRowSuffixProbe
         // Build XOR contribution tables.
         // Contribution of value v at position p = suffix(v@p, base@others) XOR baseSuffix.
         var contrib0 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos0Only)
+        foreach ((byte val, ushort suffix) in pos0Only)
         {
             contrib0[val] = (ushort)(suffix ^ baseSuffix);
         }
 
         var contrib1 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos1Only)
+        foreach ((byte val, ushort suffix) in pos1Only)
         {
             contrib1[val] = (ushort)(suffix ^ baseSuffix);
         }
 
         var contrib2 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos2Only)
+        foreach ((byte val, ushort suffix) in pos2Only)
         {
             contrib2[val] = (ushort)(suffix ^ baseSuffix);
         }
@@ -3320,7 +3321,7 @@ internal static class LongRowSuffixProbe
         var residuals = new Dictionary<ushort, int>();
         var failExamples = new List<string>();
 
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             ushort c0 = (b0 != baseInput[0] && contrib0.TryGetValue(b0, out ushort v0)) ? v0 : (ushort)0;
             ushort c1 = (b1 != baseInput[1] && contrib1.TryGetValue(b1, out ushort v1)) ? v1 : (ushort)0;
@@ -3357,7 +3358,7 @@ internal static class LongRowSuffixProbe
             sb.AppendLine();
             sb.AppendLine("| Residual | Count | Binary | Trailing zeros |");
             sb.AppendLine("|:---:|---:|---|---:|");
-            foreach (var (residual, count) in residuals.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key).Take(20))
+            foreach ((ushort residual, int count) in residuals.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key).Take(20))
             {
                 int tz = BitOperations.TrailingZeroCount(residual);
                 sb.AppendLine(CultureInfo.InvariantCulture, $"| `0x{residual:X4}` | {count} | `{Convert.ToString(residual, 2).PadLeft(16, '0')}` | {tz} |");
@@ -3397,26 +3398,26 @@ internal static class LongRowSuffixProbe
         // For single-position changes: T0[x] = (suffix_of_x - baseSuffix) mod 65536, etc.
         // Then verify multi-position changes.
         var addContrib0 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos0Only)
+        foreach ((byte val, ushort suffix) in pos0Only)
         {
             addContrib0[val] = unchecked((ushort)(suffix - baseSuffix));
         }
 
         var addContrib1 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos1Only)
+        foreach ((byte val, ushort suffix) in pos1Only)
         {
             addContrib1[val] = unchecked((ushort)(suffix - baseSuffix));
         }
 
         var addContrib2 = new Dictionary<byte, ushort>();
-        foreach (var (val, suffix) in pos2Only)
+        foreach ((byte val, ushort suffix) in pos2Only)
         {
             addContrib2[val] = unchecked((ushort)(suffix - baseSuffix));
         }
 
         int addPass = 0;
         int addFail = 0;
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
             ushort ac1 = (b1 != baseInput[1] && addContrib1.TryGetValue(b1, out ushort av1)) ? av1 : (ushort)0;
@@ -3482,7 +3483,7 @@ internal static class LongRowSuffixProbe
         int hybridXorAddFail = 0;
         var hybridFailExamples = new List<string>();
 
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             // T0[b0]:
             ushort t0;
@@ -3572,7 +3573,7 @@ internal static class LongRowSuffixProbe
         int hybridAddXorFail = 0;
         var hybridBFailExamples = new List<string>();
 
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             ushort c0 = (b0 != baseInput[0] && contrib0.TryGetValue(b0, out ushort cv0)) ? cv0 : (ushort)0;
             ushort c1 = (b1 != baseInput[1] && contrib1.TryGetValue(b1, out ushort cv1)) ? cv1 : (ushort)0;
@@ -3623,7 +3624,7 @@ internal static class LongRowSuffixProbe
         // T2[b2] = suffix(..,b2) - baseSuffix = addContrib2[b2].
         // Prediction: suffix = (addC0[b0] XOR addC1[b1]) + addC2[b2] + baseSuffix.
 
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
             ushort ac1 = (b1 != baseInput[1] && addContrib1.TryGetValue(b1, out ushort av1)) ? av1 : (ushort)0;
@@ -3652,7 +3653,7 @@ internal static class LongRowSuffixProbe
         int hybridDPass = 0;
         int hybridDFail = 0;
 
-        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        foreach ((byte b0, byte b1, byte b2, ushort suffix) in pos012Change)
         {
             ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
 
@@ -3711,8 +3712,8 @@ internal static class LongRowSuffixProbe
         var suffixes = new ushort[size * size];
         var present = new bool[size * size];
 
-        var rows = table.Rows;
-        foreach (var row in rows)
+        IReadOnlyList<SuffixPatternRow> rows = table.Rows;
+        foreach (SuffixPatternRow row in rows)
         {
             if (row.Seed is not int seed)
             {
@@ -4055,7 +4056,7 @@ internal static class LongRowSuffixProbe
         // Seeded CRC-16: init from key length or truncation boundary bytes.
         AddSeededCrc16Rules(rules);
 
-        foreach ((string label, var getText) in BuildTextInputs())
+        foreach ((string label, Func<SuffixCandidateContext, string>? getText) in BuildTextInputs())
         {
             AddHash32WordRules(rules, label, "NLS-65599 UTF16", context => Nls65599Utf16(getText(context), ignoreCase: false));
             AddHash32WordRules(rules, label, "NLS-65599 UTF16 upper", context => Nls65599Utf16(getText(context), ignoreCase: true));
@@ -4219,7 +4220,7 @@ internal static class LongRowSuffixProbe
         CompareInfo compareInfo,
         string compareLabel)
     {
-        foreach (var options in new[]
+        foreach (CompareOptions options in new[]
         {
             CompareOptions.None,
             CompareOptions.IgnoreCase,
@@ -4388,7 +4389,7 @@ internal static class LongRowSuffixProbe
     {
         int evaluated = 0;
         int exact = 0;
-        foreach (var context in contexts)
+        foreach (SuffixCandidateContext context in contexts)
         {
             ushort? candidate = rule.Compute(context);
             if (!candidate.HasValue)
@@ -4424,7 +4425,7 @@ internal static class LongRowSuffixProbe
             return hits;
         }
 
-        var first = constraints[0];
+        RollingConstraint first = constraints[0];
         for (int multiplierValue = 1; multiplierValue <= 0xFFFF; multiplierValue += 2)
         {
             ushort multiplier = (ushort)multiplierValue;
@@ -4436,7 +4437,7 @@ internal static class LongRowSuffixProbe
             bool allMatch = true;
             for (int constraintIndex = 0; constraintIndex < constraints.Length; constraintIndex++)
             {
-                var constraint = constraints[constraintIndex];
+                RollingConstraint constraint = constraints[constraintIndex];
                 if (RollingAdd(constraint.Input, multiplier, seed) != constraint.Target)
                 {
                     allMatch = false;
@@ -5105,7 +5106,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Leaf page | pref_len | payload end | entries | 510-byte decoded entries | First long raw key len | First long raw key tail | First long decoded suffix |");
         sb.AppendLine("|---:|---:|---:|---:|---:|---:|---|:---:|");
 
-        foreach (var page in pages)
+        foreach (RawLeafPageSummary page in pages)
         {
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -5128,14 +5129,14 @@ internal static class LongRowSuffixProbe
 
         try
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 fixturePath,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
-            var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+            IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string tableName in tables)
             {
                 List<ColumnMetadata> columns;
@@ -5152,14 +5153,14 @@ internal static class LongRowSuffixProbe
                 }
 
                 var columnByName = columns.ToDictionary(column => column.Name, StringComparer.OrdinalIgnoreCase);
-                foreach (var index in indexes)
+                foreach (IndexMetadata index in indexes)
                 {
                     if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
                     {
                         continue;
                     }
 
-                    var onDiskEntries = await CollectAllLeafEntriesFromRootAsync(
+                    List<IndexEntry> onDiskEntries = await CollectAllLeafEntriesFromRootAsync(
                         reader, layout, pageSize, index.FirstDp, ct);
                     int onDiskLongCount = onDiskEntries.Count(entry => entry.Key.Length == LongRowEntryLength);
                     if (onDiskLongCount == 0)
@@ -5167,8 +5168,8 @@ internal static class LongRowSuffixProbe
                         continue;
                     }
 
-                    var keyColumn = index.Columns[0];
-                    if (!columnByName.TryGetValue(keyColumn.Name, out var columnMeta))
+                    IndexColumnReference keyColumn = index.Columns[0];
+                    if (!columnByName.TryGetValue(keyColumn.Name, out ColumnMetadata? columnMeta))
                     {
                         continue;
                     }
@@ -5178,7 +5179,7 @@ internal static class LongRowSuffixProbe
                     totals.IndexesWithLongKeys++;
                     totals.LongKeysOnDisk += onDiskLongCount;
 
-                    var scan = await CompareLongRowIndexAsync(
+                    CorpusIndexScanResult scan = await CompareLongRowIndexAsync(
                         reader,
                         tableName,
                         index,
@@ -5285,14 +5286,14 @@ internal static class LongRowSuffixProbe
             return new CorpusIndexScanResult(0, 0, []);
         }
 
-        List<IndexEntry> sortedOnDisk = onDiskEntries
+        var sortedOnDisk = onDiskEntries
             .OrderBy(entry => entry.Key, BytePrefixComparer.Instance)
             .ToList();
 
         int encodedLongCount = encoded.Count(encodedKey => encodedKey.Key.Length == LongRowEntryLength);
         int prefixMatches = 0;
         var examples = new List<CorpusSuffixExample>();
-        var encodedPrefixLookup = BuildEncodedPrefixLookup(encoded);
+        Dictionary<byte[], Queue<int>> encodedPrefixLookup = BuildEncodedPrefixLookup(encoded);
         for (int indexPosition = 0; indexPosition < sortedOnDisk.Count; indexPosition++)
         {
             byte[] onDiskKey = sortedOnDisk[indexPosition].Key;
@@ -5310,7 +5311,7 @@ internal static class LongRowSuffixProbe
 
             if (examples.Count < maxExamples)
             {
-                var encodedKey = prefixMatch
+                EncodedCorpusKey encodedKey = prefixMatch
                     ? encoded[encodedIndex]
                     : encoded[Math.Min(indexPosition, encoded.Count - 1)];
                 ushort expectedSuffix = (ushort)((onDiskKey[508] << 8) | onDiskKey[509]);
@@ -5346,7 +5347,7 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            if (!lookup.TryGetValue(encodedKey, out var indexes))
+            if (!lookup.TryGetValue(encodedKey, out Queue<int>? indexes))
             {
                 indexes = new Queue<int>();
                 lookup.Add(encodedKey, indexes);
@@ -5363,7 +5364,7 @@ internal static class LongRowSuffixProbe
         byte[] onDiskKey)
     {
         if (onDiskKey.Length < PrefixMatchLength
-            || !encodedPrefixLookup.TryGetValue(onDiskKey, out var indexes)
+            || !encodedPrefixLookup.TryGetValue(onDiskKey, out Queue<int>? indexes)
             || indexes.Count == 0)
         {
             return -1;
@@ -5399,7 +5400,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Position | Data ptr | Row | Prefix match | Access suffix | Encoder suffix | Encoded len | Full len | Full tail | Value |");
         sb.AppendLine("|---:|---:|---|:---:|:---:|:---:|---:|---:|---|---|");
-        foreach (var example in scan.Examples)
+        foreach (CorpusSuffixExample example in scan.Examples)
         {
             string fullLength = example.FullLength?.ToString(CultureInfo.InvariantCulture) ?? "-";
             string encoderSuffix = example.EncodedLength >= LongRowEntryLength
@@ -5464,7 +5465,7 @@ internal static class LongRowSuffixProbe
 
     private static string DescribeCorpusRowLabelValue(DataRow row)
     {
-        var columns = row.Table.Columns;
+        DataColumnCollection columns = row.Table.Columns;
         if (columns.Contains("name"))
         {
             object value = row["name"];
@@ -5785,10 +5786,10 @@ internal static class LongRowSuffixProbe
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add(scriptPath);
 
-        using var process = Process.Start(psi)
+        using Process process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start PowerShell host '{powerShellPath}'.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit((int)timeout.TotalMilliseconds))
         {
             TryKill(process);
@@ -5822,16 +5823,16 @@ internal static class LongRowSuffixProbe
 
     private static async Task DumpV2010SuffixAnalysisAsync(string fixturePath, StringBuilder sb, CancellationToken ct)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        var dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        var ascLayout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
-        var ascKeys = await CollectAllLeafKeysAsync(reader, ascLayout, reader.PageSize, firstPage: 112, ct);
+        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        IndexLeafPageBuilder.LeafPageLayout ascLayout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, ascLayout, reader.PageSize, firstPage: 112, ct);
 
-        var codes = GeneralCodes.Value;
-        var extCodes = GeneralExtCodes.Value;
+        GeneralLegacyTextIndexEncoder.CharHandler[] codes = GeneralCodes.Value;
+        GeneralLegacyTextIndexEncoder.CharHandler[] extCodes = GeneralExtCodes.Value;
 
         var rowData = new List<RowData>();
         var rowToLeaf = new (int RowIndex, int LeafIndex)[]
@@ -5864,7 +5865,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("## Char-by-char inline analysis around position 508");
         sb.AppendLine();
 
-        foreach (var row in rowData)
+        foreach (RowData row in rowData)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{row.RowIndex}] expected=0x{row.ExpectedSuffix:X4}");
             sb.AppendLine();
@@ -5876,10 +5877,10 @@ internal static class LongRowSuffixProbe
             for (int charIndex = 0; charIndex < Math.Min(row.Text.Length, 300); charIndex++)
             {
                 char currentChar = row.Text[charIndex];
-                var handler = currentChar <= LastChar
+                GeneralLegacyTextIndexEncoder.CharHandler handler = currentChar <= LastChar
                     ? codes[currentChar]
                     : extCodes[currentChar - FirstExtChar];
-                var inlineBytes = handler.GetInlineBytes(currentChar);
+                ReadOnlySpan<byte> inlineBytes = handler.GetInlineBytes(currentChar);
                 int inlineLength = inlineBytes.Length;
 
                 if (inlinePosition + inlineLength > 508 && firstCharAt508 < 0)
@@ -5911,10 +5912,10 @@ internal static class LongRowSuffixProbe
             for (int charIndex = 0; charIndex < row.Text.Length; charIndex++)
             {
                 char currentChar = row.Text[charIndex];
-                var handler = currentChar <= LastChar
+                GeneralLegacyTextIndexEncoder.CharHandler handler = currentChar <= LastChar
                     ? codes[currentChar]
                     : extCodes[currentChar - FirstExtChar];
-                var inlineBytes = handler.GetInlineBytes(currentChar);
+                ReadOnlySpan<byte> inlineBytes = handler.GetInlineBytes(currentChar);
                 if (!inlineBytes.IsEmpty)
                 {
                     AppendBytes(inlineOnly, inlineBytes);
@@ -5945,19 +5946,19 @@ internal static class LongRowSuffixProbe
 
     private static async Task DumpV2010CrcFullSweepAsync(string fixturePath, StringBuilder sb, CancellationToken ct)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        var dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
 
-        var ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
-        var descKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 119, ct);
+        List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
+        List<IndexEntry> descKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 119, ct);
 
-        var codes = GeneralCodes.Value;
-        var extCodes = GeneralExtCodes.Value;
-        var cp1252 = Cp1252Encoding;
+        GeneralLegacyTextIndexEncoder.CharHandler[] codes = GeneralCodes.Value;
+        GeneralLegacyTextIndexEncoder.CharHandler[] extCodes = GeneralExtCodes.Value;
+        Encoding cp1252 = Cp1252Encoding;
 
         var constraints = new List<ConstraintSet>();
         var rowToLeaf = new (int RowIndex, int AscLeafIndex)[]
@@ -6011,7 +6012,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
 
         var hits = new List<CrcSweepHit>();
-        var firstConstraint = constraints[0];
+        ConstraintSet firstConstraint = constraints[0];
         var normalTable = new ushort[256];
         var reflectedTable = new ushort[256];
 
@@ -6056,7 +6057,7 @@ internal static class LongRowSuffixProbe
                     bool allMatch = true;
                     for (int constraintIndex = 1; constraintIndex < constraints.Count; constraintIndex++)
                     {
-                        var constraint = constraints[constraintIndex];
+                        ConstraintSet constraint = constraints[constraintIndex];
                         ushort constraintGot = CrcFullWithTable(
                             constraint.Inputs[inputIndex],
                             normalTable,
@@ -6080,7 +6081,7 @@ internal static class LongRowSuffixProbe
             }
         }
 
-        foreach (var hit in hits
+        foreach (CrcSweepHit hit in hits
             .OrderBy(static hit => hit.InputIndex)
             .ThenBy(static hit => hit.Polynomial)
             .ThenBy(static hit => hit.Mode))
@@ -6096,13 +6097,13 @@ internal static class LongRowSuffixProbe
 
     private static void AppendInputCandidateSummary(List<RowData> rowData, StringBuilder sb)
     {
-        var cp1252 = Cp1252Encoding;
+        Encoding cp1252 = Cp1252Encoding;
 
         sb.AppendLine();
         sb.AppendLine("## Input candidate lengths");
         sb.AppendLine();
 
-        foreach (var row in rowData)
+        foreach (RowData row in rowData)
         {
             byte[][] inputs = BuildInputCandidates(row.Full, row.Text, cp1252);
             sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{row.RowIndex}]");
@@ -6421,7 +6422,7 @@ internal static class LongRowSuffixProbe
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
             result.AddRange(entries);
 
             (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
@@ -6454,7 +6455,7 @@ internal static class LongRowSuffixProbe
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -6512,7 +6513,7 @@ internal static class LongRowSuffixProbe
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -6629,10 +6630,10 @@ internal static class LongRowSuffixProbe
         string tableName,
         CancellationToken ct)
     {
-        var dataTable = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
-        var catalogEntry = await reader.GetCatalogEntryAsync(tableName, ct)
+        DataTable dataTable = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+        CatalogEntry catalogEntry = await reader.GetCatalogEntryAsync(tableName, ct)
             ?? throw new InvalidOperationException($"Table '{tableName}' was not found in the catalog.");
-        var locations = await CollectPhysicalRowLocationsAsync(reader, catalogEntry.TDefPage, ct);
+        List<RowLocation> locations = await CollectPhysicalRowLocationsAsync(reader, catalogEntry.TDefPage, ct);
         if (locations.Count != dataTable.Rows.Count)
         {
             throw new InvalidOperationException(
@@ -6642,8 +6643,8 @@ internal static class LongRowSuffixProbe
         var result = new Dictionary<long, PhysicalRowSnapshot>(locations.Count);
         for (int rowIndex = 0; rowIndex < locations.Count; rowIndex++)
         {
-            var location = locations[rowIndex];
-            var row = dataTable.Rows[rowIndex];
+            RowLocation location = locations[rowIndex];
+            DataRow row = dataTable.Rows[rowIndex];
             object boxed = row["data"];
             object? value = boxed is DBNull ? null : boxed;
             result[EncodeDataPointer(location.PageNumber, (byte)location.RowIndex)] =
@@ -6679,7 +6680,7 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            foreach (var location in reader.EnumerateLiveRowLocations(pageNumber, page))
+            foreach (RowLocation location in reader.EnumerateLiveRowLocations(pageNumber, page))
             {
                 if (location.RowSize >= reader.rowSz.NumCols)
                 {
@@ -6716,7 +6717,7 @@ internal static class LongRowSuffixProbe
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {

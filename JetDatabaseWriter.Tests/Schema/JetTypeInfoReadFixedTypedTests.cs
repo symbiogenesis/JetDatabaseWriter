@@ -131,7 +131,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         BinaryPrimitives.WriteDoubleLittleEndian(row, dt.ToOADate());
 
         object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, DateTime, size: 8);
-        var typedDt = Assert.IsType<DateTime>(typed);
+        DateTime typedDt = Assert.IsType<DateTime>(typed);
 
         // Round-trip via OADate has its own quantization, but it preserves
         // sub-second information that the "yyyy-MM-dd HH:mm:ss" format strips.
@@ -219,7 +219,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Numeric_StrictMode_ScaleOver28_Throws()
     {
         byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false);
-        var column = NumericColumn(scale: 29);
+        ColumnInfo column = NumericColumn(scale: 29);
 
         _ = Assert.Throws<JetLimitationException>(() =>
             JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric: true));
@@ -238,7 +238,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Numeric_NonStrict_ScaleOver28_ReturnsDBNull()
     {
         byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false);
-        var column = NumericColumn(scale: 29);
+        ColumnInfo column = NumericColumn(scale: 29);
 
         object result = JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric: false);
 
@@ -260,7 +260,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         // legacy "__CX:N__" string used by ReadFixedString — keep the string
         // path pinned for the diagnostics/RowsAsStrings consumer and assert
         // both encode the same complex_id.
-        var cir = Assert.IsType<ComplexIdRef>(typed);
+        ComplexIdRef cir = Assert.IsType<ComplexIdRef>(typed);
         Assert.Equal(42, cir.Id);
         Assert.Equal("__CX:42__", viaString);
     }
@@ -321,7 +321,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
 
     private static void AssertNumericParity(byte[] row, byte scale, object expected, bool strictNumeric = false)
     {
-        var column = NumericColumn(scale);
+        ColumnInfo column = NumericColumn(scale);
         object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric);
         Assert.Equal(expected, typed);
 
@@ -339,7 +339,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         // Legacy round-trip: format → parse → boxed primitive. Must agree
         // (unless documented otherwise — see DateTime sub-second test).
         string formatted = JetTypeInfo.ReadFixedString(row, start, type, size, strictNumeric);
-        var targetType = JetTypeInfo.GetClrType(type) ?? typeof(string);
+        Type targetType = JetTypeInfo.GetClrType(type) ?? typeof(string);
         object viaRoundTrip = TypedValueParser.ParseValue(formatted, targetType);
         Assert.Equal(expected, viaRoundTrip);
     }

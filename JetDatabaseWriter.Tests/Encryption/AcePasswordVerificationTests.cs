@@ -1,8 +1,11 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -44,7 +47,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // AesEncrypted.accdb has a password set via ACE CompactDatabase.
         // The reader must detect the password flag and throw when no password is provided.
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
             async () => await AccessReader.OpenAsync(TestDatabases.AesEncrypted, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -86,7 +89,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_OpenWithCorrectPassword_Succeeds()
     {
         // The correct password should open the database without error.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         await reader.ListTablesAsync(TestContext.Current.CancellationToken);
     }
 
@@ -94,8 +97,8 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_ListTables_WithCorrectPassword_ReturnsNonEmpty()
     {
         // After authentication, ListTables should return the original database tables.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -104,11 +107,11 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_ReadTable_WithCorrectPassword_ReturnsRows()
     {
         // Reading table data after password verification should return valid rows.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        var dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "Table should contain rows after password authentication.");
     }
@@ -117,8 +120,8 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_StreamRows_WithCorrectPassword_ReturnsRows()
     {
         // Streaming rows should work normally after password verification.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -129,8 +132,8 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_GetStatistics_WithCorrectPassword_ReturnsValidStats()
     {
         // Statistics should be accessible after correct password authentication.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables after authentication.");
         Assert.True(stats.TotalRows > 0, "Should report rows after authentication.");
@@ -140,11 +143,11 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     public async Task AccdbPassword_GetColumnMetadata_WithCorrectPassword_ReturnsColumns()
     {
         // Column metadata should be fully readable after password verification.
-        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        var meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {

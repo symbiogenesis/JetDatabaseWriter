@@ -31,11 +31,11 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task MaxLengthBinaryKey_255Bytes_RoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         byte[] payload = CreatePayload(255);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "LongBin",
@@ -49,8 +49,8 @@ public sealed class IndexLongBinaryKeyTests
             await writer.InsertRowAsync("LongBin", [1, payload], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: ct);
         Assert.Single(dt.Rows);
         byte[] actual = Assert.IsType<byte[]>(dt.Rows[0]["Bin"]);
         Assert.Equal(payload, actual);
@@ -68,7 +68,7 @@ public sealed class IndexLongBinaryKeyTests
     [InlineData(255)]
     public async Task LongBinaryKeys_MultipleRows_RoundTripCorrectly(int length)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         byte[][] payloads =
         [
@@ -78,7 +78,7 @@ public sealed class IndexLongBinaryKeyTests
             CreatePayload(length, seed: 0xFF),
         ];
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "MultiBin",
@@ -95,8 +95,8 @@ public sealed class IndexLongBinaryKeyTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         // Verify each payload was stored and round-tripped correctly.
@@ -115,7 +115,7 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_Descending_RoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         byte[][] payloads =
         [
@@ -124,7 +124,7 @@ public sealed class IndexLongBinaryKeyTests
             CreatePayload(100, seed: 0xF0),
         ];
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "DescLongBin",
@@ -146,8 +146,8 @@ public sealed class IndexLongBinaryKeyTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         foreach (byte[] expected in payloads)
@@ -165,11 +165,11 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_UniqueViolation_Throws()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         byte[] payload = CreatePayload(200, seed: 0x42);
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "UniqueLongBin",
             [
@@ -193,12 +193,12 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_CompositeWithText_RoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         byte[] bin1 = CreatePayload(128, seed: 0x11);
         byte[] bin2 = CreatePayload(128, seed: 0x22);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CompLongBin",
@@ -214,8 +214,8 @@ public sealed class IndexLongBinaryKeyTests
             await writer.InsertRowAsync("CompLongBin", ["beta", bin1], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: ct);
         Assert.Equal(3, dt.Rows.Count);
     }
 
@@ -233,7 +233,7 @@ public sealed class IndexLongBinaryKeyTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

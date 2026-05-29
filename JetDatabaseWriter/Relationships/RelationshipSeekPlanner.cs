@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Relationships;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -23,7 +24,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         FkContext ctx,
         CancellationToken cancellationToken)
     {
-        if (ctx.SeekIndexes.TryGetValue(rel.Name, out var cached))
+        if (ctx.SeekIndexes.TryGetValue(rel.Name, out ParentSeekIndex? cached))
         {
             return cached;
         }
@@ -31,7 +32,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ParentSeekIndex? resolved = null;
         try
         {
-            var core = await TryResolveSeekIndexCoreAsync(
+            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
                 rel.PrimaryTable,
                 rel.PrimaryColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -40,13 +41,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
                 return null;
             }
 
-            var foreignEntry = await writer.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? foreignEntry = await writer.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry == null)
             {
                 return null;
             }
 
-            var foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            TableDef foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             var foreignRowIndexes = new int[rel.ForeignColumns.Count];
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
@@ -82,7 +83,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         FkContext ctx,
         CancellationToken cancellationToken)
     {
-        if (ctx.ChildSeekIndexes.TryGetValue(rel.Name, out var cached))
+        if (ctx.ChildSeekIndexes.TryGetValue(rel.Name, out ChildSeekIndex? cached))
         {
             return cached;
         }
@@ -90,7 +91,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         ChildSeekIndex? resolved = null;
         try
         {
-            var core = await TryResolveSeekIndexCoreAsync(
+            SeekIndexCore? core = await TryResolveSeekIndexCoreAsync(
                 rel.ForeignTable,
                 rel.ForeignColumns,
                 cancellationToken).ConfigureAwait(false);
@@ -128,13 +129,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             return null;
         }
 
-        var entry = await writer.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry? entry = await writer.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
         {
             return null;
         }
 
-        var definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        TableDef definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         var columnNumbers = new int[columnNames.Count];
         var columnTypes = new byte[columnNames.Count];
@@ -152,7 +153,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             numericScales[index] = definition.Columns[columnIndex].NumericScale;
         }
 
-        var hit = await TryFindCoveringRealIdxAsync(
+        (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
             entry.TDefPage,
             columnNumbers,
             cancellationToken).ConfigureAwait(false);

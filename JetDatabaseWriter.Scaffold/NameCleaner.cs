@@ -1,4 +1,7 @@
 namespace JetDatabaseWriter.Scaffold;
+
+using System;
+
 /// <summary>
 /// Converts Access table/column names into valid C# identifiers.
 /// </summary>
@@ -45,7 +48,7 @@ internal static class NameCleaner
         }
 
         // Reserve index 0 for a possible '_' prefix when the first char is a digit.
-        var buffer = raw.Length < 128
+        Span<char> buffer = raw.Length < 128
             ? stackalloc char[raw.Length + 1]
             : new char[raw.Length + 1];
 

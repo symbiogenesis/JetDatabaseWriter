@@ -118,7 +118,7 @@ internal static class SyntheticDatabases
             return;
         }
 
-        await using var w = await AccessWriter.CreateDatabaseAsync(NumericDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(NumericDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(
             NumericTable,
             new ColumnDefinition[]
@@ -162,7 +162,7 @@ internal static class SyntheticDatabases
             return;
         }
 
-        await using var w = await AccessWriter.CreateDatabaseAsync(TextDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(TextDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(
             TextTable,
             new ColumnDefinition[]
@@ -215,7 +215,7 @@ internal static class SyntheticDatabases
             defs.Add(new ColumnDefinition("S" + i, typeof(string), 32));
         }
 
-        await using var w = await AccessWriter.CreateDatabaseAsync(WideDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(WideDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(WideTable, defs).ConfigureAwait(false);
 
         var rows = new List<object[]>(WideRows);
@@ -246,7 +246,7 @@ internal static class SyntheticDatabases
             return;
         }
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(MemoDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(MemoDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await CreateMemoTableAsync(
             writer,
             MemoTable,
@@ -307,7 +307,7 @@ internal static class SyntheticDatabases
 
     private static async Task CreateOwnedPageDiscoveryDatabaseAsync(string databasePath)
     {
-        await using var writer = await AccessWriter.CreateDatabaseAsync(databasePath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(databasePath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await writer.CreateTableAsync(OwnedPageDiscoveryTargetTable, OwnedPageDiscoverySchema()).ConfigureAwait(false);
         await writer.InsertRowsAsync(
             OwnedPageDiscoveryTargetTable,
@@ -340,7 +340,7 @@ internal static class SyntheticDatabases
     {
         int pageSize;
         long tdefPage;
-        await using (var reader = await AccessReader.OpenAsync(
+        await using (AccessReader reader = await AccessReader.OpenAsync(
             databasePath,
             new AccessReaderOptions { UseLockFile = false }).ConfigureAwait(false))
         {
@@ -361,7 +361,7 @@ internal static class SyntheticDatabases
 
     private static async Task<long> ResolveTdefPageAsync(AccessReader reader, string tableName)
     {
-        var metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
         int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
         int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
         if (idIndex < 0 || nameIndex < 0)

@@ -58,7 +58,7 @@ internal static class EncryptionConverter
         if (EncryptionManager.IsCompoundFileEncrypted(header))
         {
             _ = source.Seek(0, SeekOrigin.Begin);
-            (byte[]? cfbInner, var cfbFormat) = await EncryptionManager
+            (byte[]? cfbInner, AccessEncryptionFormat cfbFormat) = await EncryptionManager
                 .TryDecryptCompoundFileWithFormatAsync(source, header, password, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -91,8 +91,8 @@ internal static class EncryptionConverter
             return (OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span), AccessEncryptionFormat.AccdbAgile);
         }
 
-        var fmt = DetectFormat(header);
-        var src = DetectFlatFormat(rawFile, fmt);
+        DatabaseFormat fmt = DetectFormat(header);
+        AccessEncryptionFormat src = DetectFlatFormat(rawFile, fmt);
         await using var rawStream = new MemoryStream(rawFile, writable: false);
         byte[] plaintext = await ReadFlatDecryptedAsync(rawStream, header, password, isLegacyAesCfb: false, cancellationToken)
             .ConfigureAwait(false);
@@ -122,7 +122,7 @@ internal static class EncryptionConverter
             throw new InvalidDataException("Plaintext database is shorter than the JET header.");
         }
 
-        var fmt = DetectFormat(plaintext);
+        DatabaseFormat fmt = DetectFormat(plaintext);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         if (targetFormat == AccessEncryptionFormat.None)
@@ -190,7 +190,7 @@ internal static class EncryptionConverter
                 : AccessEncryptionFormat.AccdbAesCfbWrapped;
         }
 
-        var fmt = DetectFormat(rawFile);
+        DatabaseFormat fmt = DetectFormat(rawFile);
         return DetectFlatFormat(rawFile, fmt);
     }
 
@@ -224,7 +224,7 @@ internal static class EncryptionConverter
         bool isLegacyAesCfb,
         CancellationToken cancellationToken)
     {
-        var fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
+        DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         using var pageKeys = new PageDecryptionKeys
@@ -441,7 +441,7 @@ internal static class EncryptionConverter
     /// <exception cref="JetLimitationException">Thrown when the password is too long for the fixed header password area.</exception>
     private static void EncodeJet4StylePassword(byte[] header, ReadOnlySpan<char> password, bool useAccdbLegacyMask)
     {
-        var mask = useAccdbLegacyMask
+        ReadOnlySpan<byte> mask = useAccdbLegacyMask
             ? EncryptionManager.AccdbLegacyPasswordMaskForWrite
             : EncryptionManager.Jet4PasswordMaskForWrite;
 
@@ -484,7 +484,7 @@ internal static class EncryptionConverter
         int maxBytes = System.Text.Encoding.UTF8.GetMaxByteCount(password.Length);
         Span<byte> stackBuf = stackalloc byte[256];
         byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
-        var utf8 = rented ?? stackBuf;
+        Span<byte> utf8 = rented ?? stackBuf;
         try
         {
             int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);

@@ -26,7 +26,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_RoundTrip_ReturnsAllRows(string path)
     {
-        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return; // wide-row layout under test only applies to Jet4/ACE
@@ -44,7 +44,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
 
         // Each row: 4 bytes int + 4×510 bytes UCS-2 ≈ 2044 bytes.
         const int rowCount = 20;
-        var rows = Enumerable.Range(1, rowCount).Select(i => new object[]
+        IEnumerable<object[]> rows = Enumerable.Range(1, rowCount).Select(i => new object[]
         {
             i,
             new string('A', 255),
@@ -53,14 +53,14 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
             new string('D', 255),
         });
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(rowCount, dt.Rows.Count);
     }
@@ -69,7 +69,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_GetRealRowCount_MatchesInsertCount(string path)
     {
-        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -83,19 +83,19 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         };
 
         const int rowCount = 50;
-        var rows = Enumerable.Range(1, rowCount).Select(i => new object[]
+        IEnumerable<object[]> rows = Enumerable.Range(1, rowCount).Select(i => new object[]
         {
             i,
             new string('X', 255),
         });
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, count);
@@ -105,7 +105,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_StreamRows_YieldsAllRows(string path)
     {
-        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -120,20 +120,20 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         };
 
         const int rowCount = 30;
-        var rows = Enumerable.Range(1, rowCount).Select(i => new object[]
+        IEnumerable<object[]> rows = Enumerable.Range(1, rowCount).Select(i => new object[]
         {
             i,
             new string((char)('A' + (i % 26)), 255),
             new string((char)('a' + (i % 26)), 255),
         });
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         int streamed = await reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, streamed);
@@ -144,7 +144,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     public async Task WideRows_CellValues_AreRoundTripped(string path)
     {
         // Verify that the actual cell values survive a wide-row round-trip.
-        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -161,14 +161,14 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         string expectedText1 = new('Z', 200);
         string expectedText2 = new('Q', 200);
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(tableName, [1, expectedText1, expectedText2], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Single(dt.Rows);
         Assert.Equal(1, dt.Rows[0]["Id"]);
@@ -199,7 +199,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         // Use a fresh in-memory ACE database so we don't pollute one of
         // the cached fixtures with a wide schema.
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
@@ -240,12 +240,12 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         await writer.InsertRowAsync(tableName, alternating, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(tableName, allNull, TestContext.Current.CancellationToken);
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(3, dt.Rows.Count);
 

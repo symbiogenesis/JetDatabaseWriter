@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -40,11 +41,11 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_WithSingleIndex_RoundTripsThroughListIndexes(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Single";
         const string IndexName = "IX_Idx_Single_Name";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -56,10 +57,10 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
-        var idx = Assert.Single(indexes);
+        IndexMetadata idx = Assert.Single(indexes);
         Assert.Equal(IndexName, idx.Name);
         Assert.Equal(IndexKind.Normal, idx.Kind);
         Assert.False(idx.EnforcesUniqueness);
@@ -69,7 +70,7 @@ public sealed class IndexWriterTests
         Assert.False(idx.CascadeDeletes);
         Assert.Equal(0, idx.RealIndexNumber);
 
-        var col = Assert.Single(idx.Columns);
+        IndexColumnReference col = Assert.Single(idx.Columns);
         Assert.Equal("Name", col.Name);
         Assert.True(col.IsAscending);
     }
@@ -79,10 +80,10 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_WithMultipleIndexes_RoundTripsAll(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Multi";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -99,8 +100,8 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, indexes.Count);
         Assert.Equal(ExpectedIndexNames, indexes.Select(i => i.Name).ToArray());
@@ -126,10 +127,10 @@ public sealed class IndexWriterTests
     {
         // The new overload with an empty index list must produce byte-identical output
         // to the original column-only overload, and the reader must report no indexes.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Empty";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -138,8 +139,8 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Empty(indexes);
     }
 
@@ -148,8 +149,8 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_IndexReferencesUnknownColumn_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
-        await using var writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -164,8 +165,8 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_DuplicateIndexNames_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
-        await using var writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -187,10 +188,10 @@ public sealed class IndexWriterTests
     public async Task CreateTable_WithIndex_DataInsertsAndReadsBack(DatabaseFormat format)
     {
         // The heap data path must not be perturbed by the TDEF index sections.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Data";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -211,7 +212,7 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         var rows = new List<object[]>();
         await foreach (object[] row in reader.Rows(TableName, cancellationToken: TestContext.Current.CancellationToken).WithCancellation(TestContext.Current.CancellationToken))
         {
@@ -231,10 +232,10 @@ public sealed class IndexWriterTests
     {
         // Index emission must not alter the column descriptors / names that the
         // reader extracts from the same TDEF buffer.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Cols";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -247,8 +248,8 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, meta.Count);
         Assert.Equal("Id", meta[0].Name);
@@ -271,9 +272,9 @@ public sealed class IndexWriterTests
         // their parent_page is non-zero — for a single-table single-index
         // database, exactly one such page must exist. The free_space header must
         // equal pageSize - firstEntryOffset per the format-specific §4.2 layout.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Idx_Leaf_Single",
@@ -283,7 +284,7 @@ public sealed class IndexWriterTests
         }
 
         long tdefPage;
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Single");
         }
@@ -318,9 +319,9 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_WithMultipleIndexes_EmitsOneLeafPagePerIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Idx_Leaf_Multi",
@@ -338,7 +339,7 @@ public sealed class IndexWriterTests
         }
 
         long tdefPage;
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Multi");
         }
@@ -364,9 +365,9 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task CreateTable_WithPrimaryKey_RoundTripsAsPkKind(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Pk_Table",
@@ -377,10 +378,10 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync("Pk_Table", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Pk_Table", TestContext.Current.CancellationToken);
 
-        var pk = Assert.Single(indexes);
+        IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
         Assert.Equal("Id", Assert.Single(pk.Columns).Name);
@@ -409,7 +410,7 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "Wide";
         const int ColumnCount = 50;
         const int IndexCount = 20;
@@ -426,7 +427,7 @@ public sealed class IndexWriterTests
             indexes.Add(new IndexDefinition($"IX_{i:D2}", $"C{i:D2}"));
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(TableName, columns, indexes, TestContext.Current.CancellationToken);
 
@@ -441,10 +442,10 @@ public sealed class IndexWriterTests
             await writer.InsertRowAsync(TableName, row, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
         // Every column survives.
-        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Equal(ColumnCount, meta.Count);
         for (int i = 0; i < ColumnCount; i++)
         {
@@ -453,17 +454,17 @@ public sealed class IndexWriterTests
         }
 
         // Every index survives, with the right key column.
-        var idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Equal(IndexCount, idxList.Count);
         for (int i = 0; i < IndexCount; i++)
         {
-            var idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
+            IndexMetadata idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
             Assert.Equal($"C{i:D2}", Assert.Single(idx.Columns).Name);
         }
 
         // Row data round-trips with every column populated.
-        var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
-        var r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
+        System.Data.DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        System.Data.DataRow r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
         for (int i = 0; i < ColumnCount; i++)
         {
             Assert.Equal(i + 1, Convert.ToInt32(r[$"C{i:D2}"], System.Globalization.CultureInfo.InvariantCulture));
@@ -485,7 +486,7 @@ public sealed class IndexWriterTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateTable_TDefChainSpansMultiplePages_RoundTrips(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string TableName = "VeryWide";
         const int ColumnCount = 200;
         const int IndexCount = 30;
@@ -503,7 +504,7 @@ public sealed class IndexWriterTests
             indexes.Add(new IndexDefinition($"IX_{i:D2}", $"C{i:D3}"));
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(TableName, columns, indexes, TestContext.Current.CancellationToken);
         }
@@ -514,18 +515,18 @@ public sealed class IndexWriterTests
         // 4-byte next-page pointer at offset 4. A single-page TDEF stores
         // 0 there.
         long firstTdefPage;
-        await using (var reader = await OpenReaderAsync(stream))
+        await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(TableName, tables);
 
             // Use the reader's internal stitched-bytes accessor (used by the
             // diagnostic tooling) to confirm the logical TDEF body exceeds
             // a single page.
-            var msys = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> msys = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
             Assert.Equal(ColumnCount, msys.Count);
 
-            var idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<IndexMetadata> idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
             Assert.Equal(IndexCount, idxList.Count);
 
             // Pull the catalog row to recover the TDEF page number.
@@ -556,7 +557,7 @@ public sealed class IndexWriterTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(AccessReader reader, string tableName)
     {
-        var entry = await reader.GetCatalogEntryAsync(
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync(
             tableName, TestContext.Current.CancellationToken);
         if (entry is null)
         {
@@ -575,7 +576,7 @@ public sealed class IndexWriterTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

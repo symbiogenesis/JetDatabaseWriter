@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
@@ -164,7 +165,7 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             // V2010 / ACE: continuous encoding of up to 255 characters with
             // no chunk split. ApplyMaxEntryLength handles the byte cap.
-            var v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
+            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
             return EncodeSingleChunk(
                 text,
                 v2010Chars,
@@ -199,7 +200,7 @@ internal static class GeneralLegacyTextIndexEncoder
             }
         }
 
-        var chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
 
         return EncodeSingleChunk(text, chars, ascending, codes, extCodes, 0, null);
     }
@@ -213,7 +214,7 @@ internal static class GeneralLegacyTextIndexEncoder
         int maxEntryLength,
         LongRowSuffixProvider? longRowSuffixProvider)
     {
-        var bout = CreateEntryBuffer(chars.Length, ascending);
+        List<byte> bout = CreateEntryBuffer(chars.Length, ascending);
         int payloadStart = bout.Count;
 
         var state = new ChunkEmitState(chars.Length);
@@ -233,16 +234,16 @@ internal static class GeneralLegacyTextIndexEncoder
         CharHandler[] extCodes,
         ReadOnlySpan<byte> separator)
     {
-        var chunk1 = text.AsSpan(0, splitAt);
+        ReadOnlySpan<char> chunk1 = text.AsSpan(0, splitAt);
 
         int chunk2Cap = Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength);
         int chunk2Take = chunk2Cap - resumeAt;
 
-        var chunk2 = chunk2Take > 0
+        ReadOnlySpan<char> chunk2 = chunk2Take > 0
             ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
             : ReadOnlySpan<char>.Empty;
 
-        var bout = CreateEntryBuffer(chunk1.Length + chunk2.Length + separator.Length, ascending);
+        List<byte> bout = CreateEntryBuffer(chunk1.Length + chunk2.Length + separator.Length, ascending);
         int payloadStart = bout.Count;
 
         var state = new ChunkEmitState(chunk1.Length + chunk2.Length);
@@ -294,10 +295,10 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         foreach (char c in chars)
         {
-            var ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
+            CharHandler ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
             int curCharOffset = state.CharOffset;
 
-            var inline = ch.GetInlineBytes(c);
+            ReadOnlySpan<byte> inline = ch.GetInlineBytes(c);
             if (!inline.IsEmpty)
             {
                 AppendBytes(bout, inline);
@@ -309,14 +310,14 @@ internal static class GeneralLegacyTextIndexEncoder
                 continue;
             }
 
-            var extra = ch.ExtraBytes;
+            ReadOnlySpan<byte> extra = ch.ExtraBytes;
             byte extraCodeModifier = ch.ExtraByteModifier;
             if (!extra.IsEmpty || extraCodeModifier != 0)
             {
                 WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.GetOrCreateExtraCodes());
             }
 
-            var unprint = ch.UnprintableBytes;
+            ReadOnlySpan<byte> unprint = ch.UnprintableBytes;
             if (!unprint.IsEmpty)
             {
                 state.UnprintableCodes ??= [];
@@ -553,8 +554,8 @@ internal static class GeneralLegacyTextIndexEncoder
         int numCodes = lastChar - firstChar + 1;
         var values = new CharHandler[numCodes];
 
-        var asm = typeof(GeneralLegacyTextIndexEncoder).Assembly;
-        using var raw = asm.GetManifestResourceStream(resourceName)
+        Assembly asm = typeof(GeneralLegacyTextIndexEncoder).Assembly;
+        using Stream raw = asm.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found.");
         using var gz = new GZipStream(raw, CompressionMode.Decompress);
         using var reader = new StreamReader(gz, Encoding.ASCII);

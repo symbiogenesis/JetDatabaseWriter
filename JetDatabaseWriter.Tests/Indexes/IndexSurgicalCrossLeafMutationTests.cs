@@ -39,9 +39,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // strictly less than each leaf's existing max → no per-leaf splits,
         // no parent-summary changes. cross-leaf surgical rewrites both leaves in place
         // at their existing page numbers.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -60,7 +60,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // 5 lands on leaf 0 (between 0 and 10); 4005 lands on leaf 1
             // (between 4000 and 4010). Neither is the leaf's max key.
@@ -76,8 +76,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // index pages appended.
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -97,9 +97,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // leaf's max is intentionally NOT touched (changing the tree's
         // overall max would trigger the tail-page append tail-page descent overshoot
         // and bail to bulk rebuild,-C-3 / leaf split design).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -120,7 +120,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // 3991 → leaf 0, becomes leaf 0's new max (parent summary for
             // leaf 0 must be updated).
@@ -135,8 +135,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
 
@@ -151,9 +151,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // Functional verification: after a cross-leaf insert batch, every
         // inserted key is readable AND seekable via the index. (Filter via
         // LINQ over Rows, which exercises the post-mutation tree.)
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -170,7 +170,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Three inserts spanning two leaves (the tree only has 2 with
             // 800 sparse-int entries) — but we still go through the cross-
@@ -186,8 +186,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(803, dt!.Rows.Count);
 
@@ -211,9 +211,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // batch stays in-place. cross-leaf surgical should commit both: one new appended
         // page (the split's right half) plus rewrites of both leaves +
         // parent in place. Net delta on index page count: exactly +1.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -241,7 +241,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // 200 → leaf 0 (forces overflow if leaf 0 is full).
             // 10005 → leaf 1, stays in-place.
@@ -260,8 +260,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         int delta = idxAfter - idxBefore;
         Assert.True(delta <= 2, $"Expected ≤2 new index pages, got {delta}.");
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -276,9 +276,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // Stress test: several successive cross-leaf batches of varying
         // size. Verifies the surgical path re-engages cleanly across
         // sequential calls and that the final data is consistent.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -295,7 +295,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             await writer.InsertRowsAsync("T", seedRows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Batch 1: 3 cross-leaf inserts.
             await writer.InsertRowsAsync(
@@ -316,8 +316,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(807, dt!.Rows.Count);
 
@@ -352,7 +352,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

@@ -354,7 +354,7 @@ internal static class TestDatabases
             {
                 return Task.Run(async () =>
                 {
-                    await using var r = await AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false });
+                    await using AccessReader r = await AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false });
                     return true;
                 }).GetAwaiter().GetResult();
             }
@@ -383,7 +383,7 @@ internal static class TestDatabases
 
         try
         {
-            await using var r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
+            await using AccessReader r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
             _readableCache.TryAdd(path, true);
             return true;
         }

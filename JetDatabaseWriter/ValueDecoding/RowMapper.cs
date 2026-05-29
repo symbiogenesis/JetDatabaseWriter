@@ -81,7 +81,7 @@ internal static class RowMapper<T>
     /// <param name="header">The header.</param>
     internal static Accessor? TryGetAccessor(string header)
     {
-        PropertyMap.TryGetValue(header, out var acc);
+        PropertyMap.TryGetValue(header, out Accessor? acc);
         return acc;
     }
 
@@ -107,12 +107,12 @@ internal static class RowMapper<T>
     {
         Guard.NotNull(headers, nameof(headers));
 
-        var rowParam = Expression.Parameter(typeof(object?[]), "row");
-        var itemLocal = Expression.Variable(typeof(T), "item");
-        var lenLocal = Expression.Variable(typeof(int), "len");
+        ParameterExpression rowParam = Expression.Parameter(typeof(object?[]), "row");
+        ParameterExpression itemLocal = Expression.Variable(typeof(T), "item");
+        ParameterExpression lenLocal = Expression.Variable(typeof(int), "len");
 
         // Hoist the null constant so duplicate AST nodes aren't allocated per column.
-        var nullObj = Expression.Constant(null, typeof(object));
+        ConstantExpression nullObj = Expression.Constant(null, typeof(object));
 
         int columnCount = headers.Count;
         int sourceCount = sourceTypes?.Count ?? 0;
@@ -126,23 +126,23 @@ internal static class RowMapper<T>
 
         for (int i = 0; i < columnCount; i++)
         {
-            if (!PropertyMap.TryGetValue(headers[i], out var acc))
+            if (!PropertyMap.TryGetValue(headers[i], out Accessor? acc))
             {
                 continue;
             }
 
-            var prop = acc.Property;
-            var propType = prop.PropertyType;
-            var underlying = Nullable.GetUnderlyingType(propType) ?? propType;
-            var sourceType = i < sourceCount ? sourceTypes![i] : null;
+            PropertyInfo prop = acc.Property;
+            Type propType = prop.PropertyType;
+            Type underlying = Nullable.GetUnderlyingType(propType) ?? propType;
+            Type? sourceType = i < sourceCount ? sourceTypes![i] : null;
             bool fastDirect = sourceType != null && sourceType == underlying;
 
-            var indexConst = Expression.Constant(i);
-            var valueLocal = Expression.Variable(typeof(object), "v");
-            var fetchValue = Expression.Assign(
+            ConstantExpression indexConst = Expression.Constant(i);
+            ParameterExpression valueLocal = Expression.Variable(typeof(object), "v");
+            BinaryExpression fetchValue = Expression.Assign(
                 valueLocal,
                 Expression.ArrayAccess(rowParam, indexConst));
-            var notNullOrDbNull = Expression.AndAlso(
+            BinaryExpression notNullOrDbNull = Expression.AndAlso(
                 Expression.NotEqual(valueLocal, nullObj),
                 Expression.Not(Expression.TypeIs(valueLocal, typeof(DBNull))));
 
@@ -164,11 +164,11 @@ internal static class RowMapper<T>
                 // Reuse `valueLocal` as the in/out slot so we don't need a
                 // second local — the original `value` is no longer needed
                 // after the coerce call.
-                var coerceCall = Expression.Call(
+                MethodCallExpression coerceCall = Expression.Call(
                     CoerceToTargetMethod,
                     valueLocal,
                     Expression.Constant(underlying, typeof(Type)));
-                var assign = Expression.Assign(
+                BinaryExpression assign = Expression.Assign(
                     Expression.Property(itemLocal, prop),
                     Expression.Convert(valueLocal, propType));
                 assignBlock = Expression.Block(
@@ -187,7 +187,7 @@ internal static class RowMapper<T>
         // Final expression: return item.
         statements.Add(itemLocal);
 
-        var body = Expression.Block(typeof(T), [itemLocal, lenLocal], statements);
+        BlockExpression body = Expression.Block(typeof(T), [itemLocal, lenLocal], statements);
         return Expression.Lambda<Func<object?[], T>>(body, rowParam).Compile();
     }
 
@@ -239,7 +239,7 @@ internal static class RowMapper<T>
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
-        var writer = WriteCache.GetValue(td, static key => BuildToRow(key));
+        Func<T, object[]> writer = WriteCache.GetValue(td, static key => BuildToRow(key));
         return writer(item);
     }
 
@@ -252,8 +252,8 @@ internal static class RowMapper<T>
     private static Func<T, object[]> BuildToRow(TableDef td)
     {
         int count = td.Columns.Count;
-        var itemParam = Expression.Parameter(typeof(T), "item");
-        var dbNull = Expression.Constant(DBNull.Value, typeof(object));
+        ParameterExpression itemParam = Expression.Parameter(typeof(T), "item");
+        ConstantExpression dbNull = Expression.Constant(DBNull.Value, typeof(object));
 
         // Build the array via NewArrayInit so the compiled body is a single
         // `newarr` followed by inline `stelem.ref` per element — no scratch
@@ -262,9 +262,9 @@ internal static class RowMapper<T>
         for (int i = 0; i < count; i++)
         {
             Expression valueExpr;
-            if (PropertyMap.TryGetValue(td.Columns[i].Name, out var acc))
+            if (PropertyMap.TryGetValue(td.Columns[i].Name, out Accessor? acc))
             {
-                var pt = acc.Property.PropertyType;
+                Type pt = acc.Property.PropertyType;
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
                 if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null)
                 {
@@ -277,7 +277,7 @@ internal static class RowMapper<T>
                 {
                     // Reference or Nullable<T>: box (if needed) then coalesce
                     // a null payload to DBNull.Value.
-                    var boxed = pt.IsValueType
+                    Expression boxed = pt.IsValueType
                         ? Expression.Convert(propAccess, typeof(object))
                         : propAccess;
                     valueExpr = Expression.Coalesce(boxed, dbNull);
@@ -291,7 +291,7 @@ internal static class RowMapper<T>
             values[i] = valueExpr;
         }
 
-        var body = Expression.NewArrayInit(typeof(object), values);
+        NewArrayExpression body = Expression.NewArrayInit(typeof(object), values);
         return Expression.Lambda<Func<T, object[]>>(body, itemParam).Compile();
     }
 
@@ -338,7 +338,7 @@ internal static class RowMapper<T>
 
         for (int i = 0; i < len; i++)
         {
-            var acc = index[i];
+            Accessor? acc = index[i];
             if (acc == null)
             {
                 continue;
@@ -362,11 +362,11 @@ internal static class RowMapper<T>
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {
-        var props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        PropertyInfo[] props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
         var map = new Dictionary<string, Accessor>(props.Length, StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < props.Length; i++)
         {
-            var prop = props[i];
+            PropertyInfo prop = props[i];
             if (prop.CanWrite)
             {
                 map[prop.Name] = new Accessor(prop);
@@ -386,8 +386,8 @@ internal static class RowMapper<T>
             Property = prop;
             TargetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
 
-            var instance = Expression.Parameter(typeof(T), "i");
-            var value = Expression.Parameter(typeof(object), "v");
+            ParameterExpression instance = Expression.Parameter(typeof(T), "i");
+            ParameterExpression value = Expression.Parameter(typeof(object), "v");
             Setter = Expression.Lambda<Action<T, object>>(
                 Expression.Assign(
                     Expression.Property(instance, prop),

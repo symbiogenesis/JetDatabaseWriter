@@ -42,7 +42,7 @@ public sealed class AccessReaderFuzzRobustnessTests
 
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 ms,
                 new AccessReaderOptions { UseLockFile = false, ValidateOnOpen = true },
                 leaveOpen: true,
@@ -78,7 +78,7 @@ public sealed class AccessReaderFuzzRobustnessTests
         byte[] golden;
         {
             await using var seed = new MemoryStream();
-            await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
                 seed,
                 DatabaseFormat.Jet4Mdb,
                 leaveOpen: true,
@@ -112,7 +112,7 @@ public sealed class AccessReaderFuzzRobustnessTests
         byte[] golden;
         {
             await using var seed = new MemoryStream();
-            await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
                 seed,
                 DatabaseFormat.Jet4Mdb,
                 leaveOpen: true,
@@ -164,13 +164,13 @@ public sealed class AccessReaderFuzzRobustnessTests
         await using var ms = new MemoryStream(data, writable: false);
         try
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 ms,
                 new AccessReaderOptions { UseLockFile = false, ValidateOnOpen = true },
                 leaveOpen: true,
                 cancellationToken: cancellationToken);
 
-            var tables = await reader.ListTablesAsync(cancellationToken);
+            List<string> tables = await reader.ListTablesAsync(cancellationToken);
             foreach (string t in tables)
             {
                 try

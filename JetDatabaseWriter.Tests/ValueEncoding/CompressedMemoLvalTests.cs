@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -93,7 +94,7 @@ public sealed class CompressedMemoLvalTests
     {
         var ms = new MemoryStream();
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -114,13 +115,13 @@ public sealed class CompressedMemoLvalTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MemoTest",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -140,7 +141,7 @@ public sealed class CompressedMemoLvalTests
         const string sentinel = "ZZUNIQUEWRITERSENTINELZZ";
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
@@ -172,8 +173,8 @@ public sealed class CompressedMemoLvalTests
 
         // Round-trip: the reader should still see the original string.
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(dt);
         Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
     }
@@ -193,7 +194,7 @@ public sealed class CompressedMemoLvalTests
         string memoValue = new string('K', 1480) + sentinel; // 1494 chars
 
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -227,13 +228,13 @@ public sealed class CompressedMemoLvalTests
 
         // Round-trip the value.
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(memoValue, Assert.IsType<string>(dt.Rows[0]["Content"]));
     }
 

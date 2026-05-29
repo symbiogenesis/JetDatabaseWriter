@@ -37,7 +37,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(short), (short)1, (short)2, (short)3)]
     public async Task AutoIncrement_NullValues_AssignsMonotonicSequenceFromOne(Type clrType, object expected1, object expected2, object expected3)
     {
-        await using var ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -45,7 +45,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         string tableName = $"AI_{Guid.NewGuid():N}".Substring(0, 18);
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -60,7 +60,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             await writer.InsertRowAsync(tableName, [DBNull.Value, "third"], TestContext.Current.CancellationToken);
         }
 
-        await using (var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
         {
             List<object> ids = [];
             await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
@@ -85,7 +85,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(int))]
     public async Task AutoIncrement_FlagPersists_AcrossWriterClose(Type clrType)
     {
-        await using var ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -93,7 +93,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         string tableName = $"AIF_{Guid.NewGuid():N}".Substring(0, 18);
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -101,10 +101,10 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        var id = Assert.Single(meta);
+        ColumnMetadata id = Assert.Single(meta);
         Assert.Equal(clrType, id.ClrType);
         Assert.False(id.IsNullable);
     }
@@ -117,7 +117,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [Fact]
     public async Task AutoIncrement_AfterDeleteAllRows_DoesNotReuseValues()
     {
-        await using var ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -125,7 +125,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         string tableName = $"AID_{Guid.NewGuid():N}".Substring(0, 18);
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -145,7 +145,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             await writer.InsertRowAsync(tableName, [DBNull.Value, "c"], TestContext.Current.CancellationToken);
         }
 
-        await using (var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
         {
             List<int> ids = [];
             await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
@@ -165,7 +165,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [Fact]
     public async Task AutoIncrement_ExplicitValue_OverridesCounterAndRoundTrips()
     {
-        await using var ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -173,7 +173,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         string tableName = $"AIE_{Guid.NewGuid():N}".Substring(0, 18);
 
-        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -186,7 +186,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             await writer.InsertRowAsync(tableName, [42, "explicit"], TestContext.Current.CancellationToken);
         }
 
-        await using (var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
+        await using (AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
         {
             object[]? row = null;
             await foreach (object[] r in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
@@ -213,7 +213,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(typeof(long))]
     public async Task AutoIncrement_OnUnsupportedIntegralType_ThrowsNotSupported(Type clrType)
     {
-        await using var ms = await CopyNorthwindAsync();
+        await using MemoryStream? ms = await CopyNorthwindAsync();
         if (ms is null)
         {
             return;
@@ -221,7 +221,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         string tableName = $"AIU_{Guid.NewGuid():N}".Substring(0, 18);
 
-        await using var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(

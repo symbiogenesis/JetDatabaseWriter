@@ -19,9 +19,9 @@ public sealed class EmittedPageInvariantTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateTable_WithIndex_EmitsWellFormedPages(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -42,9 +42,9 @@ public sealed class EmittedPageInvariantTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task InsertUpdateDelete_WithMaintainedIndex_LeavesWellFormedPages(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -85,9 +85,9 @@ public sealed class EmittedPageInvariantTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task MultiLevelIndexAndChainedLval_EmitWellFormedPages(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "IndexedRows",
@@ -121,7 +121,7 @@ public sealed class EmittedPageInvariantTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var stream = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             format,
             new AccessWriterOptions { UseLockFile = false },

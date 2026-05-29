@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -39,9 +40,9 @@ public sealed class IndexBinaryKeyTests
         // Binary is byte[] with MaxLength in [1, 255]. The bulk maintenance
         // loop encodes every snapshot row through IndexKeyEncoder, which must
         // accept Binary so create-then-insert on a binary-key index round-trips.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "BinIdx",
@@ -66,8 +67,8 @@ public sealed class IndexBinaryKeyTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rows = await reader.ReadDataTableAsync("BinIdx", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rows = await reader.ReadDataTableAsync("BinIdx", cancellationToken: ct);
         Assert.Equal(4, rows.Rows.Count);
     }
 
@@ -78,9 +79,9 @@ public sealed class IndexBinaryKeyTests
         // maintenance loop and uses the same encoder. With Binary now
         // supported the check fires; without binary-key indexes it would throw
         // NotSupportedException before reaching the duplicate detection.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await writer.CreateTableAsync(
             "BinUnique",
@@ -106,9 +107,9 @@ public sealed class IndexBinaryKeyTests
         // concatenates per-column entry blocks, so the binary block must
         // round-trip alongside text without the multi-column path bailing
         // back to the schema-only fall-through.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "BinComposite",
@@ -124,8 +125,8 @@ public sealed class IndexBinaryKeyTests
             await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x09 }], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rows = await reader.ReadDataTableAsync("BinComposite", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rows = await reader.ReadDataTableAsync("BinComposite", cancellationToken: ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 
@@ -134,9 +135,9 @@ public sealed class IndexBinaryKeyTests
     {
         // Descending binary keys exercise the post-loop bulk bit-flip path
         // (data bytes + final length byte flip; intermediate 0x09 stays).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "BinDesc",
@@ -165,15 +166,15 @@ public sealed class IndexBinaryKeyTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rows = await reader.ReadDataTableAsync("BinDesc", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rows = await reader.ReadDataTableAsync("BinDesc", cancellationToken: ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

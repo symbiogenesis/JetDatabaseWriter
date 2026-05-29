@@ -51,7 +51,7 @@ internal static class OfficeCryptoStandard
                 "EncryptionInfo header is not in Standard (version 3.2 or 4.2) format.");
         }
 
-        var descriptor = ParseDescriptor(encryptionInfo);
+        StandardDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] key = DeriveKey(password, descriptor);
 
         VerifyPassword(key, descriptor);
@@ -214,7 +214,7 @@ internal static class OfficeCryptoStandard
         // Step 1: H0 = SHA1(salt || password_UTF16LE)
         int passwordByteCount = Encoding.Unicode.GetByteCount(password);
         byte[]? rentedPasswordBytes = null;
-        var passwordBytes = passwordByteCount <= 512
+        Span<byte> passwordBytes = passwordByteCount <= 512
             ? stackalloc byte[passwordByteCount]
             : (rentedPasswordBytes = ArrayPool<byte>.Shared.Rent(passwordByteCount)).AsSpan(0, passwordByteCount);
 
@@ -457,7 +457,7 @@ internal static class OfficeCryptoStandard
 
     private static byte[] AesCbcZeroIv(byte[] data, byte[] key, bool encrypt)
     {
-        Aes? aes = Aes.Create();
+        var aes = Aes.Create();
 #pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
         if (aes is null)
         {
@@ -481,7 +481,7 @@ internal static class OfficeCryptoStandard
             aes.Key = key;
             aes.IV = new byte[16]; // All zeros.
 
-            var transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
             if (transform is null)
             {
                 throw new CryptographicException("AES transform creation failed.");

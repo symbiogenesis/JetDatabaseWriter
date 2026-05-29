@@ -43,7 +43,7 @@ public sealed class CompoundFileWriterTests
         Assert.True(CompoundFileReader.HasCompoundFileMagic(cfb));
 
         await using var ms = new MemoryStream(cfb);
-        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.True(streams.ContainsKey("EncryptedPackage"));
         Assert.Equal(payload, streams["EncryptedPackage"]);
@@ -62,7 +62,7 @@ public sealed class CompoundFileWriterTests
         ]);
 
         await using var ms = new MemoryStream(cfb);
-        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, streams.Count);
         Assert.Equal(info, streams["EncryptionInfo"]);
@@ -82,7 +82,7 @@ public sealed class CompoundFileWriterTests
         ]);
 
         await using var ms = new MemoryStream(cfb);
-        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, streams.Count);
         Assert.Equal(info, streams["EncryptionInfo"]);
@@ -106,10 +106,10 @@ public sealed class CompoundFileWriterTests
         byte[] cfb = CompoundFileWriter.Build(entries);
 
         await using var ms = new MemoryStream(cfb);
-        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(streamCount, streams.Count);
-        foreach (var (name, expected) in entries)
+        foreach ((string? name, byte[]? expected) in entries)
         {
             Assert.True(streams.ContainsKey(name), $"Missing {name}");
             Assert.Equal(expected, streams[name]);
@@ -175,7 +175,7 @@ public sealed class CompoundFileWriterTests
 
         byte[] cfb = CompoundFileWriter.Build(entries);
         await using var ms = new MemoryStream(cfb);
-        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(["Alpha", "Bravo", "Charlie"], streams.Keys);
     }

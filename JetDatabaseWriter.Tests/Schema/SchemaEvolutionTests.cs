@@ -21,10 +21,10 @@ public sealed class SchemaEvolutionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task AddColumnAsync_AppendsColumn_ExistingRowsBecomeNull(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -45,8 +45,8 @@ public sealed class SchemaEvolutionTests
             await writer.InsertRowAsync(table, [3, "Carol", 99], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(3, dt.Columns.Count);
         Assert.Equal("Score", dt.Columns[2].ColumnName);
@@ -65,10 +65,10 @@ public sealed class SchemaEvolutionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DropColumnAsync_RemovesColumn_AndPreservesOtherData(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -85,8 +85,8 @@ public sealed class SchemaEvolutionTests
             await writer.DropColumnAsync(table, "Score", TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.False(dt.Columns.Contains("Score"));
@@ -101,10 +101,10 @@ public sealed class SchemaEvolutionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task RenameColumnAsync_RenamesColumn_AndPreservesAllData(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -120,8 +120,8 @@ public sealed class SchemaEvolutionTests
             await writer.RenameColumnAsync(table, "Score", "Rating", TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.True(dt.Columns.Contains("Rating"));
@@ -136,10 +136,10 @@ public sealed class SchemaEvolutionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DropColumnAsync_LastColumn_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Solo";
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             table,
             [new("Only", typeof(int))],
@@ -154,10 +154,10 @@ public sealed class SchemaEvolutionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task AddColumnAsync_DuplicateName_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Dup";
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             table,
             [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 20)],
@@ -170,10 +170,10 @@ public sealed class SchemaEvolutionTests
     [Fact]
     public async Task FreshlyCreatedTable_HasNoUserDefinedIndexEntries()
     {
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
         string tableName = $"NoIdx_{Guid.NewGuid():N}"[..18];
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -184,9 +184,9 @@ public sealed class SchemaEvolutionTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var msysIndexes = await reader.ReadDataTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable? msysIndexes = await reader.ReadDataTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
         if (msysIndexes is not null)
         {
             int matches = msysIndexes.AsEnumerable()
@@ -194,7 +194,7 @@ public sealed class SchemaEvolutionTests
             Assert.Equal(0, matches);
         }
 
-        var msysRels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable? msysRels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         if (msysRels is not null)
         {
             int matches = msysRels.AsEnumerable()
@@ -222,7 +222,7 @@ public sealed class SchemaEvolutionTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

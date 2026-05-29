@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -58,28 +59,28 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
         string[] versions = BuildVersionPayloads();
 
         string script = BuildAuthoringScript(dbPath, TableName, MemoColumn, versions);
-        var result = session.RunDaoEngineScript(script, DaoTimeout);
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO authoring script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             dbPath,
             new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
 
-        var complex = await reader.GetComplexColumnsAsync(
+        IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
             TableName,
             TestContext.Current.CancellationToken);
 
-        var vhCol = Assert.Single(
+        ComplexColumnInfo vhCol = Assert.Single(
             complex,
             c => c.Kind == Enums.ComplexColumnKind.VersionHistory);
 
         Assert.False(string.IsNullOrWhiteSpace(vhCol.FlatTableName));
 
         // Locate the Memo column inside the flat child table.
-        var flatCols = await reader.GetColumnMetadataAsync(
+        List<ColumnMetadata> flatCols = await reader.GetColumnMetadataAsync(
             vhCol.FlatTableName,
             TestContext.Current.CancellationToken);
 

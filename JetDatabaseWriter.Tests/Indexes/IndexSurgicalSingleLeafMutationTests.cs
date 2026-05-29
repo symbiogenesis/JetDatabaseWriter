@@ -30,9 +30,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // least one intermediate). Update a row whose key sits in a non-tail
         // leaf and does NOT change the leaf's max key → in-place leaf rewrite rewrites the
         // single affected leaf in place with no parent-summary update.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -54,7 +54,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int updated = await writer.UpdateRowsAsync(
                 "T",
@@ -71,8 +71,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // existing page number → ZERO new index pages appended.
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt!.Rows.Count);
     }
@@ -83,9 +83,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // Insert a single row whose key lands in a middle leaf and stays
         // strictly less than that leaf's existing max → in-place leaf rewrite in-place
         // leaf rewrite, no parent-summary change required.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -106,7 +106,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Land on a leaf in the middle (not the tail); 105 sits between
             // 100 and 110 and is well below any leaf's max key.
@@ -116,8 +116,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
 
@@ -138,9 +138,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     [Fact]
     public async Task SurgicalDelete_FromMiddleLeaf_AppendsZeroIndexPages()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -159,7 +159,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Id", 50, ct);
             Assert.Equal(1, deleted);
@@ -168,8 +168,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(799, dt!.Rows.Count);
     }
@@ -182,9 +182,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // in-place rewrite of the leaf PLUS in-place rewrite of the parent
         // intermediate to update its summary entry. Total index page delta:
         // still ZERO.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -206,7 +206,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Pick an id in the middle of the key range that's NOT a multiple
             // of 100. It will land in some non-tail leaf and (with high
@@ -220,8 +220,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt!.Rows.Count);
     }
@@ -234,9 +234,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // overflow → leaf split splits the leaf into two and rewrites the
         // parent intermediate in place to insert one new summary entry.
         // Total NEW index pages = exactly 1 (the new right half).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -263,7 +263,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // leaf 1 past one-page capacity but not past two-page capacity →
         // leaf split 2-way split. The change-set must NOT span leaves (that
         // bails to bulk rebuild).
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // ~30 inserts on top of leaf 1's existing ~400 entries pushes
             // it to ~430 entries (~3870 bytes) — past one 3616-byte payload
@@ -289,8 +289,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             idxAfter - idxBefore <= 2,
             $"Expected surgical leaf split to append at most 2 index pages, but added {idxAfter - idxBefore}.");
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(1230, dt!.Rows.Count);
     }
@@ -302,9 +302,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // bails (cannot be a single-leaf rewrite); bulk rebuild handles
         // it. Verify only that the result is correct and the file is
         // readable — page-count delta is intentionally NOT asserted here.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -321,15 +321,15 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Two inserts spanning the leaf boundary (key 50 in leaf 1, key
             // 700 in a later leaf) → surgical bails to bulk rebuild.
             await writer.InsertRowsAsync("T", [[50_000], [60_000]], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt!.Rows.Count);
     }
@@ -340,9 +340,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // Build a tiny multi-leaf tree, then delete every row that lives on
         // one specific leaf → surgical path bails (empty-leaf underflow is
         // territory); bulk rebuild rebuilds and the read-back stays correct.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -360,7 +360,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         }
 
         // Delete a contiguous range that covers a whole leaf (~400 rows).
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             for (int id = 1; id <= 400; id++)
             {
@@ -368,8 +368,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             }
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt!.Rows.Count);
     }
@@ -393,7 +393,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

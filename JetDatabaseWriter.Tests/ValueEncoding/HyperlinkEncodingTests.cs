@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -39,7 +41,7 @@ public sealed class HyperlinkEncodingTests
     [InlineData("##anchor", "", "", "anchor", "")]
     public void Parse_DecomposesAccessFormat(string raw, string display, string address, string sub, string tip)
     {
-        Hyperlink? h = Hyperlink.Parse(raw);
+        var h = Hyperlink.Parse(raw);
         Assert.NotNull(h);
         Assert.Equal(display, h!.DisplayText);
         Assert.Equal(address, h.Address);
@@ -68,19 +70,19 @@ public sealed class HyperlinkEncodingTests
         var h = new Hyperlink("a#b", "https://x/y#z", "frag#1", "tip#2");
         Assert.Equal("a%23b#https://x/y%23z#frag%231#tip%232", h.ToString());
 
-        Hyperlink? round = Hyperlink.Parse(h.ToString());
+        var round = Hyperlink.Parse(h.ToString());
         Assert.Equal(h, round);
     }
 
     [Fact]
     public async Task Writer_TypedHyperlinkColumn_SetsFlagAndRoundTripsValue()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
 
         var link = new Hyperlink("Docs", "https://example.com/docs", "intro", "Hover tip");
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -93,27 +95,27 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.True(meta[1].IsHyperlink);
         Assert.Equal(typeof(Hyperlink), meta[1].ClrType);
         Assert.Equal("Hyperlink", meta[1].TypeName);
 
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(typeof(Hyperlink), dt.Columns["Link"]!.DataType);
 
-        var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
+        Hyperlink actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
     }
 
     [Fact]
     public async Task Writer_IsHyperlinkOnStringColumn_ProducesSameOnDiskShape()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -130,13 +132,13 @@ public sealed class HyperlinkEncodingTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.True(meta[1].IsHyperlink);
 
         await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
         {
-            var hl = Assert.IsType<Hyperlink>(row[1]);
+            Hyperlink hl = Assert.IsType<Hyperlink>(row[1]);
             Assert.Equal("Site", hl.DisplayText);
             Assert.Equal("https://example.com", hl.Address);
             Assert.Equal("anchor", hl.SubAddress);
@@ -146,10 +148,10 @@ public sealed class HyperlinkEncodingTests
     [Fact]
     public async Task Writer_IsHyperlinkOnNonMemoColumn_Throws()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        await using var writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "Bad",
                 [
@@ -164,11 +166,11 @@ public sealed class HyperlinkEncodingTests
     [Fact]
     public async Task Reader_PocoMapping_BindsHyperlinkAndStringPropertiesBothWays()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
         var link = new Hyperlink("Site", "https://example.com", "x", "y");
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -181,23 +183,23 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
 
-        var typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        List<HyperlinkRow> typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link, typed[0].Link);
 
-        var asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        List<StringRow> asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link.ToString(), asStrings[0].Link);
     }
 
     [Fact]
     public async Task Reader_RowsAsStrings_ReturnsRawEncodedFormForHyperlinkColumn()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
         var link = new Hyperlink("Site", "https://example.com", "x");
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -210,7 +212,7 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         await foreach (string[] row in reader.RowsAsStrings(tableName, cancellationToken: TestContext.Current.CancellationToken))
         {
             Assert.Equal(link.ToString(), row[1]);
@@ -225,7 +227,7 @@ public sealed class HyperlinkEncodingTests
     [Fact]
     public async Task Writer_HyperlinkAllFourPartsAtLargeLength_RoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
 
         // 1024 chars per part stays well under any single-part Access limit
@@ -237,7 +239,7 @@ public sealed class HyperlinkEncodingTests
         string tip = new('t', 1024);
         var link = new Hyperlink(display, address, sub, tip);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -250,9 +252,9 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
-        var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        Hyperlink actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal(display, actual.DisplayText);
         Assert.Equal(address, actual.Address);
@@ -270,7 +272,7 @@ public sealed class HyperlinkEncodingTests
     [Fact]
     public async Task Writer_HyperlinkWithEmbeddedHashInEveryPart_RoundTrips()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
 
         var link = new Hyperlink(
@@ -284,7 +286,7 @@ public sealed class HyperlinkEncodingTests
         string encoded = link.ToString();
         Assert.Equal(3, encoded.Split('#').Length - 1);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -297,9 +299,9 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
-        var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        Hyperlink actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal("https://example.com/path#section/q?x=1#y=2", actual.Address);
         Assert.Equal("tip#with#hashes", actual.ScreenTip);
@@ -308,10 +310,10 @@ public sealed class HyperlinkEncodingTests
     [Fact]
     public async Task SchemaEvolution_AddRenameColumn_PreservesHyperlinkFlag()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -334,9 +336,9 @@ public sealed class HyperlinkEncodingTests
             await writer.RenameColumnAsync(tableName, "Link", "Url", TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
-        var urlCol = meta[2];
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        ColumnMetadata urlCol = meta[2];
         Assert.Equal("Url", urlCol.Name);
         Assert.True(urlCol.IsHyperlink);
         Assert.Equal(typeof(Hyperlink), urlCol.ClrType);
@@ -345,7 +347,7 @@ public sealed class HyperlinkEncodingTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -375,12 +377,12 @@ public sealed class HyperlinkEncodingTests
         // A plain MEMO column without the HYPERLINK_FLAG_MASK (0x80) bit
         // must continue to round-trip '#'-laden strings verbatim — we must not
         // false-positive on memo content that merely contains '#' characters.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"Hyper_{Guid.NewGuid():N}"[..18];
 
         const string hyperlinkText = "Click me#https://example.com/page#anchor#";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -393,13 +395,13 @@ public sealed class HyperlinkEncodingTests
             await writer.InsertRowAsync(tableName, [1, hyperlinkText], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(1, dt.Rows.Count);
 
         Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);
 
-        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(typeof(string), meta[1].ClrType);
         Assert.False(meta[1].IsHyperlink);
     }

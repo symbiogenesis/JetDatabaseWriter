@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -44,9 +45,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
         SetJet3EncryptionFlag(data);
 
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -72,9 +73,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "test".AsMemory(),
         };
 
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -87,8 +88,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
 
-        await using var ms = ToStream(data);
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
+        await using MemoryStream ms = ToStream(data);
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -105,10 +106,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "wrong_password".AsMemory(),
         };
 
-        await using var ms = ToStream(data);
-        var ex = await Record.ExceptionAsync(async () =>
+        await using MemoryStream ms = ToStream(data);
+        Exception? ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+            await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
             await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
@@ -122,7 +123,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         SetJet4PasswordFlag(data);
         string temp = WriteTempBytes(data, ".mdb");
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessWriter.OpenAsync(temp, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -141,7 +142,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "wrong_password".AsMemory(),
         };
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
         Assert.Contains("incorrect", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -158,7 +159,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "test".AsMemory(),
         };
 
-        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
         Assert.NotNull(writer);
     }
 
@@ -182,7 +183,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         };
 
         const string TableName = "JetWriteEncTest";
-        await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -199,8 +200,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         }
 
         var readerOptions = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -221,7 +222,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         var writerOptions = new AccessWriterOptions { UseLockFile = false };
 
         const string TableName = "Jet3WriteEncTest";
-        await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -237,8 +238,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -265,7 +266,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
-        await using (var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 TableName,
@@ -286,8 +287,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             UseLockFile = false,
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
-        await using var reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -313,9 +314,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        var dt = (await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "RC4-decrypted table should contain rows");
@@ -329,10 +330,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int rowCount = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -347,9 +348,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        var stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables in encrypted database");
         Assert.True(stats.TotalRows > 0, "Should report rows in encrypted database");
@@ -363,13 +364,13 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        var meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {
@@ -386,10 +387,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        await using MemoryStream ms = ToStream(data);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        var all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
         Assert.All(all.Values, dt => Assert.NotNull(dt));
     }
@@ -603,7 +604,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             aes.Mode = CipherMode.ECB;
 #pragma warning restore RS0030
             aes.Padding = PaddingMode.None;
-            using var encryptor = aes.CreateEncryptor();
+            using ICryptoTransform encryptor = aes.CreateEncryptor();
             byte[] block = new byte[length];
             Buffer.BlockCopy(data, offset, block, 0, length);
             byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);

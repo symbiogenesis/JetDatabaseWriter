@@ -299,7 +299,7 @@ internal static class CompoundFileWriter
         ushort majorVersion,
         uint miniStreamCutoff)
     {
-        var h = file.AsSpan(0, 512);
+        Span<byte> h = file.AsSpan(0, 512);
 
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(Constants.CompoundFile.HeaderOffsets.MinorVersion, 2), 0x003E);
@@ -371,7 +371,7 @@ internal static class CompoundFileWriter
 
     private static void WriteUnusedEntry(byte[] file, int offset)
     {
-        var e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
+        Span<byte> e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
         e[0x42] = 0x00; // unallocated
         BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
@@ -391,7 +391,7 @@ internal static class CompoundFileWriter
         uint rightSibling,
         uint child)
     {
-        var e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
+        Span<byte> e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
 
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);

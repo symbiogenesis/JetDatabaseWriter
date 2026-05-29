@@ -86,7 +86,7 @@ internal static class JetExpressionConverter
         }
 
         var builder = new ColumnPropertyBlockBuilder();
-        foreach (var col in columns)
+        foreach (ColumnDefinition col in columns)
         {
             ApplyColumn(builder, col, format);
         }
@@ -129,7 +129,7 @@ internal static class JetExpressionConverter
             return;
         }
 
-        var target = builder.GetOrAddTarget(col.Name);
+        ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(col.Name);
         if (emitAllowZeroLength)
         {
             target.AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, false);

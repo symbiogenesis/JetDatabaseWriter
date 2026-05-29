@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 public sealed class CalculatedColumnWriteTests
@@ -14,10 +15,10 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task CreateTable_CalculatedColumns_RoundTripsMetadataAndCachedValues()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         DateTime eventDate = new(2025, 2, 3, 4, 5, 6);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcRoundTrip",
@@ -58,10 +59,10 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var metadata = await reader.GetColumnMetadataAsync("CalcRoundTrip", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcRoundTrip", TestContext.Current.CancellationToken);
 
-        var calcLabel = Assert.Single(metadata, c => c.Name == "CalcLabel");
+        ColumnMetadata calcLabel = Assert.Single(metadata, c => c.Name == "CalcLabel");
         Assert.True(calcLabel.IsCalculated);
         Assert.Equal("[Label] & \" #\" & [Score]", calcLabel.CalculationExpression);
         Assert.Equal(0x0A, calcLabel.CalculatedResultType);
@@ -71,21 +72,21 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(0x04, Assert.Single(metadata, c => c.Name == "NextScore").CalculatedResultType);
         Assert.Equal(0x10, Assert.Single(metadata, c => c.Name == "Weighted").CalculatedResultType);
 
-        var table = await reader.ReadDataTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadDataTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
 
-        var row = table.Rows[0];
+        DataRow row = table.Rows[0];
         Assert.Equal("Alpha #9", row["CalcLabel"]);
         Assert.False(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
         Assert.Equal(10, Convert.ToInt32(row["NextScore"], CultureInfo.InvariantCulture));
         Assert.Equal(11.25m, Convert.ToDecimal(row["Weighted"], CultureInfo.InvariantCulture));
         Assert.Equal(eventDate, Convert.ToDateTime(row["EventDate"], CultureInfo.InvariantCulture));
 
-        var typed = await reader.ReadTableAsync<CalculatedProjection>(
+        List<CalculatedProjection> typed = await reader.ReadTableAsync<CalculatedProjection>(
             "CalcRoundTrip",
             maxRows: 10,
             TestContext.Current.CancellationToken);
-        var item = Assert.Single(typed);
+        CalculatedProjection item = Assert.Single(typed);
         Assert.Equal("Alpha #9", item.CalcLabel);
         Assert.False(item.IsHigh);
         Assert.Equal(10, item.NextScore);
@@ -95,10 +96,10 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task CreateTable_CalculatedMemoOverInlineLimit_RoundTripsCachedValue()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string memo = new('A', 1200);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcMemo",
@@ -115,8 +116,8 @@ public sealed class CalculatedColumnWriteTests
             await writer.InsertRowAsync("CalcMemo", [1, memo], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var table = await reader.ReadDataTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
         Assert.Equal(memo, table.Rows[0]["ComputedMemo"]);
     }
@@ -124,9 +125,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_CalculatedColumns_EvaluatesMissingCachedValues()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcEval",
@@ -172,9 +173,9 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
-        var row = Assert.Single(table.AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Alpha", row["SafeLabel"]);
         Assert.Equal("Alpha #12", row["CalcLabel"]);
@@ -187,9 +188,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task UpdateRows_RecomputesCalculatedColumns()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcUpdate",
@@ -228,9 +229,9 @@ public sealed class CalculatedColumnWriteTests
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
-        var row = Assert.Single(table.AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Beta #3", row["CalcLabel"]);
         Assert.False(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
@@ -239,9 +240,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRowPoco_CalculatedColumnsCanBeOmitted()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcPoco",
@@ -262,9 +263,9 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
-        var row = Assert.Single(table.AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Gamma #7", row["CalcLabel"]);
     }
@@ -272,9 +273,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_CalculatedColumns_EvaluatesAccessOperatorsAndBuiltins()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcAccessSyntax",
@@ -397,8 +398,8 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["IsEven"], CultureInfo.InvariantCulture));
         Assert.True(Convert.ToBoolean(row["MatchesLabel"], CultureInfo.InvariantCulture));
@@ -424,9 +425,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_CalculatedColumns_EvaluatesFunctionRegistryGoldenCases()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "CalcFunctionRegistry",
@@ -497,8 +498,8 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
         Assert.Equal("second", row["ChoiceEdge"]);
@@ -514,9 +515,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_InvalidCalculatedExpressionSyntax_ThrowsArgumentException()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcBadSyntax",
             [
@@ -539,10 +540,10 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_OverNestedCalculatedExpression_ThrowsArgumentException()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string expression = new string('(', 129) + "1" + new string(')', 129);
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcDeepExpression",
             [
@@ -554,7 +555,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDeepExpression",
                 [DBNull.Value],
@@ -566,9 +567,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_CalculatedExpressionGeneratedTextTooLarge_ThrowsArgumentException()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcHugeText",
             [
@@ -580,7 +581,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.InsertRowAsync(
                 "CalcHugeText",
                 [DBNull.Value],
@@ -598,9 +599,9 @@ public sealed class CalculatedColumnWriteTests
     [InlineData("DMax(\"Score\", \"People\")")]
     public async Task InsertRow_AccessRejectedDomainAggregateCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcDomain",
             [
@@ -612,7 +613,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDomain",
                 [DBNull.Value],
@@ -626,9 +627,9 @@ public sealed class CalculatedColumnWriteTests
     [InlineData("A1 + 1")]
     public async Task InsertRow_SpreadsheetOnlyCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcSpreadsheetOnly",
             [
@@ -640,7 +641,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcSpreadsheetOnly",
                 [DBNull.Value],
@@ -652,9 +653,9 @@ public sealed class CalculatedColumnWriteTests
     [Fact]
     public async Task InsertRow_CircularCalculatedDependency_ThrowsInvalidOperationException()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "CalcCycle",
             [

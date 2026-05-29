@@ -58,9 +58,9 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_EmptyText_ReturnsNull()
     {
         using var stringReader = new StringReader(string.Empty);
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var record = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
+        DelimitedTextRecord? record = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(record);
     }
@@ -68,7 +68,7 @@ public sealed class DelimitedTextReaderTests
     [Fact]
     public async Task ReadRecordAsync_LineEndings_ReturnsEmptySingleColumnRows()
     {
-        var records = await ReadAllAsync("\r\n\n\r");
+        List<ParsedDelimitedTextRecord> records = await ReadAllAsync("\r\n\n\r");
 
         Assert.Collection(
             records,
@@ -80,7 +80,7 @@ public sealed class DelimitedTextReaderTests
     [Fact]
     public async Task ReadRecordAsync_QuotedFields_SpanLinesAndUnescape()
     {
-        var records = await ReadAllAsync(
+        List<ParsedDelimitedTextRecord> records = await ReadAllAsync(
             "A,B,C\r\n1,\"two\r\nlines\",\"He said \"\"hi\"\"\"\n");
 
         Assert.Collection(
@@ -93,7 +93,7 @@ public sealed class DelimitedTextReaderTests
     [MemberData(nameof(QuotedFieldCases))]
     public async Task ReadRecordAsync_QuotedFieldCases_UnescapeConsistently(string source, string expected)
     {
-        var record = Assert.Single(await ReadAllAsync(source));
+        ParsedDelimitedTextRecord record = Assert.Single(await ReadAllAsync(source));
 
         Assert.Equal([expected], record.Fields);
     }
@@ -102,11 +102,11 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_DoesNotDependOnTextReaderPeek()
     {
         using var stringReader = new NoPeekStringReader("A,B\r\n1,\"x\r\ny\"\r\n");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var header = await ReadRecordSnapshotAsync(reader);
-        var row = await ReadRecordSnapshotAsync(reader);
-        var end = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? header = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? row = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? end = await ReadRecordSnapshotAsync(reader);
 
         Assert.NotNull(header);
         Assert.NotNull(row);
@@ -119,11 +119,11 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_ReusedParserBuffers_DoNotMutateReturnedRecords()
     {
         using var stringReader = new StringReader("A,B\n1,2\nlong-value,\"quoted\"\n");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var header = await ReadRecordSnapshotAsync(reader);
-        var firstRow = await ReadRecordSnapshotAsync(reader);
-        var secondRow = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? header = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? firstRow = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? secondRow = await ReadRecordSnapshotAsync(reader);
 
         Assert.NotNull(header);
         Assert.NotNull(firstRow);
@@ -137,10 +137,10 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_UnquotedRunsAcrossBufferBoundaries_ParseCorrectly()
     {
         using var stringReader = new StringReader("abcdefg\"literal\",tail\nnext,row\n");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var firstRow = await ReadRecordSnapshotAsync(reader);
-        var secondRow = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? firstRow = await ReadRecordSnapshotAsync(reader);
+        ParsedDelimitedTextRecord? secondRow = await ReadRecordSnapshotAsync(reader);
 
         Assert.NotNull(firstRow);
         Assert.NotNull(secondRow);
@@ -151,7 +151,7 @@ public sealed class DelimitedTextReaderTests
     [Fact]
     public async Task ReadRecordAsync_SeparatorsOnly_ReturnsEmptyColumns()
     {
-        var record = Assert.Single(await ReadAllAsync(",,,\n"));
+        ParsedDelimitedTextRecord record = Assert.Single(await ReadAllAsync(",,,\n"));
 
         AssertRecord(record, 0, 1, 2, string.Empty, string.Empty, string.Empty, string.Empty);
     }
@@ -159,7 +159,7 @@ public sealed class DelimitedTextReaderTests
     [Fact]
     public async Task ReadRecordAsync_CustomSeparator_KeepsSeparatorInsideQuotes()
     {
-        var records = await ReadAllAsync(
+        List<ParsedDelimitedTextRecord> records = await ReadAllAsync(
             "C1;C2;C3\n10;\"A;\";\"20\"\";\"\"11\"\n",
             delimiter: ';');
 
@@ -173,10 +173,10 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_MissingClosingQuote_ThrowsInvalidData()
     {
         using var stringReader = new StringReader("A,B\n1,\"unterminated\n");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
         _ = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
         Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -186,9 +186,9 @@ public sealed class DelimitedTextReaderTests
     public async Task ReadRecordAsync_UnterminatedQuotedFieldCases_ThrowInvalidData(string source)
     {
         using var stringReader = new StringReader(source);
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
         Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -198,9 +198,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(128, 3, 8, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("abcd\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
         Assert.Contains("MaxFieldLength", exception.Message, StringComparison.Ordinal);
     }
@@ -210,9 +210,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(4, 128, 8, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("ab,cd\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
         Assert.Contains("MaxRecordLength", exception.Message, StringComparison.Ordinal);
     }
@@ -222,9 +222,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(128, 128, 2, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("a,b,c\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
         Assert.Contains("MaxColumnCount", exception.Message, StringComparison.Ordinal);
     }
@@ -233,7 +233,7 @@ public sealed class DelimitedTextReaderTests
     public async Task CountRecordsAsync_EmptyText_ReturnsZero()
     {
         using var stringReader = new StringReader(string.Empty);
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
         long count = await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken);
 
@@ -244,7 +244,7 @@ public sealed class DelimitedTextReaderTests
     public async Task CountRecordsAsync_SkipsHeaderAndHonorsQuotedLineEndings()
     {
         using var stringReader = new StringReader("A,B\r\n1,\"two\r\nlines\"\n2,\"cr\ronly\"\r3,plain");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
         long count = await reader.CountRecordsAsync(skipFirstRecord: true, TestContext.Current.CancellationToken);
 
@@ -255,9 +255,9 @@ public sealed class DelimitedTextReaderTests
     public async Task CountRecordsAsync_MissingClosingQuote_ThrowsInvalidData()
     {
         using var stringReader = new StringReader("A,B\n1,\"unterminated\n");
-        using var reader = CreateReader(stringReader);
+        using DelimitedTextReader reader = CreateReader(stringReader);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.CountRecordsAsync(skipFirstRecord: true, TestContext.Current.CancellationToken));
         Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -267,9 +267,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(4, 128, 8, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("ab,cd\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
         Assert.Contains("MaxRecordLength", exception.Message, StringComparison.Ordinal);
     }
@@ -279,9 +279,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(128, 3, 8, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("abcd\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
         Assert.Contains("MaxFieldLength", exception.Message, StringComparison.Ordinal);
     }
@@ -291,9 +291,9 @@ public sealed class DelimitedTextReaderTests
     {
         var limits = new DelimitedTextLimits(128, 128, 2, "MaxRecordLength", "MaxFieldLength", "MaxColumnCount");
         using var stringReader = new StringReader("a,b,c\n");
-        using var reader = CreateReader(stringReader, limits: limits);
+        using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
         Assert.Contains("MaxColumnCount", exception.Message, StringComparison.Ordinal);
     }
@@ -317,7 +317,7 @@ public sealed class DelimitedTextReaderTests
         char delimiter)
     {
         string[] lineEndings = ["\r\n", "\n", "\r"];
-        FuzzRandom random = FuzzRandom.Create(fuzzSeed);
+        var random = FuzzRandom.Create(fuzzSeed);
         var expectedRows = new List<string[]>();
         var text = new StringBuilder();
         int fixedColumnCount = random.Next(1, maxColumnCount + 1);
@@ -343,7 +343,7 @@ public sealed class DelimitedTextReaderTests
             }
         }
 
-        var actualRows = await ReadAllAsync(text.ToString(), delimiter);
+        List<ParsedDelimitedTextRecord> actualRows = await ReadAllAsync(text.ToString(), delimiter);
 
         Assert.Equal(expectedRows.Count, actualRows.Count);
         for (int i = 0; i < expectedRows.Count; i++)
@@ -367,11 +367,11 @@ public sealed class DelimitedTextReaderTests
     private static async ValueTask<List<ParsedDelimitedTextRecord>> ReadAllAsync(string text, char delimiter = ',')
     {
         using var stringReader = new StringReader(text);
-        using var reader = CreateReader(stringReader, delimiter);
+        using DelimitedTextReader reader = CreateReader(stringReader, delimiter);
         var records = new List<ParsedDelimitedTextRecord>();
         while (true)
         {
-            var record = await ReadRecordSnapshotAsync(reader);
+            ParsedDelimitedTextRecord? record = await ReadRecordSnapshotAsync(reader);
             if (!record.HasValue)
             {
                 return records;
@@ -383,7 +383,7 @@ public sealed class DelimitedTextReaderTests
 
     private static async ValueTask<ParsedDelimitedTextRecord?> ReadRecordSnapshotAsync(DelimitedTextReader reader)
     {
-        var record = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
+        DelimitedTextRecord? record = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
         return record.HasValue ? Snapshot(record.Value) : null;
     }
 

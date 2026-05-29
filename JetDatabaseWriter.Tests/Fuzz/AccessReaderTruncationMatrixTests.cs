@@ -62,7 +62,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
             return;
         }
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] full = await db.GetFileAsync(path, ct);
         if (truncateBytes >= full.Length)
         {
@@ -76,7 +76,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
 
         try
         {
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false },
                 leaveOpen: true,
@@ -84,7 +84,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
 
             // Best-effort table walk. Per-table failures are tolerated as
             // long as they surface as managed exceptions.
-            var tables = await reader.ListTablesAsync(ct);
+            List<string> tables = await reader.ListTablesAsync(ct);
             foreach (string t in tables)
             {
                 try

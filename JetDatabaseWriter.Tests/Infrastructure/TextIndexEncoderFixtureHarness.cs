@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
@@ -37,19 +39,19 @@ internal static class TextIndexEncoderFixtureHarness
         IReadOnlyCollection<string>? skipTables = null,
         CancellationToken ct = default)
     {
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         int totalIndexesValidated = 0;
         int totalKeysValidated = 0;
-        var skip = skipTables ?? Array.Empty<string>();
+        IReadOnlyCollection<string> skip = skipTables ?? Array.Empty<string>();
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             if (skip.Contains(tableName, StringComparer.OrdinalIgnoreCase))
@@ -57,28 +59,28 @@ internal static class TextIndexEncoderFixtureHarness
                 continue;
             }
 
-            var cols = await reader.GetColumnMetadataAsync(tableName, ct);
+            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-            var indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (var index in indexes)
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+            foreach (IndexMetadata index in indexes)
             {
                 if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
                 {
                     continue;
                 }
 
-                var keyCol = index.Columns[0];
-                if (!colByName.TryGetValue(keyCol.Name, out var colMeta)
+                IndexColumnReference keyCol = index.Columns[0];
+                if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
                     || colMeta.ClrType != typeof(string))
                 {
                     continue;
                 }
 
-                var onDiskKeys = await CollectAllLeafKeysAsync(
+                List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
                     reader, layout, pageSize, index.FirstDp, ct);
 
-                var dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {
@@ -148,7 +150,7 @@ internal static class TextIndexEncoderFixtureHarness
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -174,8 +176,8 @@ internal static class TextIndexEncoderFixtureHarness
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (var e in entries)
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (IndexEntry e in entries)
             {
                 result.Add(e.Key);
             }

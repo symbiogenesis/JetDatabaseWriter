@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -68,14 +70,14 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         var results = new List<RelationshipRowSnapshot>();
-        var nameCol = msysRelDef.FindColumn("szRelationship");
-        var objCol = msysRelDef.FindColumn("szObject");
-        var refObjCol = msysRelDef.FindColumn("szReferencedObject");
-        var colCol = msysRelDef.FindColumn("szColumn");
-        var refColCol = msysRelDef.FindColumn("szReferencedColumn");
-        var icolCol = msysRelDef.FindColumn("icolumn");
-        var ccolCol = msysRelDef.FindColumn("ccolumn");
-        var grbitCol = msysRelDef.FindColumn("grbit");
+        ColumnInfo? nameCol = msysRelDef.FindColumn("szRelationship");
+        ColumnInfo? objCol = msysRelDef.FindColumn("szObject");
+        ColumnInfo? refObjCol = msysRelDef.FindColumn("szReferencedObject");
+        ColumnInfo? colCol = msysRelDef.FindColumn("szColumn");
+        ColumnInfo? refColCol = msysRelDef.FindColumn("szReferencedColumn");
+        ColumnInfo? icolCol = msysRelDef.FindColumn("icolumn");
+        ColumnInfo? ccolCol = msysRelDef.FindColumn("ccolumn");
+        ColumnInfo? grbitCol = msysRelDef.FindColumn("grbit");
         if (nameCol == null || objCol == null || refObjCol == null || colCol == null
             || refColCol == null || icolCol == null || ccolCol == null || grbitCol == null)
         {
@@ -100,7 +102,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                foreach (var row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string name = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (string.IsNullOrEmpty(name) || !namePredicate(name))
@@ -111,7 +113,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     var values = new object[msysRelDef.Columns.Count];
                     for (int column = 0; column < values.Length; column++)
                     {
-                        var tableColumn = msysRelDef.Columns[column];
+                        ColumnInfo tableColumn = msysRelDef.Columns[column];
                         string raw = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, tableColumn);
                         values[column] = string.IsNullOrEmpty(raw)
                             ? DBNull.Value
@@ -166,7 +168,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return [];
         }
 
-        var table = await writer.ReadTableSnapshotAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        DataTable table = await writer.ReadTableSnapshotAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         try
         {
             if (!table.Columns.Contains("szRelationship"))
@@ -189,7 +191,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                if (!groups.TryGetValue(name, out var list))
+                if (!groups.TryGetValue(name, out List<DataRow>? list))
                 {
                     list = [];
                     groups[name] = list;
@@ -199,13 +201,13 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             }
 
             var result = new List<FkRelationship>(groups.Count);
-            foreach (var group in groups)
+            foreach (KeyValuePair<string, List<DataRow>> group in groups)
             {
-                var rows = group.Value;
+                List<DataRow> rows = group.Value;
                 rows.Sort((left, right) => RelationshipCatalogInt32(left["icolumn"])
                     .CompareTo(RelationshipCatalogInt32(right["icolumn"])));
 
-                var head = rows[0];
+                DataRow head = rows[0];
                 int grbit = RelationshipCatalogInt32(head["grbit"]);
                 if ((grbit & Constants.RelationshipFlags.NoRefIntegrity) != 0)
                 {
@@ -263,14 +265,14 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
 
     public async ValueTask<long> FindSystemTableTdefPageAsync(string tableName, CancellationToken cancellationToken)
     {
-        var msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return 0;
         }
 
-        var rows = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (var row in rows)
+        List<CatalogRow> rows = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
         {
             if (row.ObjectType == Constants.SystemObjects.UserTableType
                 && row.TDefPage > 0
@@ -289,7 +291,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var nameCol = msysRelDef.FindColumn("szRelationship");
+        ColumnInfo? nameCol = msysRelDef.FindColumn("szRelationship");
         if (nameCol == null)
         {
             return names;
@@ -313,7 +315,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                foreach (var row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string name = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.IsNullOrEmpty(name))

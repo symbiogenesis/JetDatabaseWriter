@@ -25,9 +25,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_ThrowsAndLeavesTableUnchanged()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int))],
@@ -37,7 +37,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", [1], ct);
         await writer.InsertRowAsync("T", [2], ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync("T", [1], ct));
 
         // Error message must indicate the conflict was caught BEFORE the
@@ -45,8 +45,8 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
         // Table should still contain exactly the two rows successfully inserted.
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(2, dt!.Rows.Count);
     }
@@ -54,9 +54,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_DoesNotConsumeAutoIncrement()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [
@@ -76,8 +76,8 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         // Next successful insert should use Id=3, not Id=4.
         await writer.InsertRowAsync("T", [DBNull.Value, 300], ct);
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         var ids = dt!.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         Assert.Equal(ExpectedIds123, ids);
@@ -86,9 +86,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task BatchInsert_IntraBatchDuplicate_ThrowsAndPersistsNoRows()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -105,14 +105,14 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 [4],
             };
 
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await writer.InsertRowsAsync("T", batch, ct));
             Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
         }
 
         // Re-open and confirm the batch was fully rolled back.
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Empty(dt!.Rows);
     }
@@ -120,9 +120,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task UpdateRows_CreatesDuplicate_ThrowsAndLeavesTableUnchanged()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -153,8 +153,8 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         }
 
         // Reopen and confirm the original Code value survived.
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         var codeById = dt!.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
         Assert.Equal(100, codeById[1]);
@@ -165,9 +165,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task MultiColumnUniqueIndex_DuplicateComposite_Throws()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [
@@ -188,9 +188,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task PrimaryKey_DuplicateInsert_ThrowsBeforeWrite()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
@@ -198,7 +198,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         await writer.InsertRowAsync("T", [1], ct);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync("T", [1], ct));
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
     }
@@ -206,9 +206,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task NonUniqueIndex_DuplicateInsert_IsAllowed()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -227,8 +227,8 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt!.Rows.Count);
     }
@@ -238,7 +238,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

@@ -91,9 +91,9 @@ internal static class CalculatedExpressionDateTimeFunctions
     private static int DateDiff(string interval, DateTime start, DateTime end)
     {
         int sign = start <= end ? 1 : -1;
-        var lower = sign > 0 ? start : end;
-        var upper = sign > 0 ? end : start;
-        var span = upper - lower;
+        DateTime lower = sign > 0 ? start : end;
+        DateTime upper = sign > 0 ? end : start;
+        TimeSpan span = upper - lower;
         int result = interval.Trim().ToUpperInvariant() switch
         {
             "YYYY" => upper.Year - lower.Year,

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -39,7 +40,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             TestContext.Current.CancellationToken);
 
         await using var ms = new MemoryStream(fileBytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -51,11 +52,11 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
         int totalColumnsChecked = 0;
         foreach (string tableName in tables)
         {
-            var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            var pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
-            foreach (var pair in pairs)
+            (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
+            foreach ((int Primary, int Redundant) pair in pairs)
             {
                 Assert.True(
                     pair.Primary == pair.Redundant,
@@ -71,7 +72,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
     public async Task WriterAuthored_RedundantColNum_MatchesPrimary()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -96,19 +97,19 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
         byte[] fileBytes = ms.ToArray();
         ms.Position = 0;
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        var pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
+        (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry!.TDefPage, reader.PageSize);
         Assert.NotEmpty(pairs);
 
-        var mismatches = pairs
+        (int Index, int Primary, int Redundant)[] mismatches = pairs
             .Select((p, idx) => (Index: idx, p.Primary, p.Redundant))
             .Where(t => t.Primary != t.Redundant)
             .ToArray();

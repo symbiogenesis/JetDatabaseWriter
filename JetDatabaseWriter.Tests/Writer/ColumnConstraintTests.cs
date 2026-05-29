@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
@@ -21,10 +22,10 @@ public sealed class ColumnConstraintTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DefaultValue_IsAppliedOnInsert(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Defaults";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -38,8 +39,8 @@ public sealed class ColumnConstraintTests
             await writer.InsertRowAsync(table, [2, 7], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
@@ -50,10 +51,10 @@ public sealed class ColumnConstraintTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task NullablePublicValueShapes_TreatNullAsDatabaseNull(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "NullableShapes";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -83,13 +84,13 @@ public sealed class ColumnConstraintTests
             Assert.Equal(1, updated);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, dt.Rows.Count);
 
-        var first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
-        var second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
-        var third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
+        DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
+        DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
+        DataRow third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
 
         Assert.Equal(DBNull.Value, first["Name"]);
         Assert.Equal(42, first["Score"]);
@@ -106,10 +107,10 @@ public sealed class ColumnConstraintTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task NotNull_RejectsMissingValue(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Required";
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             table,
             [
@@ -129,10 +130,10 @@ public sealed class ColumnConstraintTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task NotNull_PersistsAcrossWriterReopen(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Required";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -143,7 +144,7 @@ public sealed class ColumnConstraintTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken));
@@ -151,8 +152,8 @@ public sealed class ColumnConstraintTests
             await writer.InsertRowAsync(table, [2, "Alice"], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         Assert.True(meta[0].IsNullable);
         Assert.False(meta[1].IsNullable);
     }
@@ -162,10 +163,10 @@ public sealed class ColumnConstraintTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task ValidationRule_RejectsBadValues(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "Validated";
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             table,
             [
@@ -187,10 +188,10 @@ public sealed class ColumnConstraintTests
         // database. On reopen, no validation fires for previously-guarded columns.
         // This documents the gap; when persisted expression-based validation is
         // implemented, this test should start failing.
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
         const string table = "ValidNoPersist";
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 table,
@@ -204,13 +205,13 @@ public sealed class ColumnConstraintTests
         }
 
         // Reopen: the delegate-based rule is lost; out-of-range values are accepted.
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.InsertRowAsync(table, [2, 250], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(250, dt.Rows[1]["Score"]);
     }
@@ -228,8 +229,8 @@ public sealed class ColumnConstraintTests
     [Fact]
     public async Task NotNull_DoesNotStampPrivate0x08BitInTdefColumnFlags()
     {
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
-        await using (var writer = await OpenWriterAsync(stream))
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "FlagGuard",
@@ -284,7 +285,7 @@ public sealed class ColumnConstraintTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

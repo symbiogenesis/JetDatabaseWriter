@@ -36,13 +36,13 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         ColumnMetadata? oleColumn = null;
         foreach (string table in tables)
         {
-            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             oleColumn = meta.FirstOrDefault(c => c.TypeName == "OLE Object");
             if (oleColumn is not null)
             {
@@ -67,14 +67,14 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyOleValue = false;
 
         foreach (string table in tables)
         {
-            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((c, i) => (c, i))
                 .Where(t => t.c.TypeName == "OLE Object")
@@ -116,13 +116,13 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyImagePayload = false;
         foreach (string table in tables)
         {
-            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((column, index) => (column, index))
                 .Where(static entry => entry.column.TypeName == "OLE Object")
@@ -169,8 +169,8 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        var reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawUnwrappedTextPayload = false;
         byte[] expectedPrefix =
@@ -181,7 +181,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
         foreach (string table in tables)
         {
-            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((column, index) => (column, index))
                 .Where(static entry => entry.column.TypeName == "OLE Object")
@@ -274,14 +274,14 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         ms.Position = 0;
-        await using (var writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(tableName, [1, payload], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
-        await using (var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             object[]? actual = null;
             await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
@@ -375,7 +375,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
     private static string? InvokeTryDecodeOleObject(byte[] bytes)
     {
-        var method = typeof(AccessReader).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
+        MethodInfo? method = typeof(AccessReader).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
         return (string?)method!.Invoke(null, [bytes, 0, bytes.Length]);
     }

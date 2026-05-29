@@ -144,7 +144,7 @@ internal sealed class IndexCursor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var (found, continueToNext) = IndexPageCodec.ContainsKeyInLeafPage(layout, page, pageSize, searchKey);
+            (bool found, bool continueToNext) = IndexPageCodec.ContainsKeyInLeafPage(layout, page, pageSize, searchKey);
             if (found)
             {
                 return true;

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -52,7 +53,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             TestContext.Current.CancellationToken);
 
         await using var ms = new MemoryStream(fileBytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -64,7 +65,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         var allTextColumns = new List<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)>();
         foreach (string tableName in tables)
         {
-            var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             allTextColumns.AddRange(ReadTextColumnSortInfo(fileBytes, (int)entry!.TDefPage, reader.PageSize, tableName));
@@ -75,7 +76,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         // Distinct (LCID, sort-version) pairs across the entire fixture. A
         // homogeneous fixture means DAO always picks the same pair for the
         // file format under test.
-        var distinct = allTextColumns
+        (ushort Lcid, ushort SortVersion)[] distinct = allTextColumns
             .Select(c => (c.Lcid, c.SortVersion))
             .Distinct()
             .OrderBy(p => p.Lcid)
@@ -124,7 +125,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
     public async Task WriterAuthored_TextSortVersion_MatchesDaoBaseline()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -145,16 +146,16 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         byte[] fileBytes = ms.ToArray();
         ms.Position = 0;
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        var rows = ReadTextColumnSortInfo(fileBytes, (int)entry!.TDefPage, reader.PageSize, "Customers").ToArray();
+        (string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)[] rows = ReadTextColumnSortInfo(fileBytes, (int)entry!.TDefPage, reader.PageSize, "Customers").ToArray();
         Assert.NotEmpty(rows);
 
         // Pull the DAO-authored ground truth in-line so the failure message
@@ -164,7 +165,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             TestContext.Current.CancellationToken);
 
         await using var daoMs = new MemoryStream(daoBytes, writable: false);
-        await using var daoReader = await AccessReader.OpenAsync(
+        await using AccessReader daoReader = await AccessReader.OpenAsync(
             daoMs,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -174,7 +175,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         var daoTextCols = new List<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)>();
         foreach (string tableName in daoTables)
         {
-            var daoEntry = await daoReader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? daoEntry = await daoReader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             if (daoEntry is null)
             {
                 continue;

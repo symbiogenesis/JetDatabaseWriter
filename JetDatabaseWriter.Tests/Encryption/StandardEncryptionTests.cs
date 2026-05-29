@@ -56,7 +56,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] data = await BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
             async () => await AccessReader.OpenAsync(
                 ms,
                 new AccessReaderOptions { UseLockFile = false },
@@ -78,7 +78,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             UseLockFile = false,
         };
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
             async () => await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -96,7 +96,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             UseLockFile = false,
         };
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
             async () => await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -112,33 +112,33 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] data = await BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
     }
 
     [Fact]
     public async Task Standard_ListTables_MatchesUnencryptedSource()
     {
-        var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<string> expected = (await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken))
+        AccessReader sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
+        var expected = (await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken))
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
 
         byte[] data = await BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
-        await using var encReader = await AccessReader.OpenAsync(
+        await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        List<string> actual = (await encReader.ListTablesAsync(TestContext.Current.CancellationToken))
+        var actual = (await encReader.ListTablesAsync(TestContext.Current.CancellationToken))
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
 
@@ -151,16 +151,16 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] data = await BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             tables[0],
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -174,13 +174,13 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] data = await BuildStandardEncryptedFixtureAsync();
 
         await using var ms = new MemoryStream(data, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(
@@ -194,23 +194,23 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_RowCounts_MatchUnencryptedSource()
     {
-        var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        var expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        AccessReader sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
+        List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
-        await using var encReader = await AccessReader.OpenAsync(
+        await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        var actual = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        List<TableStat> actual = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expected.Count, actual.Count);
-        foreach (var exp in expected)
+        foreach (TableStat exp in expected)
         {
-            var act = actual.FirstOrDefault(s => s.Name == exp.Name);
+            TableStat? act = actual.FirstOrDefault(s => s.Name == exp.Name);
             Assert.NotNull(act);
             Assert.Equal(exp.RowCount, act!.RowCount);
         }
@@ -219,8 +219,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_ColumnMetadata_MatchesUnencryptedSource()
     {
-        var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        var tables = await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken);
+        AccessReader sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
+        List<string> tables = await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken);
         var expectedCols = new Dictionary<string, List<ColumnMetadata>>(StringComparer.Ordinal);
         foreach (string table in tables)
         {
@@ -229,7 +229,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         byte[] data = await BuildStandardEncryptedFixtureAsync();
         await using var ms = new MemoryStream(data, writable: false);
-        await using var encReader = await AccessReader.OpenAsync(
+        await using AccessReader encReader = await AccessReader.OpenAsync(
             ms,
             CorrectPasswordOptions(),
             leaveOpen: true,
@@ -237,7 +237,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         foreach (string table in tables)
         {
-            var actual = await encReader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            List<ColumnMetadata> actual = await encReader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.Equal(expectedCols[table].Count, actual.Count);
 
             for (int i = 0; i < actual.Count; i++)
@@ -269,7 +269,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                 Password = TestPassword.AsMemory(),
             };
 
-            await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync(
                     TableName,
@@ -289,8 +289,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
 
             // Reopen via AccessReader: must detect Standard encryption,
             // decrypt, and surface the freshly-inserted row.
-            await using var reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            var dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
+            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);
@@ -616,9 +616,9 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             await AssertStandardCfbV4FileAsync(path, TestContext.Current.CancellationToken);
 
             // Should still be openable with the password.
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 path, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.NotEmpty(tables);
         }
         finally
@@ -657,8 +657,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
 
             // New password should work.
             var newOpts = new AccessReaderOptions { Password = NewPassword.AsMemory(), UseLockFile = false };
-            await using var reader = await AccessReader.OpenAsync(path, newOpts, TestContext.Current.CancellationToken);
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            await using AccessReader reader = await AccessReader.OpenAsync(path, newOpts, TestContext.Current.CancellationToken);
+            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.NotEmpty(tables);
         }
         finally
@@ -687,11 +687,11 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
 
             // Should now be openable without any password.
-            await using var reader = await AccessReader.OpenAsync(
+            await using AccessReader reader = await AccessReader.OpenAsync(
                 path,
                 new AccessReaderOptions { UseLockFile = false },
                 TestContext.Current.CancellationToken);
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.NotEmpty(tables);
         }
         finally
@@ -725,7 +725,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
 
         await using var stream = new MemoryStream(bytes, writable: false);
-        var streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken);
 
         Assert.True(streams.ContainsKey("EncryptionInfo"));
         Assert.True(streams.ContainsKey("EncryptedPackage"));

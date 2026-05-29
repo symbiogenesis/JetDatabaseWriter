@@ -117,7 +117,7 @@ internal static class TypedValueParser
                 failure = "expected a decimal number";
                 return false;
             case TypeCode.DateTime:
-                if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateTimeValue))
+                if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTimeValue))
                 {
                     parsedValue = dateTimeValue;
                     return true;
@@ -129,7 +129,7 @@ internal static class TypedValueParser
 
         if (targetType == typeof(Guid))
         {
-            if (Guid.TryParse(value, out var guidValue))
+            if (Guid.TryParse(value, out Guid guidValue))
             {
                 parsedValue = guidValue;
                 return true;

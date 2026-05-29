@@ -33,12 +33,12 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
         }
 
         // Snapshot FK index metadata before mutation.
-        var before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
         Assert.True(before.Count > 0, "NorthwindTraders should have FK indexes.");
 
         // Mutate: copy the database, add a scratch table with rows.
-        var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "ScratchPreserve",
@@ -48,11 +48,11 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
         }
 
         // Re-read FK indexes after mutation.
-        var after = await SnapshotFkIndexesFromStreamAsync(temp, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> after = await SnapshotFkIndexesFromStreamAsync(temp, TestContext.Current.CancellationToken);
 
         // Every FK index that existed before should still be present.
         Assert.Equal(before.Count, after.Count);
-        foreach (var (table, indexName) in before)
+        foreach ((string? table, string? indexName) in before)
         {
             Assert.Contains((table, indexName), after);
         }
@@ -71,11 +71,11 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
             return;
         }
 
-        var before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> before = await SnapshotFkIndexesAsync(path, TestContext.Current.CancellationToken);
         Assert.True(before.Count > 0, "NorthwindTraders should have FK indexes.");
 
-        var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("PresPar", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync("PresChi", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("ParId", typeof(int))], TestContext.Current.CancellationToken);
@@ -84,11 +84,11 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
                 TestContext.Current.CancellationToken);
         }
 
-        var after = await SnapshotFkIndexesFromStreamAsync(temp, TestContext.Current.CancellationToken);
+        List<(string Table, string IndexName)> after = await SnapshotFkIndexesFromStreamAsync(temp, TestContext.Current.CancellationToken);
 
         // The new relationship adds 2 FK entries (one per side); all old ones remain.
         Assert.True(after.Count >= before.Count + 2, $"Expected at least {before.Count + 2} FK indexes after relationship, got {after.Count}.");
-        foreach (var (table, indexName) in before)
+        foreach ((string? table, string? indexName) in before)
         {
             Assert.Contains((table, indexName), after);
         }
@@ -107,8 +107,8 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
             return;
         }
 
-        var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "MetaPreserve",
@@ -117,14 +117,14 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
             await writer.InsertRowAsync("MetaPreserve", [42], TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkCount = 0;
         foreach (string table in tables)
         {
-            var indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
-            foreach (var idx in indexes.Where(i => i.IsForeignKey))
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+            foreach (IndexMetadata? idx in indexes.Where(i => i.IsForeignKey))
             {
                 fkCount++;
                 Assert.NotEmpty(idx.Columns);
@@ -139,18 +139,18 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
 
     private static async Task<List<(string Table, string IndexName)>> SnapshotFkIndexesFromStreamAsync(MemoryStream stream, CancellationToken ct)
     {
-        await using var reader = await OpenReaderAsync(stream, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
         return await CollectFkIndexesAsync(reader, ct);
     }
 
     private static async Task<List<(string Table, string IndexName)>> CollectFkIndexesAsync(AccessReader reader, CancellationToken ct)
     {
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         var result = new List<(string, string)>();
         foreach (string table in tables)
         {
-            var indexes = await reader.ListIndexesAsync(table, ct);
-            foreach (var idx in indexes.Where(i => i.IsForeignKey))
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, ct);
+            foreach (IndexMetadata? idx in indexes.Where(i => i.IsForeignKey))
             {
                 result.Add((table, idx.Name));
             }
@@ -173,7 +173,7 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
 
     private async Task<List<(string Table, string IndexName)>> SnapshotFkIndexesAsync(string path, CancellationToken ct)
     {
-        var reader = await db.GetReaderAsync(path, ct);
+        AccessReader reader = await db.GetReaderAsync(path, ct);
         return await CollectFkIndexesAsync(reader, ct);
     }
 }

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -10,6 +11,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
@@ -166,7 +168,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // bail (TdefPreambleStatus != Ok or a downstream layout check) on
         // those tables; that is the same fall-back trigger documented in
         // §7.9 of docs/design/index-and-relationship-format-notes.md.
-        var (status, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus status, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (status != TdefPreambleStatus.Ok)
         {
             // Bulk path is silent on every bail (Empty / TooMany /
@@ -181,17 +183,17 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int numRealIdx = preamble.NumRealIdx;
         int realIdxDescStart = preamble.RealIdxDescStart;
 
-        var leafLayout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer.format);
 
         // Decode the index catalog: every populated real-idx slot (with
         // IsUnique already promoted for any slot backing a PK logical-idx),
         // along with the snapshot-index map and pre-resolved key columns.
-        var catalog = IndexCatalogReader.ReadResolved(
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuffer,
             writer.indexLayout,
             writer.indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
-        var realIdxByNum = catalog.RealIdxByNum;
+        Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
 
         if (realIdxByNum.Count == 0)
         {
@@ -200,8 +202,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         // Snapshot rows + locations in matching order (same page-walk semantics as
         // the existing UpdateRowsAsync/DeleteRowsAsync rely on).
-        using var snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
 
         bool tdefDirty = false;
@@ -220,13 +222,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (var (rieKey, rie) in realIdxByNum)
+        foreach ((int rieKey, RealIdxEntry rie) in realIdxByNum)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             // Skip indexes whose key columns failed to resolve against the
             // snapshot (deleted-column gap).
-            if (!catalog.TryGetKeyColumnInfos(rieKey, out var keyColInfos))
+            if (!catalog.TryGetKeyColumnInfos(rieKey, out List<KeyColumnInfo>? keyColInfos))
             {
                 continue;
             }
@@ -273,7 +275,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             long firstPageNumber = writer.stream.Length / writer.pgSz;
-            var build = IndexBTreeBuilder.Build(leafLayout, writer.pgSz, tdefPage, leafEntries, firstPageNumber);
+            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.pgSz, tdefPage, leafEntries, firstPageNumber);
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
 
@@ -322,7 +324,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     continue;
                 }
 
-                if (!realIdxByNum.TryGetValue(realIdxNum, out var rebuiltEntry))
+                if (!realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rebuiltEntry))
                 {
                     continue;
                 }
@@ -348,7 +350,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
     private static bool HasLongOrComplexStorageColumns(TableDef tableDef)
     {
-        foreach (var column in tableDef.Columns)
+        foreach (ColumnInfo column in tableDef.Columns)
         {
             if (column.Type is MemoType or OleType or AttachmentType or ComplexType)
             {
@@ -402,7 +404,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 result[i] = Array.Empty<long>();
             }
 
-            foreach (var rowBound in writer.EnumerateLiveRowBounds(page))
+            foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
             {
                 int realIdxNum = rowBound.RowIndex - 2;
                 if (realIdxNum < 0 || realIdxNum >= numRealIdx)
@@ -555,7 +557,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             indexPageGroups[i] = Array.Empty<long>();
         }
 
-        foreach ((int realIdxNum, var entry) in slots)
+        foreach ((int realIdxNum, RealIdxEntry entry) in slots)
         {
             if (realIdxNum < 0 || realIdxNum >= numRealIdx)
             {
@@ -632,7 +634,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return null;
             }
 
-            var entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.pgSz);
+            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.pgSz);
             if (entries.Count == 0)
             {
                 return null;
@@ -720,8 +722,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
-        var idxLayout = writer.indexLayout;
-        var layout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLayout idxLayout = writer.indexLayout;
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.format);
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -730,7 +732,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return true;
         }
 
-        var (preStatus, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         switch (preStatus)
         {
             case TdefPreambleStatus.Ok:
@@ -759,7 +761,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // against Access-authored repair output.
         for (int li = 0; li < numIdx; li++)
         {
-            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out var entry))
+            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
             {
                 LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
                 return false;
@@ -776,7 +778,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         var slots = new List<(int RealIdxNum, RealIdxEntry Entry)>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out var slot, out var keyCols))
+            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? keyCols))
             {
                 LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
                 return false;
@@ -796,15 +798,15 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return false;
         }
 
-        var snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         bool tdefDirty = false;
-        foreach ((_, var rie) in slots)
+        foreach ((_, RealIdxEntry rie) in slots)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             // Resolve key columns to (ColumnInfo, snapshot index, ascending).
-            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out var keyColInfos))
+            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo>? keyColInfos))
             {
                 LastIncrementalBail = "C2 resolveFailed";
                 return false;
@@ -822,7 +824,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
-            var addEntries = EncodeHintEntries(insertedRows, keyColInfos);
+            List<IndexEntry> addEntries = EncodeHintEntries(insertedRows, keyColInfos);
             if (addCount > 0 && addEntries.Count != addCount)
             {
                 // Encoder rejected at least one row; bail to bulk.
@@ -835,7 +837,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             // key from the live leaf entry); the surgical multi-level path
             // needs the keys to perform a path-capturing descent that
             // confirms every change targets the same leaf.
-            var removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
+            List<IndexEntry> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
             if (delCount > 0 && removeEntries.Count != delCount)
             {
                 LastIncrementalBail = "C5";
@@ -975,7 +977,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
                 }
 
-                var splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
+                List<IndexEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
                 if (splicedAll is null)
                 {
                     LastIncrementalBail = $"C10 allExisting={allExisting.Count}";
@@ -1004,8 +1006,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            var existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, writer.pgSz);
-            var spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, writer.pgSz);
+            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
                 LastIncrementalBail = $"C12 existing={existing.Count}";
@@ -1060,7 +1062,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int totalLen = 0;
         for (int k = 0; k < keyColInfos.Count; k++)
         {
-            (var col, int _, bool ascending) = keyColInfos[k];
+            (ColumnInfo? col, int _, bool ascending) = keyColInfos[k];
             object? value = cells[k];
             perColumn[k] = col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
@@ -1143,7 +1145,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return results;
         }
 
-        foreach ((var loc, object[] row) in rows)
+        foreach ((RowLocation loc, object[] row) in rows)
         {
             byte[]? composite = TryEncodeCompositeKey(keyColInfos, row);
             if (composite is null)
@@ -1209,11 +1211,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        var layout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.format);
 
         LastIncrementalBail = null;
 
-        var (preStatus, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (TdefPreambleStatus preStatus, TdefPreamble preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         switch (preStatus)
         {
             case TdefPreambleStatus.Ok:
@@ -1238,13 +1240,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // Decode the index catalog once, with key columns pre-resolved
         // against the snapshot. PK promotion is harmless here (this path
         // doesn't gate on IsUnique); names are unused so we skip them.
-        var catalog = IndexCatalogReader.ReadResolved(
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuf,
             writer.indexLayout,
             writer.indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
 
-        foreach ((int ri, var rie) in catalog.RealIdxByNum)
+        foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
             long firstDp = (uint)Ri32(tdefBuf, rie.FirstDpOffset);
             if (firstDp <= 0)
@@ -1254,7 +1256,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             // Resolve key columns to TDEF ColumnInfos.
-            if (!catalog.TryGetKeyColumnInfos(ri, out var keyColInfos))
+            if (!catalog.TryGetKeyColumnInfos(ri, out List<KeyColumnInfo>? keyColInfos))
             {
                 LastIncrementalBail = $"S3 ri={ri} resolveFailed";
                 return false;
@@ -1317,7 +1319,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     break;
                 }
 
-                var probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
+                List<IndexEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
                 if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[probe.Count - 1].Key) <= 0)
                 {
                     // composite belongs in this leaf (or earlier).
@@ -1345,14 +1347,14 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
             int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
-            var existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
 
             var addEntries = new List<IndexEntry>(1)
             {
                 new IndexEntry(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
             };
 
-            var spliced = IndexLeafIncremental.Splice(
+            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
                 existing,
                 addEntries,
                 Array.Empty<(long DataPage, byte DataRow)>());
@@ -1379,7 +1381,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             catch (ArgumentOutOfRangeException)
             {
                 // Leaf overflow → N-way split.
-                var splitPages = btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
+                SplitPages? splitPages = btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
                     ?? IndexHelpers.TryGreedySplitLeafInN(layout, writer.pgSz, spliced);
                 if (splitPages is null)
                 {
@@ -1402,12 +1404,12 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
                 if (hasCleanPath && descentPath.Count > 0)
                 {
-                    var leftLast = splitPages.GetLastEntry(0);
+                    IndexEntry leftLast = splitPages.GetLastEntry(0);
                     var leftSummary = new DecodedIntermediateEntry(leftLast, ChildPage: pageNumbers[0]);
                     var rightSummaries = new DecodedIntermediateEntry[splitCount - 1];
                     for (int p = 1; p < splitCount; p++)
                     {
-                        var last = splitPages.GetLastEntry(p);
+                        IndexEntry last = splitPages.GetLastEntry(p);
                         rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
                     }
 

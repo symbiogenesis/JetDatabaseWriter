@@ -70,20 +70,20 @@ public sealed class IndexNonTextSingleColumnFixtureTests
     [MemberData(nameof(Fixtures))]
     public async Task NonTextSingleColumnIndexes_LeafMatchesEncoder(string fixturePath)
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         var failures = new StringBuilder();
         int indexesValidated = 0;
         int keysValidated = 0;
 
-        var tables = await reader.ListTablesAsync(ct);
+        List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             List<ColumnMetadata> cols;
@@ -108,15 +108,15 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 continue;
             }
 
-            foreach (var index in indexes)
+            foreach (IndexMetadata index in indexes)
             {
                 if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
                 {
                     continue;
                 }
 
-                var keyCol = index.Columns[0];
-                if (!colByName.TryGetValue(keyCol.Name, out var colMeta))
+                IndexColumnReference keyCol = index.Columns[0];
+                if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta))
                 {
                     continue;
                 }
@@ -215,7 +215,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 }
 
                 encoded.Sort((a, b) => CompareBytesUnsigned(a.Key, b.Key));
-                List<byte[]> onDiskKeys = onDisk
+                var onDiskKeys = onDisk
                     .Select(e => e.Key)
                     .OrderBy(k => k, ByteSpanComparer.Instance)
                     .ToList();
@@ -363,7 +363,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -389,7 +389,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
             result.AddRange(entries);
 
             (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);

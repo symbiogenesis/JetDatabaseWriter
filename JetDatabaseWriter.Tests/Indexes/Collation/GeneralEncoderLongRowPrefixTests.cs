@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -92,30 +94,30 @@ public sealed class GeneralEncoderLongRowPrefixTests
         string tableName,
         string[] expectedSuffixes)
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout =
+        IndexLeafPageBuilder.LeafPageLayout layout =
             IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
 
-        var indexes = await reader.ListIndexesAsync(tableName, ct);
-        var dataIndex = Assert.Single(indexes, candidateIndex =>
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
             candidateIndex.Columns.Count == 1
             && !candidateIndex.IsForeignKey
             && candidateIndex.FirstDp > 0
             && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
 
-        var onDiskKeys = await CollectAllLeafKeysAsync(
+        List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
             reader,
             layout,
             reader.PageSize,
             dataIndex.FirstDp,
             ct);
 
-        List<string> actualSuffixes = onDiskKeys
+        var actualSuffixes = onDiskKeys
             .Where(key => key.Length == LongRowEntryLength)
             .Select(key => Convert.ToHexString(
                 key.AsSpan(PrefixMatchLength, LongRowEntryLength - PrefixMatchLength)))
@@ -152,43 +154,43 @@ public sealed class GeneralEncoderLongRowPrefixTests
         string tableName,
         LongRowValidationMode validationMode)
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        var layout =
+        IndexLeafPageBuilder.LeafPageLayout layout =
             IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
-        var cols = await reader.GetColumnMetadataAsync(tableName, ct);
+        List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
         var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-        var indexes = await reader.ListIndexesAsync(tableName, ct);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
 
         int indexesValidated = 0;
         int keysValidated = 0;
         int longRowKeysSeen = 0;
 
-        foreach (var index in indexes)
+        foreach (IndexMetadata index in indexes)
         {
             if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
             {
                 continue;
             }
 
-            var keyCol = index.Columns[0];
-            if (!colByName.TryGetValue(keyCol.Name, out var colMeta)
+            IndexColumnReference keyCol = index.Columns[0];
+            if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
                 || colMeta.ClrType != typeof(string))
             {
                 continue;
             }
 
-            var onDiskKeys = await CollectAllLeafKeysAsync(
+            List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
                 reader, layout, pageSize, index.FirstDp, ct);
 
-            var dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
             var values = new List<string?>(dt.Rows.Count);
             foreach (DataRow row in dt.Rows)
             {
@@ -322,13 +324,13 @@ public sealed class GeneralEncoderLongRowPrefixTests
 
     private static async Task<string> ReadTemplateTextAsync(string rowName)
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var reader = await AccessReader.OpenAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        var dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        var row = dataTable.Rows
+        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        DataRow row = dataTable.Rows
             .Cast<DataRow>()
             .Single(row => string.Equals((string)row["name"], rowName, StringComparison.OrdinalIgnoreCase));
         return (string)row["data"];
@@ -357,7 +359,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
                     $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
             }
 
-            var entries =
+            List<DecodedIntermediateEntry> entries =
                 IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
@@ -383,8 +385,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (var e in entries)
+            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            foreach (IndexEntry e in entries)
             {
                 result.Add(e.Key);
             }

@@ -245,7 +245,7 @@ internal static class IndexLeafPageBuilder
 
         for (int i = 0; i < entries.Count; i++)
         {
-            var e = entries[i];
+            IndexEntry e = entries[i];
 
             // §4.3 + §4.4: first entry includes the shared-prefix bytes; later
             // entries strip the leading prefLen bytes (the reader logically

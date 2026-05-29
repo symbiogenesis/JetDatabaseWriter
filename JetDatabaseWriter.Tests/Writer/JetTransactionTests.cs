@@ -39,13 +39,13 @@ public sealed class JetTransactionTests
     public async Task BeginTransaction_ReturnsActiveTransaction()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(tx);
         Assert.False(tx.IsCommitted);
@@ -56,13 +56,13 @@ public sealed class JetTransactionTests
     public async Task BeginTransaction_TwiceWithoutCommit_Throws()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using var first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(first);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -73,7 +73,7 @@ public sealed class JetTransactionTests
     public async Task Commit_PersistsBufferedInserts()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -81,7 +81,7 @@ public sealed class JetTransactionTests
         {
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [2, "Beta"], TestContext.Current.CancellationToken);
 
@@ -92,7 +92,7 @@ public sealed class JetTransactionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken);
         Assert.Equal(2, count);
     }
@@ -101,7 +101,7 @@ public sealed class JetTransactionTests
     public async Task Rollback_DiscardsBufferedInserts()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -109,7 +109,7 @@ public sealed class JetTransactionTests
         {
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [2, "Beta"], TestContext.Current.CancellationToken);
 
@@ -118,7 +118,7 @@ public sealed class JetTransactionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken);
         Assert.Equal(0, count);
     }
@@ -127,7 +127,7 @@ public sealed class JetTransactionTests
     public async Task Dispose_WithoutCommit_RollsBackImplicitly()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -136,7 +136,7 @@ public sealed class JetTransactionTests
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
             // Begin tx, do work, dispose without committing.
-            var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             try
             {
                 await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
@@ -151,7 +151,7 @@ public sealed class JetTransactionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken);
         Assert.Equal(0, count);
     }
@@ -164,7 +164,7 @@ public sealed class JetTransactionTests
         // otherwise a multi-row insert that allocates a new data page would
         // immediately fail to find that page on the next AppendRow call.
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -172,7 +172,7 @@ public sealed class JetTransactionTests
 
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         // 100 rows comfortably forces multiple page mutations and at least one
         // new appended page; the writer's own row append path round-trips
@@ -193,13 +193,13 @@ public sealed class JetTransactionTests
     public async Task Commit_AfterRollback_Throws()
     {
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -220,14 +220,14 @@ public sealed class JetTransactionTests
             MaxTransactionPageBudget = 1,
         };
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             writerOptions,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken));
@@ -240,7 +240,7 @@ public sealed class JetTransactionTests
         // every committed transaction so cooperating openers can detect a
         // catalog/data version change without re-reading the entire file.
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
@@ -253,7 +253,7 @@ public sealed class JetTransactionTests
             await ms.ReadAsync(before.AsMemory(), TestContext.Current.CancellationToken);
             byte beforeByte = before[0x14];
 
-            await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
             await tx.CommitAsync(TestContext.Current.CancellationToken);
 
@@ -269,7 +269,7 @@ public sealed class JetTransactionTests
     public async Task Commit_WhenReplayWriteFails_LeavesSuccessfulReplayPrefixOnDisk()
     {
         await using var stream = new FaultInjectingStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             NonLockingWriterOptions(),
@@ -279,7 +279,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         Assert.True(tx.JournaledPageCount > 1);
@@ -302,7 +302,7 @@ public sealed class JetTransactionTests
     public async Task Commit_WhenCommitLockByteWriteFails_MarksRolledBackWithoutBumpingCommitByte()
     {
         await using var stream = new FaultInjectingStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             NonLockingWriterOptions(),
@@ -312,7 +312,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         stream.ThrowBeforePageWriteAtOffset(0);
@@ -334,7 +334,7 @@ public sealed class JetTransactionTests
     public async Task Commit_WhenCanceledBeforeCommitLockByteUpdate_MarksRolledBackWithoutBumpingCommitByte()
     {
         await using var stream = new FaultInjectingStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             NonLockingWriterOptions(),
@@ -344,7 +344,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
@@ -365,7 +365,7 @@ public sealed class JetTransactionTests
     public async Task Commit_WhenDurableFlushFails_MarksRolledBackAfterBumpingCommitByte()
     {
         await using var stream = new FaultInjectingStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             NonLockingWriterOptions(),
@@ -375,7 +375,7 @@ public sealed class JetTransactionTests
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
 
-        await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
         int durableFlushCall = tx.JournaledPageCount + 2;
@@ -408,7 +408,7 @@ public sealed class JetTransactionTests
             UseTransactionalWrites = true,
         };
 
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             writerOptions,
@@ -441,7 +441,7 @@ public sealed class JetTransactionTests
         }
 
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken);
 
         // Only the seed row should remain — none of the batch rows persisted.
@@ -458,7 +458,7 @@ public sealed class JetTransactionTests
         // transaction is opened, so PageCacheSize/MaxTransactionPageBudget
         // do not affect the call's success).
         await using var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },

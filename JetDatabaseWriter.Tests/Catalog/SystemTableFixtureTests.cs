@@ -1,7 +1,10 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
+using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -21,11 +24,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysAccessStorage_HasExpectedColumns()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync(
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "MSysAccessStorage",
             TestContext.Current.CancellationToken);
 
@@ -43,11 +46,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysAccessStorage_ReadsNonEmptyRowSet()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MSysAccessStorage",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -61,11 +64,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysNavPaneGroups_HasExpectedColumns()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync(
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "MSysNavPaneGroups",
             TestContext.Current.CancellationToken);
 
@@ -81,11 +84,11 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task MSysNavPaneGroups_ReadsNonEmptyRowSet()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "MSysNavPaneGroups",
             cancellationToken: TestContext.Current.CancellationToken);
 

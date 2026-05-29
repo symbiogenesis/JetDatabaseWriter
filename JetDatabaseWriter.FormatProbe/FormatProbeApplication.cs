@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.FormatProbe.Bisection;
 using JetDatabaseWriter.FormatProbe.Dao;
@@ -81,7 +82,7 @@ internal static class FormatProbeApplication
             return 0;
         });
 
-        var parseResult = rootCommand.Parse(args);
+        ParseResult parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync(cancellationToken: CancellationToken.None);
     }
 
@@ -344,9 +345,9 @@ internal static class FormatProbeApplication
         string dbPath = Environment.GetEnvironmentVariable("DIAG_MEMO_PATH")
             ?? Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag", "writer_memo.accdb");
         Console.WriteLine($"Reading {dbPath}");
-        await using var rdr = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
+        await using AccessReader rdr = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
         string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
-        var dt = await rdr.ReadDataTableAsync(tableName);
+        System.Data.DataTable dt = await rdr.ReadDataTableAsync(tableName);
         Console.WriteLine($"Reader sees RowCount={dt!.Rows.Count}");
         foreach (System.Data.DataRow row in dt!.Rows)
         {
@@ -357,8 +358,8 @@ internal static class FormatProbeApplication
             }
         }
 
-        var catalog = await ReadCatalogAsync(rdr);
-        var entry = catalog.First(c => c.Name == tableName);
+        List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(rdr);
+        (long Id, string Name, int Type, long Flags, long TdefPage) entry = catalog.First(c => c.Name == tableName);
         Console.WriteLine($"TDEF page = {entry.TdefPage}");
         byte[] tdefPage = await rdr.ReadPageAsync(entry.TdefPage);
         Console.WriteLine($"TDEF[0]={tdefPage[0]:X2} (0x02 expected)");
@@ -492,8 +493,8 @@ internal static class FormatProbeApplication
     private static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
     {
         Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-        await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
-        var catalog = await ReadCatalogAsync(reader);
+        await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+        List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
 
         var sb = new StringBuilder();
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"# Format probe appendix: indexes, PKs, FKs, relationships");
@@ -511,7 +512,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Id | Name | Type | Flags (hex) | TDEF page |");
         _ = sb.AppendLine("|---:|---|---:|---|---:|");
-        foreach (var c in catalog.OrderBy(c => c.Id))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.OrderBy(c => c.Id))
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {c.Id} | `{Md(c.Name)}` | {c.Type} | 0x{unchecked((uint)c.Flags):X8} | {c.TdefPage} |");
         }
@@ -528,7 +529,7 @@ internal static class FormatProbeApplication
         var picked = new HashSet<long>();
         foreach (string name in alwaysInclude)
         {
-            var match = catalog.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+            (long Id, string Name, int Type, long Flags, long TdefPage) match = catalog.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
             if (match.TdefPage > 0 && picked.Add(match.TdefPage))
             {
                 await EmitTDefAsync(reader, sb, match.Name, match.TdefPage, includeIndexAnnotations: true);
@@ -537,7 +538,7 @@ internal static class FormatProbeApplication
 
         // Pick up to 4 user tables (no system mask) that actually have indexes
         int userTablesEmitted = 0;
-        foreach (var c in catalog
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog
             .Where(c => c.Type == 1 && unchecked((uint)c.Flags & 0x80000000u) == 0 && c.TdefPage > 0)
             .OrderBy(c => c.Id))
         {
@@ -575,8 +576,8 @@ internal static class FormatProbeApplication
     private static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
     {
         Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-        await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
-        var catalog = await ReadCatalogAsync(reader);
+        await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+        List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
 
         var sb = new StringBuilder();
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"# Format probe appendix: complex columns (Attachment, Multi-value)");
@@ -593,7 +594,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Id | Name | Type | Flags (hex) | TDEF page |");
         _ = sb.AppendLine("|---:|---|---:|---|---:|");
-        foreach (var c in catalog.OrderBy(c => c.Id))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.OrderBy(c => c.Id))
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {c.Id} | `{Md(c.Name)}` | {c.Type} | 0x{unchecked((uint)c.Flags):X8} | {c.TdefPage} |");
         }
@@ -604,7 +605,7 @@ internal static class FormatProbeApplication
         // every flat table (`f_*` naming convention), every type/template table (`MSysComplexType_*`).
         var hits = new List<(string Name, long Page, string Reason, byte[]? Bytes)>();
 
-        foreach (var c in catalog.Where(c => c.Type == 1 && c.TdefPage > 0))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.Where(c => c.Type == 1 && c.TdefPage > 0))
         {
             byte[]? bytes = await reader.GetRawTDefBytesAsync(c.TdefPage, default);
             if (bytes is null)
@@ -619,22 +620,22 @@ internal static class FormatProbeApplication
             }
         }
 
-        foreach (var c in catalog.Where(c => c.Name.Equals("MSysComplexColumns", StringComparison.OrdinalIgnoreCase)))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.Where(c => c.Name.Equals("MSysComplexColumns", StringComparison.OrdinalIgnoreCase)))
         {
             hits.Insert(0, (c.Name, c.TdefPage, "catalog: `MSysComplexColumns` schema", null));
         }
 
-        foreach (var c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("MSysComplexType_", StringComparison.Ordinal)))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("MSysComplexType_", StringComparison.Ordinal)))
         {
             hits.Add((c.Name, c.TdefPage, "complex-type template table (Jackcess `typeObjTable`)", null));
         }
 
-        foreach (var c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("f_", StringComparison.Ordinal)))
+        foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("f_", StringComparison.Ordinal)))
         {
             hits.Add((c.Name, c.TdefPage, "hidden flat (child) table — `f_<guid>_<userColName>`", null));
         }
 
-        foreach (var hit in hits.DistinctBy(h => h.Page))
+        foreach ((string Name, long Page, string Reason, byte[]? Bytes) hit in hits.DistinctBy(h => h.Page))
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### Reason: {hit.Reason}");
             await EmitTDefAsync(reader, sb, hit.Name, hit.Page, includeIndexAnnotations: false, includeComplexAnnotations: true, preloadedBytes: hit.Bytes);
@@ -673,7 +674,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
 
         using var catalogScanThrottle = new System.Threading.SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());
-        var scans = await Task.WhenAll(
+        CatalogScanResult[] scans = await Task.WhenAll(
             fixturePaths.Select(path => ScanCatalogFixtureAsync(fixturesDir, path, catalogScanThrottle)));
 
         var verdicts = scans
@@ -686,7 +687,7 @@ internal static class FormatProbeApplication
 
         var msysNameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var anyIndexNameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var scan in scans)
+        foreach (CatalogScanResult? scan in scans)
         {
             foreach (string name in scan.MsysNames)
             {
@@ -703,7 +704,7 @@ internal static class FormatProbeApplication
         int idxColHits = 0;
         int errors = 0;
         int totalCatalogRows = 0;
-        foreach (var verdict in verdicts)
+        foreach ((string RelPath, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) verdict in verdicts)
         {
             if (verdict.HasIndexes == true)
             {
@@ -754,7 +755,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| `MSys*` name | Fixtures it appears in (out of " + (fixturePaths.Length - errors) + ") |");
         _ = sb.AppendLine("|---|---:|");
-        foreach (var kv in msysNameCounts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (KeyValuePair<string, int> kv in msysNameCounts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `{Md(kv.Key)}` | {kv.Value} |");
         }
@@ -772,7 +773,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Name | Fixtures it appears in |");
         _ = sb.AppendLine("|---|---:|");
-        foreach (var kv in anyIndexNameCounts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (KeyValuePair<string, int> kv in anyIndexNameCounts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `{Md(kv.Key)}` | {kv.Value} |");
         }
@@ -783,7 +784,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Fixture (relative to `Databases/`) | Format | Catalog rows | `MSysIndexes` | `MSysIndexColumns` | `MSysRelationships` | First name containing \"index\" (if any) | Notes |");
         _ = sb.AppendLine("|---|---|---:|:---:|:---:|:---:|---|---|");
-        foreach (var v in verdicts)
+        foreach ((string RelPath, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) v in verdicts)
         {
             string idx = v.HasIndexes switch
             {
@@ -814,13 +815,13 @@ internal static class FormatProbeApplication
         {
             _ = sb.AppendLine("## Catalogs of fixtures with index-catalog tables");
             _ = sb.AppendLine();
-            foreach (var (relPath, catalog) in withIndexCatalog)
+            foreach ((string? relPath, List<(long Id, string Name, int Type, long Flags, long TdefPage)>? catalog) in withIndexCatalog)
             {
                 _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### `{Md(relPath)}`");
                 _ = sb.AppendLine();
                 _ = sb.AppendLine("| Id | Name | Type | Flags (hex) | TDEF page |");
                 _ = sb.AppendLine("|---:|---|---:|---|---:|");
-                foreach (var c in catalog.OrderBy(c => c.Id))
+                foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog.OrderBy(c => c.Id))
                 {
                     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {c.Id} | `{Md(c.Name)}` | {c.Type} | 0x{unchecked((uint)c.Flags):X8} | {c.TdefPage} |");
                 }
@@ -854,8 +855,8 @@ internal static class FormatProbeApplication
         try
         {
             Console.WriteLine($"Probing {relPath} ...");
-            await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
-            var catalog = await ReadCatalogAsync(reader);
+            await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+            List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
             bool hasIdx = catalog.Any(c => c.Name.Equals("MSysIndexes", StringComparison.OrdinalIgnoreCase));
             bool hasIdxCols = catalog.Any(c => c.Name.Equals("MSysIndexColumns", StringComparison.OrdinalIgnoreCase));
             bool hasRel = catalog.Any(c => c.Name.Equals("MSysRelationships", StringComparison.OrdinalIgnoreCase));
@@ -864,15 +865,15 @@ internal static class FormatProbeApplication
                 .Select(c => c.Name)
                 .FirstOrDefault();
 
-            List<string> msysNames = catalog
+            var msysNames = catalog
                 .Where(c => c.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
                 .Select(c => c.Name)
                 .ToList();
-            List<string> indexNames = catalog
+            var indexNames = catalog
                 .Where(c => c.Name.Contains("index", StringComparison.OrdinalIgnoreCase))
                 .Select(c => c.Name)
                 .ToList();
-            var indexCatalog = hasIdx || hasIdxCols
+            List<(long Id, string Name, int Type, long Flags, long TdefPage)>? indexCatalog = hasIdx || hasIdxCols
                 ? catalog
                 : null;
 
@@ -912,7 +913,7 @@ internal static class FormatProbeApplication
 
     private static async Task<List<(long Id, string Name, int Type, long Flags, long TdefPage)>> ReadCatalogAsync(AccessReader reader)
     {
-        var msys = await reader.GetMSysObjectsTableDefAsync(default)
+        TableDef msys = await reader.GetMSysObjectsTableDefAsync(default)
                    ?? throw new InvalidOperationException("MSysObjects TDEF not found.");
         int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
         int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
@@ -1004,7 +1005,7 @@ internal static class FormatProbeApplication
             }
 
             Console.WriteLine($"Probing Jet3 indexes in {rel} ...");
-            await using var reader = await AccessReader.OpenAsync(full, new AccessReaderOptions { UseLockFile = false });
+            await using AccessReader reader = await AccessReader.OpenAsync(full, new AccessReaderOptions { UseLockFile = false });
             if (reader.DatabaseFormat != DatabaseFormat.Jet3Mdb)
             {
                 _ = sb.AppendLine(CultureInfo.InvariantCulture, $"## `{Md(rel)}` — _skipped (not Jet3, format = {reader.DatabaseFormat})_");
@@ -1017,11 +1018,11 @@ internal static class FormatProbeApplication
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Format: {reader.DatabaseFormat}, page size: {reader.PageSize}, code page: {reader.CodePage}");
             _ = sb.AppendLine();
 
-            var catalog = await ReadCatalogAsync(reader);
+            List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
             int userTablesEmitted = 0;
 
             // Pick up to 4 user tables (Type=1, no system bit) whose TDEF declares numIdx > 0.
-            foreach (var c in catalog
+            foreach ((long Id, string Name, int Type, long Flags, long TdefPage) c in catalog
                 .Where(c => c.Type == 1 && unchecked((uint)c.Flags & 0x80000000u) == 0 && c.TdefPage > 0)
                 .OrderBy(c => c.Id))
             {
@@ -1450,7 +1451,7 @@ internal static class FormatProbeApplication
             {
                 _ = sb.AppendLine("**Complex columns detected:**");
                 _ = sb.AppendLine();
-                foreach (var (i, n, t, id) in complexCols)
+                foreach ((int i, string? n, byte t, string? id) in complexCols)
                 {
                     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Column #{i} `{Md(n)}` — type 0x{t:X2} ({TypeName(t)}) — ComplexID bytes (LE u32 in misc): `{id}` = **{U32FromHex(id)}**");
                 }

@@ -25,9 +25,9 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task ColumnMetadata_DecimalColumn_RoundTripsDeclaredPrecisionAndScale()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -38,9 +38,9 @@ public sealed class IndexNumericKeyIncrementalTests
                 ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync("T", ct);
-        var amount = cols.Single(c => c.Name == "Amount");
+        ColumnMetadata amount = cols.Single(c => c.Name == "Amount");
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)4, amount.NumericScale);
     }
@@ -49,9 +49,9 @@ public sealed class IndexNumericKeyIncrementalTests
     public async Task ColumnMetadata_DecimalColumn_DefaultsMatchAccessUiDefaults()
     {
         // Access "Number → Decimal" UI default is precision=18, scale=0.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -59,8 +59,8 @@ public sealed class IndexNumericKeyIncrementalTests
                 ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var amount = (await reader.GetColumnMetadataAsync("T", ct)).Single();
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        ColumnMetadata amount = (await reader.GetColumnMetadataAsync("T", ct)).Single();
         Assert.Equal((byte)18, amount.NumericPrecision);
         Assert.Equal((byte)0, amount.NumericScale);
     }
@@ -73,9 +73,9 @@ public sealed class IndexNumericKeyIncrementalTests
         // leaf (and possibly intermediates) at the end of the file.
         // After Numeric incremental the path participates: one new leaf is appended per
         // splice (same shape as the surgical non-numeric fast path).
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -95,7 +95,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         long lengthAfterBulk = stream.Length;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // One row insert that lands between two existing keys ⇒
             // single-leaf splice.
@@ -115,7 +115,7 @@ public sealed class IndexNumericKeyIncrementalTests
             $"Splice grew file by {lengthAfterSplice - lengthAfterBulk} bytes; expected ≤ 32 KB.");
 
         // Round-trip verification.
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         List<object[]> rows = [];
         await foreach (object[] row in reader.Rows("T", cancellationToken: ct))
         {
@@ -133,9 +133,9 @@ public sealed class IndexNumericKeyIncrementalTests
         // declared scale=2 every value is canonical at scale 2; the
         // append fast path engages because every new key sorts strictly
         // after the current tail max.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -154,7 +154,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         long beforeAppend = stream.Length;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Pure append — sorts after every existing key.
             await writer.InsertRowAsync("T", [9999.00m], ct);
@@ -170,7 +170,7 @@ public sealed class IndexNumericKeyIncrementalTests
             delta <= 8 * Constants.PageSizes.Jet4,
             $"Append grew file by {delta} bytes; expected ≤ 32 KB (in-place tail rewrite).");
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         long count = await reader.Rows("T", cancellationToken: ct).CountAsync(cancellationToken: ct);
         Assert.Equal(401, count);
     }
@@ -178,9 +178,9 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task IncrementalDelete_NumericKey_DoesNotBailToBulk()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -203,7 +203,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         long beforeDelete = stream.Length;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Id", 2, ct);
             Assert.Equal(1, deleted);
@@ -216,7 +216,7 @@ public sealed class IndexNumericKeyIncrementalTests
             delta <= 8 * Constants.PageSizes.Jet4,
             $"Delete grew file by {delta} bytes; expected ≤ 32 KB (incremental rewrite).");
 
-        await using var reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
         long count = await reader.Rows("T", cancellationToken: ct).CountAsync(cancellationToken: ct);
         Assert.Equal(2, count);
     }
@@ -228,9 +228,9 @@ public sealed class IndexNumericKeyIncrementalTests
         // With declared scale=2 (the column's canonical scale), the
         // unique-index pre-insert check must catch the duplicate
         // before the row hits disk.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Amount", typeof(decimal)) { NumericScale = 2 }],
@@ -249,9 +249,9 @@ public sealed class IndexNumericKeyIncrementalTests
         // stores every cell as an integer. The index sort key is encoded
         // at scale=0, so 1.4 (rounds to 1) and 1.6 (rounds to 2) are
         // distinct, but 1.6 and 2.0 collide.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("N", typeof(decimal))],
@@ -267,9 +267,9 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task NumericPrecisionOutOfRange_ThrowsArgumentOutOfRange()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
             await writer.CreateTableAsync(
@@ -281,9 +281,9 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task NumericScaleAboveDeclaredPrecision_ThrowsArgumentOutOfRange()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
             await writer.CreateTableAsync(
@@ -295,7 +295,7 @@ public sealed class IndexNumericKeyIncrementalTests
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },

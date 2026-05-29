@@ -149,9 +149,9 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                 // Evict LRU entry and reuse its slot in-place (zero allocation).
                 nodeIdx = nodes[Sentinel].Prev;
                 Detach(nodeIdx);
-                ref var evicted = ref nodes[nodeIdx];
+                ref Node evicted = ref nodes[nodeIdx];
                 map.Remove(evicted.Key);
-                var evictedValue = evicted.Value;
+                TValue? evictedValue = evicted.Value;
 
                 // Clear references so reused slot doesn't temporarily root the old key/value.
                 evicted.Key = default!;
@@ -181,7 +181,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         {
             if (onEvict != null)
             {
-                foreach (var kvp in map)
+                foreach (KeyValuePair<TKey, int> kvp in map)
                 {
                     onEvict(nodes[kvp.Value].Value);
                 }
@@ -207,7 +207,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Detach(int idx)
     {
-        ref var node = ref nodes[idx];
+        ref Node node = ref nodes[idx];
         nodes[node.Prev].Next = node.Next;
         nodes[node.Next].Prev = node.Prev;
     }
@@ -222,7 +222,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Prepend(int idx)
     {
-        ref var node = ref nodes[idx];
+        ref Node node = ref nodes[idx];
         int oldHead = nodes[Sentinel].Next;
         node.Next = oldHead;
         node.Prev = Sentinel;

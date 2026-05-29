@@ -48,11 +48,11 @@ public sealed class IndexBulkInsertStressTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task BulkInsert_UniqueIntIndex_ManyRows_ProducesMultiLevelBTree(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         const int RowCount = 1500;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Big",
@@ -73,8 +73,8 @@ public sealed class IndexBulkInsertStressTests
         // Reader must surface every row. (Round-trip via ReadDataTableAsync
         // confirms the data pages remain readable; the index B-tree was
         // exercised purely on the write side.)
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(RowCount, dt.Rows.Count);
         var seen = new HashSet<int>();
         foreach (DataRow r in dt.Rows)
@@ -109,9 +109,9 @@ public sealed class IndexBulkInsertStressTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task BulkInsert_UniqueIndex_DuplicateKeyInBatch_ThrowsOnRebuild(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int))],
@@ -153,9 +153,9 @@ public sealed class IndexBulkInsertStressTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task AutoIncrement_AfterRejectedInsert_DoesNotSkipNextValue(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -181,10 +181,10 @@ public sealed class IndexBulkInsertStressTests
             await writer.InsertRowAsync("T", [DBNull.Value, "row3"], ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken))!;
 
-        var rows = dt.AsEnumerable()
+        (int Id, string Data)[] rows = dt.AsEnumerable()
             .Select(r => (Id: (int)r["Id"], Data: (string)r["Data"]))
             .OrderBy(t => t.Id)
             .ToArray();
@@ -210,10 +210,10 @@ public sealed class IndexBulkInsertStressTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task BulkInsert_ThenDeleteRange_LeavesConsistentIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const int RowCount = 800;
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "Big",
@@ -241,8 +241,8 @@ public sealed class IndexBulkInsertStressTests
             Assert.Equal(1, d2);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(RowCount - 2, dt.Rows.Count);
 
         var ids = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
@@ -308,7 +308,7 @@ public sealed class IndexBulkInsertStressTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

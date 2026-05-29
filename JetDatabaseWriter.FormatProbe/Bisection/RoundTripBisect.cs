@@ -28,7 +28,7 @@ internal static class RoundTripBisect
             return 1;
         }
 
-        var hostProbe = DaoPowerShellHostResolver.Probe();
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
         if (hostProbe.HostPath is null)
         {
             await Console.Error.WriteLineAsync($"[bisect] {hostProbe.FailureReason}");
@@ -137,7 +137,7 @@ internal static class RoundTripBisect
             Console.WriteLine("[bisect] stopping at first failure (set DIAG_RT_RUN_ALL=1 for exhaustive output)");
         }
 
-        foreach (var (name, action) in steps)
+        foreach ((string? name, Func<AccessWriter, Task>? action) in steps)
         {
             string srcPath = FormatProbeArtifacts.GetFilePath(workRoot, $"rt-bisect-{name}.accdb");
             string dstPath = FormatProbeArtifacts.GetFilePath(workRoot, $"rt-bisect-{name}.compacted.accdb");
@@ -145,7 +145,7 @@ internal static class RoundTripBisect
 
             try
             {
-                await using (var writer = await AccessWriter.OpenAsync(srcPath, new AccessWriterOptions { UseLockFile = false }))
+                await using (AccessWriter writer = await AccessWriter.OpenAsync(srcPath, new AccessWriterOptions { UseLockFile = false }))
                 {
                     await action(writer);
                 }
@@ -243,7 +243,7 @@ internal static class RoundTripBisect
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add(scriptPath);
 
-        using var p = Process.Start(psi)!;
+        using Process p = Process.Start(psi)!;
         string err = p.StandardError.ReadToEnd();
         _ = p.StandardOutput.ReadToEnd();
         p.WaitForExit(120_000);

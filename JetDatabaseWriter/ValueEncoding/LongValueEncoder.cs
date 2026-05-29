@@ -11,6 +11,7 @@ using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
@@ -50,7 +51,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         object[]? result = null;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            var col = tableDef.Columns[i];
+            ColumnInfo col = tableDef.Columns[i];
             if (col.IsFixed || (col.Type != OleType && col.Type != MemoType))
             {
                 continue;

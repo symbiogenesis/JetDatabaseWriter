@@ -18,7 +18,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     {
         string path = await CreateReadableDatabaseAsync();
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions
             {
@@ -37,7 +37,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         const int RowCount = 2_000;
         string path = await CreateReadableDatabaseAsync(RowCount);
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions
             {
@@ -62,7 +62,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     {
         string path = await CreateReadableDatabaseAsync();
 
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             path,
             new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
@@ -76,13 +76,13 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     {
         string path = await CreateReadableDatabaseAsync();
 
-        await using var stream = FileStreamFactory.Open(
+        await using FileStream stream = FileStreamFactory.Open(
             path,
             FileMode.Open,
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete,
             FileOptions.Asynchronous | FileOptions.RandomAccess);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions
             {
@@ -106,7 +106,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
 
     private static async ValueTask AssertReadableItemsTableAsync(AccessReader reader)
     {
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Single(tables);
         Assert.Equal("Items", tables[0]);
     }
@@ -134,7 +134,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         _paths.Add(path);
         _paths.Add(Path.ChangeExtension(path, ".ldb"));
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             path,
             DatabaseFormat.Jet4Mdb,
             cancellationToken: TestContext.Current.CancellationToken);

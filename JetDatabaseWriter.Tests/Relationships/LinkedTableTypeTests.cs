@@ -1,8 +1,10 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -32,13 +34,13 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var table2 = linked.FirstOrDefault(
+        LinkedTableInfo? table2 = linked.FirstOrDefault(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(table2);
@@ -59,13 +61,13 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var table2 = linked.Single(
+        LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
         Assert.False(string.IsNullOrWhiteSpace(table2.SourcePath));
@@ -84,13 +86,13 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var table2 = linked.Single(
+        LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
         Assert.Null(table2.ConnectString);
@@ -109,13 +111,13 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        var table2 = linked.Single(
+        LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal("Table1", table2.SourceObjectName);
@@ -133,10 +135,10 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             return;
         }
 
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        var linked =
+        List<LinkedTableInfo> linked =
             await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(linked);

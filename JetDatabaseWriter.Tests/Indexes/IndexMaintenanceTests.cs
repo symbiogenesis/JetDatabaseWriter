@@ -2,9 +2,11 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -40,9 +42,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -71,9 +73,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task InsertRow_Single_RebuildsIndexLeaf(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -93,9 +95,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task UpdateRows_RebuildsIndexLeaf_PreservingRowCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -135,9 +137,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DeleteRows_RebuildsIndexLeaf_WithReducedEntryCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -169,9 +171,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task AddColumn_PreservesExistingIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -183,8 +185,8 @@ public sealed class IndexMaintenanceTests
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         Assert.Single(indexes);
         Assert.Equal("IX_Id", indexes[0].Name);
         Assert.Equal("Id", indexes[0].Columns[0].Name);
@@ -195,9 +197,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task RenameColumn_RemapsIndexColumnReference(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -209,8 +211,8 @@ public sealed class IndexMaintenanceTests
             await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         Assert.Single(indexes);
         Assert.Equal("IX_Id", indexes[0].Name);
         Assert.Equal("Identifier", indexes[0].Columns[0].Name);
@@ -221,9 +223,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DropColumn_DropsIndexReferencingDroppedColumn(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -241,8 +243,8 @@ public sealed class IndexMaintenanceTests
             await writer.DropColumnAsync("T", "Score", ct);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         Assert.Single(indexes);
         Assert.Equal("IX_Id", indexes[0].Name);
     }
@@ -254,9 +256,9 @@ public sealed class IndexMaintenanceTests
     {
         // Text indexes whose values are limited to digits + ASCII letters
         // are maintained on insert via the General Legacy sort-key encoder.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -286,9 +288,9 @@ public sealed class IndexMaintenanceTests
         // (spaces, punctuation, accented characters). Strings that previously
         // fell through to the stale-leaf path now participate in the index maintenance
         // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -318,9 +320,9 @@ public sealed class IndexMaintenanceTests
         // (Text = 0x0A, Memo = 0x0C both supported by IndexKeyEncoder).
         // Round-trip a memo-keyed index and confirm the bulk rebuild populated
         // the leaf instead of leaving the leaf-page emission placeholder in place.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -346,9 +348,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task MixedDirectionUniqueCompositeIndex_UpdateDeleteInsert_RoundTrips(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -395,12 +397,12 @@ public sealed class IndexMaintenanceTests
 
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(3, rowsRead.Rows.Count);
 
-        var indexes = await reader.ListIndexesAsync("T", ct);
-        var index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", ct);
+        IndexMetadata index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
         Assert.True(index.EnforcesUniqueness);
         Assert.True(index.HasUniqueFlag);
         Assert.Equal("Code", index.Columns[0].Name);
@@ -418,9 +420,9 @@ public sealed class IndexMaintenanceTests
         // single leaf for either format (~400 for Jet4, ~200 for Jet3).
         // 700 rows guarantees a multi-level tree on both formats.
         const int RowCount = 700;
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -439,14 +441,14 @@ public sealed class IndexMaintenanceTests
 
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
-        await using var reader = await OpenReaderAsync(stream);
-        var indexes = await reader.ListIndexesAsync("T", ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", ct);
         Assert.Single(indexes);
         Assert.Equal("IX_Id", indexes[0].Name);
 
         // Rows still readable via table scan (the reader does not consume the
         // index, but the rows-on-disk count is the index's truth source).
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(RowCount, rowsRead.Rows.Count);
     }
 
@@ -460,9 +462,9 @@ public sealed class IndexMaintenanceTests
         // the new entry, and emit a fresh root. The reader's row count must
         // include the late insert.
         const int InitialRows = 700;
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -484,8 +486,8 @@ public sealed class IndexMaintenanceTests
 
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -495,9 +497,9 @@ public sealed class IndexMaintenanceTests
     public async Task DeleteRows_AfterMultiLevelTreeExists_ShrinksTreeAndStaysConsistent(DatabaseFormat format)
     {
         const int InitialRows = 700;
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -517,8 +519,8 @@ public sealed class IndexMaintenanceTests
             Assert.Equal(1, deleted);
         }
 
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows - 1, rowsRead.Rows.Count);
     }
 
@@ -527,9 +529,9 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task PrimaryKey_InsertDuplicate_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using var writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int))],
@@ -552,9 +554,9 @@ public sealed class IndexMaintenanceTests
         // single-row insert and a single-row delete on the same leaf to
         // confirm the incremental (non-rebuild) splice path works for both
         // insert and delete operations.
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -585,9 +587,9 @@ public sealed class IndexMaintenanceTests
         // the incremental path by inserting and deleting one more row.
         // The reader must still see the correct total row count after maintenance.
         const int InitialRows = 700;
-        await using var stream = await CreateFreshStreamAsync(format);
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (var writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -612,8 +614,8 @@ public sealed class IndexMaintenanceTests
         }
 
         // Net: InitialRows + 1 insert − 1 delete = InitialRows.
-        await using var reader = await OpenReaderAsync(stream);
-        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows, rowsRead.Rows.Count);
     }
 
@@ -731,8 +733,8 @@ public sealed class IndexMaintenanceTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
-        await using var reader = await OpenReaderAsync(stream);
-        var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         if (entry is null)
         {
             throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
@@ -744,7 +746,7 @@ public sealed class IndexMaintenanceTests
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
             new AccessWriterOptions { UseLockFile = false },

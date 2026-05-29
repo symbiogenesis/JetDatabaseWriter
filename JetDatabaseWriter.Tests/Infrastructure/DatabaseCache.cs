@@ -57,7 +57,7 @@ public sealed class DatabaseCache : IAsyncDisposable
         List<Task> disposeTasks = [];
         List<Exception> exceptions = [];
 
-        foreach (var (key, lazy) in _readers)
+        foreach ((string? key, Lazy<Task<AccessReader>>? lazy) in _readers)
         {
             if (!lazy.IsValueCreated)
             {
@@ -68,7 +68,7 @@ public sealed class DatabaseCache : IAsyncDisposable
             disposeTasks.Add(DisposeReaderAsync(lazy));
         }
 
-        Task allDisposals = Task.WhenAll(disposeTasks);
+        var allDisposals = Task.WhenAll(disposeTasks);
         await allDisposals.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
         if (allDisposals.Exception is { } aggregate)
@@ -91,7 +91,7 @@ public sealed class DatabaseCache : IAsyncDisposable
 
     private static async Task DisposeReaderAsync(Lazy<Task<AccessReader>> lazy)
     {
-        var reader = await lazy.Value.ConfigureAwait(false);
+        AccessReader? reader = await lazy.Value.ConfigureAwait(false);
         if (reader is not null)
         {
             await reader.DisposeAsync().ConfigureAwait(false);

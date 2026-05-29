@@ -1,9 +1,12 @@
 namespace JetDatabaseWriter.Tests.Conformance;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -23,11 +26,11 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task OldDatesV2007_ListTables_ReturnsSingleTable()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal("Table1", tables[0]);
@@ -40,11 +43,11 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_HasDateTimeColumn()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        var meta = await reader.GetColumnMetadataAsync(
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 
@@ -59,17 +62,17 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_AllDates_AreBeforeYear1600()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(4, dt.Rows.Count);
 
-        var dates = dt.AsEnumerable()
+        DateTime[] dates = dt.AsEnumerable()
             .Select(r => r.Field<DateTime>("DateField"))
             .ToArray();
 
@@ -84,15 +87,15 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     [Fact]
     public async Task Table1_ContainsDateFrom1392()
     {
-        var reader = await db.GetReaderAsync(
+        AccessReader reader = await db.GetReaderAsync(
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        var dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadDataTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var dates = dt.AsEnumerable()
+        DateTime[] dates = dt.AsEnumerable()
             .Select(r => r.Field<DateTime>("DateField"))
             .ToArray();
 

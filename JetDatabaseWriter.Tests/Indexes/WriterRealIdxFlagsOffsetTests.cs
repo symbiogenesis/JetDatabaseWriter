@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -50,7 +51,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
             TestContext.Current.CancellationToken);
 
         await using var ms = new MemoryStream(fileBytes, writable: false);
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
@@ -66,10 +67,10 @@ public sealed class WriterRealIdxFlagsOffsetTests
 
         foreach (string tableName in tables)
         {
-            var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            var physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
+            List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
             for (int i = 0; i < physOffsets.Count; i++)
             {
                 int phys = physOffsets[i];
@@ -142,7 +143,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
     public async Task WriterAuthored_FlagsByte_PositionedAtDaoOffset()
     {
         await using var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false },
@@ -160,17 +161,17 @@ public sealed class WriterRealIdxFlagsOffsetTests
 
         byte[] fileBytes = ms.ToArray();
         ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        var entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        var physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
+        List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
         Assert.NotEmpty(physOffsets);
 
         var sample = new StringBuilder();

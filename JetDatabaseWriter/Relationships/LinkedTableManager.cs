@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -103,7 +104,7 @@ internal static class LinkedTableManager
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var msys = await reader.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return [];
@@ -187,8 +188,8 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal static async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
-        var links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
-        var link = links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        List<LinkedTableInfo> links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
+        LinkedTableInfo? link = links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
         return link is null ? null : link with { };
     }
 
@@ -208,7 +209,7 @@ internal static class LinkedTableManager
     {
         ThrowIfUnsupportedLinkedRead(link);
 
-        var linkedOptions = reader.LinkedSourceOpenOptions;
+        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
         string resolvedPath = ResolveLinkedSourcePath(reader, link);
 
         if (!File.Exists(resolvedPath))
@@ -226,7 +227,7 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        var source = GetLinkedTextDataSource(reader, link);
+        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
         using var textReader = new StreamReader(source.FilePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         using var delimitedReader = new DelimitedTextReader(textReader, source.Format, source.Limits.Delimited);
         return await delimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
@@ -238,7 +239,7 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         long rowCount = 0;
 
         await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
@@ -255,7 +256,7 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        var source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         var metadata = new List<ColumnMetadata>(source.ColumnNames.Length);
         for (int i = 0; i < source.ColumnNames.Length; i++)
         {
@@ -281,7 +282,7 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         CancellationToken cancellationToken)
     {
-        var source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         DataTable? table = null;
         try
         {
@@ -300,13 +301,13 @@ internal static class LinkedTableManager
                 progress?.Report(rowCount);
                 if (maxRows.HasValue && rowCount >= maxRows.Value)
                 {
-                    var result = table;
+                    DataTable result = table;
                     table = null;
                     return result;
                 }
             }
 
-            var final = table;
+            DataTable final = table;
             table = null;
             return final;
         }
@@ -321,7 +322,7 @@ internal static class LinkedTableManager
         string tableName,
         CancellationToken cancellationToken)
     {
-        var link = await FindLinkedTableAsync(reader, tableName, cancellationToken).ConfigureAwait(false);
+        LinkedTableInfo? link = await FindLinkedTableAsync(reader, tableName, cancellationToken).ConfigureAwait(false);
         if (link?.Kind != LinkedTableKind.Text)
         {
             return null;
@@ -512,7 +513,7 @@ internal static class LinkedTableManager
 
     private static string ResolveLinkedSourcePath(AccessReader reader, LinkedTableInfo link)
     {
-        var linkedOptions = reader.LinkedSourceOpenOptions;
+        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
         return ResolveLinkedSourcePath(
             link,
             reader.HostDatabasePath,
@@ -525,14 +526,14 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        var source = GetLinkedTextDataSource(reader, link);
+        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
         string[] columnNames = await ReadLinkedTextColumnNamesAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false);
         return new LinkedTextSource(source.FilePath, source.Format, source.Limits, columnNames);
     }
 
     private static LinkedTextDataSource GetLinkedTextDataSource(AccessReader reader, LinkedTableInfo link)
     {
-        var limits = CreateLinkedTextLimits(reader.LinkedSourceOpenOptions);
+        LinkedTextLimits limits = CreateLinkedTextLimits(reader.LinkedSourceOpenOptions);
         string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
         if (!File.Exists(resolvedPath))
         {
@@ -658,7 +659,7 @@ internal static class LinkedTableManager
     {
         using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         using var delimitedReader = new DelimitedTextReader(reader, format, limits.Delimited);
-        var firstRecord = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+        DelimitedTextRecord? firstRecord = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
         if (firstRecord is not { } record)
         {
             return [];
@@ -680,7 +681,7 @@ internal static class LinkedTableManager
         bool isFirstRecord = true;
         while (true)
         {
-            var record = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+            DelimitedTextRecord? record = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
             if (record is not { } current)
             {
                 yield break;
