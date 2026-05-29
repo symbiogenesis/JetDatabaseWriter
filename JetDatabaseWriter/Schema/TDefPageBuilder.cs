@@ -542,11 +542,22 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             DateTimeType => 8,
             GuidType => 16,
             NumericType => 17,
-            TextType => format != DatabaseFormat.Jet3Mdb ? Math.Max(2, (maxLength > 0 ? maxLength : 255) * 2) : (maxLength > 0 ? maxLength : 255),
+            TextType => GetTextDeclaredSize(maxLength, format),
             BinaryType => maxLength > 0 ? maxLength : 255,
             AttachmentType or ComplexType => 4,
             _ => 0,
         };
+
+    private static int GetTextDeclaredSize(int maxLength, DatabaseFormat format)
+    {
+        int effectiveLength = maxLength > 0 ? maxLength : 255;
+        return format switch
+        {
+            DatabaseFormat.Jet3Mdb => effectiveLength,
+            DatabaseFormat.Jet4Mdb or DatabaseFormat.AceAccdb => Math.Max(2, effectiveLength * 2),
+            _ => throw new NotSupportedException($"Unsupported database format: {format}"),
+        };
+    }
 
     private static int GetCalculatedDeclaredSize(byte type, int declaredSize)
     {
