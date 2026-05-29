@@ -36,33 +36,38 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// No OleDB, ODBC, or ACE/Jet driver installation required.
 /// </para>
 /// <para>
-/// Supports:
-///   Jet3  – Access 97 (.mdb)
-///   Jet4+ – Access 2000-2019 (.mdb / .accdb)
+/// Supported formats:
 /// </para>
+/// <list type="bullet">
+///   <item><description>Jet3 – Access 97 (.mdb)</description></item>
+///   <item><description>Jet4+ – Access 2000-2019 (.mdb / .accdb)</description></item>
+/// </list>
 /// <para>
 /// Features:
-///   ✓ All standard data types (Text, Integer, Date, GUID, Currency, etc.)
-///   ✓ MEMO fields (inline + single-page + multi-page LVAL chains)
-///   ✓ OLE Object fields — auto-detects images (JPEG/PNG/GIF/BMP), documents (PDF/DOC/RTF), archives (ZIP)
-///   ✓ Streaming API — process millions of rows without OOM (StreamRows, ReadTable)
-///   ✓ Progress reporting — IProgress&lt;int&gt; callbacks for long operations
-///   ✓ Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost
-///   ✓ Catalog caching — single MSysObjects scan, reused across calls
-///   ✓ Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.)
-///   ✓ Password-protected databases — supports the implemented Jet/ACE encryption formats
 /// </para>
+/// <list type="bullet">
+///   <item><description>All standard data types (Text, Integer, Date, GUID, Currency, etc.).</description></item>
+///   <item><description>MEMO fields (inline, single-page, and multi-page LVAL chains).</description></item>
+///   <item><description>OLE Object fields — auto-detects images (JPEG/PNG/GIF/BMP), documents (PDF/DOC/RTF), and archives (ZIP).</description></item>
+///   <item><description>Streaming API — process millions of rows without OOM (StreamRows, ReadTable).</description></item>
+///   <item><description>Progress reporting — IProgress&lt;int&gt; callbacks for long operations.</description></item>
+///   <item><description>Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost.</description></item>
+///   <item><description>Catalog caching — single MSysObjects scan, reused across calls.</description></item>
+///   <item><description>Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.).</description></item>
+///   <item><description>Password-protected databases — supports the implemented Jet/ACE encryption formats.</description></item>
+/// </list>
 /// <para>
 /// Limitations:
-///   ✓ Attachment and multi-value complex fields — decoded via hidden flat tables
-///   ✓ Access-file linked tables — read-through via trusted source paths
-///   ✓ CSV/text linked tables — managed string-valued delimited-text read-through via trusted source paths
-///   ✗ ODBC linked tables — metadata only
-///   ✗ Overflow rows (span multiple pages) — silently skipped (rare edge case)
 /// </para>
+/// <list type="bullet">
+///   <item><description>Attachment and multi-value complex fields — decoded via hidden flat tables.</description></item>
+///   <item><description>Access-file linked tables — read-through via trusted source paths.</description></item>
+///   <item><description>CSV/text linked tables — managed string-valued delimited-text read-through via trusted source paths.</description></item>
+///   <item><description>ODBC linked tables — metadata only.</description></item>
+///   <item><description>Overflow rows (span multiple pages) — silently skipped (rare edge case).</description></item>
+/// </list>
 /// <para>
-/// Based on the mdbtools format specification:
-///   <see href="https://github.com/mdbtools/mdbtools/blob/master/HACKING.md" />.
+/// Based on the <see href="https://github.com/mdbtools/mdbtools/blob/master/HACKING.md">mdbtools format specification</see>.
 /// </para>
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
