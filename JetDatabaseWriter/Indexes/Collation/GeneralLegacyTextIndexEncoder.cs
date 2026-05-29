@@ -703,7 +703,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override ReadOnlySpan<byte> GetInlineBytes(char c) => bytes;
 
-        public override ReadOnlySpan<byte> ExtraBytes => extraBytes is null ? [] : extraBytes;
+        public override ReadOnlySpan<byte> ExtraBytes => extraBytes ?? [];
 
         public override byte CrazyFlag => crazyFlag;
     }
