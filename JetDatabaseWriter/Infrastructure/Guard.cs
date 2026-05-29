@@ -19,6 +19,7 @@ internal static class Guard
     /// <param name="value">The value.</param>
     /// <param name="paramName">The param name.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="value"/> is <see langword="null"/>.</exception>
+    [SuppressMessage("Roslynator", "RCS1256:Invalid argument null check", Justification = "Guard helper accepts nullable values to establish the NotNull postcondition.")]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNull<T>([NotNull] T? value, string paramName)
         where T : class
