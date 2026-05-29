@@ -125,45 +125,24 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = DetectFormat(plaintext);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        if (targetFormat == AccessEncryptionFormat.None)
-        {
-            return (byte[])plaintext.Clone();
-        }
-
-        // Validate target/format compatibility.
-        switch (targetFormat)
-        {
-            case AccessEncryptionFormat.Jet4Rc4:
-                if (fmt != DatabaseFormat.Jet4Mdb)
-                {
-                    throw new NotSupportedException(
-                        $"Target format {targetFormat} is only valid for Jet4 (.mdb) databases.");
-                }
-
-                break;
-            case AccessEncryptionFormat.AccdbLegacyPassword:
-            case AccessEncryptionFormat.AccdbAesCfbWrapped:
-            case AccessEncryptionFormat.AccdbAgile:
-            case AccessEncryptionFormat.AccdbStandard:
-            case AccessEncryptionFormat.AccdbAgileCfb:
-                if (fmt != DatabaseFormat.AceAccdb)
-                {
-                    throw new NotSupportedException(
-                        $"Target format {targetFormat} is only valid for ACE (.accdb) databases.");
-                }
-
-                break;
-        }
-
-        if (targetPassword.IsEmpty)
-        {
-            throw new ArgumentException(
-                "A non-empty password is required to apply encryption.",
-                nameof(targetPassword));
-        }
-
         return targetFormat switch
         {
+            AccessEncryptionFormat.None => (byte[])plaintext.Clone(),
+            AccessEncryptionFormat.Jet4Rc4 when fmt != DatabaseFormat.Jet4Mdb
+                => throw new NotSupportedException($"Target format {targetFormat} is only valid for Jet4 (.mdb) databases."),
+            AccessEncryptionFormat.AccdbLegacyPassword or
+            AccessEncryptionFormat.AccdbAesCfbWrapped or
+            AccessEncryptionFormat.AccdbAgile or
+            AccessEncryptionFormat.AccdbStandard or
+            AccessEncryptionFormat.AccdbAgileCfb when fmt != DatabaseFormat.AceAccdb
+                => throw new NotSupportedException($"Target format {targetFormat} is only valid for ACE (.accdb) databases."),
+            AccessEncryptionFormat.Jet4Rc4 or
+            AccessEncryptionFormat.AccdbLegacyPassword or
+            AccessEncryptionFormat.AccdbAesCfbWrapped or
+            AccessEncryptionFormat.AccdbAgile or
+            AccessEncryptionFormat.AccdbStandard or
+            AccessEncryptionFormat.AccdbAgileCfb when targetPassword.IsEmpty
+                => throw new ArgumentException("A non-empty password is required to apply encryption.", nameof(targetPassword)),
             AccessEncryptionFormat.Jet4Rc4 => BuildJet4Rc4(plaintext, pageSize, targetPassword.Span),
             AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword.Span),
