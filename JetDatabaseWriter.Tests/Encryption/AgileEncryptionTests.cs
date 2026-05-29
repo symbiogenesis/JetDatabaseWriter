@@ -156,7 +156,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.True(dt!.Rows.Count > 0, "Agile-decrypted table should contain rows.");
+        Assert.True(dt.Rows.Count > 0, "Agile-decrypted table should contain rows.");
     }
 
     [Fact]
@@ -203,7 +203,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         {
             TableStat? act = actual.FirstOrDefault(s => s.Name == exp.Name);
             Assert.NotNull(act);
-            Assert.Equal(exp.RowCount, act!.RowCount);
+            Assert.Equal(exp.RowCount, act.RowCount);
         }
     }
 
@@ -282,7 +282,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             // Reopen via AccessReader: must still detect Agile, decrypt,
             // and surface the freshly-inserted row.
             await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);

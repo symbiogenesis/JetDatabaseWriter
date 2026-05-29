@@ -331,7 +331,7 @@ public sealed class IndexLeafPageBuilderTests
 
         SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, pageSize, entries);
         Assert.NotNull(splitPages);
-        Assert.True(splitPages!.Count >= 2);
+        Assert.True(splitPages.Count >= 2);
 
         byte[] uncappedFirstPage = IndexLeafPageBuilder.BuildLeafPage(
             layout,

@@ -108,7 +108,7 @@ public sealed class IndexLeafIncrementalTests
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, adds, []);
         Assert.NotNull(spliced);
-        Assert.Equal(3, spliced!.Count);
+        Assert.Equal(3, spliced.Count);
         Assert.Equal(0, spliced[0].DataRow);
         Assert.Equal(2, spliced[1].DataRow); // key=2 sorts between 1 and 3
         Assert.Equal(1, spliced[2].DataRow);
@@ -131,7 +131,7 @@ public sealed class IndexLeafIncrementalTests
             existing, [], [(100, 1)]);
 
         Assert.NotNull(spliced);
-        Assert.Equal(2, spliced!.Count);
+        Assert.Equal(2, spliced.Count);
         Assert.Equal(0, spliced[0].DataRow);
         Assert.Equal(2, spliced[1].DataRow);
     }
@@ -173,7 +173,7 @@ public sealed class IndexLeafIncrementalTests
             existing, adds, [(100, 0)]);
 
         Assert.NotNull(spliced);
-        Assert.Equal(2, spliced!.Count);
+        Assert.Equal(2, spliced.Count);
         Assert.Equal(2, spliced[0].DataRow); // new key=3
         Assert.Equal(1, spliced[1].DataRow); // existing key=5
     }
@@ -193,7 +193,7 @@ public sealed class IndexLeafIncrementalTests
 
         byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
         Assert.NotNull(page);
-        Assert.Equal(0x04, page![0]);
+        Assert.Equal(0x04, page[0]);
         Assert.True(IndexLeafIncremental.IsSingleRootLeaf(layout, page));
 
         List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
@@ -252,10 +252,10 @@ public sealed class IndexLeafIncrementalTests
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(decoded, adds, []);
         Assert.NotNull(spliced);
 
-        byte[]? newPage = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, spliced!);
+        byte[]? newPage = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, spliced);
         Assert.NotNull(newPage);
 
-        List<IndexEntry> reDecoded = IndexLeafIncremental.DecodeEntries(layout, newPage!, pageSize);
+        List<IndexEntry> reDecoded = IndexLeafIncremental.DecodeEntries(layout, newPage, pageSize);
         Assert.Equal(4, reDecoded.Count);
         for (int i = 0; i < 4; i++)
         {

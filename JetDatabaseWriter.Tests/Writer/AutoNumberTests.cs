@@ -196,7 +196,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             }
 
             Assert.NotNull(row);
-            Assert.Equal(42, row![0]);
+            Assert.Equal(42, row[0]);
             Assert.Equal("explicit", row[1]);
         }
     }

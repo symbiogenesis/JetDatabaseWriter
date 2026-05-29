@@ -61,7 +61,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
-        Assert.Equal("Attachment", col!.TypeName);
+        Assert.Equal("Attachment", col.TypeName);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
-        Assert.Equal(typeof(byte[]), col!.ClrType);
+        Assert.Equal(typeof(byte[]), col.ClrType);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
-        Assert.Equal("LVAL", col!.Size.ToString());
+        Assert.Equal("LVAL", col.Size.ToString());
     }
 
     [Fact]

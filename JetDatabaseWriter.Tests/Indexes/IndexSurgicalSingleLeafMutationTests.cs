@@ -74,7 +74,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(800, dt!.Rows.Count);
+        Assert.Equal(800, dt.Rows.Count);
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(801, dt!.Rows.Count);
+        Assert.Equal(801, dt.Rows.Count);
 
         // Spot-check the inserted key is readable.
         bool found = false;
@@ -171,7 +171,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(799, dt!.Rows.Count);
+        Assert.Equal(799, dt.Rows.Count);
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(801, dt!.Rows.Count);
+        Assert.Equal(801, dt.Rows.Count);
     }
 
     [Fact]
@@ -292,7 +292,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(1230, dt!.Rows.Count);
+        Assert.Equal(1230, dt.Rows.Count);
     }
 
     [Fact]
@@ -331,7 +331,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(802, dt!.Rows.Count);
+        Assert.Equal(802, dt.Rows.Count);
     }
 
     [Fact]
@@ -371,7 +371,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(400, dt!.Rows.Count);
+        Assert.Equal(400, dt.Rows.Count);
     }
 
     private static int CountIndexPages(byte[] fileBytes)

@@ -165,7 +165,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.True(dt!.Rows.Count > 0, "Standard-decrypted table should contain rows.");
+        Assert.True(dt.Rows.Count > 0, "Standard-decrypted table should contain rows.");
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         {
             TableStat? act = actual.FirstOrDefault(s => s.Name == exp.Name);
             Assert.NotNull(act);
-            Assert.Equal(exp.RowCount, act!.RowCount);
+            Assert.Equal(exp.RowCount, act.RowCount);
         }
     }
 
@@ -290,7 +290,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             // Reopen via AccessReader: must detect Standard encryption,
             // decrypt, and surface the freshly-inserted row.
             await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);

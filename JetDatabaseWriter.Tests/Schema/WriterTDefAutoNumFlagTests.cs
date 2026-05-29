@@ -76,7 +76,7 @@ public sealed class WriterTDefAutoNumFlagTests
             CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            int tdefOff = (int)entry!.TDefPage * pageSize;
+            int tdefOff = (int)entry.TDefPage * pageSize;
             byte autoNumByte = fileBytes[tdefOff + TDefAutoNumFlagOffset];
             bool anyAutonumColumn = HasAnyAutonumColumn(fileBytes, tdefOff);
 
@@ -190,7 +190,7 @@ public sealed class WriterTDefAutoNumFlagTests
         int pageSize = reader.PageSize;
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        int tdefOff = (int)entry!.TDefPage * pageSize;
+        int tdefOff = (int)entry.TDefPage * pageSize;
         return fileBytes[tdefOff + TDefAutoNumFlagOffset];
     }
 

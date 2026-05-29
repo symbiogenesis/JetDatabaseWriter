@@ -68,7 +68,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            allTextColumns.AddRange(ReadTextColumnSortInfo(fileBytes, (int)entry!.TDefPage, reader.PageSize, tableName));
+            allTextColumns.AddRange(ReadTextColumnSortInfo(fileBytes, (int)entry.TDefPage, reader.PageSize, tableName));
         }
 
         Assert.NotEmpty(allTextColumns);
@@ -155,7 +155,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        (string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)[] rows = ReadTextColumnSortInfo(fileBytes, (int)entry!.TDefPage, reader.PageSize, "Customers").ToArray();
+        (string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)[] rows = ReadTextColumnSortInfo(fileBytes, (int)entry.TDefPage, reader.PageSize, "Customers").ToArray();
         Assert.NotEmpty(rows);
 
         // Pull the DAO-authored ground truth in-line so the failure message

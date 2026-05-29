@@ -81,7 +81,7 @@ public sealed record Hyperlink
 
         // Up to 4 parts separated by '#'. Extra '#'-delimited parts are joined
         // back into the screentip slot so no information is lost on round-trip.
-        string[] parts = value!.Split('#');
+        string[] parts = value.Split('#');
         string display = parts.Length > 0 ? Decode(parts[0]) : string.Empty;
         string address = parts.Length > 1 ? Decode(parts[1]) : string.Empty;
         string subAddr = parts.Length > 2 ? Decode(parts[2]) : string.Empty;

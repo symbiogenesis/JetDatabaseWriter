@@ -62,7 +62,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Single(dt!.Rows);
+        Assert.Single(dt.Rows);
         Assert.Equal(42, dt.Rows[0]["Id"]);
     }
 
@@ -103,7 +103,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(5, dt!.Rows.Count);
+        Assert.Equal(5, dt.Rows.Count);
     }
 
     [Theory]
@@ -146,7 +146,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(3, dt!.Rows.Count);
+        Assert.Equal(3, dt.Rows.Count);
     }
 
     [Theory]
@@ -191,7 +191,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(3, dt!.Rows.Count);
+        Assert.Equal(3, dt.Rows.Count);
         bool foundUpdated = false;
         foreach (DataRow row in dt.Rows)
         {
@@ -242,7 +242,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(801, dt!.Rows.Count);
+        Assert.Equal(801, dt.Rows.Count);
     }
 
     [Theory]
@@ -271,7 +271,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(3, dt!.Rows.Count);
+        Assert.Equal(3, dt.Rows.Count);
     }
 
     [Theory]

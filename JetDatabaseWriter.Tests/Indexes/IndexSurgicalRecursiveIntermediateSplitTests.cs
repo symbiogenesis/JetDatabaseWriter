@@ -72,7 +72,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(rowCount - (rowCount / 5), dt!.Rows.Count);
+        Assert.Equal(rowCount - (rowCount / 5), dt.Rows.Count);
         foreach (DataRow r in dt.Rows)
         {
             Assert.NotEqual(2, (int)r["Tag"]);
@@ -131,7 +131,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(560, dt!.Rows.Count);
+        Assert.Equal(560, dt.Rows.Count);
 
         // Verify uniqueness of (K1, K2) composite — no duplicate keys
         // (would indicate a corrupted index or row split).
@@ -200,7 +200,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
 
         const int deletedCount = (initialRows + 10) / 11; // ceil(700/11) = 64
         int expected = initialRows - deletedCount + 20;
-        Assert.Equal(expected, dt!.Rows.Count);
+        Assert.Equal(expected, dt.Rows.Count);
 
         var keyPairs = dt.Rows.Cast<DataRow>()
             .Select(r => ((string)r["K1"], (string)r["K2"]))

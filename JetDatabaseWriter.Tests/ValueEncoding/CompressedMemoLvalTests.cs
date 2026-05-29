@@ -176,7 +176,7 @@ public sealed class CompressedMemoLvalTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(dt);
-        Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
+        Assert.Equal(sentinel, dt.Rows[0]["Txt"]);
     }
 
     /// <summary>

@@ -271,7 +271,7 @@ public sealed class IndexSurgicalNWaySplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
-        Assert.Equal(expectedRows, dt!.Rows.Count);
+        Assert.Equal(expectedRows, dt.Rows.Count);
 
         // Composite (K1, K2) is unique by construction in every test —
         // duplicate would indicate a corrupted index.

@@ -348,8 +348,8 @@ internal static class FormatProbeApplication
         await using AccessReader rdr = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
         string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
         System.Data.DataTable dt = await rdr.ReadDataTableAsync(tableName);
-        Console.WriteLine($"Reader sees RowCount={dt!.Rows.Count}");
-        foreach (System.Data.DataRow row in dt!.Rows)
+        Console.WriteLine($"Reader sees RowCount={dt.Rows.Count}");
+        foreach (System.Data.DataRow row in dt.Rows)
         {
             Console.WriteLine($"  Id={row[0]}");
             if (dt.Rows.Count > 5)

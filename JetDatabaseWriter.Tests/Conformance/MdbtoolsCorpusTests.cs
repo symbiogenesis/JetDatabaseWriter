@@ -414,7 +414,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
             DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
 
-            foreach (DataColumn col in dt!.Columns)
+            foreach (DataColumn col in dt.Columns)
             {
                 if (col.DataType == typeof(System.DateTime))
                 {

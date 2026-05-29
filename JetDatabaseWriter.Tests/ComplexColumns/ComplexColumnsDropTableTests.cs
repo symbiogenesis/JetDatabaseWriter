@@ -70,7 +70,7 @@ public sealed class ComplexColumnsDropTableTests
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        bool anyForFiles = cx!.Rows.Cast<DataRow>().Any(r =>
+        bool anyForFiles = cx.Rows.Cast<DataRow>().Any(r =>
             string.Equals(Convert.ToString(r["ColumnName"], System.Globalization.CultureInfo.InvariantCulture), "Files", StringComparison.OrdinalIgnoreCase));
         Assert.False(anyForFiles, "MSysComplexColumns still has a row for the dropped parent's complex column.");
     }
@@ -136,8 +136,8 @@ public sealed class ComplexColumnsDropTableTests
             "MSysObjects",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(msys);
-        long expectedId = flatTdefPage!.Value;
-        bool flatStillThere = msys!.Rows.Cast<DataRow>().Any(r =>
+        long expectedId = flatTdefPage.Value;
+        bool flatStillThere = msys.Rows.Cast<DataRow>().Any(r =>
         {
             object idObj = r["Id"];
             if (idObj is null || idObj == DBNull.Value)
@@ -154,7 +154,7 @@ public sealed class ComplexColumnsDropTableTests
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        Assert.Empty(cx!.Rows);
+        Assert.Empty(cx.Rows);
     }
 
     [Fact]

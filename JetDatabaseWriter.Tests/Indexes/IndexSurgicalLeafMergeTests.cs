@@ -78,7 +78,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(400, dt!.Rows.Count);
+        Assert.Equal(400, dt.Rows.Count);
 
         // All surviving rows have Tag=1.
         foreach (DataRow r in dt.Rows)
@@ -134,7 +134,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(800, dt!.Rows.Count);
+        Assert.Equal(800, dt.Rows.Count);
 
         var tags = dt.Rows.Cast<DataRow>().Select(r => (int)r["Tag"]).ToHashSet();
         Assert.Equal(2, tags.Count);
@@ -199,7 +199,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(LeftAndMidCount, dt!.Rows.Count);
+        Assert.Equal(LeftAndMidCount, dt.Rows.Count);
 
         foreach (DataRow r in dt.Rows)
         {
@@ -251,7 +251,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(400, dt!.Rows.Count);
+        Assert.Equal(400, dt.Rows.Count);
 
         // Surviving rows all have Desc=KEEP and even Ids (since DEL was
         // assigned to even-INDEX rows, which got Id = i+1 = odd Id;
@@ -305,7 +305,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(801, dt!.Rows.Count);
+        Assert.Equal(801, dt.Rows.Count);
 
         // 9999 row present.
         bool found = false;
@@ -383,7 +383,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(LeftLeafCount, dt!.Rows.Count);
+        Assert.Equal(LeftLeafCount, dt.Rows.Count);
         foreach (DataRow r in dt.Rows)
         {
             Assert.Equal("A", (string)r["Region"]);

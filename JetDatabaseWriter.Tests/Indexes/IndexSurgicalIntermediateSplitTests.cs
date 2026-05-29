@@ -73,7 +73,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(320, dt!.Rows.Count);
+        Assert.Equal(320, dt.Rows.Count);
         foreach (DataRow r in dt.Rows)
         {
             Assert.NotEqual(2, (int)r["Tag"]);
@@ -130,7 +130,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(230, dt!.Rows.Count);
+        Assert.Equal(230, dt.Rows.Count);
 
         // Verify all 230 keys present (no duplicate / missing rows).
         var keys = dt.Rows.Cast<DataRow>().Select(r => (string)r["K"]).ToHashSet();
@@ -187,7 +187,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         Assert.NotNull(dt);
 
         // 300 - ceil(300/7) deleted + 10 inserted = 300 - 43 + 10 = 267.
-        Assert.Equal(267, dt!.Rows.Count);
+        Assert.Equal(267, dt.Rows.Count);
 
         var keys = dt.Rows.Cast<DataRow>().Select(r => (string)r["K"]).ToHashSet();
         Assert.Equal(267, keys.Count);

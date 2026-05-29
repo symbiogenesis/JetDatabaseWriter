@@ -46,7 +46,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal(3, dt.Columns.Count);
         Assert.Equal("Score", dt.Columns[2].ColumnName);
@@ -86,7 +86,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.False(dt.Columns.Contains("Score"));
@@ -121,7 +121,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.True(dt.Columns.Contains("Rating"));

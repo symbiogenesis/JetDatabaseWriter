@@ -67,7 +67,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(rowCount - leftSubtreeRows, dt!.Rows.Count);
+        Assert.Equal(rowCount - leftSubtreeRows, dt.Rows.Count);
 
         var keyPairs = dt.Rows.Cast<DataRow>()
             .Select(r => ((string)r["K1"], (string)r["K2"]))
@@ -126,7 +126,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(25, dt!.Rows.Count);
+        Assert.Equal(25, dt.Rows.Count);
 
         var keyPairs = dt.Rows.Cast<DataRow>()
             .Select(r => ((string)r["K1"], (string)r["K2"]))
@@ -187,7 +187,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt!.Rows.Count);
+        Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt.Rows.Count);
 
         var keyPairs = dt.Rows.Cast<DataRow>()
             .Select(r => ((string)r["K1"], (string)r["K2"]))

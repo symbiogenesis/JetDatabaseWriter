@@ -1114,7 +1114,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 // entry at OriginalIndex; the dead leaf page is deliberately
                 // left unreferenced here, matching the conservative bulk
                 // rebuild path that leaves old index pages for Compact & Repair.
-                AddParentOp(parentOps, mergeParent.PageNumber, mergeParent.TakenIndex, IntermediateOpType.Remove, default!);
+                AddParentOp(parentOps, mergeParent.PageNumber, mergeParent.TakenIndex, IntermediateOpType.Remove, default);
 
                 continue;
             }
@@ -1681,7 +1681,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     return false;
                 }
 
-                AddParentOp(parentOps, gpCollapse.ParentPage, gpCollapse.IndexInParent, IntermediateOpType.Remove, default!);
+                AddParentOp(parentOps, gpCollapse.ParentPage, gpCollapse.IndexInParent, IntermediateOpType.Remove, default);
 
                 if (!pending.Contains(gpCollapse.ParentPage))
                 {

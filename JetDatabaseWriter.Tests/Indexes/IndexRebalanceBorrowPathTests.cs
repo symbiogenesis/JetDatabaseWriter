@@ -103,7 +103,7 @@ public sealed class IndexRebalanceBorrowPathTests
 
         // Verify: all survivors + new inserts are present.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct));
 
         int expectedCount = initialRows - deletedIds.Count + insertCount;
         Assert.Equal(expectedCount, dt.Rows.Count);
@@ -193,7 +193,7 @@ public sealed class IndexRebalanceBorrowPathTests
 
             // Verify after each round.
             await using AccessReader reader = await OpenReaderAsync(stream);
-            DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
+            DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct));
             Assert.Equal(expected.Count, dt.Rows.Count);
 
             var actual = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
@@ -268,7 +268,7 @@ public sealed class IndexRebalanceBorrowPathTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct))!;
+        DataTable dt = (await reader.ReadDataTableAsync("T", cancellationToken: this.ct));
 
         const int expectedCount = rowCount - (2 * deletePerSide);
         Assert.Equal(expectedCount, dt.Rows.Count);

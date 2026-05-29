@@ -48,7 +48,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(2, dt!.Rows.Count);
+        Assert.Equal(2, dt.Rows.Count);
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        var ids = dt!.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         Assert.Equal(ExpectedIds123, ids);
     }
 
@@ -114,7 +114,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Empty(dt!.Rows);
+        Assert.Empty(dt.Rows);
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        var codeById = dt!.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
+        var codeById = dt.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
         Assert.Equal(100, codeById[1]);
         Assert.Equal(200, codeById[2]);
         Assert.Equal(300, codeById[3]);
@@ -230,7 +230,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(3, dt!.Rows.Count);
+        Assert.Equal(3, dt.Rows.Count);
     }
 
     // ── helpers (mirrors IndexBulkInsertStressTests / IndexWriterAdvancedTests) ───

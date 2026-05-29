@@ -296,7 +296,7 @@ public sealed class LinkedTableTests : IDisposable
 
         // Verify the source data is readable directly
         await using AccessReader sourceReader = await AccessReader.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["ProductID"]);
@@ -356,7 +356,7 @@ public sealed class LinkedTableTests : IDisposable
         Assert.Equal(sourcePath, entry.SourcePath);
 
         // Reading through the link should return source data
-        DataTable dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken));
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
         Assert.Equal("Widget", dt.Rows[0]["Name"]);
@@ -561,7 +561,7 @@ public sealed class LinkedTableTests : IDisposable
         };
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
-        DataTable dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);

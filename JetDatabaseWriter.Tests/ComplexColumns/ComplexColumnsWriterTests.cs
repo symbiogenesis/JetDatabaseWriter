@@ -163,11 +163,11 @@ public sealed class ComplexColumnsWriterTests
 
         CatalogEntry? entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        TableDef? tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
+        TableDef? tableDef = await reader.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         Assert.NotNull(tableDef);
-        ColumnInfo? files = tableDef!.FindColumn("Files");
+        ColumnInfo? files = tableDef.FindColumn("Files");
         Assert.NotNull(files);
-        Assert.Equal(Constants.ColumnTypes.ComplexType, files!.Type);
+        Assert.Equal(Constants.ColumnTypes.ComplexType, files.Type);
     }
 
     [Fact]
@@ -410,7 +410,7 @@ public sealed class ComplexColumnsWriterTests
         DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         DataRow row = Assert.Single(
-            cx!.Rows.Cast<DataRow>(),
+            cx.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),
                 "Files",
@@ -450,7 +450,7 @@ public sealed class ComplexColumnsWriterTests
         DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         DataRow row = Assert.Single(
-            cx!.Rows.Cast<DataRow>(),
+            cx.Rows.Cast<DataRow>(),
             r => string.Equals(
                 Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture),
                 "Tags",

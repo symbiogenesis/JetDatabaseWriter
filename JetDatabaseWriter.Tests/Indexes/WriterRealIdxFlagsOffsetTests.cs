@@ -70,7 +70,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
             CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
-            List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
+            List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry.TDefPage, pageSize);
             for (int i = 0; i < physOffsets.Count; i++)
             {
                 int phys = physOffsets[i];
@@ -171,7 +171,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
         CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
-        List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry!.TDefPage, pageSize);
+        List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry.TDefPage, pageSize);
         Assert.NotEmpty(physOffsets);
 
         var sample = new StringBuilder();

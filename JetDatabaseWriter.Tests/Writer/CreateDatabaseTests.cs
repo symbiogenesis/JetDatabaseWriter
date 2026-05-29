@@ -396,7 +396,7 @@ public sealed class CreateDatabaseTests
         TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
-        Assert.Equal(FullCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
+        Assert.Equal(FullCatalogColumnNames, msys.Columns.ConvertAll(c => c.Name));
     }
 
     [Theory]
@@ -418,7 +418,7 @@ public sealed class CreateDatabaseTests
         TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
-        Assert.Equal(SlimCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
+        Assert.Equal(SlimCatalogColumnNames, msys.Columns.ConvertAll(c => c.Name));
     }
 
     [Theory]

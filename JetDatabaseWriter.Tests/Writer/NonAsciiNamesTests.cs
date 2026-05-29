@@ -66,7 +66,7 @@ public sealed class NonAsciiNamesTests
 
         DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(rows);
-        Assert.Equal(2, rows!.Rows.Count);
+        Assert.Equal(2, rows.Rows.Count);
         Assert.Equal("Größe", rows.Rows[0][ColumnName]);
         Assert.Equal("Straße", rows.Rows[1][ColumnName]);
     }
@@ -110,7 +110,7 @@ public sealed class NonAsciiNamesTests
         Assert.Contains(meta, c => c.Name == ColumnName);
 
         DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("Océ", rows!.Rows[0][ColumnName]);
+        Assert.Equal("Océ", rows.Rows[0][ColumnName]);
     }
 
     [Theory]
@@ -156,7 +156,7 @@ public sealed class NonAsciiNamesTests
         Assert.Contains(meta, c => c.Name == ColumnName);
 
         DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("山田太郎", rows!.Rows[0][ColumnName]);
+        Assert.Equal("山田太郎", rows.Rows[0][ColumnName]);
     }
 
     [Theory]

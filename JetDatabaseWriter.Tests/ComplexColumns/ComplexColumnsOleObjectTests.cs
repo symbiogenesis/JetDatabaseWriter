@@ -51,7 +51,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         Assert.NotNull(oleColumn);
-        Assert.Equal(typeof(byte[]), oleColumn!.ClrType);
+        Assert.Equal(typeof(byte[]), oleColumn.ClrType);
     }
 
     /// <summary>
@@ -295,7 +295,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             // Reader returns OLE payloads as byte[] at the row level. Tolerate
             // the older string representation so this round-trip test pins the
             // value-preservation contract independently of representation.
-            switch (actual![1])
+            switch (actual[1])
             {
                 case byte[] roundTripped:
                     Assert.Equal(payload, roundTripped);
@@ -377,6 +377,6 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
     {
         MethodInfo? method = typeof(AccessReader).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
-        return (string?)method!.Invoke(null, [bytes, 0, bytes.Length]);
+        return (string?)method.Invoke(null, [bytes, 0, bytes.Length]);
     }
 }

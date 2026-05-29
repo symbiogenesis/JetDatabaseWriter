@@ -155,7 +155,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
         {
             CatalogEntry? entry = await reader2.GetCatalogEntryAsync(tableName, ct);
             Assert.NotNull(entry);
-            int tdefPage = (int)entry!.TDefPage;
+            int tdefPage = (int)entry.TDefPage;
             int off = tdefPage * pageSize;
 
             // TDEF header layout (Jet4/ACE), see Constants.TableDefinition.Jet4:

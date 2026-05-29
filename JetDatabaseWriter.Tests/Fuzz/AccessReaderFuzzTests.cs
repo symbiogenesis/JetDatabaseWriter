@@ -87,7 +87,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Randomize the number of rows to read (1-10)
                         int maxRows = random.Next(1, 11);
                         int count = 0;
-                        await foreach (object[] dataRow in reader.Rows(tableName!, cancellationToken: ct))
+                        await foreach (object[] dataRow in reader.Rows(tableName, cancellationToken: ct))
                         {
                             count++;
                             if (count > maxRows)
@@ -99,7 +99,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Try reading schema and columns
                         try
                         {
-                            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName!, ct);
+                            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
                             output.WriteLine($"Schema columns: {columns?.Count}");
                         }
                         catch (Exception ex)
@@ -113,7 +113,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Try reading indexes
                         try
                         {
-                            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName!, ct);
+                            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
                             output.WriteLine($"Index count: {indexes?.Count}");
                         }
                         catch (Exception ex)

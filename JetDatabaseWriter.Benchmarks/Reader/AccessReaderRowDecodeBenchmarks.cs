@@ -93,7 +93,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Numeric_DataTable()
     {
         DataTable dt = await this._numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
-        return dt!.Rows.Count;
+        return dt.Rows.Count;
     }
 
     // ── Text-heavy ────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Text_DataTable()
     {
         DataTable dt = await this._textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
-        return dt!.Rows.Count;
+        return dt.Rows.Count;
     }
 
     // ── Wide (40 cols, narrow DTO binds 4) ────────────────────────────
@@ -254,7 +254,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_DataTable()
     {
         DataTable dt = await this._memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
-        return dt!.Rows.Count;
+        return dt.Rows.Count;
     }
 
     // Isolated LVAL branches. These keep the mixed benchmark above intact while

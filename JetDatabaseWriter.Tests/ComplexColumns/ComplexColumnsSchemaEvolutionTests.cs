@@ -136,7 +136,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
-        bool anyForFiles = cx!.Rows.Cast<DataRow>().Any(r =>
+        bool anyForFiles = cx.Rows.Cast<DataRow>().Any(r =>
             string.Equals(Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture), "Files", StringComparison.OrdinalIgnoreCase));
         Assert.False(anyForFiles);
 
@@ -268,7 +268,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         Assert.DoesNotContain(
-            cx!.Rows.Cast<DataRow>(),
+            cx.Rows.Cast<DataRow>(),
             r => string.Equals(Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture), "Labels", StringComparison.OrdinalIgnoreCase));
     }
 

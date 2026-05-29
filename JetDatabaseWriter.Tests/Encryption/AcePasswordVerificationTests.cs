@@ -111,7 +111,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken));
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "Table should contain rows after password authentication.");
     }

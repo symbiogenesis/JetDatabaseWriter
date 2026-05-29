@@ -79,7 +79,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(802, dt!.Rows.Count);
+        Assert.Equal(802, dt.Rows.Count);
 
         var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         Assert.Contains(5, ids);
@@ -138,7 +138,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(802, dt!.Rows.Count);
+        Assert.Equal(802, dt.Rows.Count);
 
         var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         Assert.Contains(3991, ids);
@@ -188,7 +188,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(803, dt!.Rows.Count);
+        Assert.Equal(803, dt.Rows.Count);
 
         var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).ToHashSet();
         Assert.Contains(5, ids);
@@ -262,7 +262,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(801, dt!.Rows.Count);
+        Assert.Equal(801, dt.Rows.Count);
 
         var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).ToHashSet();
         Assert.Contains(200, ids);
@@ -317,7 +317,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(807, dt!.Rows.Count);
+        Assert.Equal(807, dt.Rows.Count);
 
         var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
         for (int v = 1; v <= 4; v++)

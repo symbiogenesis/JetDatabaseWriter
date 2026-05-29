@@ -56,7 +56,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int streamCount = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
-        int dtCount = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!.Rows.Count;
+        int dtCount = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count;
 
         Assert.Equal(dtCount, streamCount);
     }

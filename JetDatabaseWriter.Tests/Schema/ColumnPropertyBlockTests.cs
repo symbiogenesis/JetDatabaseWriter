@@ -28,7 +28,7 @@ public class ColumnPropertyBlockTests
         var block = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
 
         Assert.NotNull(block);
-        Assert.Empty(block!.Targets);
+        Assert.Empty(block.Targets);
         Assert.Empty(block.UnknownChunks);
     }
 
@@ -44,7 +44,7 @@ public class ColumnPropertyBlockTests
         var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
 
         Assert.NotNull(parsed);
-        Assert.Single(parsed!.Targets);
+        Assert.Single(parsed.Targets);
 
         ColumnPropertyTarget target = parsed.Targets[0];
         Assert.Equal("Qty", target.Name);
@@ -74,9 +74,9 @@ public class ColumnPropertyBlockTests
         var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
 
         Assert.NotNull(parsed);
-        ColumnPropertyTarget? target = parsed!.FindTarget("Score");
+        ColumnPropertyTarget? target = parsed.FindTarget("Score");
         Assert.NotNull(target);
-        Assert.Equal("0", target!.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
         Assert.Equal(">=0 And <=100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, DatabaseFormat.Jet4Mdb));
         Assert.Equal("Score must be 0-100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, DatabaseFormat.Jet4Mdb));
         Assert.Equal("Test score (0-100)", target.GetTextValue(Constants.ColumnPropertyNames.Description, DatabaseFormat.Jet4Mdb));
