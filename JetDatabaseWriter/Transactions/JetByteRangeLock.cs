@@ -5,8 +5,9 @@ using System.Diagnostics;
 using System.IO;
 #if NETSTANDARD2_1
 using System.Runtime.InteropServices;
-#endif
+#else
 using System.Runtime.Versioning;
+#endif
 using System.Threading;
 using System.Threading.Tasks;
 
