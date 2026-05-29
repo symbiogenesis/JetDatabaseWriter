@@ -1,14 +1,13 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
-using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Constants;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
