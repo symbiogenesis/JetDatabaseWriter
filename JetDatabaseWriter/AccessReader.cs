@@ -67,6 +67,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
+    private const int MinimumTableScanReadAheadCacheSlots = 3;
+
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<byte> OlePayloadSignatureFirstBytes = SearchValues.Create([0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF]);
 #else
@@ -835,12 +837,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    /// <summary>
+    /// Determines whether table pages should be read ahead.
+    /// The cache returns page buffers to the shared pool on eviction, so read-ahead
+    /// needs room for the previous, current, and prefetched data pages.
+    /// </summary>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="pageNumbers">The list of page numbers for the table.</param>
+    /// <returns><c>true</c> if table pages should be read ahead; otherwise, <c>false</c>.</returns>
     private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
-        // The cache returns page buffers to the shared pool on eviction, so read-ahead
-        // needs room for the previous, current, and prefetched data pages.
         ParallelPageReadsEnabled
             && pageCache is not null
-            && PageCacheSize >= 3
+            && PageCacheSize >= MinimumTableScanReadAheadCacheSlots
             && pageNumbers.Count > 1
             && !HasCacheReentrantScanColumns(tableDef);
 
