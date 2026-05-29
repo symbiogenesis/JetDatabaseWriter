@@ -1917,7 +1917,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             DisposeActiveTransactionAsync,
             RewrapAndCloseOuterEncryptedStreamAsync,
             DisposeStateLockAsync,
-            () => base.DisposeAsync()).ConfigureAwait(false);
+            base.DisposeAsync).ConfigureAwait(false);
     }
 
     private async ValueTask DisposeActiveTransactionAsync()

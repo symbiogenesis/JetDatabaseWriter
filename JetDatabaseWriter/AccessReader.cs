@@ -1070,7 +1070,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         byte[] searchKey = EncodeIndexSeekKey(tableName, index, td, keyValues);
         var cursor = new IndexCursor(
-            (pageNumber, ct) => ReadPageCachedAsync(pageNumber, ct),
+            ReadPageCachedAsync,
             PageSizeBytes);
         List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
             index.FirstDp,
