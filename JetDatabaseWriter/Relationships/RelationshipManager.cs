@@ -557,8 +557,7 @@ internal sealed class RelationshipManager
         Buffer.BlockCopy(td, logIdxStart, newTd, existingLogIdxStart, oldLogIdxLen);
 
         // Logical-idx names follow the same order as their entries.
-        int newLogIdxNamesStart = existingLogIdxStart + oldLogIdxLen;
-        int newNameOffset = newLogIdxNamesStart;
+        int newNameOffset = existingLogIdxStart + oldLogIdxLen;
         Wu16(newTd, newNameOffset, nameBytes.Length);
         Buffer.BlockCopy(nameBytes, 0, newTd, newNameOffset + 2, nameBytes.Length);
 

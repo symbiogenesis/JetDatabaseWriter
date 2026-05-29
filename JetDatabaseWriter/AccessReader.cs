@@ -3221,8 +3221,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     break;
 
                 case ColumnSliceKind.Var:
-                    string value = await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false);
-                    result[i] = value;
+                    result[i] = await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false);
                     break;
 
                 default:
