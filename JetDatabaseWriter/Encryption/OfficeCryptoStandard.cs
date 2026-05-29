@@ -55,7 +55,8 @@ internal static class OfficeCryptoStandard
         byte[] key = DeriveKey(password, descriptor);
 
         VerifyPassword(key, descriptor);
-        return DecryptPackage(key, encryptedPackage, descriptor.KeyBits / 8);
+
+        return DecryptPackage(key, encryptedPackage);
     }
 
     /// <summary>
@@ -329,7 +330,7 @@ internal static class OfficeCryptoStandard
     // Package decryption / encryption
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] DecryptPackage(byte[] key, byte[] encryptedPackage, int keyByteCount)
+    private static byte[] DecryptPackage(byte[] key, byte[] encryptedPackage)
     {
         if (encryptedPackage.Length < 8)
         {
