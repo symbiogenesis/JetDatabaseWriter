@@ -680,7 +680,7 @@ public sealed class LockFileTests : IDisposable
         // Use a synthetic empty file as a stand-in for a database — the slot
         // writer only needs the path, not a real Access database.
         string dbPath = Path.Combine(Path.GetTempPath(), $"JetLockFin_{Guid.NewGuid():N}.accdb");
-        File.WriteAllBytes(dbPath, Array.Empty<byte>());
+        File.WriteAllBytes(dbPath, []);
         this._tempFiles.Add(dbPath);
         string lockPath = Path.ChangeExtension(dbPath, ".laccdb");
 

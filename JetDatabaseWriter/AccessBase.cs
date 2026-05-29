@@ -1192,7 +1192,7 @@ public abstract class AccessBase : IAccessBase
         int numRows = Ru16(page, this.DataPage.NumRows);
         if (numRows == 0)
         {
-            return Array.Empty<RowBound>();
+            return [];
         }
 
         // Clamp numRows to the maximum that can physically fit in the page's
@@ -1232,7 +1232,7 @@ public abstract class AccessBase : IAccessBase
 
         if (liveCount == 0)
         {
-            return Array.Empty<RowBound>();
+            return [];
         }
 
         Array.Sort(positions, 0, posCount);

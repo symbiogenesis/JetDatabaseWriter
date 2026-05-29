@@ -241,7 +241,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         ReadOnlySpan<char> chunk2 = chunk2Take > 0
             ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
-            : ReadOnlySpan<char>.Empty;
+            : [];
 
         List<byte> bout = CreateEntryBuffer(chunk1.Length + chunk2.Length + separator.Length, ascending);
         int payloadStart = bout.Count;

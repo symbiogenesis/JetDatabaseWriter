@@ -4136,7 +4136,7 @@ internal static class LongRowSuffixProbe
             AppendLengthLE(context.FullKey),
             AppendLengthLE(context.ByteInputs[1]),
             inputs[AuxInputCandidateIndex],
-            context.FullKey.Length >= 2 ? context.FullKey[1..^1] : Array.Empty<byte>(),
+            context.FullKey.Length >= 2 ? context.FullKey[1..^1] : [],
             AppendTextLengthBE(SliceOrEmpty(context.FullKey, 508), context.Row.Text),
             AppendTextLengthLE(SliceOrEmpty(context.FullKey, 508), context.Row.Text),
             EncodeTextOrEmpty(context.Row.Text, Encoding.Unicode),
@@ -4150,7 +4150,7 @@ internal static class LongRowSuffixProbe
     {
         if (string.IsNullOrEmpty(text))
         {
-            return Array.Empty<byte>();
+            return [];
         }
 
         return encoding.GetBytes(text);
@@ -4160,7 +4160,7 @@ internal static class LongRowSuffixProbe
     {
         if (string.IsNullOrEmpty(text) || text.Length <= startIndex)
         {
-            return Array.Empty<byte>();
+            return [];
         }
 
         return encoding.GetBytes(text, startIndex, text.Length - startIndex);

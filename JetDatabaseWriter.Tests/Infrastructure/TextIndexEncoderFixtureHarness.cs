@@ -49,7 +49,7 @@ internal static class TextIndexEncoderFixtureHarness
 
         int totalIndexesValidated = 0;
         int totalKeysValidated = 0;
-        IReadOnlyCollection<string> skip = skipTables ?? Array.Empty<string>();
+        IReadOnlyCollection<string> skip = skipTables ?? [];
 
         List<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)

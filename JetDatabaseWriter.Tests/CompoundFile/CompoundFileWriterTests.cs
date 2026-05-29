@@ -122,7 +122,7 @@ public sealed class CompoundFileWriterTests
 
     [Fact]
     public void Build_EmptyStreamList_Throws() => _ = Assert.Throws<ArgumentException>(() =>
-                                                           CompoundFileWriter.Build(Array.Empty<KeyValuePair<string, byte[]>>()));
+                                                           CompoundFileWriter.Build([]));
 
     [Fact]
     public void Build_OutputUsesV3SectorSize()

@@ -642,10 +642,10 @@ internal static class DaoBaselineProbe
             List<CatalogEntry> catalog = await ReadCatalogAsync(r);
             CatalogEntry? rt = catalog.FirstOrDefault(c => string.Equals(c.Name, "RT_Customers", StringComparison.Ordinal));
 
-            byte[] tdefBytes = Array.Empty<byte>();
+            byte[] tdefBytes = [];
             if (rt?.TdefPage > 0)
             {
-                tdefBytes = (await r.GetRawTDefBytesAsync(rt.TdefPage, default)) ?? Array.Empty<byte>();
+                tdefBytes = (await r.GetRawTDefBytesAsync(rt.TdefPage, default)) ?? [];
             }
 
             return new ReaderSnapshot

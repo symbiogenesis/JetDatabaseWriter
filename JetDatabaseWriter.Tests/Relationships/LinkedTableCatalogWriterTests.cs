@@ -231,7 +231,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 "LinkedOrders",
                 "ODBC;DSN=Sales",
                 "dbo.Orders",
-                Array.Empty<ColumnDefinition>(),
+                [],
                 ct).AsTask());
 
         Assert.Contains("source column", ex.Message, StringComparison.OrdinalIgnoreCase);

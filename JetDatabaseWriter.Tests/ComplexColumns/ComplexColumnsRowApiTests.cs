@@ -389,7 +389,7 @@ public sealed class ComplexColumnsRowApiTests
                 "Documents",
                 "Files",
                 new Dictionary<string, object?> { ["Id"] = 1 },
-                new AttachmentInput("empty.dat", Array.Empty<byte>()),
+                new AttachmentInput("empty.dat", []),
                 TestContext.Current.CancellationToken);
         }
 

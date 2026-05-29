@@ -212,7 +212,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         {
             for (int i = 0; i < rebuiltIndexPageGroups.Length; i++)
             {
-                rebuiltIndexPageGroups[i] = Array.Empty<long>();
+                rebuiltIndexPageGroups[i] = [];
             }
 
             oldIndexPageGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(
@@ -400,7 +400,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             var result = new long[numRealIdx][];
             for (int i = 0; i < result.Length; i++)
             {
-                result[i] = Array.Empty<long>();
+                result[i] = [];
             }
 
             foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
@@ -553,7 +553,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         var indexPageGroups = new long[numRealIdx][];
         for (int i = 0; i < indexPageGroups.Length; i++)
         {
-            indexPageGroups[i] = Array.Empty<long>();
+            indexPageGroups[i] = [];
         }
 
         foreach ((int realIdxNum, RealIdxEntry entry) in slots)
@@ -1357,7 +1357,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
                 existing,
                 addEntries,
-                Array.Empty<(long DataPage, byte DataRow)>());
+                []);
             if (spliced is null)
             {
                 this.LastIncrementalBail = $"S11 ri={ri} splice null";
