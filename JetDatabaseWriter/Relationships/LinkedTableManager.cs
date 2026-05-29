@@ -362,7 +362,7 @@ internal static class LinkedTableManager
                 nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes));
         }
 
-        if (options.LinkedTextMaxMaterializedRows.HasValue && options.LinkedTextMaxMaterializedRows.Value == 0)
+        if (options.LinkedTextMaxMaterializedRows == 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options),
