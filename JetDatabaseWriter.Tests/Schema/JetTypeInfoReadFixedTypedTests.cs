@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
@@ -8,12 +10,12 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(System.ReadOnlySpan{byte}, int, byte, int, bool)"/>: the typed
+/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(System.ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>: the typed
 /// fixed-width decode that powers the typed-row read path. Each test verifies
-/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/> +
+/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, ColumnType, int, bool)"/> +
 /// <see cref="TypedValueParser.ParseValue"/> round-trip the typed reader is
 /// replacing — except where the round-trip is documented as lossy (sub-second
 /// DateTime precision), in which case the typed path is asserted to keep
@@ -252,9 +254,10 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(row, 42);
+        ColumnType columnType = (ColumnType)type;
 
-        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, type, size: 4);
-        string viaString = JetTypeInfo.ReadFixedString(row, start: 0, type, size: 4);
+        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, columnType, size: 4);
+        string viaString = JetTypeInfo.ReadFixedString(row, start: 0, columnType, size: 4);
 
         // Typed path now emits a typed ComplexIdRef sentinel rather than the
         // legacy "__CX:N__" string used by ReadFixedString — keep the string
@@ -271,8 +274,9 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Complex_TooShort_ReturnsDBNull(byte type)
     {
         byte[] row = new byte[2]; // size < 4
+        ColumnType columnType = (ColumnType)type;
 
-        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, type, size: 2);
+        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, columnType, size: 2);
 
         Assert.Equal(DBNull.Value, result);
     }
@@ -330,7 +334,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         Assert.Equal(expected, viaRoundTrip);
     }
 
-    private static void AssertParity(byte[] row, int start, byte type, int size, object expected, bool strictNumeric = false)
+    private static void AssertParity(byte[] row, int start, ColumnType type, int size, object expected, bool strictNumeric = false)
     {
         // Typed path returns the boxed primitive directly.
         object typed = JetTypeInfo.ReadFixedTyped(row, start, type, size, strictNumeric);

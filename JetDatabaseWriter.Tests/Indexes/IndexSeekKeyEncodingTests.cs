@@ -4,7 +4,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Tests for relationship seek-key encoding metadata. Numeric keys need the

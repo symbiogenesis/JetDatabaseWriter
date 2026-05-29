@@ -146,7 +146,7 @@ internal static class JetExpressionConverter
         if (col.IsCalculated)
         {
             target.AddMemoText(Constants.ColumnPropertyNames.Expression, col.CalculationExpression ?? string.Empty, format);
-            target.AddByte(Constants.ColumnPropertyNames.ResultType, AccessWriter.TypeCodeFromDefinition(col));
+            target.AddByte(Constants.ColumnPropertyNames.ResultType, (byte)AccessWriter.TypeCodeFromDefinition(col));
         }
     }
 

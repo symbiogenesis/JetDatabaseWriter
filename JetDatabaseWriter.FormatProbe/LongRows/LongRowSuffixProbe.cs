@@ -33,6 +33,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 internal static class LongRowSuffixProbe
 {
@@ -5437,7 +5438,7 @@ internal static class LongRowSuffixProbe
 
         if (columnMeta.ClrType == typeof(byte[]))
         {
-            return IndexKeyEncoder.EncodeEntry(0x09, value, ascending);
+            return IndexKeyEncoder.EncodeEntry(BinaryType, value, ascending);
         }
 
         return null;

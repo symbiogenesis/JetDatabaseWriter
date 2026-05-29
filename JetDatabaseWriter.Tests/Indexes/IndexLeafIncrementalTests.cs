@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using static JetDatabaseWriter.Enums.ColumnType;
 using Xunit;
 
 /// <summary>
@@ -25,9 +26,9 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         var entries = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true), 100, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true), 100, 1),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, ascending: true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, ascending: true), 100, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, ascending: true), 100, 2),
         };
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
@@ -98,12 +99,12 @@ public sealed class IndexLeafIncrementalTests
         _ = format; // Splice is format-agnostic; parameter present for consistency.
         var existing = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, true), 100, 1),
         };
         var adds = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 100, 2),
         };
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, adds, []);
@@ -122,9 +123,9 @@ public sealed class IndexLeafIncrementalTests
         _ = format; // Splice is format-agnostic; parameter present for consistency.
         var existing = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 100, 1),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 100, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, true), 100, 2),
         };
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
@@ -144,7 +145,7 @@ public sealed class IndexLeafIncrementalTests
         _ = format; // Splice is format-agnostic; parameter present for consistency.
         var existing = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 100, 0),
         };
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
@@ -161,12 +162,12 @@ public sealed class IndexLeafIncrementalTests
         _ = format; // Splice is format-agnostic; parameter present for consistency.
         var existing = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 5, true), 100, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 5, true), 100, 1),
         };
         var adds = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, true), 100, 2),
         };
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
@@ -187,8 +188,8 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         var entries = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 200, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 200, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 200, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 200, 1),
         };
 
         byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
@@ -214,7 +215,7 @@ public sealed class IndexLeafIncrementalTests
         for (int i = 0; i < 1000; i++)
         {
             entries.Add(new IndexEntry(
-                IndexKeyEncoder.EncodeEntry(0x04, i, true), 100, 0));
+                IndexKeyEncoder.EncodeEntry(LongIntegerType, i, true), 100, 0));
         }
 
         byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
@@ -233,9 +234,9 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         var entries = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1000, true), 100, 0),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1001, true), 100, 1),
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1002, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1000, true), 100, 0),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1001, true), 100, 1),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1002, true), 100, 2),
         };
 
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
@@ -246,7 +247,7 @@ public sealed class IndexLeafIncrementalTests
 
         var adds = new List<IndexEntry>
         {
-            new(IndexKeyEncoder.EncodeEntry(0x04, 1003, true), 100, 3),
+            new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1003, true), 100, 3),
         };
 
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(decoded, adds, []);
@@ -306,7 +307,7 @@ public sealed class IndexLeafIncrementalTests
         for (int i = 0; i < 800; i++)
         {
             entries.Add(new IndexEntry(
-                IndexKeyEncoder.EncodeEntry(0x04, i, true), 100 + (i / 10), (byte)(i % 10)));
+                IndexKeyEncoder.EncodeEntry(LongIntegerType, i, true), 100 + (i / 10), (byte)(i % 10)));
         }
 
         IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, firstPageNumber: 50);

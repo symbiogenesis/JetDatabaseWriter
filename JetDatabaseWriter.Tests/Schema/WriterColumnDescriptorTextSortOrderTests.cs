@@ -10,7 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Tests round-trip-openrecordset hypothesis H24: that the writer leaves the
@@ -240,7 +240,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         {
             int desc = colStart + (i * 25);
             byte colType = fileBytes[desc + 0];
-            if (colType is not TextType and not MemoType)
+            if (colType is not (byte)TextType and not (byte)MemoType)
             {
                 continue;
             }

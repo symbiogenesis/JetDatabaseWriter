@@ -98,7 +98,7 @@ internal static class LinkedOdbcLvPropBuilder
                 throw new ArgumentException($"Duplicate source column name '{column.Name}'.", nameof(sourceColumns));
             }
 
-            byte typeCode = AccessWriter.TypeCodeFromDefinition(column);
+            ColumnType typeCode = AccessWriter.TypeCodeFromDefinition(column);
             identities.Add(new ColumnIdentity(column, typeCode, Guid.NewGuid()));
         }
 
@@ -166,7 +166,7 @@ internal static class LinkedOdbcLvPropBuilder
             WriteGuid(stream, column.Guid);
             WriteUInt16(stream, 0x0007);
             WriteGuid(stream, tableGuid);
-            WriteByte(stream, column.TypeCode);
+            WriteByte(stream, (byte)column.TypeCode);
             WriteByte(stream, column.Column.IsNullable ? (byte)0x01 : (byte)0x00);
             WriteUInt16(stream, (ushort)Math.Min(Math.Max(column.Column.MaxLength, 0), ushort.MaxValue));
             WriteNameMapString(stream, encoding, column.Column.Name);
@@ -217,7 +217,7 @@ internal static class LinkedOdbcLvPropBuilder
         AddEntry(
             target,
             propertyName,
-            Constants.ColumnTypes.BooleanType,
+            ColumnType.BooleanType,
             ddlFlag,
             [value ? (byte)0xFF : (byte)0x00]);
 
@@ -226,7 +226,7 @@ internal static class LinkedOdbcLvPropBuilder
         string propertyName,
         byte value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, Constants.ColumnTypes.ByteType, ddlFlag, [value]);
+        AddEntry(target, propertyName, ColumnType.ByteType, ddlFlag, [value]);
 
     private static void AddInteger16(
         ColumnPropertyBlockBuilder.TargetBuilder target,
@@ -236,7 +236,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(short)];
         BinaryPrimitives.WriteInt16LittleEndian(bytes, value);
-        AddEntry(target, propertyName, Constants.ColumnTypes.IntegerType, ddlFlag, bytes);
+        AddEntry(target, propertyName, ColumnType.IntegerType, ddlFlag, bytes);
     }
 
     private static void AddInteger32(
@@ -247,7 +247,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        AddEntry(target, propertyName, Constants.ColumnTypes.IntegerType, ddlFlag, bytes);
+        AddEntry(target, propertyName, ColumnType.IntegerType, ddlFlag, bytes);
     }
 
     private static void AddLong(
@@ -258,7 +258,7 @@ internal static class LinkedOdbcLvPropBuilder
     {
         var bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        AddEntry(target, propertyName, Constants.ColumnTypes.LongIntegerType, ddlFlag, bytes);
+        AddEntry(target, propertyName, ColumnType.LongIntegerType, ddlFlag, bytes);
     }
 
     private static void AddBinary(
@@ -266,19 +266,19 @@ internal static class LinkedOdbcLvPropBuilder
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, Constants.ColumnTypes.BinaryType, ddlFlag, value);
+        AddEntry(target, propertyName, ColumnType.BinaryType, ddlFlag, value);
 
     private static void AddOle(
         ColumnPropertyBlockBuilder.TargetBuilder target,
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
-        AddEntry(target, propertyName, Constants.ColumnTypes.OleType, ddlFlag, value);
+        AddEntry(target, propertyName, ColumnType.OleType, ddlFlag, value);
 
     private static void AddEntry(
         ColumnPropertyBlockBuilder.TargetBuilder target,
         string propertyName,
-        byte dataType,
+        ColumnType dataType,
         byte ddlFlag,
         byte[] value) =>
         target.Entries.Add(new ColumnPropertyBlockBuilder.EntryBuilder
@@ -319,5 +319,5 @@ internal static class LinkedOdbcLvPropBuilder
     private static void WriteByte(Stream stream, byte value) =>
         stream.WriteByte(value);
 
-    private sealed record ColumnIdentity(ColumnDefinition Column, byte TypeCode, Guid Guid);
+    private sealed record ColumnIdentity(ColumnDefinition Column, ColumnType TypeCode, Guid Guid);
 }

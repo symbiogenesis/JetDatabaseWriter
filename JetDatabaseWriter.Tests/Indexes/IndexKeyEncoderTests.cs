@@ -1,9 +1,11 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using JetDatabaseWriter.Indexes;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Unit tests for <see cref="IndexKeyEncoder"/>. The assertions verify
@@ -299,7 +301,7 @@ public sealed class IndexKeyEncoderTests
 
     [Theory]
     [InlineData(NumericType)]
-    public void UnsupportedColumnType_Throws(byte columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
+    public void UnsupportedColumnType_Throws(ColumnType columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
 
     // ── General Legacy text encoding (full Jackcess port) ──
     //

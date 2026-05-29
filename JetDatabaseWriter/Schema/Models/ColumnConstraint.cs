@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Schema.Models;
 
 using System;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Per-column constraint metadata used at insert time to apply default values,
@@ -24,7 +25,7 @@ internal sealed class ColumnConstraint
 
     public string? CalculationExpression { get; set; }
 
-    public byte CalculatedResultType { get; set; }
+    public ColumnType CalculatedResultType { get; set; }
 
     /// <summary>
     /// Gets or sets lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.

@@ -35,7 +35,7 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_SingleColumn_DefaultValue_RoundTrips()
     {
-        SyntheticEntry[] entries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("0"))];
+        SyntheticEntry[] entries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("0"))];
         SyntheticBlock[] blocks = [new SyntheticBlock("Qty", 0x0000, entries)];
         string[] names = ["DefaultValue"];
 
@@ -52,7 +52,7 @@ public class ColumnPropertyBlockTests
 
         ColumnPropertyEntry entry = target.Entries[0];
         Assert.Equal(Constants.ColumnPropertyNames.DefaultValue, entry.Name);
-        Assert.Equal(Constants.ColumnTypes.TextType, entry.DataType);
+        Assert.Equal(ColumnType.TextType, entry.DataType);
         Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
     }
 
@@ -61,10 +61,10 @@ public class ColumnPropertyBlockTests
     {
         SyntheticEntry[] entries =
         [
-            new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("0")),
-            new SyntheticEntry(1, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes(">=0 And <=100")),
-            new SyntheticEntry(2, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("Score must be 0-100")),
-            new SyntheticEntry(3, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("Test score (0-100)")),
+            new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("0")),
+            new SyntheticEntry(1, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes(">=0 And <=100")),
+            new SyntheticEntry(2, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("Score must be 0-100")),
+            new SyntheticEntry(3, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("Test score (0-100)")),
         ];
         SyntheticBlock[] blocks = [new SyntheticBlock("Score", 0x0000, entries)];
         string[] names = ["DefaultValue", "ValidationRule", "ValidationText", "Description"];
@@ -85,8 +85,8 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_TableLevelAndColumnLevel_BothSurfaced()
     {
-        SyntheticEntry[] tableEntries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("Customer orders"))];
-        SyntheticEntry[] colEntries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("Primary key"))];
+        SyntheticEntry[] tableEntries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("Customer orders"))];
+        SyntheticEntry[] colEntries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("Primary key"))];
         SyntheticBlock[] blocks =
         [
             new SyntheticBlock("Orders", 0x0000, tableEntries),
@@ -107,7 +107,7 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_FindTarget_IsCaseInsensitive()
     {
-        SyntheticEntry[] entries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("hi"))];
+        SyntheticEntry[] entries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("hi"))];
         SyntheticBlock[] blocks = [new SyntheticBlock("Foo", 0x0000, entries)];
         string[] names = ["Description"];
 
@@ -131,7 +131,7 @@ public class ColumnPropertyBlockTests
         string[] names = ["Description"];
         WriteChunk(ms, 0x0080, BuildNamePoolPayload(names));
 
-        SyntheticEntry[] entries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("ok"))];
+        SyntheticEntry[] entries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("ok"))];
         WriteChunk(ms, 0x0000, BuildPropertyBlockPayload("X", entries));
 
         ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), DatabaseFormat.Jet4Mdb)!;
@@ -162,7 +162,7 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_NameIndexOutOfRange_Stops_DoesNotThrow()
     {
-        SyntheticEntry[] entries = [new SyntheticEntry(5, Constants.ColumnTypes.TextType, 0x00, Encoding.Unicode.GetBytes("oops"))];
+        SyntheticEntry[] entries = [new SyntheticEntry(5, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("oops"))];
         SyntheticBlock[] blocks = [new SyntheticBlock("X", 0x0000, entries)];
         string[] names = ["Description"];
 
@@ -176,9 +176,9 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_AcceptsAllPropertyBlockSubtypes()
     {
-        SyntheticEntry[] aEntries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0, Encoding.Unicode.GetBytes("a"))];
-        SyntheticEntry[] bEntries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0, Encoding.Unicode.GetBytes("b"))];
-        SyntheticEntry[] cEntries = [new SyntheticEntry(0, Constants.ColumnTypes.TextType, 0, Encoding.Unicode.GetBytes("c"))];
+        SyntheticEntry[] aEntries = [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("a"))];
+        SyntheticEntry[] bEntries = [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("b"))];
+        SyntheticEntry[] cEntries = [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("c"))];
         SyntheticBlock[] blocks =
         [
             new SyntheticBlock("A", 0x0000, aEntries),
@@ -236,7 +236,7 @@ public class ColumnPropertyBlockTests
             int entryLen = 8 + e.Value.Length;
             WriteUInt16(ms, (ushort)entryLen);
             ms.WriteByte(e.DdlFlag);
-            ms.WriteByte(e.DataType);
+            ms.WriteByte((byte)e.DataType);
             WriteUInt16(ms, (ushort)e.NameIndex);
             WriteUInt16(ms, (ushort)e.Value.Length);
             ms.Write(e.Value, 0, e.Value.Length);
@@ -275,7 +275,7 @@ public class ColumnPropertyBlockTests
         ms.WriteByte((byte)((v >> 24) & 0xFF));
     }
 
-    private sealed record SyntheticEntry(int NameIndex, byte DataType, byte DdlFlag, byte[] Value);
+    private sealed record SyntheticEntry(int NameIndex, ColumnType DataType, byte DdlFlag, byte[] Value);
 
     private sealed record SyntheticBlock(string TargetName, ushort ChunkType, SyntheticEntry[] Entries);
 }

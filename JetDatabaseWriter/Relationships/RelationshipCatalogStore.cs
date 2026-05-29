@@ -11,7 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipCatalogStore(AccessWriter writer)

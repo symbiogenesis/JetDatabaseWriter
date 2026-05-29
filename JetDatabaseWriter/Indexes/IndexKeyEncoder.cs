@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Indexes;
 
 using System;
@@ -7,7 +9,7 @@ using System.Numerics;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
@@ -57,7 +59,7 @@ using static JetDatabaseWriter.Constants.IndexEntryFlags;
 /// </summary>
 internal static class IndexKeyEncoder
 {
-    // Column type codes are imported via `using static JetDatabaseWriter.Constants.ColumnTypes;`.
+    // Column type codes are imported via `using static JetDatabaseWriter.ColumnTypes;`.
 
     /// <summary>
     /// Returns the entry-flag + key-bytes block for a single column value.
@@ -77,7 +79,7 @@ internal static class IndexKeyEncoder
     /// supported set.</exception>
     /// <exception cref="ArgumentException">The value cannot be coerced to the
     /// .NET representation expected by <paramref name="columnType"/>.</exception>
-    public static byte[] EncodeEntry(byte columnType, object? value, bool ascending = true)
+    public static byte[] EncodeEntry(ColumnType columnType, object? value, bool ascending = true)
     {
         bool isNull = value is null or DBNull;
         if (isNull)
@@ -139,7 +141,7 @@ internal static class IndexKeyEncoder
         return result;
     }
 
-    private static byte[] EncodeKey(byte columnType, object value)
+    private static byte[] EncodeKey(ColumnType columnType, object value)
     {
         switch (columnType)
         {
@@ -202,7 +204,7 @@ internal static class IndexKeyEncoder
 
             default:
                 throw new NotSupportedException(
-                    $"Index key encoding for column type 0x{columnType:X2} is not supported. " +
+                    $"Index key encoding for column type 0x{(byte)columnType:X2} is not supported. " +
                     "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
         }
     }
@@ -689,7 +691,7 @@ internal static class IndexKeyEncoder
     /// mask, never in index key bytes.
     /// </summary>
     /// <param name="columnType">The column type.</param>
-    internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
+    internal static bool IsColumnTypeSeekable(ColumnType columnType) => columnType switch
     {
         ByteType or IntegerType or LongIntegerType or MoneyType or FloatType or DoubleType
             or DateTimeType or BinaryType or TextType or MemoType or GuidType or NumericType => true,

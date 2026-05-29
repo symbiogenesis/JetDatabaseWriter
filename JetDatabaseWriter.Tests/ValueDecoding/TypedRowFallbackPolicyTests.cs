@@ -6,7 +6,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 public sealed class TypedRowFallbackPolicyTests
 {

@@ -20,7 +20,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -824,9 +824,11 @@ public abstract class AccessBase : IAccessBase
                 break;
             }
 
+            var type = (ColumnType)td[o + this.ColumnDescriptor.TypeOff];
+
             cols.Add(new ColumnInfo
             {
-                Type = td[o + this.ColumnDescriptor.TypeOff],
+                Type = type,
                 ColNum = Ru16(td, o + this.ColumnDescriptor.NumOff),
                 VarIdx = Ru16(td, o + this.ColumnDescriptor.VarOff),
                 FixedOff = Ru16(td, o + this.ColumnDescriptor.FixedOff),
@@ -847,8 +849,8 @@ public abstract class AccessBase : IAccessBase
                 // scale Access shows in Design View. Same byte positions as
                 // the Jackcess `FixedPointColumnDescriptor` parser. Other
                 // column types leave these at 0.
-                NumericPrecision = td[o + this.ColumnDescriptor.TypeOff] == NumericType ? td[o + this.ColumnDescriptor.MiscOff] : (byte)0,
-                NumericScale = td[o + this.ColumnDescriptor.TypeOff] == NumericType ? td[o + this.ColumnDescriptor.MiscOff + 1] : (byte)0,
+                NumericPrecision = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff] : (byte)0,
+                NumericScale = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff + 1] : (byte)0,
             });
         }
 

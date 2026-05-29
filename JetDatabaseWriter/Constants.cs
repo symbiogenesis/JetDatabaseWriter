@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Central container for project-wide constant values, grouped into nested
@@ -8,67 +9,6 @@ using System;
 /// </summary>
 internal static class Constants
 {
-    /// <summary>
-    /// JET column-type discriminator codes as documented in the mdbtools
-    /// <see href="HACKING.md" /> reference. Stored in the <c>col_type</c> byte of each
-    /// TDEF column descriptor; also used as the runtime tag for every value
-    /// crack / encode path. Summaries retain the matching mdbtools
-    /// <c>MDB_*</c> identifiers while the constants use idiomatic C# names.
-    /// </summary>
-    public static class ColumnTypes
-    {
-        /// <summary>mdbtools <c>MDB_BOOL</c> (0x01): 1 bit — stored in the row null-mask, never in the fixed area.</summary>
-        public const byte BooleanType = 0x01;
-
-        /// <summary>mdbtools <c>MDB_BYTE</c> (0x02): 1-byte unsigned integer.</summary>
-        public const byte ByteType = 0x02;
-
-        /// <summary>mdbtools <c>MDB_INT</c> (0x03): 2-byte signed integer.</summary>
-        public const byte IntegerType = 0x03;
-
-        /// <summary>mdbtools <c>MDB_LONGINT</c> (0x04): 4-byte signed integer.</summary>
-        public const byte LongIntegerType = 0x04;
-
-        /// <summary>mdbtools <c>MDB_MONEY</c> (0x05): 8-byte int64 / 10000 fixed-point currency.</summary>
-        public const byte MoneyType = 0x05;
-
-        /// <summary>mdbtools <c>MDB_FLOAT</c> (0x06): 4-byte IEEE-754 single-precision float.</summary>
-        public const byte FloatType = 0x06;
-
-        /// <summary>mdbtools <c>MDB_DOUBLE</c> (0x07): 8-byte IEEE-754 double-precision float.</summary>
-        public const byte DoubleType = 0x07;
-
-        /// <summary>mdbtools <c>MDB_SDATETIME</c> (0x08): 8-byte OLE-Automation date.</summary>
-        public const byte DateTimeType = 0x08;
-
-        /// <summary>mdbtools <c>MDB_BINARY</c> (0x09): variable-length binary, ≤ 255 bytes inline.</summary>
-        public const byte BinaryType = 0x09;
-
-        /// <summary>mdbtools <c>MDB_TEXT</c> (0x0A): variable-length string (UCS-2 in Jet4/ACE, ANSI in Jet3).</summary>
-        public const byte TextType = 0x0A;
-
-        /// <summary>mdbtools <c>MDB_OLE</c> (0x0B): long-value (LVAL) OLE blob.</summary>
-        public const byte OleType = 0x0B;
-
-        /// <summary>mdbtools <c>MDB_MEMO</c> (0x0C): long-value (LVAL) text — stored inline when small.</summary>
-        public const byte MemoType = 0x0C;
-
-        /// <summary>mdbtools <c>MDB_REPID</c> (0x0F): 16-byte GUID (replication identifier).</summary>
-        public const byte GuidType = 0x0F;
-
-        /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal cell (sign + 16-byte magnitude; descriptor carries scale).</summary>
-        public const byte NumericType = 0x10;
-
-        /// <summary>Legacy/private attachment alias (0x11). Access-authored ACCDB complex columns use <see cref="ComplexType"/> and classify attachments via <c>MSysComplexColumns</c>.</summary>
-        public const byte AttachmentType = 0x11;
-
-        /// <summary>Access 2007+ complex parent column (0x12): attachment, multi-value, or version-history with hidden flat-table backing.</summary>
-        public const byte ComplexType = 0x12;
-
-        /// <summary>Access 2019+ extended Date/Time (0x14): 42-byte fixed string. No mdbtools symbol — post-dates mdbtools.</summary>
-        public const byte DateTimeExtendedType = 0x14;
-    }
-
     /// <summary>
     /// Standard property names that appear in <c>MSysObjects.LvProp</c> blobs.
     /// </summary>
@@ -86,7 +26,7 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column expression string (Access 2010+, ACCDB only). Written as a
-        /// <see cref="ColumnTypes.MemoType"/> entry. Contains the Jet/VBA
+        /// <see cref="ColumnType.MemoType"/> entry. Contains the Jet/VBA
         /// expression Microsoft Access evaluates to compute the cached column value
         /// (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>). See Jackcess <c>PropertyMap.EXPRESSION_PROP</c>.
         /// </summary>
@@ -94,8 +34,8 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column result data type (Access 2010+, ACCDB only). Written as a
-        /// <see cref="ColumnTypes.ByteType"/> entry holding
-        /// the JET column-type code (<see cref="ColumnTypes"/>) of the value the
+        /// <see cref="ColumnType.ByteType"/> entry holding
+        /// the JET column-type code (<see cref="ColumnType"/>) of the value the
         /// expression produces. Distinguishes the logical CLR type of the column from
         /// the on-disk storage which always carries a 23-byte calculated-value wrapper.
         /// See Jackcess <c>PropertyMap.RESULT_TYPE_PROP</c>.

@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
@@ -8,7 +10,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Builds <see cref="DirectRowDecoder{T}"/> delegates for the
@@ -234,7 +236,7 @@ internal static class DirectRowDecoderBuilder
     }
 
     private static BinaryExpression BuildKindGate(
-        byte colType,
+        ColumnType colType,
         Expression kindExpr,
         Expression dataLenExpr)
     {
@@ -273,10 +275,10 @@ internal static class DirectRowDecoderBuilder
             GuidType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
             TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
-            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{column.Type:X2}."),
+            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{(byte)column.Type:X2}."),
         };
 
-    private static bool IsDirectlyDecodable(byte colType, Type targetUnderlying) => colType switch
+    private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying) => colType switch
     {
         BooleanType => targetUnderlying == typeof(bool),
         ByteType => targetUnderlying == typeof(byte),

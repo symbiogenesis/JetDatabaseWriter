@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Unit tests for the shared index page codec and read-only cursor.
@@ -51,8 +52,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
         IndexCursor cursor = CreateCursor(tree);
 
-        byte[] existingKey = IndexKeyEncoder.EncodeEntry(0x04, 750, ascending: true);
-        byte[] missingKey = IndexKeyEncoder.EncodeEntry(0x04, 5000, ascending: true);
+        byte[] existingKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 750, ascending: true);
+        byte[] missingKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5000, ascending: true);
 
         Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, existingKey, this.cancellationToken));
         Assert.False(await cursor.ContainsKeyAsync(tree.RootPageNumber, missingKey, this.cancellationToken));
@@ -63,7 +64,7 @@ public sealed class IndexCursorTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task FindRowLocationsAsync_DuplicateKeySpanningLeaves_ReturnsEveryMatch(DatabaseFormat format)
     {
-        byte[] duplicateKey = IndexKeyEncoder.EncodeEntry(0x04, 42, ascending: true);
+        byte[] duplicateKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 42, ascending: true);
         List<IndexEntry> entries = BuildDuplicateEntries(duplicateKey, 500);
         TreeFixture tree = BuildTree(format, entries);
         IndexCursor cursor = CreateCursor(tree);
@@ -91,7 +92,7 @@ public sealed class IndexCursorTests
     {
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
         long tailPageNumber = FindTailLeafPage(tree);
-        byte[] appendedKey = IndexKeyEncoder.EncodeEntry(0x04, 5000, ascending: true);
+        byte[] appendedKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5000, ascending: true);
         var appendedEntry = new IndexEntry(appendedKey, DataPage: 999, DataRow: 7);
 
         byte[] tailPage = tree.Pages[tailPageNumber];
@@ -160,7 +161,7 @@ public sealed class IndexCursorTests
         for (int entryNumber = 0; entryNumber < count; entryNumber++)
         {
             entries.Add(new IndexEntry(
-                IndexKeyEncoder.EncodeEntry(0x04, entryNumber, ascending: true),
+                IndexKeyEncoder.EncodeEntry(LongIntegerType, entryNumber, ascending: true),
                 DataPage: 100 + (entryNumber / 200),
                 DataRow: (byte)(entryNumber % 200)));
         }

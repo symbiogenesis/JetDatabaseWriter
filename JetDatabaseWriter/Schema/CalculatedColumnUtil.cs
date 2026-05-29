@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Schema;
 
 using System;
@@ -5,8 +7,8 @@ using System.Buffers.Binary;
 using System.Globalization;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Constants;
-using static JetDatabaseWriter.Constants.ColumnTypes;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -79,7 +81,7 @@ internal static class CalculatedColumnUtil
         return unwrapped;
     }
 
-    internal static string ReadPayloadString(ReadOnlySpan<byte> payload, byte type, bool strictNumeric)
+    internal static string ReadPayloadString(ReadOnlySpan<byte> payload, ColumnType type, bool strictNumeric)
     {
         switch (type)
         {
@@ -98,7 +100,7 @@ internal static class CalculatedColumnUtil
         }
     }
 
-    internal static object ReadPayloadTyped(ReadOnlySpan<byte> payload, byte type, bool strictNumeric)
+    internal static object ReadPayloadTyped(ReadOnlySpan<byte> payload, ColumnType type, bool strictNumeric)
     {
         switch (type)
         {

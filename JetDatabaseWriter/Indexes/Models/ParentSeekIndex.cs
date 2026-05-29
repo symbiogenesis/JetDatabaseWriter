@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Indexes.Models;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Resolved parent-side seek index for a single relationship. The seeker
@@ -22,7 +23,7 @@ internal sealed record ParentSeekIndex(
 /// <param name="NumericScale">The numeric scale.</param>
 /// <param name="LegacyNumeric">The legacy numeric.</param>
 internal readonly record struct ParentSeekKeyColumn(
-    byte ColumnType,
+    ColumnType ColumnType,
     bool Ascending,
     int ForeignColumnIndex,
     byte NumericScale,

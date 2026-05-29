@@ -14,7 +14,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
 {
     private readonly record struct SeekIndexCore(
         long FirstDp,
-        byte[] ColTypes,
+        ColumnType[] ColTypes,
         byte[] NumericScales,
         IReadOnlyList<bool> Ascending,
         bool LegacyNumeric);
@@ -138,7 +138,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         TableDef definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         var columnNumbers = new int[columnNames.Count];
-        var columnTypes = new byte[columnNames.Count];
+        var columnTypes = new ColumnType[columnNames.Count];
         var numericScales = new byte[columnNames.Count];
         for (int index = 0; index < columnNames.Count; index++)
         {

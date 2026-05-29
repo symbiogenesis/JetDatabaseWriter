@@ -18,7 +18,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202, SA1204
@@ -797,7 +797,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         if (!isComplexCol)
         {
             throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type=0x{complexCol.Type:X2}).");
+                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type=0x{(byte)complexCol.Type:X2}).");
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.
@@ -880,7 +880,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
     }
 
-    private static ComplexColumnKind ClassifyComplexColumnKind(byte parentType, TableDef flatDef)
+    private static ComplexColumnKind ClassifyComplexColumnKind(ColumnType parentType, TableDef flatDef)
     {
         if (parentType == AttachmentType)
         {

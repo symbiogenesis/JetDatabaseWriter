@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Indexes.Models;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Resolved child-side (FK-side) seek index for a single relationship.
@@ -22,7 +23,7 @@ internal sealed record ChildSeekIndex(
 /// <param name="NumericScale">The numeric scale.</param>
 /// <param name="LegacyNumeric">The legacy numeric.</param>
 internal readonly record struct ChildSeekKeyColumn(
-    byte ColumnType,
+    ColumnType ColumnType,
     bool Ascending,
     byte NumericScale,
     bool LegacyNumeric);

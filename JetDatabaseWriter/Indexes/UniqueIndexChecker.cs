@@ -9,7 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
 

@@ -9,7 +9,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -266,7 +266,7 @@ internal static class IndexHelpers
                         OleType => "OLE Object",
                         AttachmentType => "Attachment",
                         ComplexType => "Multi-Value (Complex)",
-                        _ => $"0x{column.Type:X2}",
+                        _ => $"0x{(byte)column.Type:X2}",
                     };
                     throw new NotSupportedException(
                         $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {typeName}; "
@@ -605,7 +605,7 @@ internal static class IndexHelpers
     }
 
     private static byte[] EncodeSeekKeyColumn(
-        byte columnType,
+        ColumnType columnType,
         object? value,
         bool ascending,
         byte numericScale,

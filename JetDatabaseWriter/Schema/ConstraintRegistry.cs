@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Schema;
 
 using System;
@@ -11,7 +13,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Per-table client-side constraint registry. Manages column-level constraints
@@ -280,7 +282,7 @@ internal sealed class ConstraintRegistry(
         return value;
     }
 
-    private static Type TdefTypeToClrType(byte type) => type switch
+    private static Type TdefTypeToClrType(ColumnType type) => type switch
     {
         BooleanType => typeof(bool),
         ByteType => typeof(byte),
@@ -297,15 +299,15 @@ internal sealed class ConstraintRegistry(
         _ => typeof(object),
     };
 
-    private static byte ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyBlock? properties)
+    private static ColumnType ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyBlock? properties)
     {
         if (!col.IsCalculated)
         {
-            return 0;
+            return default;
         }
 
         ColumnPropertyEntry? resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
-        return resultType?.Value.Length > 0 ? resultType.Value[0] : col.Type;
+        return resultType?.Value.Length > 0 ? (ColumnType)resultType.Value[0] : col.Type;
     }
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)

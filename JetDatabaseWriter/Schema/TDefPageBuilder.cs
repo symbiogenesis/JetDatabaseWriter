@@ -10,7 +10,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204
@@ -33,7 +33,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         {
             ColumnDefinition definition = columns[i];
             AccessWriter.ValidateCalculatedColumn(definition, format);
-            byte type = AccessWriter.TypeCodeFromDefinition(definition);
+            ColumnType type = AccessWriter.TypeCodeFromDefinition(definition);
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
@@ -73,7 +73,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     if (type != MemoType)
                     {
                         throw new ArgumentException(
-                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type 0x{type:X2}; " +
+                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type 0x{(byte)type:X2}; " +
                             "hyperlink columns must be MEMO (string with no MaxLength, or typeof(Hyperlink)).",
                             nameof(columns));
                     }
@@ -166,7 +166,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 numVarCols++;
             }
 
-            page[o + writer.ColumnDescriptor.TypeOff] = col.Type;
+            page[o + writer.ColumnDescriptor.TypeOff] = (byte)col.Type;
             if (jet4)
             {
                 Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
@@ -529,7 +529,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         Wi32(db, pageOffset + row1Start + 1, 0);
     }
 
-    private static int GetDeclaredSize(byte type, int maxLength, DatabaseFormat format)
+    private static int GetDeclaredSize(ColumnType type, int maxLength, DatabaseFormat format)
         => type switch
         {
             BooleanType => 0,
@@ -559,7 +559,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         };
     }
 
-    private static int GetCalculatedDeclaredSize(byte type, int declaredSize)
+    private static int GetCalculatedDeclaredSize(ColumnType type, int declaredSize)
     {
         if (type is MemoType or OleType)
         {
@@ -574,7 +574,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         return Constants.CalculatedColumn.FixedFieldLen;
     }
 
-    private static byte GetExtraFlags(ColumnDefinition definition, byte type, DatabaseFormat format)
+    private static byte GetExtraFlags(ColumnDefinition definition, ColumnType type, DatabaseFormat format)
     {
         if (definition.IsCalculated)
         {
@@ -600,7 +600,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int colSzOff = isJet3 ? 16 : 23;
         int textColSize = isJet3 ? 255 : 510;
 
-        (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
+        (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
 
         int numCols = columns.Length;
         int numVarCols = 0;
@@ -625,10 +625,10 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         for (int i = 0; i < numCols; i++)
         {
-            (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags) col = columns[i];
+            (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags) col = columns[i];
             int o = colStart + (i * colDescSz);
 
-            db[o + colTypeOff] = col.Type;
+            db[o + colTypeOff] = (byte)col.Type;
             if (!isJet3)
             {
                 Wi32(db, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
@@ -707,7 +707,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         return (pages, firstDpLogicalOffsets);
     }
 
-    private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
+    private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
     [
         ("Id",          LongIntegerType,     0, 0, 0,  4,           0x03),
         ("ParentId",    LongIntegerType,     1, 0, 4,  4,           0x03),
@@ -720,7 +720,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         ("Database",    TextType,     8, 2, 0,  textColSize, 0x02),
     ];
 
-    private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildFullCatalogColumns(int textColSize) =>
+    private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildFullCatalogColumns(int textColSize) =>
     [
         ("Id",           LongIntegerType,     0,  0, 0,  4,           0x13),
         ("ParentId",     LongIntegerType,     1,  0, 4,  4,           0x13),

@@ -1,10 +1,12 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Schema.Models;
 
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class ColumnInfo
 {
-    public byte Type { get; set; }
+    public ColumnType Type { get; set; }
 
     /// <summary>
     /// Gets or sets col_num: absolute column number (includes deleted cols).
@@ -45,7 +47,7 @@ internal sealed class ColumnInfo
     /// <see cref="Type"/> still controls row storage layout, but the wrapped
     /// cached payload is encoded as this type when present.
     /// </summary>
-    public byte CalculatedResultType { get; set; }
+    public ColumnType CalculatedResultType { get; set; }
 
     /// <summary>
     /// Gets a value indicating whether the column is an Access 2010+ calculated

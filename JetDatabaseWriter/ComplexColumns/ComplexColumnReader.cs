@@ -18,7 +18,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class ComplexColumnReader(AccessReader reader)
@@ -89,7 +89,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         int colStart = reader.TDef.BlockEnd + (numRealIdx * reader.TDef.RealIdxEntrySz);
 
-        var byComplexId = new Dictionary<int, (string Name, byte Type)>();
+        var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
         for (int i = 0; i < numCols; i++)
         {
             int offset = colStart + (i * reader.ColumnDescriptor.Size);
@@ -98,7 +98,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 break;
             }
 
-            byte type = td[offset + reader.ColumnDescriptor.TypeOff];
+            var type = (ColumnType)td[offset + reader.ColumnDescriptor.TypeOff];
             if (type is not ComplexType and not AttachmentType)
             {
                 continue;
@@ -455,7 +455,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         return output.ToArray();
     }
 
-    private static byte[] DecodeColumnBytes(string value, byte colType)
+    private static byte[] DecodeColumnBytes(string value, ColumnType colType)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -496,7 +496,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     }
 
     private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
-        Dictionary<int, (string Name, byte Type)> byComplexId,
+        Dictionary<int, (string Name, ColumnType Type)> byComplexId,
         CancellationToken cancellationToken)
     {
         long msysTdef = await reader.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -532,7 +532,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 continue;
             }
 
-            if (!byComplexId.TryGetValue(complexId, out (string Name, byte Type) parent))
+            if (!byComplexId.TryGetValue(complexId, out (string Name, ColumnType Type) parent))
             {
                 continue;
             }

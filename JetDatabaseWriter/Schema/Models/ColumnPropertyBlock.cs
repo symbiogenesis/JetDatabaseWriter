@@ -203,7 +203,7 @@ internal sealed class ColumnPropertyBlock
             }
 
             byte ddlFlag = blob[pos + 2];
-            byte dataType = blob[pos + 3];
+            var dataType = (ColumnType)blob[pos + 3];
             int nameIndex = Ru16(blob, pos + 4);
             int valueLen = Ru16(blob, pos + 6);
 

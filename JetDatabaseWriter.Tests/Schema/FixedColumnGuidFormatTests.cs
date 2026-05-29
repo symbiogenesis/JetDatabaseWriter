@@ -1,12 +1,14 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using JetDatabaseWriter.Schema;
 using Xunit;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, byte, int, bool)"/>
+/// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>
 /// for <c>Guid</c> columns. The format is:
 /// <c>{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}</c>
 /// — braces, lowercase hex, with the first three groups stored little-endian

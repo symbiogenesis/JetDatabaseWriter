@@ -5,6 +5,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Unit tests for <see cref="IndexBTreeBuilder"/>. Verifies B-tree leaf
@@ -43,7 +44,7 @@ public sealed class IndexBTreeBuilderTests
         var entries = new List<IndexEntry>();
         for (int i = 0; i < 10; i++)
         {
-            byte[] key = IndexKeyEncoder.EncodeEntry(0x04, i, ascending: true);
+            byte[] key = IndexKeyEncoder.EncodeEntry(LongIntegerType, i, ascending: true);
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
@@ -173,7 +174,7 @@ public sealed class IndexBTreeBuilderTests
         var entries = new List<IndexEntry>();
         for (int i = 1; i <= 3; i++)
         {
-            byte[] key = IndexKeyEncoder.EncodeEntry(0x04, i, ascending: true);
+            byte[] key = IndexKeyEncoder.EncodeEntry(LongIntegerType, i, ascending: true);
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 

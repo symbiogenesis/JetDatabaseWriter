@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Schema;
 
 using System;
@@ -8,7 +10,7 @@ using System.Text;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Per-JET column-type metadata table. Centralises facts that previously
@@ -25,8 +27,8 @@ internal static class JetTypeInfo
     /// <c>0</c> for variable-length types and unknown codes. Mirrors the
     /// per-type sizes documented in mdbtools <see href="HACKING.md" />.
     /// </summary>
-    /// <param name="type">JET column-type code (see <see cref="Constants.ColumnTypes"/>).</param>
-    public static int GetFixedSize(byte type) => type switch
+    /// <param name="type">JET column-type code (see <see cref="ColumnType"/>).</param>
+    public static int GetFixedSize(ColumnType type) => type switch
     {
         ByteType => 1,
         IntegerType => 2,
@@ -60,7 +62,7 @@ internal static class JetTypeInfo
     /// descriptor — see <see cref="Models.ColumnInfo.IsFixed"/>.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static bool IsAlwaysVariableLength(byte type)
+    public static bool IsAlwaysVariableLength(ColumnType type)
         => type is TextType or BinaryType or MemoType or OleType;
 
     /// <summary>
@@ -73,7 +75,7 @@ internal static class JetTypeInfo
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static Type? GetClrType(byte type) => type switch
+    public static Type? GetClrType(ColumnType type) => type switch
     {
         BooleanType => typeof(bool),
         ByteType => typeof(byte),
@@ -120,8 +122,8 @@ internal static class JetTypeInfo
     /// reader has hydrated it; otherwise it falls back to the descriptor type.
     /// </summary>
     /// <param name="col">The column descriptor.</param>
-    public static byte ResolveValueType(ColumnInfo col)
-        => col.IsCalculated && col.CalculatedResultType != 0 ? col.CalculatedResultType : col.Type;
+    public static ColumnType ResolveValueType(ColumnInfo col)
+        => col.IsCalculated && col.CalculatedResultType != default ? col.CalculatedResultType : col.Type;
 
     /// <summary>
     /// Returns the human-friendly Access display name for a JET column-type code
@@ -130,7 +132,7 @@ internal static class JetTypeInfo
     /// names exposed by the legacy DAO/ADO type-name properties.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static string GetTypeDisplayName(byte type) => type switch
+    public static string GetTypeDisplayName(ColumnType type) => type switch
     {
         BooleanType => "Yes/No",
         ByteType => "Byte",
@@ -149,7 +151,7 @@ internal static class JetTypeInfo
         AttachmentType => "Attachment",
         ComplexType => "Complex",
         DateTimeExtendedType => "Date/Time Extended",
-        _ => $"0x{type:X2}",
+        _ => $"0x{(byte)type:X2}",
     };
 
     /// <summary>
@@ -160,7 +162,7 @@ internal static class JetTypeInfo
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     /// <param name="declaredSize">The declared size.</param>
-    public static ColumnSize GetColumnSize(byte type, int declaredSize) => type switch
+    public static ColumnSize GetColumnSize(ColumnType type, int declaredSize) => type switch
     {
         BooleanType => ColumnSize.FromBits(1),
         ByteType => ColumnSize.FromBytes(1),
@@ -195,7 +197,7 @@ internal static class JetTypeInfo
     /// <param name="type">The JET column type or operation type.</param>
     /// <param name="size">The size in bytes.</param>
     /// <param name="strictNumeric">The strict numeric.</param>
-    internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
+    internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, ColumnType type, int size, bool strictNumeric = false)
     {
         try
         {
@@ -240,7 +242,7 @@ internal static class JetTypeInfo
     /// The typed-reader hot path uses this to avoid per-column culture-invariant
     /// string formatting and re-parsing.
     /// <para>
-    /// Type mapping mirrors <see cref="GetClrType(byte)"/>:
+    /// Type mapping mirrors <see cref="GetClrType(ColumnType)"/>:
     /// <c>Byte → byte</c>, <c>Integer → short</c>, <c>LongInteger → int</c>,
     /// <c>Float → float</c>, <c>Double → double</c>,
     /// <c>DateTime → DateTime</c> (un-truncated; <c>ReadFixedString</c>
@@ -269,17 +271,19 @@ internal static class JetTypeInfo
     /// <param name="type">The JET column type or operation type.</param>
     /// <param name="size">The size in bytes.</param>
     /// <param name="strictNumeric">The strict numeric.</param>
-    internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
+    internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, ColumnType type, int size, bool strictNumeric = false)
     {
         try
         {
             return type switch
             {
                 ByteType => row[start],
-                IntegerType => Ri16(row, start),// Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
-                                                // the legacy "(short)Ru16(...)" cast throws OverflowException for
-                                                // values with the high bit set and ReadFixedString silently maps
-                                                // those to string.Empty → DBNull. The typed path keeps the value.
+
+                // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
+                // the legacy "(short)Ru16(...)" cast throws OverflowException for
+                // values with the high bit set and ReadFixedString silently maps
+                // those to string.Empty → DBNull. The typed path keeps the value.
+                IntegerType => Ri16(row, start),
                 LongIntegerType => Ri32(row, start),
                 FloatType => ReadSingleLittleEndian(row.Slice(start, 4)),
                 DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)),

@@ -287,7 +287,7 @@ internal sealed class ColumnPropertyBlockBuilder
             int valueLength = entry.Value.Length;
             WriteUInt16(payload, ref offset, (ushort)entryLength);
             payload[offset++] = entry.DdlFlag;
-            payload[offset++] = entry.DataType;
+            payload[offset++] = (byte)entry.DataType;
             WriteUInt16(payload, ref offset, nameIndex);
             WriteUInt16(payload, ref offset, (ushort)valueLength);
             WriteBytes(payload, ref offset, entry.Value);
@@ -403,7 +403,7 @@ internal sealed class ColumnPropertyBlockBuilder
             this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.TextType,
+                DataType = ColumnType.TextType,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -421,7 +421,7 @@ internal sealed class ColumnPropertyBlockBuilder
             this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.MemoType,
+                DataType = ColumnType.MemoType,
                 DdlFlag = 0x00,
                 Value = enc.GetBytes(value),
             });
@@ -436,7 +436,7 @@ internal sealed class ColumnPropertyBlockBuilder
             this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.ByteType,
+                DataType = ColumnType.ByteType,
                 DdlFlag = 0x01,
                 Value = [value],
             });
@@ -455,7 +455,7 @@ internal sealed class ColumnPropertyBlockBuilder
             this.Entries.Add(new EntryBuilder
             {
                 Name = propertyName,
-                DataType = Constants.ColumnTypes.BooleanType,
+                DataType = ColumnType.BooleanType,
                 DdlFlag = 0x01,
                 Value = [value ? (byte)0xFF : (byte)0x00],
             });
@@ -468,8 +468,8 @@ internal sealed class ColumnPropertyBlockBuilder
         /// <summary>Gets or sets the property name (e.g. <c>"DefaultValue"</c>).</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Gets or sets the Jet column-type code (see <see cref="Constants.ColumnTypes"/>).</summary>
-        public byte DataType { get; set; }
+        /// <summary>Gets or sets the Jet column-type code (see <see cref="ColumnType"/>).</summary>
+        public ColumnType DataType { get; set; }
 
         /// <summary>Gets or sets the flag byte at entry offset 2.</summary>
         public byte DdlFlag { get; set; }

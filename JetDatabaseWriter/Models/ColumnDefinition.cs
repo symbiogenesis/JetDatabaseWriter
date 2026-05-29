@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 
 /// <summary>
@@ -274,7 +275,7 @@ public sealed record ColumnDefinition
     public string? CalculationExpression { get; init; }
 
     /// <summary>
-    /// Gets the JET column-type code (see <see cref="Constants.ColumnTypes"/>)
+    /// Gets the JET column-type code (see <see cref="ColumnType"/>)
     /// of the value <see cref="CalculationExpression"/> produces. When left at
     /// zero for a calculated column, the writer derives the result type from
     /// <see cref="ClrType"/>. Persisted in <c>MSysObjects.LvProp</c> as the

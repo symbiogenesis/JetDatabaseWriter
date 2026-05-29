@@ -27,7 +27,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -937,7 +937,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             string? calcExpr = isCalc
                 ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, this.Format)
                 : null;
-            byte calcResultType = isCalc ? ResolveCalculatedResultType(target) : (byte)0;
+            ColumnType calcResultType = isCalc ? ResolveCalculatedResultType(target) : default;
 
             return new ColumnMetadata
             {
@@ -960,20 +960,20 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 NumericScale = col.NumericScale,
                 IsCalculated = isCalc,
                 CalculationExpression = calcExpr,
-                CalculatedResultType = calcResultType != 0 ? calcResultType : col.CalculatedResultType,
+                CalculatedResultType = (byte)(calcResultType != default ? calcResultType : col.CalculatedResultType),
             };
         }).ToList();
     }
 
-    private static byte ResolveCalculatedResultType(ColumnPropertyTarget? target)
+    private static ColumnType ResolveCalculatedResultType(ColumnPropertyTarget? target)
     {
         ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return rt?.Value.Length >= 1
-            && (rt.DataType == Constants.ColumnTypes.ByteType
-                || rt.DataType == Constants.ColumnTypes.IntegerType
-                || rt.DataType == Constants.ColumnTypes.LongIntegerType)
-            ? rt.Value[0]
-            : (byte)0;
+            && (rt.DataType == ColumnType.ByteType
+                || rt.DataType == ColumnType.IntegerType
+                || rt.DataType == ColumnType.LongIntegerType)
+            ? (ColumnType)rt.Value[0]
+            : default;
     }
 
     /// <summary>
@@ -2543,7 +2543,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="wantedColumns">The wanted columns.</param>
     /// <param name="type1">The type1.</param>
     /// <param name="type2">The type2.</param>
-    private static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, byte type1, byte type2)
+    private static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, ColumnType type1, ColumnType type2)
     {
         int limit = Math.Min(columns.Count, wantedColumns.Length);
         for (int i = 0; i < limit; i++)
@@ -2960,7 +2960,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             var diag = new StringBuilder();
             _ = diag.AppendLine($"JET: {(this.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {this.PageSizeBytes}  TotalPages: {this.DatabaseStream.Length / this.PageSizeBytes}");
             _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
-                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
+                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{(byte)c.Type:X2}]")));
             _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
             foreach (CatalogEntry e in result)
             {
@@ -3131,8 +3131,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            byte resultType = ResolveCalculatedResultType(properties.FindTarget(col.Name));
-            if (resultType != 0 && resultType != col.CalculatedResultType)
+            ColumnType resultType = ResolveCalculatedResultType(properties.FindTarget(col.Name));
+            if (resultType != default && resultType != col.CalculatedResultType)
             {
                 col.CalculatedResultType = resultType;
                 changed = true;

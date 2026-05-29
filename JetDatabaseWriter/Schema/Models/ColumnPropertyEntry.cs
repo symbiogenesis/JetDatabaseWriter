@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Schema.Models;
 
+using JetDatabaseWriter.Enums;
+
 /// <summary>
 /// One property entry within a <see cref="ColumnPropertyTarget"/>.
 /// </summary>
@@ -9,6 +11,6 @@ namespace JetDatabaseWriter.Schema.Models;
 /// <param name="Value">Raw value bytes — interpretation depends on <paramref name="DataType"/>.</param>
 internal sealed record ColumnPropertyEntry(
     string Name,
-    byte DataType,
+    ColumnType DataType,
     byte DdlFlag,
     byte[] Value);

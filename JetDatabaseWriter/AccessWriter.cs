@@ -30,7 +30,7 @@ using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
@@ -2207,11 +2207,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return Equals(left, right);
     }
 
-    internal static byte TypeCodeFromDefinition(ColumnDefinition column)
+    internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
     {
         if (column.IsCalculated && column.CalculatedResultType != 0)
         {
-            return column.CalculatedResultType;
+            return (ColumnType)column.CalculatedResultType;
         }
 
         // Complex columns override the CLR-driven mapping. Access writes the
@@ -2276,7 +2276,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    internal static bool IsVariableType(byte type) => type is TextType or BinaryType or MemoType or OleType;
+    internal static bool IsVariableType(ColumnType type) => type is TextType or BinaryType or MemoType or OleType;
 
     internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
     {
@@ -2310,7 +2310,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
         }
 
-        byte type = TypeCodeFromDefinition(column);
+        ColumnType type = TypeCodeFromDefinition(column);
         switch (type)
         {
             case BooleanType:
@@ -2329,7 +2329,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return;
             default:
                 throw new NotSupportedException(
-                    $"Column '{column.Name}': calculated result type 0x{type:X2} is not supported.");
+                    $"Column '{column.Name}': calculated result type 0x{(byte)type:X2} is not supported.");
         }
     }
 
@@ -2937,7 +2937,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 };
             default:
                 Type clrType = JetTypeInfo.GetClrType(column.Type)
-                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
+                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{(byte)column.Type:X2}.");
                 baseDef = new ColumnDefinition(column.Name, clrType);
                 break;
         }
@@ -2974,7 +2974,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (column.IsCalculated)
         {
             ColumnPropertyTarget? target = properties?.FindTarget(column.Name);
-            byte resultType = column.Type;
+            byte resultType = (byte)column.Type;
             ColumnPropertyEntry? resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
             if (resultTypeEntry?.Value.Length >= 1)
             {

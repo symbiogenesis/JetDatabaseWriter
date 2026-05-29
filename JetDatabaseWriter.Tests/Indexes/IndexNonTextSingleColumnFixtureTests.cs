@@ -1,3 +1,5 @@
+using JetDatabaseWriter.Enums;
+
 namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
@@ -14,6 +16,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Indexes.Collation;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Single-column non-text index encoder validation. Routes each indexed
@@ -141,8 +144,8 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     continue;
                 }
 
-                byte columnTypeCode = ResolveColumnTypeCode(colMeta.ClrType);
-                if (columnTypeCode == 0)
+                ColumnType? columnTypeCode = ResolveColumnTypeCode(colMeta.ClrType);
+                if (columnTypeCode is null)
                 {
                     string skipMsg = FormattableString.Invariant(
                         $"""
@@ -192,7 +195,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     byte[] key;
                     try
                     {
-                        key = IndexKeyEncoder.EncodeEntry(columnTypeCode, v, keyCol.IsAscending);
+                        key = IndexKeyEncoder.EncodeEntry(columnTypeCode.Value, v, keyCol.IsAscending);
                     }
                     catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
                     {
@@ -225,7 +228,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 {
                     string countMsg = FormattableString.Invariant(
                         $"""
-                          {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending}): count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}
+                          {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{(byte)columnTypeCode.Value:X2} asc={keyCol.IsAscending}): count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}
 
                         """);
                     failures.Append(countMsg);
@@ -248,7 +251,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                         string actHex = Convert.ToHexString(encoded[i].Key);
                         string detailMsg = FormattableString.Invariant(
                             $"""
-                              {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending})[{i}] value="{preview}" expected={expHex} actual={actHex}
+                              {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{(byte)columnTypeCode.Value:X2} asc={keyCol.IsAscending})[{i}] value="{preview}" expected={expHex} actual={actHex}
 
                             """);
                         failures.Append(detailMsg);
@@ -279,35 +282,35 @@ public sealed class IndexNonTextSingleColumnFixtureTests
     /// <summary>
     /// Maps the ClrType surfaced by <see cref="ColumnMetadata.ClrType"/> back
     /// to the JET type code expected by <see cref="IndexKeyEncoder.EncodeEntry"/>.
-    /// Returns 0 for types this test doesn't know how to encode (caller skips).
+    /// Returns <see langword="null"/> for types this test doesn't know how to encode (caller skips).
     /// </summary>
     /// <param name="clr">The CLR type.</param>
-    private static byte ResolveColumnTypeCode(Type clr)
+    private static ColumnType? ResolveColumnTypeCode(Type clr)
     {
         // mdbtools HACKING.md §3 column type code table.
         if (clr == typeof(byte))
         {
-            return 0x02;
+            return ByteType;
         }
 
         if (clr == typeof(short) || clr == typeof(int))
         {
-            return clr == typeof(short) ? (byte)0x03 : (byte)0x04;
+            return clr == typeof(short) ? IntegerType : LongIntegerType;
         }
 
         if (clr == typeof(float))
         {
-            return 0x06;
+            return FloatType;
         }
 
         if (clr == typeof(double))
         {
-            return 0x07;
+            return DoubleType;
         }
 
         if (clr == typeof(DateTime))
         {
-            return 0x08;
+            return DateTimeType;
         }
 
         if (clr == typeof(decimal))
@@ -316,25 +319,25 @@ public sealed class IndexNonTextSingleColumnFixtureTests
             // decimal in the reader; the encoder tolerates either via the
             // same fixed-point path. Default to Money because it's the
             // more common case in the Jackcess fixtures.
-            return 0x05;
+            return MoneyType;
         }
 
         if (clr == typeof(bool))
         {
-            return 0x01;
+            return BooleanType;
         }
 
         if (clr == typeof(Guid))
         {
-            return 0x0F;
+            return GuidType;
         }
 
         if (clr == typeof(byte[]))
         {
-            return 0x09;
+            return BinaryType;
         }
 
-        return 0;
+        return null;
     }
 
     private static string Truncate(string s, int max)
