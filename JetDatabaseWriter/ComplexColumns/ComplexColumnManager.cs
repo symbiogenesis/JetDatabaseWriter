@@ -1216,11 +1216,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         string ext = input.FileType ?? DeriveExtension(input.FileName);
 
-        flatDef.SetValueByName(values, "FileURL", (object?)input.FileURL ?? DBNull.Value);
+        flatDef.SetValueByName(values, "FileURL", input.FileURL ?? (object)DBNull.Value);
         flatDef.SetValueByName(values, "FileName", input.FileName);
         flatDef.SetValueByName(values, "FileType", ext);
         flatDef.SetValueByName(values, "FileFlags", DBNull.Value);
-        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp.HasValue ? input.FileTimeStamp.Value : DBNull.Value);
+        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp ?? (object)DBNull.Value);
         flatDef.SetValueByName(values, "FileData", AttachmentWrapper.Encode(ext, input.FileData));
         return values;
     }
