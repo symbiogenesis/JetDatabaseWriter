@@ -126,7 +126,7 @@ public sealed class LvalLengthMismatchTests
 
     private static async Task<byte[]> ReadOleBlobAsync(byte[] dbBytes)
     {
-        using var ms = new MemoryStream(dbBytes, writable: false);
+        await using var ms = new MemoryStream(dbBytes, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
             new AccessReaderOptions { UseLockFile = false },
