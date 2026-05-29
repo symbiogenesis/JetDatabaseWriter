@@ -75,6 +75,7 @@ internal static class JetTypeInfo
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the column type is unknown.</exception>
     public static Type? GetClrType(ColumnType type) => type switch
     {
         BooleanType => typeof(bool),
@@ -93,7 +94,8 @@ internal static class JetTypeInfo
         OleType => typeof(byte[]),
         AttachmentType => typeof(byte[]),
         ComplexType => typeof(byte[]),
-        _ => null,
+        DateTimeExtendedType => null,
+        _ => throw new InvalidOperationException($"Column type: '{type}' is unknown."),
     };
 
     /// <summary>
