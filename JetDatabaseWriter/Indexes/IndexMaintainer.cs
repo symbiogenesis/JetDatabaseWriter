@@ -17,8 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 
-#pragma warning disable SA1202
-#pragma warning disable SA1204
+#pragma warning disable SA1202, SA1204
 
 /// <summary>
 /// Index B-tree maintenance for <see cref="AccessWriter"/>: bulk rebuild
