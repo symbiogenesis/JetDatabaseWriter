@@ -139,7 +139,6 @@ internal sealed class RowEncoder(AccessWriter writer)
 
                 return 16;
 
-
             default:
                 return 0;
         }

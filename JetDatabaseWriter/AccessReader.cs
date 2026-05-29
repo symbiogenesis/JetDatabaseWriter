@@ -3280,7 +3280,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     int required = col.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                     return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
 
-
                 default:
                     return string.Empty;
             }
