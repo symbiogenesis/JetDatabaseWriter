@@ -2327,9 +2327,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case GuidType:
             case NumericType:
                 return;
-            default:
+            case OleType:
+            case AttachmentType:
+            case ComplexType:
+            case DateTimeExtendedType:
                 throw new NotSupportedException(
                     $"Column '{column.Name}': calculated result type 0x{(byte)type:X2} is not supported.");
+            default:
+                throw new InvalidOperationException(
+                    $"Column '{column.Name}': calculated result type 0x{(byte)type:X2} is unknown.");
         }
     }
 
