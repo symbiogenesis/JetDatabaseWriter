@@ -10,8 +10,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202
-#pragma warning disable SA1204
+#pragma warning disable SA1202, SA1204
 
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
