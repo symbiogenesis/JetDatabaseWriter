@@ -428,10 +428,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
     /// <summary>Sets the Office97 password flag (0x01) in a Jet3 database header.</summary>
     /// <param name="data">The data bytes or values.</param>
-    private static void SetJet3EncryptionFlag(byte[] data)
-    {
-        data[0x62] = 0x01; // Office97 password flag
-    }
+    private static void SetJet3EncryptionFlag(byte[] data) => data[0x62] = 0x01; // Office97 password flag
 
     /// <summary>
     /// Sets the Office97 password flag (0x01) and encodes password <c>"test"</c>

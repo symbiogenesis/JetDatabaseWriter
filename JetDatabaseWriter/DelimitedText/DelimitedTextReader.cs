@@ -645,10 +645,7 @@ internal sealed class DelimitedTextReader : IDisposable
         fieldCount++;
     }
 
-    private void IncrementLineNumber()
-    {
-        lineNumber++;
-    }
+    private void IncrementLineNumber() => lineNumber++;
 
     private void ThrowIfDisposed()
     {

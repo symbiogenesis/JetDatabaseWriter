@@ -68,9 +68,7 @@ internal static class LinkedTableManager
     /// <param name="hostDatabasePath">The host database path.</param>
     internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
         AccessReaderOptions options,
-        string hostDatabasePath)
-    {
-        return new AccessReaderOptions
+        string hostDatabasePath) => new AccessReaderOptions
         {
             PageCacheSize = options.PageCacheSize,
             DiagnosticsEnabled = options.DiagnosticsEnabled,
@@ -91,7 +89,6 @@ internal static class LinkedTableManager
             LinkedTextMaxSourceFileBytes = options.LinkedTextMaxSourceFileBytes,
             LinkedTextMaxMaterializedRows = options.LinkedTextMaxMaterializedRows,
         };
-    }
 
     /// <summary>
     /// Enumerates every linked table (Access-file, ODBC, or text) defined in

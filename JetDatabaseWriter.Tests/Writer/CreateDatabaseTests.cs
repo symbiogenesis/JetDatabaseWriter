@@ -264,18 +264,12 @@ public sealed class CreateDatabaseTests
     }
 
     [Fact]
-    public async Task CreateDatabaseAsync_Path_NullPath_ThrowsArgumentNullException()
-    {
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            AccessWriter.CreateDatabaseAsync((string)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
-    }
+    public async Task CreateDatabaseAsync_Path_NullPath_ThrowsArgumentNullException() => await Assert.ThrowsAsync<ArgumentNullException>(() =>
+                                                                                                  AccessWriter.CreateDatabaseAsync((string)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
 
     [Fact]
-    public async Task CreateDatabaseAsync_Stream_NullStream_ThrowsArgumentNullException()
-    {
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            AccessWriter.CreateDatabaseAsync((Stream)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
-    }
+    public async Task CreateDatabaseAsync_Stream_NullStream_ThrowsArgumentNullException() => await Assert.ThrowsAsync<ArgumentNullException>(() =>
+                                                                                                      AccessWriter.CreateDatabaseAsync((Stream)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
 
     [Fact]
     public async Task CreateDatabaseAsync_Stream_Jet3Mdb_ReturnsNonNullWriter()

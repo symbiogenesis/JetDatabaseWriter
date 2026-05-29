@@ -37,16 +37,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     [Fact]
-    public async Task Open_WithMissingFile_ThrowsFileNotFoundException()
-    {
-        await Assert.ThrowsAsync<FileNotFoundException>(async () => await AccessWriter.OpenAsync(@"C:\nonexistent\fake.mdb", cancellationToken: TestContext.Current.CancellationToken));
-    }
+    public async Task Open_WithMissingFile_ThrowsFileNotFoundException() => await Assert.ThrowsAsync<FileNotFoundException>(async () => await AccessWriter.OpenAsync(@"C:\nonexistent\fake.mdb", cancellationToken: TestContext.Current.CancellationToken));
 
     [Fact]
-    public async Task Open_WithNullPath_ThrowsArgumentNullException()
-    {
-        await Assert.ThrowsAsync<ArgumentNullException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
-    }
+    public async Task Open_WithNullPath_ThrowsArgumentNullException() => await Assert.ThrowsAsync<ArgumentNullException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
 
     [Fact]
     public async Task OpenAsync_WhenCancelled_ThrowsOperationCanceledException()

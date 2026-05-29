@@ -9,16 +9,10 @@ using Xunit;
 public class ColumnPropertyBlockTests
 {
     [Fact]
-    public void Parse_NullBlob_Returns_Null()
-    {
-        Assert.Null(ColumnPropertyBlock.Parse(null, DatabaseFormat.Jet4Mdb));
-    }
+    public void Parse_NullBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse(null, DatabaseFormat.Jet4Mdb));
 
     [Fact]
-    public void Parse_EmptyBlob_Returns_Null()
-    {
-        Assert.Null(ColumnPropertyBlock.Parse([], DatabaseFormat.Jet4Mdb));
-    }
+    public void Parse_EmptyBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse([], DatabaseFormat.Jet4Mdb));
 
     [Fact]
     public void Parse_UnknownMagic_Returns_Null()

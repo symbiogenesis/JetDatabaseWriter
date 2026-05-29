@@ -78,12 +78,9 @@ public sealed class IndexLongRowEncoderTests
         AssertHasSubsequence(desc, [0xF7, 0xF8, 0xF7, 0xFB]);
     }
 
-    private static void AssertHasSubsequence(byte[] hay, byte[] needle)
-    {
-        Assert.True(
+    private static void AssertHasSubsequence(byte[] hay, byte[] needle) => Assert.True(
             ContainsSubsequence(hay, needle),
             $"Expected sequence {Convert.ToHexString(needle)} in {Convert.ToHexString(hay)}.");
-    }
 
     private static bool ContainsSubsequence(byte[] hay, byte[] needle)
     {

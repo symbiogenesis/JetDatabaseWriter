@@ -355,14 +355,11 @@ public sealed class DelimitedTextReaderTests
     private static DelimitedTextReader CreateReader(
         TextReader reader,
         char delimiter = ',',
-        DelimitedTextLimits? limits = null)
-    {
-        return new DelimitedTextReader(
+        DelimitedTextLimits? limits = null) => new DelimitedTextReader(
             reader,
             new DelimitedTextFormat(hasHeaderRow: false, delimiter),
             limits ?? DefaultLimits,
             bufferLength: 7);
-    }
 
     private static async ValueTask<List<ParsedDelimitedTextRecord>> ReadAllAsync(string text, char delimiter = ',')
     {

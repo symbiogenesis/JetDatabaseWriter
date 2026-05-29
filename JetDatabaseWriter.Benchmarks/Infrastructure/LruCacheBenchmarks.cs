@@ -37,10 +37,7 @@ public class LruCacheBenchmarks : IDisposable
     }
 
     [Benchmark]
-    public void Add_Existing()
-    {
-        _cache.Add(0, "updated");
-    }
+    public void Add_Existing() => _cache.Add(0, "updated");
 
     [Benchmark]
     public void Add_Evict()

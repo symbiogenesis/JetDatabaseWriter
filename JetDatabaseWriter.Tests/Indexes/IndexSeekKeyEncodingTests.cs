@@ -42,8 +42,5 @@ public sealed class IndexSeekKeyEncodingTests
     }
 
     [Fact]
-    public void NumericColumnType_IsSeekableWhenDescriptorScaleIsResolved()
-    {
-        Assert.True(IndexKeyEncoder.IsColumnTypeSeekable(NumericType));
-    }
+    public void NumericColumnType_IsSeekableWhenDescriptorScaleIsResolved() => Assert.True(IndexKeyEncoder.IsColumnTypeSeekable(NumericType));
 }

@@ -475,9 +475,7 @@ internal static class AgileEncryptionFixtureBuilder
         h.Slice(0x4C + 4, 108 * 4).Fill(0xFF);
     }
 
-    private static void WriteRootEntry(byte[] sector, int offset)
-    {
-        WriteDirEntry(
+    private static void WriteRootEntry(byte[] sector, int offset) => WriteDirEntry(
             sector,
             offset,
             "Root Entry",
@@ -488,7 +486,6 @@ internal static class AgileEncryptionFixtureBuilder
             leftSibling: Constants.CompoundFile.FreeSect,
             rightSibling: Constants.CompoundFile.FreeSect,
             child: 1);
-    }
 
     private static void WriteStreamEntry(
         byte[] sector,
@@ -497,9 +494,7 @@ internal static class AgileEncryptionFixtureBuilder
         uint startSector,
         long size,
         uint leftSibling,
-        uint rightSibling)
-    {
-        WriteDirEntry(
+        uint rightSibling) => WriteDirEntry(
             sector,
             offset,
             name,
@@ -510,7 +505,6 @@ internal static class AgileEncryptionFixtureBuilder
             leftSibling: leftSibling,
             rightSibling: rightSibling,
             child: Constants.CompoundFile.FreeSect);
-    }
 
     private static void WriteUnusedEntry(byte[] sector, int offset)
     {

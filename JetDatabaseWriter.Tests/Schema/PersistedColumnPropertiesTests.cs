@@ -31,18 +31,12 @@ public sealed class PersistedColumnPropertiesTests
     [InlineData((short)7, "7")]
     [InlineData((byte)5, "5")]
     [InlineData(9999999999, "9999999999")]
-    public void ToJetExpression_Integers_RoundTripInvariant(object value, string expected)
-    {
-        Assert.Equal(expected, JetExpressionConverter.ToJetExpression(value));
-    }
+    public void ToJetExpression_Integers_RoundTripInvariant(object value, string expected) => Assert.Equal(expected, JetExpressionConverter.ToJetExpression(value));
 
     [Theory]
     [InlineData(true, "True")]
     [InlineData(false, "False")]
-    public void ToJetExpression_Booleans(bool value, string expected)
-    {
-        Assert.Equal(expected, JetExpressionConverter.ToJetExpression(value));
-    }
+    public void ToJetExpression_Booleans(bool value, string expected) => Assert.Equal(expected, JetExpressionConverter.ToJetExpression(value));
 
     [Fact]
     public void ToJetExpression_Strings_QuoteAndEscape()
@@ -66,10 +60,7 @@ public sealed class PersistedColumnPropertiesTests
     }
 
     [Fact]
-    public void ToJetExpression_ByteArray_Throws()
-    {
-        Assert.Throws<NotSupportedException>(() => JetExpressionConverter.ToJetExpression(new byte[] { 1, 2, 3 }));
-    }
+    public void ToJetExpression_ByteArray_Throws() => Assert.Throws<NotSupportedException>(() => JetExpressionConverter.ToJetExpression(new byte[] { 1, 2, 3 }));
 
     // ── ColumnPropertyBlockBuilder round-trip via parser ──────────────
 
@@ -94,10 +85,7 @@ public sealed class PersistedColumnPropertiesTests
     }
 
     [Fact]
-    public void Builder_Empty_Returns_Null_Blob()
-    {
-        Assert.Null(new ColumnPropertyBlockBuilder().ToBytes(DatabaseFormat.Jet4Mdb));
-    }
+    public void Builder_Empty_Returns_Null_Blob() => Assert.Null(new ColumnPropertyBlockBuilder().ToBytes(DatabaseFormat.Jet4Mdb));
 
     [Fact]
     public void Builder_FromBlock_PreservesUnknownChunks()

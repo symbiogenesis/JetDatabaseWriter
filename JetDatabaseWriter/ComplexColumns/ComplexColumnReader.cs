@@ -63,7 +63,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
-        if (reader.format == DatabaseFormat.Jet3Mdb)
+        if (reader.Format == DatabaseFormat.Jet3Mdb)
         {
             return [];
         }
@@ -80,37 +80,37 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        int numCols = Ru16(td, reader.tdef.NumCols);
-        int numRealIdx = Ri32(td, reader.tdef.NumRealIdx);
+        int numCols = Ru16(td, reader.TDef.NumCols);
+        int numRealIdx = Ri32(td, reader.TDef.NumRealIdx);
         if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
 
-        int colStart = reader.tdef.BlockEnd + (numRealIdx * reader.tdef.RealIdxEntrySz);
+        int colStart = reader.TDef.BlockEnd + (numRealIdx * reader.TDef.RealIdxEntrySz);
 
         var byComplexId = new Dictionary<int, (string Name, byte Type)>();
         for (int i = 0; i < numCols; i++)
         {
-            int offset = colStart + (i * reader.colDesc.Size);
-            if (offset + reader.colDesc.Size > td.Length)
+            int offset = colStart + (i * reader.ColumnDescriptor.Size);
+            if (offset + reader.ColumnDescriptor.Size > td.Length)
             {
                 break;
             }
 
-            byte type = td[offset + reader.colDesc.TypeOff];
+            byte type = td[offset + reader.ColumnDescriptor.TypeOff];
             if (type != ComplexType && type != AttachmentType)
             {
                 continue;
             }
 
-            int complexId = Ri32(td, offset + reader.colDesc.MiscOff);
+            int complexId = Ri32(td, offset + reader.ColumnDescriptor.MiscOff);
             if (complexId <= 0)
             {
                 continue;
             }
 
-            int colNum = Ru16(td, offset + reader.colDesc.NumOff);
+            int colNum = Ru16(td, offset + reader.ColumnDescriptor.NumOff);
 
             ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;

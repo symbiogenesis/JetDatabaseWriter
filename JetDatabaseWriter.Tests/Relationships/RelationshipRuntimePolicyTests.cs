@@ -8,10 +8,7 @@ using Xunit;
 public sealed class RelationshipRuntimePolicyTests
 {
     [Fact]
-    public void CascadeDepthPolicy_AllowsConfiguredLimit()
-    {
-        RelationshipCascadePolicy.ThrowIfDepthExceeded(AccessWriter.CascadeMaxDepth);
-    }
+    public void CascadeDepthPolicy_AllowsConfiguredLimit() => RelationshipCascadePolicy.ThrowIfDepthExceeded(AccessWriter.CascadeMaxDepth);
 
     [Fact]
     public void CascadeDepthPolicy_RejectsBeyondConfiguredLimit()

@@ -478,10 +478,7 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal(new string('x', 80), values[3]);
     }
 
-    private static byte[] InvokeDecompressAttachmentData(byte[] bytes, int offset)
-    {
-        return ComplexColumnReader.DecompressAttachmentData(bytes, offset);
-    }
+    private static byte[] InvokeDecompressAttachmentData(byte[] bytes, int offset) => ComplexColumnReader.DecompressAttachmentData(bytes, offset);
 
     private static byte[] InflateWithZlib(byte[] bytes)
     {

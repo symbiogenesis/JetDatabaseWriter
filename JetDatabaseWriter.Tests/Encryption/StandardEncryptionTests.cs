@@ -438,11 +438,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Standard_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(
+    public void Standard_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException() => Assert.Throws<ArgumentNullException>(
             () => OfficeCryptoStandard.Decrypt(null!, new byte[64], TestPassword));
-    }
 
     [Fact]
     public void Standard_Decrypt_NullEncryptedPackage_ThrowsArgumentNullException()
@@ -456,11 +453,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public void Standard_Encrypt_NullInnerPackage_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(
+    public void Standard_Encrypt_NullInnerPackage_ThrowsArgumentNullException() => Assert.Throws<ArgumentNullException>(
             () => OfficeCryptoStandard.Encrypt(null!, TestPassword));
-    }
 
     // ═══════════════════════════════════════════════════════════════════
     // 6. FORMAT DETECTION

@@ -84,7 +84,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return results;
         }
 
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -97,7 +97,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                if (Ri32(page, writer.dataPage.TDefOff) != msysRelTdefPage)
+                if (Ri32(page, writer.DataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }
@@ -297,7 +297,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return names;
         }
 
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -310,7 +310,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                if (Ri32(page, writer.dataPage.TDefOff) != msysRelTdefPage)
+                if (Ri32(page, writer.DataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }

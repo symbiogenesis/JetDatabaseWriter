@@ -194,9 +194,7 @@ internal static class EntityEmitter
             LiteralExpression(SyntaxKind.DefaultLiteralExpression));
     }
 
-    private static DocumentationCommentTriviaSyntax XmlDocSummary(string text)
-    {
-        return DocumentationCommentTrivia(
+    private static DocumentationCommentTriviaSyntax XmlDocSummary(string text) => DocumentationCommentTrivia(
             SyntaxKind.SingleLineDocumentationCommentTrivia,
             List(new XmlNodeSyntax[]
             {
@@ -213,5 +211,4 @@ internal static class EntityEmitter
                 XmlText().WithTextTokens(TokenList(
                     XmlTextNewLine(TriviaList(), "\n", "\n", TriviaList()))),
             }));
-    }
 }

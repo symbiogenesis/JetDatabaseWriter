@@ -100,20 +100,14 @@ internal sealed class TableDef
     /// such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public int FindColumnIndex(string columnName)
-    {
-        return Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
-    }
+    public int FindColumnIndex(string columnName) => Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Returns the column whose name matches <paramref name="columnName"/>
     /// case-insensitively, or <see langword="null"/> when no such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public ColumnInfo? FindColumn(string columnName)
-    {
-        return Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
-    }
+    public ColumnInfo? FindColumn(string columnName) => Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Resolves <paramref name="columnNames"/> to their <see cref="ColumnInfo.ColNum"/>
@@ -178,10 +172,7 @@ internal sealed class TableDef
     /// candidate exists. Throws when no <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
-    public ColumnInfo FindFlatTableForeignKeyColumn()
-    {
-        return Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+    public ColumnInfo FindFlatTableForeignKeyColumn() => Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
             ?? Columns.Find(c => c.Type == LongIntegerType)
             ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
-    }
 }

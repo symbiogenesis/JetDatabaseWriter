@@ -144,10 +144,7 @@ internal static class DaoPowerShellHostResolver
         }
     }
 
-    private static string BuildPowerShellPath(string windowsDirectory, string systemDirectoryName)
-    {
-        return Path.Combine(windowsDirectory, systemDirectoryName, PowerShellRelativePath);
-    }
+    private static string BuildPowerShellPath(string windowsDirectory, string systemDirectoryName) => Path.Combine(windowsDirectory, systemDirectoryName, PowerShellRelativePath);
 
     private static void TryKill(Process process)
     {

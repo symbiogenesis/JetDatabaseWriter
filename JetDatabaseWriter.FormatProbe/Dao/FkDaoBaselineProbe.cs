@@ -555,9 +555,7 @@ internal static class FkDaoBaselineProbe
         string writerPath,
         string writerCompactPath,
         string daoPath,
-        string daoCompactPath)
-    {
-        return $$"""
+        string daoCompactPath) => $$"""
             $ErrorActionPreference='Stop'
             $writerPath = {{Quote(writerPath)}}
             $writerCompactPath = {{Quote(writerCompactPath)}}
@@ -627,7 +625,6 @@ internal static class FkDaoBaselineProbe
                 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
             }
             """;
-    }
 
     private static Dictionary<string, PowerShellStepResult> ParsePowerShellStepResults(string stdout)
     {

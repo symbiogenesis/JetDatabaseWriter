@@ -43,7 +43,6 @@ internal sealed class RowDecodePlan
     }
 
     private static object DecodeLongVariableValue(
-        AccessBase source,
         byte[] page,
         int start,
         int length,
@@ -304,7 +303,7 @@ internal sealed class RowDecodePlan
 
                 case MemoType:
                 case OleType:
-                    return DecodeLongVariableValue(source, page, start, length, column, longValueDecoder, ref needsLongValue);
+                    return DecodeLongVariableValue(page, start, length, column, longValueDecoder, ref needsLongValue);
 
                 case ByteType:
                 case IntegerType:

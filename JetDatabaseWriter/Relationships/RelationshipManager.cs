@@ -78,7 +78,7 @@ internal sealed class RelationshipManager
         Guard.NotNullOrEmpty(relationship.Name, "relationship.Name");
         Guard.NotNullOrEmpty(relationship.PrimaryTable, "relationship.PrimaryTable");
         Guard.NotNullOrEmpty(relationship.ForeignTable, "relationship.ForeignTable");
-        Guard.ThrowIfDisposed(writer.disposed, this);
+        Guard.ThrowIfDisposed(writer.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         // Validate referenced user tables exist.
@@ -139,7 +139,7 @@ internal sealed class RelationshipManager
         // different (20-byte) logical-idx layout that this library does not
         // yet exercise — skip silently to keep the catalog row emission
         // working on .mdb (Access 97) databases.
-        if (writer.format != DatabaseFormat.Jet3Mdb)
+        if (writer.Format != DatabaseFormat.Jet3Mdb)
         {
             await EmitFkPerTdefEntriesAsync(
                 relationship,
@@ -250,14 +250,14 @@ internal sealed class RelationshipManager
         // numbers are stable for the cross-referenced first_dp values.
         if (pkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer.pgSz, primaryTdefPage, []);
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer.PageSizeBytes, primaryTdefPage, []);
             long lp = await pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
         }
 
         if (fkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer.pgSz, foreignTdefPage, []);
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer.PageSizeBytes, foreignTdefPage, []);
             long lp = await pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);
         }
@@ -458,22 +458,22 @@ internal sealed class RelationshipManager
         byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
         int nameRecordSize = 2 + nameBytes.Length;
 
-        int deltaRealIdxSkip = allocateNewRealIdx ? writer.tdef.RealIdxEntrySz : 0;
+        int deltaRealIdxSkip = allocateNewRealIdx ? writer.TDef.RealIdxEntrySz : 0;
         int deltaRealIdxPhys = allocateNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         // Build the rewritten page.
         var newTd = new byte[GetLogicalTDefCapacity(currentEnd + totalGrowth)];
-        Buffer.BlockCopy(td, 0, newTd, 0, writer.tdef.BlockEnd);
+        Buffer.BlockCopy(td, 0, newTd, 0, writer.TDef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
-        int oldRealIdxSkipLen = numRealIdx * writer.tdef.RealIdxEntrySz;
-        Buffer.BlockCopy(td, writer.tdef.BlockEnd, newTd, writer.tdef.BlockEnd, oldRealIdxSkipLen);
-        int newRealIdxSkipEnd = writer.tdef.BlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
+        int oldRealIdxSkipLen = numRealIdx * writer.TDef.RealIdxEntrySz;
+        Buffer.BlockCopy(td, writer.TDef.BlockEnd, newTd, writer.TDef.BlockEnd, oldRealIdxSkipLen);
+        int newRealIdxSkipEnd = writer.TDef.BlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
 
         // Column descriptors.
-        int oldColStart = writer.tdef.BlockEnd + oldRealIdxSkipLen;
-        int colDescBlockLen = numCols * writer.colDesc.Size;
+        int oldColStart = writer.TDef.BlockEnd + oldRealIdxSkipLen;
+        int colDescBlockLen = numCols * writer.ColumnDescriptor.Size;
         Buffer.BlockCopy(td, oldColStart, newTd, newRealIdxSkipEnd, colDescBlockLen);
 
         // Column names (variable length).
@@ -572,10 +572,10 @@ internal sealed class RelationshipManager
         }
 
         // Update header counts.
-        Wi32(newTd, writer.tdef.NumCols + 2, numIdx + 1);
+        Wi32(newTd, writer.TDef.NumCols + 2, numIdx + 1);
         if (allocateNewRealIdx)
         {
-            Wi32(newTd, writer.tdef.NumRealIdx, numRealIdx + 1);
+            Wi32(newTd, writer.TDef.NumRealIdx, numRealIdx + 1);
         }
 
         // tdef_len at offset 8 = (newEnd - 8). The page header (8 bytes) is
@@ -599,8 +599,8 @@ internal sealed class RelationshipManager
     /// <param name="numRealIdx">The number of real index.</param>
     internal int LocateRealIdxDescStart(byte[] td, int numCols, int numRealIdx)
     {
-        int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
-        int pos = colStart + (numCols * writer.colDesc.Size);
+        int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
+        int pos = colStart + (numCols * writer.ColumnDescriptor.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (writer.ReadColumnName(td, ref pos, out _) < 0)
@@ -777,7 +777,7 @@ internal sealed class RelationshipManager
     private async ValueTask DropRelationshipCoreAsync(string relationshipName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(relationshipName, nameof(relationshipName));
-        Guard.ThrowIfDisposed(writer.disposed, this);
+        Guard.ThrowIfDisposed(writer.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         long msysRelTdefPage = await catalog.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
@@ -809,7 +809,7 @@ internal sealed class RelationshipManager
         }
 
         // Jet4/ACE only — Jet3 never received the per-TDEF FK logical-idx entries.
-        if (writer.format != DatabaseFormat.Jet3Mdb)
+        if (writer.Format != DatabaseFormat.Jet3Mdb)
         {
             await ForEachRelationshipFkPairAsync(
                 matches,
@@ -870,7 +870,7 @@ internal sealed class RelationshipManager
     {
         Guard.NotNullOrEmpty(oldName, nameof(oldName));
         Guard.NotNullOrEmpty(newName, nameof(newName));
-        Guard.ThrowIfDisposed(writer.disposed, this);
+        Guard.ThrowIfDisposed(writer.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
@@ -939,7 +939,7 @@ internal sealed class RelationshipManager
         // Update the TDEF logical-idx name cookies on both sides so the
         // on-disk index name matches the catalog row. Jet3 never received
         // FK logical-idx entries, so this is a no-op there.
-        if (writer.format != DatabaseFormat.Jet3Mdb)
+        if (writer.Format != DatabaseFormat.Jet3Mdb)
         {
             await ForEachRelationshipFkPairAsync(
                 matches,
@@ -1052,7 +1052,7 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, writer.tdef.NumCols + 2, layout.NumIdx - 1);
+        Wi32(td, writer.TDef.NumCols + 2, layout.NumIdx - 1);
         Wi32(td, 8, finalEnd - 8);
 
         await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
@@ -1129,16 +1129,16 @@ internal sealed class RelationshipManager
         // [_writer._tdef.BlockEnd, _writer._tdef.BlockEnd + numRealIdx * _writer._tdef.RealIdxEntrySz). We
         // collapse out the LAST N × _writer._tdef.RealIdxEntrySz bytes of that block by
         // left-shifting everything that follows.
-        int oldSkipEnd = writer.tdef.BlockEnd + (layout.NumRealIdx * writer.tdef.RealIdxEntrySz);
-        int newSkipEnd = oldSkipEnd - (reclaim * writer.tdef.RealIdxEntrySz);
+        int oldSkipEnd = writer.TDef.BlockEnd + (layout.NumRealIdx * writer.TDef.RealIdxEntrySz);
+        int newSkipEnd = oldSkipEnd - (reclaim * writer.TDef.RealIdxEntrySz);
         Buffer.BlockCopy(td, oldSkipEnd, td, newSkipEnd, layout.CurrentEnd - oldSkipEnd);
-        int endAfterStep1 = layout.CurrentEnd - (reclaim * writer.tdef.RealIdxEntrySz);
+        int endAfterStep1 = layout.CurrentEnd - (reclaim * writer.TDef.RealIdxEntrySz);
 
         // After step 1 the real-idx physical descriptor section starts at
         // (realIdxDescStart - reclaim * _writer._tdef.RealIdxEntrySz). We need to drop the
         // trailing N × 52 bytes of physical descriptors. Compute the new
         // boundaries.
-        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * writer.tdef.RealIdxEntrySz);
+        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * writer.TDef.RealIdxEntrySz);
         int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
         int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
@@ -1152,7 +1152,7 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, writer.tdef.NumRealIdx, layout.NumRealIdx - reclaim);
+        Wi32(td, writer.TDef.NumRealIdx, layout.NumRealIdx - reclaim);
         Wi32(td, 8, finalEnd - 8);
 
         await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
@@ -1292,15 +1292,15 @@ internal sealed class RelationshipManager
             throw new NotSupportedException($"TDEF at page {startPage} could not be read.");
         }
 
-        int total = writer.pgSz + ((parts.Count - 1) * (writer.pgSz - 8));
+        int total = writer.PageSizeBytes + ((parts.Count - 1) * (writer.PageSizeBytes - 8));
         var logical = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, logical, 0, writer.pgSz);
+        Buffer.BlockCopy(parts[0], 0, logical, 0, writer.PageSizeBytes);
 
-        int logicalOffset = writer.pgSz;
+        int logicalOffset = writer.PageSizeBytes;
         for (int partIndex = 1; partIndex < parts.Count; partIndex++)
         {
-            Buffer.BlockCopy(parts[partIndex], 8, logical, logicalOffset, writer.pgSz - 8);
-            logicalOffset += writer.pgSz - 8;
+            Buffer.BlockCopy(parts[partIndex], 8, logical, logicalOffset, writer.PageSizeBytes - 8);
+            logicalOffset += writer.PageSizeBytes - 8;
         }
 
         for (int partIndex = 0; partIndex < parts.Count; partIndex++)
@@ -1313,20 +1313,20 @@ internal sealed class RelationshipManager
 
     private int GetLogicalTDefPageCount(int usedLength)
     {
-        if (usedLength <= writer.pgSz)
+        if (usedLength <= writer.PageSizeBytes)
         {
             return 1;
         }
 
-        int bodyPerContinuation = writer.pgSz - 8;
-        int continuationBytes = usedLength - writer.pgSz;
+        int bodyPerContinuation = writer.PageSizeBytes - 8;
+        int continuationBytes = usedLength - writer.PageSizeBytes;
         return 1 + ((continuationBytes + bodyPerContinuation - 1) / bodyPerContinuation);
     }
 
     private int GetLogicalTDefCapacity(int usedLength)
     {
         int pageCount = GetLogicalTDefPageCount(usedLength);
-        return writer.pgSz + ((pageCount - 1) * (writer.pgSz - 8));
+        return writer.PageSizeBytes + ((pageCount - 1) * (writer.PageSizeBytes - 8));
     }
 
     private void EnsureLogicalTDefCapacity(ref byte[] logicalBytes, int usedLength)
@@ -1355,14 +1355,14 @@ internal sealed class RelationshipManager
 
         for (int pageIndex = retainedCount; pageIndex < pageCount; pageIndex++)
         {
-            pageNumbers[pageIndex] = await pageAllocator.AllocatePageAsync(new byte[writer.pgSz], cancellationToken).ConfigureAwait(false);
+            pageNumbers[pageIndex] = await pageAllocator.AllocatePageAsync(new byte[writer.PageSizeBytes], cancellationToken).ConfigureAwait(false);
         }
 
         logicalBytes[0] = Constants.PageTypes.TableDefinition;
         logicalBytes[1] = 0x01;
         int tdefLen = Math.Max(0, usedLength - 8);
         Wi32(logicalBytes, 8, tdefLen);
-        Wu16(logicalBytes, 2, Math.Max(0, writer.pgSz - tdefLen - 8));
+        Wu16(logicalBytes, 2, Math.Max(0, writer.PageSizeBytes - tdefLen - 8));
 
         byte[][] pages = MaterializeLogicalTDefPages(logicalBytes, usedLength, pageNumbers);
         for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
@@ -1380,19 +1380,19 @@ internal sealed class RelationshipManager
     {
         var pages = new byte[pageNumbers.Length][];
 
-        pages[0] = new byte[writer.pgSz];
-        Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(writer.pgSz, logicalBytes.Length));
+        pages[0] = new byte[writer.PageSizeBytes];
+        Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(writer.PageSizeBytes, logicalBytes.Length));
         Wi32(pages[0], 4, pageNumbers.Length > 1 ? checked((int)pageNumbers[1]) : 0);
 
-        int bodyPerContinuation = writer.pgSz - 8;
+        int bodyPerContinuation = writer.PageSizeBytes - 8;
         for (int pageIndex = 1; pageIndex < pageNumbers.Length; pageIndex++)
         {
-            byte[] page = new byte[writer.pgSz];
+            byte[] page = new byte[writer.PageSizeBytes];
             page[0] = Constants.PageTypes.TableDefinition;
             page[1] = 0x01;
             Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
 
-            int sourceOffset = writer.pgSz + ((pageIndex - 1) * bodyPerContinuation);
+            int sourceOffset = writer.PageSizeBytes + ((pageIndex - 1) * bodyPerContinuation);
             int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, usedLength - sourceOffset));
             if (copyLength > 0)
             {
@@ -1444,14 +1444,14 @@ internal sealed class RelationshipManager
     private bool TryParseFkTDefLayout(byte[] td, out FkTDefLayout layout)
     {
         layout = default;
-        if (td.Length < writer.tdef.BlockEnd || td[0] != Constants.PageTypes.TableDefinition)
+        if (td.Length < writer.TDef.BlockEnd || td[0] != Constants.PageTypes.TableDefinition)
         {
             return false;
         }
 
-        int numCols = Ru16(td, writer.tdef.NumCols);
-        int numIdx = Ri32(td, writer.tdef.NumCols + 2);
-        int numRealIdx = Ri32(td, writer.tdef.NumRealIdx);
+        int numCols = Ru16(td, writer.TDef.NumCols);
+        int numIdx = Ri32(td, writer.TDef.NumCols + 2);
+        int numRealIdx = Ri32(td, writer.TDef.NumRealIdx);
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
             || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)

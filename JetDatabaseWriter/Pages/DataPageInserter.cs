@@ -44,7 +44,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         if (writer.TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
             byte[] cached = await writer.ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == Constants.PageTypes.Data && Ri32(cached, writer.dataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            if (cached[0] == Constants.PageTypes.Data && Ri32(cached, writer.DataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
             {
                 return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
@@ -103,7 +103,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
                 cancellationToken.ThrowIfCancellationRequested();
 
                 byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+                if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.DataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
                 {
                     writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
                     return new PageInsertTarget { PageNumber = pageNumber, Page = page };
@@ -115,13 +115,13 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             return null;
         }
 
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 1; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+            if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.DataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
             {
                 writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
                 return new PageInsertTarget { PageNumber = pageNumber, Page = page };
@@ -135,7 +135,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private async ValueTask<List<long>?> TryReadMappedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = writer.stream.Length / writer.pgSz;
+        long totalPages = writer.PhysicalPageCount;
         if (tdefPage <= 0 || tdefPage >= totalPages)
         {
             return null;
@@ -161,7 +161,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         try
         {
             if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, writer.dataPage, writer.pgSz, pointer.RowIndex, out RowBound rowBound))
+                || !UsageMap.TryGetRowBound(usageMapPage, writer.DataPage, writer.PageSizeBytes, pointer.RowIndex, out RowBound rowBound))
             {
                 return null;
             }
@@ -170,7 +170,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             return await UsageMap.TryEnumeratePagesAsync(
                 usageMapPage,
                 rowBound,
-                writer.pgSz,
+                writer.PageSizeBytes,
                 totalPages,
                 minimumPageNumber: 1,
                 strict: true,
@@ -263,7 +263,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
     {
-        if (!UsageMap.TryGetRowBound(umPage, writer.dataPage, writer.pgSz, rowIndex, out RowBound rowBound))
+        if (!UsageMap.TryGetRowBound(umPage, writer.DataPage, writer.PageSizeBytes, rowIndex, out RowBound rowBound))
         {
             return false;
         }
@@ -284,23 +284,23 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal bool CanInsertRow(byte[] page, int rowLength)
     {
-        int numRows = Ru16(page, writer.dataPage.NumRows);
+        int numRows = Ru16(page, writer.DataPage.NumRows);
         if (numRows >= Constants.DataPage.MaxRowsPerPage)
         {
             return false;
         }
 
         int dataStart = GetFirstRowStart(page, numRows);
-        int nextOffsetPos = writer.dataPage.RowsStart + ((numRows + 1) * 2);
+        int nextOffsetPos = writer.DataPage.RowsStart + ((numRows + 1) * 2);
         return dataStart - nextOffsetPos >= rowLength;
     }
 
     internal int GetFirstRowStart(byte[] page, int numRows)
     {
-        int first = writer.pgSz;
+        int first = writer.PageSizeBytes;
         for (int i = 0; i < numRows; i++)
         {
-            int raw = Ru16(page, writer.dataPage.RowsStart + (i * 2));
+            int raw = Ru16(page, writer.DataPage.RowsStart + (i * 2));
             int start = raw & Constants.DataPage.RowOffsetMask;
             if (start > 0 && start < first)
             {
@@ -313,30 +313,30 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal byte[] CreateEmptyDataPage(long tdefPage)
     {
-        byte[] page = new byte[writer.pgSz];
+        byte[] page = new byte[writer.PageSizeBytes];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        Wu16(page, 2, writer.pgSz - writer.dataPage.RowsStart);
-        Wi32(page, writer.dataPage.TDefOff, (int)tdefPage);
-        Wu16(page, writer.dataPage.NumRows, 0);
+        Wu16(page, 2, writer.PageSizeBytes - writer.DataPage.RowsStart);
+        Wi32(page, writer.DataPage.TDefOff, (int)tdefPage);
+        Wu16(page, writer.DataPage.NumRows, 0);
         return page;
     }
 
     internal async ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
     {
-        byte[] page = new byte[writer.pgSz];
+        byte[] page = new byte[writer.PageSizeBytes];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
-        int row0Off = writer.pgSz - Constants.UsageMap.RowSize;
+        int row0Off = writer.PageSizeBytes - Constants.UsageMap.RowSize;
         int row1Off = row0Off - Constants.UsageMap.RowSize;
 
-        Wi32(page, writer.dataPage.TDefOff, 0);
-        Wu16(page, writer.dataPage.NumRows, 2);
-        Wu16(page, writer.dataPage.RowsStart, row0Off);
-        Wu16(page, writer.dataPage.RowsStart + 2, row1Off);
+        Wi32(page, writer.DataPage.TDefOff, 0);
+        Wu16(page, writer.DataPage.NumRows, 2);
+        Wu16(page, writer.DataPage.RowsStart, row0Off);
+        Wu16(page, writer.DataPage.RowsStart + 2, row1Off);
 
-        int freeSpace = row1Off - (writer.dataPage.RowsStart + 4);
+        int freeSpace = row1Off - (writer.DataPage.RowsStart + 4);
         Wu16(page, 2, freeSpace);
 
         return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -344,16 +344,16 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
     {
-        int numRows = Ru16(page, writer.dataPage.NumRows);
+        int numRows = Ru16(page, writer.DataPage.NumRows);
         int firstRowStart = GetFirstRowStart(page, numRows);
         int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = writer.dataPage.RowsStart + (numRows * 2);
+        int rowOffsetPos = writer.DataPage.RowsStart + (numRows * 2);
 
         Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
         Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, writer.dataPage.NumRows, numRows + 1);
+        Wu16(page, writer.DataPage.NumRows, numRows + 1);
 
-        int freeSpace = rowStart - (writer.dataPage.RowsStart + ((numRows + 1) * 2));
+        int freeSpace = rowStart - (writer.DataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
             throw new InvalidDataException("Insufficient free space remained on the target page.");

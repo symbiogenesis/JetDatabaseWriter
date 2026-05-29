@@ -95,10 +95,7 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    public void Unregister(string tableName)
-    {
-        constraints.Remove(tableName);
-    }
+    public void Unregister(string tableName) => constraints.Remove(tableName);
 
     public void Rename(string oldName, string newName)
     {
@@ -115,10 +112,7 @@ internal sealed class ConstraintRegistry(
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="constraints">The constraints.</param>
-    public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints)
-    {
-        return this.constraints.TryGetValue(tableName, out constraints);
-    }
+    public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints) => this.constraints.TryGetValue(tableName, out constraints);
 
     /// <summary>
     /// Applies registered column constraints to <paramref name="values"/> and
@@ -216,21 +210,18 @@ internal sealed class ConstraintRegistry(
         ValidateCalculatedResults(tableName, list, values);
     }
 
-    private static ColumnConstraint ToConstraint(ColumnDefinition def)
+    private static ColumnConstraint ToConstraint(ColumnDefinition def) => new ColumnConstraint
     {
-        return new ColumnConstraint
-        {
-            Name = def.Name,
-            ClrType = def.ClrType,
-            IsNullable = def.IsNullable,
-            DefaultValue = def.DefaultValue,
-            IsAutoIncrement = def.IsAutoIncrement,
-            ValidationRule = def.ValidationRule,
-            IsCalculated = def.IsCalculated,
-            CalculationExpression = def.CalculationExpression,
-            CalculatedResultType = AccessWriter.TypeCodeFromDefinition(def),
-        };
-    }
+        Name = def.Name,
+        ClrType = def.ClrType,
+        IsNullable = def.IsNullable,
+        DefaultValue = def.DefaultValue,
+        IsAutoIncrement = def.IsAutoIncrement,
+        ValidationRule = def.ValidationRule,
+        IsCalculated = def.IsCalculated,
+        CalculationExpression = def.CalculationExpression,
+        CalculatedResultType = AccessWriter.TypeCodeFromDefinition(def),
+    };
 
     private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)
     {
@@ -258,10 +249,7 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    private static bool IsIntegralType(Type t)
-    {
-        return t == typeof(byte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
-    }
+    private static bool IsIntegralType(Type t) => t == typeof(byte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
 
     // The return type must remain 'object' so callers can store the boxed integral
     // (byte/short/int/long) directly into a values[] array preserving the column's CLR type.

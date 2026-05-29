@@ -49,11 +49,8 @@ public sealed class TypedValueParserTests
     }
 
     [Fact]
-    public void ParseValue_ByteArray_MalformedBase64DataUriThrowsInStrictMode()
-    {
-        _ = Assert.Throws<FormatException>(() =>
-            TypedValueParser.ParseValue("data:application/octet-stream;base64,not-base64", typeof(byte[])));
-    }
+    public void ParseValue_ByteArray_MalformedBase64DataUriThrowsInStrictMode() => _ = Assert.Throws<FormatException>(() =>
+                                                                                            TypedValueParser.ParseValue("data:application/octet-stream;base64,not-base64", typeof(byte[])));
 
     [Fact]
     public void ParseValue_ByteArray_MalformedBase64DataUriReturnsDBNullInNonStrictMode()

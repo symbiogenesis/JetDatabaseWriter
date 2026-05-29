@@ -11,14 +11,11 @@ internal static class StreamReadExtensions
     public static async ValueTask ReadExactlyAsync(
         this Stream stream,
         Memory<byte> buffer,
-        CancellationToken cancellationToken = default)
-    {
-        _ = await stream.ReadAtLeastAsync(
+        CancellationToken cancellationToken = default) => _ = await stream.ReadAtLeastAsync(
             buffer,
             buffer.Length,
             throwOnEndOfStream: true,
             cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
 
     public static async ValueTask<int> ReadAtLeastAsync(
         this Stream stream,

@@ -480,10 +480,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Jet4FormatMagic_HasExpectedValue()
-    {
-        Assert.Equal(0x00000659, Constants.TableDefinition.Jet4.FormatMagic);
-    }
+    public void Jet4FormatMagic_HasExpectedValue() => Assert.Equal(0x00000659, Constants.TableDefinition.Jet4.FormatMagic);
 
     [Fact]
     public void DefaultOwnerBlob_IsTwoBytes_0x71_0x10()
@@ -501,10 +498,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     }
 
     [Fact]
-    public void DefaultAcm_HasExpectedValue()
-    {
-        Assert.Equal(0x000FFEFF, Constants.Aces.DefaultAcm);
-    }
+    public void DefaultAcm_HasExpectedValue() => Assert.Equal(0x000FFEFF, Constants.Aces.DefaultAcm);
 
     [Fact]
     public void OwnerSid_IsTwoBytes()

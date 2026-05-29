@@ -260,9 +260,7 @@ internal static class DirectRowDecoderBuilder
         Expression offsetExpr,
         Expression dataLenExpr,
         Expression boolValueExpr,
-        ParameterExpression readerParam)
-    {
-        return column.Type switch
+        ParameterExpression readerParam) => column.Type switch
         {
             BooleanType => boolValueExpr,
             ByteType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadByteAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
@@ -277,26 +275,22 @@ internal static class DirectRowDecoderBuilder
             TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{column.Type:X2}."),
         };
-    }
 
-    private static bool IsDirectlyDecodable(byte colType, Type targetUnderlying)
+    private static bool IsDirectlyDecodable(byte colType, Type targetUnderlying) => colType switch
     {
-        return colType switch
-        {
-            BooleanType => targetUnderlying == typeof(bool),
-            ByteType => targetUnderlying == typeof(byte),
-            IntegerType => targetUnderlying == typeof(short),
-            LongIntegerType => targetUnderlying == typeof(int),
-            MoneyType => targetUnderlying == typeof(decimal),
-            FloatType => targetUnderlying == typeof(float),
-            DoubleType => targetUnderlying == typeof(double),
-            DateTimeType => targetUnderlying == typeof(DateTime),
-            GuidType => targetUnderlying == typeof(Guid),
-            NumericType => targetUnderlying == typeof(decimal),
-            TextType => targetUnderlying == typeof(string),
-            _ => false,
-        };
-    }
+        BooleanType => targetUnderlying == typeof(bool),
+        ByteType => targetUnderlying == typeof(byte),
+        IntegerType => targetUnderlying == typeof(short),
+        LongIntegerType => targetUnderlying == typeof(int),
+        MoneyType => targetUnderlying == typeof(decimal),
+        FloatType => targetUnderlying == typeof(float),
+        DoubleType => targetUnderlying == typeof(double),
+        DateTimeType => targetUnderlying == typeof(DateTime),
+        GuidType => targetUnderlying == typeof(Guid),
+        NumericType => targetUnderlying == typeof(decimal),
+        TextType => targetUnderlying == typeof(string),
+        _ => false,
+    };
 }
 
 /// <summary>

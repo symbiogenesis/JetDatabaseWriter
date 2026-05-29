@@ -48,17 +48,12 @@ public sealed class GeneralEncoderSharedTests
     private static readonly byte[] EmptyEncodedAsc = [0x7F, 0x00];
 
     [Fact]
-    public void General97_Empty_EmitsFlagPlusEndExtraText()
-    {
-        Assert.Equal(EmptyEncodedAsc, General97TextIndexEncoder.Encode(string.Empty, ascending: true));
-    }
+    public void General97_Empty_EmitsFlagPlusEndExtraText() => Assert.Equal(EmptyEncodedAsc, General97TextIndexEncoder.Encode(string.Empty, ascending: true));
 
     [Fact]
-    public void General97_AllSpaces_EmitsFlagPlusEndExtraText()
-    {
+    public void General97_AllSpaces_EmitsFlagPlusEndExtraText() =>
         // Trailing-space stripping (post-trim empty) — same encoded form as "".
         Assert.Equal(EmptyEncodedAsc, General97TextIndexEncoder.Encode("   ", ascending: true));
-    }
 
     [Theory]
     [InlineData("ABC")]

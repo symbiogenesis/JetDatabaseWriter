@@ -27,10 +27,7 @@ public class AccessReaderOwnedPageDiscoveryBenchmarks
     public OwnedPageDiscoveryPath Path { get; set; }
 
     [GlobalSetup]
-    public async Task Setup()
-    {
-        await SyntheticDatabases.EnsureOwnedPageDiscoveryAsync().ConfigureAwait(false);
-    }
+    public async Task Setup() => await SyntheticDatabases.EnsureOwnedPageDiscoveryAsync().ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> ColdOpenFirstRow()

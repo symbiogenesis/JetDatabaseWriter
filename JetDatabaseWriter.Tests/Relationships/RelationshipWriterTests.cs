@@ -223,18 +223,12 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public void RelationshipDefinition_MismatchedArity_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-            new RelationshipDefinition("FK", "P", ["A", "B"], "C", ["X"]));
-    }
+    public void RelationshipDefinition_MismatchedArity_Throws() => Assert.Throws<ArgumentException>(() =>
+                                                                            new RelationshipDefinition("FK", "P", ["A", "B"], "C", ["X"]));
 
     [Fact]
-    public void RelationshipDefinition_EmptyColumns_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-            new RelationshipDefinition("FK", "P", [], "C", []));
-    }
+    public void RelationshipDefinition_EmptyColumns_Throws() => Assert.Throws<ArgumentException>(() =>
+                                                                         new RelationshipDefinition("FK", "P", [], "C", []));
 
     // ════════════════════════════════════════════════════════════════
     // per-TDEF FK emission — per-TDEF FK logical-idx entry round-trip tests

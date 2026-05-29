@@ -241,8 +241,5 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         public int Next { get; set; }
     }
 
-    public void Dispose()
-    {
-        rwLock.Dispose();
-    }
+    public void Dispose() => rwLock.Dispose();
 }

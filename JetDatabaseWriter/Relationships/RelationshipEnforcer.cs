@@ -169,7 +169,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 {
                     var cursor = new IndexCursor(
                         (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
-                        writer.pgSz);
+                        writer.PageSizeBytes);
                     bool found = await cursor.ContainsKeyAsync(
                         seekIndex.RootPage,
                         encodedKey,

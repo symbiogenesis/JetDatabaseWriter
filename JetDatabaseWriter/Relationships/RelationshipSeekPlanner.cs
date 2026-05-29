@@ -124,7 +124,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        if (writer.format == DatabaseFormat.Jet3Mdb)
+        if (writer.Format == DatabaseFormat.Jet3Mdb)
         {
             return null;
         }
@@ -175,7 +175,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             columnTypes,
             numericScales,
             hit.Value.AscendingFlags,
-            writer.format == DatabaseFormat.Jet4Mdb);
+            writer.Format == DatabaseFormat.Jet4Mdb);
     }
 
     private async ValueTask<(long FirstDp, IReadOnlyList<bool> AscendingFlags)?> TryFindCoveringRealIdxAsync(
@@ -190,8 +190,8 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             return null;
         }
 
-        int numColumns = Ru16(tableDefinition, writer.tdef.NumCols);
-        int numRealIndexes = Ri32(tableDefinition, writer.tdef.NumRealIdx);
+        int numColumns = Ru16(tableDefinition, writer.TDef.NumCols);
+        int numRealIndexes = Ri32(tableDefinition, writer.TDef.NumRealIdx);
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
             || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {
@@ -232,8 +232,8 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
 
     private int LocateRealIdxDescStart(byte[] tableDefinition, int numColumns, int numRealIndexes)
     {
-        int columnStart = writer.tdef.BlockEnd + (numRealIndexes * writer.tdef.RealIdxEntrySz);
-        int position = columnStart + (numColumns * writer.colDesc.Size);
+        int columnStart = writer.TDef.BlockEnd + (numRealIndexes * writer.TDef.RealIdxEntrySz);
+        int position = columnStart + (numColumns * writer.ColumnDescriptor.Size);
         for (int column = 0; column < numColumns; column++)
         {
             if (writer.ReadColumnName(tableDefinition, ref position, out _) < 0)

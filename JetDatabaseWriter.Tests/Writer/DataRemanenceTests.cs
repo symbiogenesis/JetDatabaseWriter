@@ -296,16 +296,13 @@ public sealed class DataRemanenceTests
         }
     }
 
-    private static async ValueTask CreateInlinePayloadTableAsync(AccessWriter writer, string tableName, System.Threading.CancellationToken cancellationToken)
-    {
-        await writer.CreateTableAsync(
+    private static async ValueTask CreateInlinePayloadTableAsync(AccessWriter writer, string tableName, System.Threading.CancellationToken cancellationToken) => await writer.CreateTableAsync(
             tableName,
             [
                 new ColumnDefinition("Id", typeof(int)),
                 new ColumnDefinition("Payload", typeof(byte[]), maxLength: 128),
             ],
             cancellationToken);
-    }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {

@@ -383,11 +383,11 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        int baseRowLength = writer.rowSz.NumCols + fixedAreaSize + varPayloadSize + writer.rowSz.Eod + (varLen * writer.rowSz.VarEntry) + writer.rowSz.VarLen + nullMaskLen;
+        int baseRowLength = writer.RowFields.NumCols + fixedAreaSize + varPayloadSize + writer.RowFields.Eod + (varLen * writer.RowFields.VarEntry) + writer.RowFields.VarLen + nullMaskLen;
 
-        int jumpSize = writer.format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
+        int jumpSize = writer.Format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
         int rowLength = baseRowLength + jumpSize;
-        int finalJump = writer.format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
+        int finalJump = writer.Format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
         if (finalJump != jumpSize)
         {
             jumpSize = finalJump;
@@ -397,8 +397,8 @@ internal sealed class RowEncoder(AccessWriter writer)
         var row = new byte[rowLength];
         int pos = 0;
 
-        WriteField(row, pos, writer.rowSz.NumCols, numCols);
-        pos += writer.rowSz.NumCols;
+        WriteField(row, pos, writer.RowFields.NumCols, numCols);
+        pos += writer.RowFields.NumCols;
 
         if (fixedAreaSize > 0)
         {
@@ -412,7 +412,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             ArrayPool<byte>.Shared.Return(fixedArea);
         }
 
-        int currentOffset = writer.rowSz.NumCols + fixedAreaSize;
+        int currentOffset = writer.RowFields.NumCols + fixedAreaSize;
 
         // Stack-allocate variable offsets for typical tables (up to 128 var columns).
         Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
@@ -428,19 +428,19 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        WriteField(row, pos, writer.rowSz.Eod, currentOffset);
-        pos += writer.rowSz.Eod;
+        WriteField(row, pos, writer.RowFields.Eod, currentOffset);
+        pos += writer.RowFields.Eod;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            WriteField(row, pos, writer.rowSz.VarEntry, variableOffsets[varIndex]);
-            pos += writer.rowSz.VarEntry;
+            WriteField(row, pos, writer.RowFields.VarEntry, variableOffsets[varIndex]);
+            pos += writer.RowFields.VarEntry;
         }
 
         pos += jumpSize;
 
-        WriteField(row, pos, writer.rowSz.VarLen, varLen);
-        pos += writer.rowSz.VarLen;
+        WriteField(row, pos, writer.RowFields.VarLen, varLen);
+        pos += writer.RowFields.VarLen;
         nullMask.CopyTo(row.AsSpan(pos));
 
         return row;
@@ -449,7 +449,7 @@ internal sealed class RowEncoder(AccessWriter writer)
     private bool CanStoreFixedColumn(ColumnInfo column)
     {
         int size = JetTypeInfo.GetFixedSize(column.Type);
-        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < writer.pgSz;
+        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < writer.PageSizeBytes;
     }
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)

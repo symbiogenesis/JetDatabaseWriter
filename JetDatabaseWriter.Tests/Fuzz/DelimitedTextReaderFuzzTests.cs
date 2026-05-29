@@ -33,14 +33,11 @@ public sealed class DelimitedTextReaderFuzzTests
     /// </summary>
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public void FuzzDelimitedTextReader()
-    {
-        Fuzzer.Run(stream =>
-        {
-            byte[] fuzzedBytes = ReadAllBytes(stream);
-            RunFuzzIteration(fuzzedBytes);
-        });
-    }
+    public void FuzzDelimitedTextReader() => Fuzzer.Run(stream =>
+                                                  {
+                                                      byte[] fuzzedBytes = ReadAllBytes(stream);
+                                                      RunFuzzIteration(fuzzedBytes);
+                                                  });
 
     private static void RunFuzzIteration(byte[] fuzzedBytes)
     {

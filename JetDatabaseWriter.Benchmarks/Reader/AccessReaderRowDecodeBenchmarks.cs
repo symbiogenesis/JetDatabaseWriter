@@ -195,40 +195,28 @@ public class AccessReaderRowDecodeBenchmarks
     }
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan()
-    {
-        return await CountColdUntypedRowsAsync(
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
             options: null).ConfigureAwait(false);
-    }
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_CacheDisabled()
-    {
-        return await CountColdUntypedRowsAsync(
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_CacheDisabled() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
             new AccessReaderOptions { PageCacheSize = 0 }).ConfigureAwait(false);
-    }
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_LargeCache()
-    {
-        return await CountColdUntypedRowsAsync(
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_LargeCache() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
             new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
-    }
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_ParallelReads()
-    {
-        return await CountColdUntypedRowsAsync(
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_ParallelReads() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
             new AccessReaderOptions { ParallelPageReadsEnabled = true }).ConfigureAwait(false);
-    }
 
     // ── Memo (LVAL) decode ────────────────────────────────────────────
     // Mixes inline (32 B), single-LVAL-page (~2 KB), and chained-LVAL

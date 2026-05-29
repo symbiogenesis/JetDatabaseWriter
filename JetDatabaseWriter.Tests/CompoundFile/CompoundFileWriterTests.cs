@@ -117,18 +117,12 @@ public sealed class CompoundFileWriterTests
     }
 
     [Fact]
-    public void Build_NullStreams_Throws()
-    {
-        _ = Assert.Throws<ArgumentNullException>(() =>
-            CompoundFileWriter.Build(null!));
-    }
+    public void Build_NullStreams_Throws() => _ = Assert.Throws<ArgumentNullException>(() =>
+                                                       CompoundFileWriter.Build(null!));
 
     [Fact]
-    public void Build_EmptyStreamList_Throws()
-    {
-        _ = Assert.Throws<ArgumentException>(() =>
-            CompoundFileWriter.Build(Array.Empty<KeyValuePair<string, byte[]>>()));
-    }
+    public void Build_EmptyStreamList_Throws() => _ = Assert.Throws<ArgumentException>(() =>
+                                                           CompoundFileWriter.Build(Array.Empty<KeyValuePair<string, byte[]>>()));
 
     [Fact]
     public void Build_OutputUsesV3SectorSize()
@@ -157,11 +151,8 @@ public sealed class CompoundFileWriterTests
     }
 
     [Fact]
-    public void BuildOfficeCrypto_SmallRegularStream_Throws()
-    {
-        _ = Assert.Throws<ArgumentException>(() =>
-            CompoundFileWriter.BuildOfficeCrypto([new("S", CreatePatternedBuffer(64))]));
-    }
+    public void BuildOfficeCrypto_SmallRegularStream_Throws() => _ = Assert.Throws<ArgumentException>(() =>
+                                                                          CompoundFileWriter.BuildOfficeCrypto([new("S", CreatePatternedBuffer(64))]));
 
     [Fact]
     public async Task RoundTrip_PreservesEnumerationOrder()

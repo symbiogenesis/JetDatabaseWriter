@@ -24,7 +24,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        if (writer.disposed)
+        if (writer.IsDisposed)
         {
             throw new ObjectDisposedException(nameof(AccessWriter));
         }
@@ -40,7 +40,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
                     "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
             }
 
-            long baseLength = writer.stream.Length;
+            long baseLength = writer.DatabaseLengthBytes;
             var journal = new PageJournal(baseLength, writer.PageSize, writer.Options.MaxTransactionPageBudget);
             var tx = new JetTransaction(writer, journal);
             writer.ActiveJournal = journal;
@@ -63,7 +63,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
-        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.disposed)
+        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
         {
             await work(cancellationToken).ConfigureAwait(false);
             return;
@@ -105,7 +105,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.disposed)
+        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
         {
             return await work(cancellationToken).ConfigureAwait(false);
         }
@@ -152,7 +152,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     {
         Guard.NotNull(transaction, nameof(transaction));
 
-        if (writer.disposed)
+        if (writer.IsDisposed)
         {
             throw new ObjectDisposedException(nameof(AccessWriter));
         }
@@ -270,23 +270,6 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
     {
-        await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (writer.stream is FileStream fs)
-            {
-#pragma warning disable CA1849
-                fs.Flush(flushToDisk: true);
-#pragma warning restore CA1849
-            }
-            else
-            {
-                await writer.stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _ = writer.IoGate.Release();
-        }
+        await writer.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
     }
 }

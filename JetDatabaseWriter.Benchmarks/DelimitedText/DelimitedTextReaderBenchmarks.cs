@@ -40,17 +40,14 @@ public class DelimitedTextReaderBenchmarks
 
     /// <summary>Generates the source text for the selected scenario.</summary>
     [GlobalSetup]
-    public void Setup()
+    public void Setup() => _source = Scenario switch
     {
-        _source = Scenario switch
-        {
-            PlainScenario => BuildPlainSource(),
-            QuotedMultilineScenario => BuildQuotedMultilineSource(),
-            EmptyFieldsScenario => BuildEmptyFieldsSource(),
-            RepetitiveValuesScenario => BuildRepetitiveValuesSource(),
-            _ => throw new InvalidOperationException("Unknown delimited text benchmark scenario."),
-        };
-    }
+        PlainScenario => BuildPlainSource(),
+        QuotedMultilineScenario => BuildQuotedMultilineSource(),
+        EmptyFieldsScenario => BuildEmptyFieldsSource(),
+        RepetitiveValuesScenario => BuildRepetitiveValuesSource(),
+        _ => throw new InvalidOperationException("Unknown delimited text benchmark scenario."),
+    };
 
     /// <summary>Parses every row and discards field values after each record is produced.</summary>
     /// <returns>The number of parsed rows.</returns>

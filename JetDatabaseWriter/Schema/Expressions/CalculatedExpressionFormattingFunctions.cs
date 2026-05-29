@@ -66,16 +66,13 @@ internal static class CalculatedExpressionFormattingFunctions
         return prefix + displayValue.ToString("N" + safeDecimalDigits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + suffix;
     }
 
-    private static string FormatDateTime(DateTime value, int formatType)
+    private static string FormatDateTime(DateTime value, int formatType) => formatType switch
     {
-        return formatType switch
-        {
-            0 => value.ToString("G", CultureInfo.InvariantCulture),
-            1 => value.ToString("D", CultureInfo.InvariantCulture),
-            2 => value.ToString("d", CultureInfo.InvariantCulture),
-            3 => value.ToString("T", CultureInfo.InvariantCulture),
-            4 => value.ToString("t", CultureInfo.InvariantCulture),
-            _ => throw new ArgumentException($"Calculated-column FormatDateTime type '{formatType}' is not valid."),
-        };
-    }
+        0 => value.ToString("G", CultureInfo.InvariantCulture),
+        1 => value.ToString("D", CultureInfo.InvariantCulture),
+        2 => value.ToString("d", CultureInfo.InvariantCulture),
+        3 => value.ToString("T", CultureInfo.InvariantCulture),
+        4 => value.ToString("t", CultureInfo.InvariantCulture),
+        _ => throw new ArgumentException($"Calculated-column FormatDateTime type '{formatType}' is not valid."),
+    };
 }

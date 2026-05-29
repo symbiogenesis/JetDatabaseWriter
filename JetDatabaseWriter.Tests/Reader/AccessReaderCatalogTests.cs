@@ -405,10 +405,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     }
 
     [Fact]
-    public async Task Open_WhenFileNotFound_ThrowsFileNotFoundException()
-    {
-        await Assert.ThrowsAsync<System.IO.FileNotFoundException>(async () => await AccessReader.OpenAsync(@"C:\no\such\file.mdb", cancellationToken: TestContext.Current.CancellationToken));
-    }
+    public async Task Open_WhenFileNotFound_ThrowsFileNotFoundException() => await Assert.ThrowsAsync<System.IO.FileNotFoundException>(async () => await AccessReader.OpenAsync(@"C:\no\such\file.mdb", cancellationToken: TestContext.Current.CancellationToken));
 
     [Theory]
     [MemberData(nameof(TestDatabases.AllExisting), MemberType = typeof(TestDatabases))]

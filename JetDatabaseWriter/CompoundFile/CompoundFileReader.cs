@@ -23,11 +23,8 @@ internal static class CompoundFileReader
     /// Returns true when the leading bytes match the OLE compound file magic.
     /// </summary>
     /// <param name="header">Buffer holding at least 8 bytes from offset 0.</param>
-    public static bool HasCompoundFileMagic(byte[] header)
-    {
-        return header?.Length >= 8 &&
+    public static bool HasCompoundFileMagic(byte[] header) => header?.Length >= 8 &&
             header.AsSpan(0, 8).SequenceEqual(Constants.CompoundFile.Signature);
-    }
 
     /// <summary>
     /// Parses the compound file and returns its named top-level streams.

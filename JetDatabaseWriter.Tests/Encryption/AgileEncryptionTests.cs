@@ -367,11 +367,8 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Agile_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(
+    public void Agile_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException() => Assert.Throws<ArgumentNullException>(
             () => OfficeCryptoAgile.Decrypt(null!, new byte[64], "pw"));
-    }
 
     [Fact]
     public void Agile_Decrypt_NullEncryptedPackage_ThrowsArgumentNullException()
@@ -387,11 +384,8 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
-    public void Agile_Encrypt_NullInnerPackage_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(
+    public void Agile_Encrypt_NullInnerPackage_ThrowsArgumentNullException() => Assert.Throws<ArgumentNullException>(
             () => OfficeCryptoAgile.Encrypt(null!, "pw"));
-    }
 
     // ═══════════════════════════════════════════════════════════════════
     // Helpers

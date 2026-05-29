@@ -144,8 +144,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         longValueDecoder = new ValueDecoding.LongValueDecoder(this);
 
         bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
-        (pageKeys.Rc4DbKey, pageKeys.AesPageKey) =
-            EncryptionManager.ResolveReaderPageKeys(hdr, format, isAccdbCfbEncrypted, password);
+        (PageKeys.Rc4DbKey, PageKeys.AesPageKey) =
+            EncryptionManager.ResolveReaderPageKeys(hdr, Format, isAccdbCfbEncrypted, password);
 
         if (isAccdbCfbEncrypted)
         {
@@ -166,7 +166,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         lockFile.Acquire();
         try
         {
-            byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
         }
         catch
         {
@@ -188,7 +188,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public string LastDiagnostics { get; private set; } = string.Empty;
 
     /// <summary>Gets the absolute path of the database backing this reader, or empty when opened from a stream. Used by <see cref="LinkedTableManager"/> to anchor relative source paths.</summary>
-    internal string HostDatabasePath => path;
+    internal string HostDatabasePath => DatabasePath;
 
     /// <summary>
     /// Gets the cached options used to re-open linked-source databases referenced
@@ -447,10 +447,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            int numRows = Ru16(page, dataPage.NumRows);
+            int numRows = Ru16(page, DataPage.NumRows);
             for (int r = 0; r < numRows; r++)
             {
-                int raw = Ru16(page, dataPage.RowsStart + (r * 2));
+                int raw = Ru16(page, DataPage.RowsStart + (r * 2));
                 if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
                 {
                     continue;
@@ -611,7 +611,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                 {
-                    if (rb.RowSize < rowSz.NumCols)
+                    if (rb.RowSize < RowFields.NumCols)
                     {
                         continue;
                     }
@@ -714,7 +714,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
-                if (rb.RowSize < rowSz.NumCols)
+                if (rb.RowSize < RowFields.NumCols)
                 {
                     continue;
                 }
@@ -776,7 +776,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
-                if (rb.RowSize < rowSz.NumCols)
+                if (rb.RowSize < RowFields.NumCols)
                 {
                     continue;
                 }
@@ -836,16 +836,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers)
-    {
+    private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
         // The cache returns page buffers to the shared pool on eviction, so read-ahead
         // needs room for the previous, current, and prefetched data pages.
-        return ParallelPageReadsEnabled
+        ParallelPageReadsEnabled
             && pageCache is not null
             && PageCacheSize >= 3
             && pageNumbers.Count > 1
             && !HasCacheReentrantScanColumns(tableDef);
-    }
 
     private async ValueTask<TableScanPage> ReadTableScanPageAsync(long pageNumber, CancellationToken cancellationToken)
     {
@@ -925,7 +923,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
-                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)
+                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, Format)
                 : null;
             byte calcResultType = isCalc ? ResolveCalculatedResultType(target) : (byte)0;
 
@@ -942,10 +940,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = JetTypeInfo.GetColumnSize(JetTypeInfo.ResolveValueType(col), GetMetadataDeclaredSize(col)),
-                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format),
-                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format),
-                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format),
-                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format),
+                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, Format),
+                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, Format),
+                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, Format),
+                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, Format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
                 IsCalculated = isCalc,
@@ -1022,7 +1020,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Length < tdef.BlockEnd)
+        if (td == null || td.Length < TDef.BlockEnd)
         {
             return [];
         }
@@ -1049,14 +1047,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        if (format == DatabaseFormat.Jet3Mdb)
+        if (Format == DatabaseFormat.Jet3Mdb)
         {
             throw new NotSupportedException("Index seeks are currently supported for Jet4/ACE databases only.");
         }
 
         (CatalogEntry? entry, TableDef? td) = resolved.Value;
         byte[]? tdefBytes = await ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (tdefBytes == null || tdefBytes.Length < tdef.BlockEnd)
+        if (tdefBytes == null || tdefBytes.Length < TDef.BlockEnd)
         {
             yield break;
         }
@@ -1074,7 +1072,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte[] searchKey = EncodeIndexSeekKey(tableName, index, td, keyValues);
         var cursor = new IndexCursor(
             (pageNumber, ct) => ReadPageCachedAsync(pageNumber, ct),
-            pgSz);
+            PageSizeBytes);
         List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
             index.FirstDp,
             searchKey,
@@ -1162,9 +1160,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
     {
-        int numCols = Ru16(td, tdef.NumCols);
-        int numIdx = Ri32(td, tdef.NumCols + 2);
-        int numRealIdx = Ri32(td, tdef.NumRealIdx);
+        int numCols = Ru16(td, TDef.NumCols);
+        int numIdx = Ri32(td, TDef.NumCols + 2);
+        int numRealIdx = Ri32(td, TDef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
         if (numIdx <= 0 || numIdx > Constants.TableDefinition.MaxIndexes)
@@ -1178,10 +1176,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
-        int colStart = tdef.BlockEnd + (numRealIdx * tdef.RealIdxEntrySz);
+        int colStart = TDef.BlockEnd + (numRealIdx * TDef.RealIdxEntrySz);
 
         // Walk column-name length-prefix block to find where it ends.
-        int pos = colStart + (numCols * colDesc.Size);
+        int pos = colStart + (numCols * ColumnDescriptor.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(td, ref pos, out _) < 0)
@@ -1191,7 +1189,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int realIdxDescStart = pos;
-        (int _, int logicalIdxStart, int logicalIdxNamesStart, int _, int _) = indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        (int _, int logicalIdxStart, int logicalIdxNamesStart, int _, int _) = IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (logicalIdxNamesStart > td.Length)
         {
@@ -1223,7 +1221,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            if (!indexLayout.TryReadLogicalEntry(td, logicalIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
+            if (!IndexLayoutInfo.TryReadLogicalEntry(td, logicalIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
             {
                 break;
             }
@@ -1235,7 +1233,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte flags = 0x00;
             int firstDp = 0;
             if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && indexLayout.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? kcs))
+                && IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? kcs))
             {
                 foreach ((int cn, bool ascending) in kcs)
                 {
@@ -1294,7 +1292,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 nameof(keyValues));
         }
 
-        bool legacyNumeric = format == DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = Format == DatabaseFormat.Jet4Mdb;
         byte[][] perColumn = new byte[index.Columns.Count][];
         int totalLength = 0;
 
@@ -1334,12 +1332,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, this.dataPage.TDefOff) != entry.TDefPage)
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != entry.TDefPage)
         {
             return null;
         }
 
-        if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < rowSz.NumCols)
+        if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < RowFields.NumCols)
         {
             return null;
         }
@@ -1483,7 +1481,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                     foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                     {
-                        if (rb.RowSize < rowSz.NumCols)
+                        if (rb.RowSize < RowFields.NumCols)
                         {
                             continue;
                         }
@@ -1859,7 +1857,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < rowSz.NumCols)
+        if (rowSize < RowFields.NumCols)
         {
             return null;
         }
@@ -1906,7 +1904,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < rowSz.NumCols)
+        if (rowSize < RowFields.NumCols)
         {
             return null;
         }
@@ -1953,9 +1951,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int rowStart,
         ColumnSlice slice,
         ColumnInfo col,
-        CancellationToken cancellationToken)
-    {
-        return slice.Kind switch
+        CancellationToken cancellationToken) => slice.Kind switch
         {
             ColumnSliceKind.Bool => slice.BoolValue,
             ColumnSliceKind.Null => DBNull.Value,
@@ -1964,7 +1960,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnSliceKind.Var => await ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
             _ => DBNull.Value,
         };
-    }
 
     private object ParseColumnValue(string rawValue, ColumnInfo col) =>
         TypedValueParser.ParseValue(rawValue, JetTypeInfo.ResolveClrType(col), strictParsing);
@@ -2129,15 +2124,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         return new DatabaseStatistics
         {
-            TotalPages = stream.Length / pgSz,
-            DatabaseSizeBytes = stream.Length,
+            TotalPages = DatabaseStream.Length / PageSizeBytes,
+            DatabaseSizeBytes = DatabaseStream.Length,
             TableCount = tables.Count,
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
             PageCacheHitRate = pageCacheHitRate,
-            Version = format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE",
-            Format = format,
-            CodePage = codePage,
+            Version = Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE",
+            Format = Format,
+            CodePage = CodePageCore,
         };
     }
 
@@ -2285,7 +2280,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             scanEnd,
             4,
             OlePayloadSignatureFirstBytes,
-            static (ReadOnlySpan<byte> window, ref string? state) => TryMatchOlePayloadMagic(window, out state),
+            static (window, ref state) => TryMatchOlePayloadMagic(window, out state),
             ref matchedMimeType);
         if (candidate < 0)
         {
@@ -2632,12 +2627,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return boundedLength <= 0 ? [] : CreateOlePayloadBytes(buffer, offset, boundedLength, allowInputReuse);
     }
 
-    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse)
-    {
-        return allowInputReuse && offset == 0 && length == buffer.Length
+    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse) => allowInputReuse && offset == 0 && length == buffer.Length
             ? buffer
             : buffer.AsSpan(offset, length).ToArray();
-    }
 
     private async ValueTask DisposeReaderResourcesAsync()
     {
@@ -2697,7 +2689,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = stream.Length / pgSz;
+        long totalPages = DatabaseStream.Length / PageSizeBytes;
         if (tdefPage <= 0 || tdefPage >= totalPages)
         {
             return null;
@@ -2747,7 +2739,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, dataPage, pgSz, usageMapRow, out RowBound rowBound))
+                || !UsageMap.TryGetRowBound(usageMapPage, DataPage, PageSizeBytes, usageMapRow, out RowBound rowBound))
             {
                 return null;
             }
@@ -2756,7 +2748,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
                 usageMapPage,
                 rowBound,
-                pgSz,
+                PageSizeBytes,
                 totalPages,
                 minimumPageNumber: 1,
                 strict: true,
@@ -2798,7 +2790,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, dataPage.TDefOff) != tdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, DataPage.TDefOff) != tdefPage)
                 {
                     return false;
                 }
@@ -2820,7 +2812,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
     {
         var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = stream.Length / pgSz;
+        long totalPages = DatabaseStream.Length / PageSizeBytes;
 
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
@@ -2834,7 +2826,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                long owner = Ri32(page, dataPage.TDefOff);
+                long owner = Ri32(page, DataPage.TDefOff);
                 if (owner <= 0)
                 {
                     continue;
@@ -2956,7 +2948,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (DiagnosticsEnabled)
         {
             var diag = new StringBuilder();
-            _ = diag.AppendLine($"JET: {(format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {pgSz}  TotalPages: {stream.Length / pgSz}");
+            _ = diag.AppendLine($"JET: {(Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {PageSizeBytes}  TotalPages: {DatabaseStream.Length / PageSizeBytes}");
             _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
                 string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
             _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
@@ -2994,15 +2986,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private void ValidateDatabaseFormat()
     {
-        if (stream.Length < 128)
+        if (DatabaseStream.Length < 128)
         {
             throw new InvalidDataException("File too small to be a valid JET database");
         }
 
         // Verify the JET magic signature at offset 0: 00 01 00 00
-        _ = stream.Seek(0, SeekOrigin.Begin);
+        _ = DatabaseStream.Seek(0, SeekOrigin.Begin);
         var magic = new byte[4];
-        int read = stream.Read(magic, 0, 4);
+        int read = DatabaseStream.Read(magic, 0, 4);
         if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
         {
             var msg = $"File does not have a valid JET magic signature (expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).";
@@ -3154,7 +3146,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (rb.RowSize < rowSz.NumCols)
+            if (rb.RowSize < RowFields.NumCols)
             {
                 continue;
             }
@@ -3171,7 +3163,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < rowSz.NumCols)
+        if (rowSize < RowFields.NumCols)
         {
             return null;
         }
@@ -3585,7 +3577,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// reject the row outright. Used by the compiled direct-decoder
     /// delegate's preflight check (mirrors <c>TryCrackRowSync</c>).
     /// </summary>
-    internal int NumColsFieldSize => rowSz.NumCols;
+    internal int NumColsFieldSize => RowFields.NumCols;
 
     /// <summary>
     /// Internal helper for the compiled direct decoder's first-row-bytes
@@ -3657,8 +3649,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     internal async ValueTask<byte[]> GetRawPageBytesAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pooled = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        var copy = new byte[pgSz];
-        Buffer.BlockCopy(pooled, 0, copy, 0, pgSz);
+        var copy = new byte[PageSizeBytes];
+        Buffer.BlockCopy(pooled, 0, copy, 0, PageSizeBytes);
         ReturnPage(pooled);
         return copy;
     }
@@ -3702,7 +3694,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             byte[]? blob = TryDecodeBase64DataUrl(CatalogValueReader.GetStringOrEmpty(row, idxLvProp));
-            return ColumnPropertyBlock.Parse(blob, format);
+            return ColumnPropertyBlock.Parse(blob, Format);
         }
 
         return null;

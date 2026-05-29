@@ -299,10 +299,7 @@ public sealed class IndexKeyEncoderTests
 
     [Theory]
     [InlineData(NumericType)]
-    public void UnsupportedColumnType_Throws(byte columnType)
-    {
-        Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
-    }
+    public void UnsupportedColumnType_Throws(byte columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
 
     // ── General Legacy text encoding (full Jackcess port) ──
     //
@@ -827,10 +824,7 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void Binary_RejectsNonByteArrayValue()
-    {
-        Assert.Throws<ArgumentException>(() => IndexKeyEncoder.EncodeEntry(BinaryType, "not bytes", ascending: true));
-    }
+    public void Binary_RejectsNonByteArrayValue() => Assert.Throws<ArgumentException>(() => IndexKeyEncoder.EncodeEntry(BinaryType, "not bytes", ascending: true));
 
     // ── Numeric (Decimal) ────────────────────────────────────────
 
@@ -977,11 +971,8 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void Numeric_TargetScaleSmallerThanNatural_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-            IndexKeyEncoder.EncodeNumericEntry(1.50m, ascending: true, targetScale: 0, legacy: false));
-    }
+    public void Numeric_TargetScaleSmallerThanNatural_Throws() => Assert.Throws<ArgumentException>(() =>
+                                                                           IndexKeyEncoder.EncodeNumericEntry(1.50m, ascending: true, targetScale: 0, legacy: false));
 
     [Fact]
     public void Numeric_OverflowsSixteenByteMantissa_Throws()
@@ -1248,11 +1239,8 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void DateTimeExt_WrongLength_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-            IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, new byte[10], ascending: true));
-    }
+    public void DateTimeExt_WrongLength_Throws() => Assert.Throws<ArgumentException>(() =>
+                                                             IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, new byte[10], ascending: true));
 
     [Fact]
     public void DateTimeExt_Ordering_IsLexicographic()

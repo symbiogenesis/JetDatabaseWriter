@@ -9,9 +9,7 @@ public class ColumnInfoBenchmarks
     private ColumnInfo[] _columns = null!;
 
     [GlobalSetup]
-    public void Setup()
-    {
-        _columns =
+    public void Setup() => _columns =
         [
             new() { Type = 0x01, Flags = 0x00, Name = "Bool" },       // Boolean → fixed
             new() { Type = 0x04, Flags = 0x00, Name = "Long" },       // LongInteger → fixed
@@ -25,7 +23,6 @@ public class ColumnInfoBenchmarks
             new() { Type = 0xFF, Flags = 0x01, Name = "Custom_Fixed" },   // unknown type, FLAG_FIXED set
             new() { Type = 0xFF, Flags = 0x00, Name = "Custom_Var" },     // unknown type, FLAG_FIXED clear
         ];
-    }
 
     [Benchmark]
     public int IsFixed_AllColumns()

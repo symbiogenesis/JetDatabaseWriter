@@ -384,13 +384,13 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             return null;
         }
 
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.dataPage.TDefOff) != acesTdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.DataPage.TDefOff) != acesTdefPage)
                 {
                     continue;
                 }
@@ -487,7 +487,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         var result = new List<CatalogRow>();
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -499,7 +499,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                 continue;
             }
 
-            if (Ri32(page, writer.dataPage.TDefOff) != 2)
+            if (Ri32(page, writer.DataPage.TDefOff) != 2)
             {
                 AccessBase.ReturnPage(page);
                 continue;
@@ -555,7 +555,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
         var usedIds = new HashSet<int>();
         int maxLow24 = 0;
-        long total = writer.stream.Length / writer.pgSz;
+        long total = writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -563,7 +563,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.dataPage.TDefOff) != 2)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.DataPage.TDefOff) != 2)
                 {
                     continue;
                 }

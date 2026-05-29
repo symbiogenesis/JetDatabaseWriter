@@ -100,9 +100,9 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     {
         byte[] buffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        int numCols = Ru16(buffer, writer.tdef.NumCols);
-        int numIdx = Ri32(buffer, writer.tdef.NumCols + 2);
-        int numRealIdx = Ri32(buffer, writer.tdef.NumRealIdx);
+        int numCols = Ru16(buffer, writer.TDef.NumCols);
+        int numIdx = Ri32(buffer, writer.TDef.NumCols + 2);
+        int numRealIdx = Ri32(buffer, writer.TDef.NumRealIdx);
 
         if (numIdx <= 0 || numRealIdx <= 0)
         {
@@ -114,8 +114,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return (TdefPreambleStatus.TooMany, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
         }
 
-        int colStart = writer.tdef.BlockEnd + (numRealIdx * writer.tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer.colDesc.Size);
+        int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (writer.ReadColumnName(buffer, ref namePos, out _) < 0)
@@ -183,15 +183,15 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int numRealIdx = preamble.NumRealIdx;
         int realIdxDescStart = preamble.RealIdxDescStart;
 
-        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer.Format);
 
         // Decode the index catalog: every populated real-idx slot (with
         // IsUnique already promoted for any slot backing a PK logical-idx),
         // along with the snapshot-index map and pre-resolved key columns.
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuffer,
-            writer.indexLayout,
-            writer.indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
+            writer.IndexLayoutInfo,
+            writer.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
         Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
 
@@ -207,7 +207,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
 
         bool tdefDirty = false;
-        long[][]? rebuiltIndexPageGroups = writer.format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
+        long[][]? rebuiltIndexPageGroups = writer.Format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
         long[][]? oldIndexPageGroups = null;
         if (rebuiltIndexPageGroups is not null)
         {
@@ -274,8 +274,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 leafEntries.Add(new IndexEntry(key, page, row));
             }
 
-            long firstPageNumber = writer.stream.Length / writer.pgSz;
-            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.pgSz, tdefPage, leafEntries, firstPageNumber);
+            long firstPageNumber = writer.PhysicalPageCount;
+            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, leafEntries, firstPageNumber);
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
 
@@ -292,7 +292,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (reservedFirstPage != firstPageNumber)
                 {
                     firstPageNumber = reservedFirstPage;
-                    build = IndexBTreeBuilder.Build(leafLayout, writer.pgSz, tdefPage, leafEntries, firstPageNumber);
+                    build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, leafEntries, firstPageNumber);
                     rootPageNumber = build.RootPageNumber;
                 }
 
@@ -385,7 +385,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= writer.stream.Length / writer.pgSz)
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= writer.PhysicalPageCount)
         {
             return null;
         }
@@ -416,8 +416,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (!await UsageMap.TryEnumeratePagesAsync(
                     page,
                     rowBound,
-                    writer.pgSz,
-                    writer.stream.Length / writer.pgSz,
+                    writer.PageSizeBytes,
+                    writer.PhysicalPageCount,
                     minimumPageNumber: 0,
                     strict: false,
                     writer.ReadPageAsync,
@@ -478,7 +478,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
     private async ValueTask<bool> IsReplacedIndexPageAsync(long pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= writer.stream.Length / writer.pgSz)
+        if (pageNumber <= 0 || pageNumber >= writer.PhysicalPageCount)
         {
             return false;
         }
@@ -497,7 +497,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
     private async ValueTask<bool> CanReuseSingleLeafPageAsync(int pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= writer.stream.Length / writer.pgSz)
+        if (pageNumber <= 0 || pageNumber >= writer.PhysicalPageCount)
         {
             return false;
         }
@@ -540,13 +540,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (writer.format == DatabaseFormat.Jet3Mdb || slots.Count == 0)
+        if (writer.Format == DatabaseFormat.Jet3Mdb || slots.Count == 0)
         {
             return true;
         }
 
         long usageMapPage = ReadTableUsageMapPage(tdefBuffer);
-        if (usageMapPage <= 0 || usageMapPage >= writer.stream.Length / writer.pgSz)
+        if (usageMapPage <= 0 || usageMapPage >= writer.PhysicalPageCount)
         {
             return false;
         }
@@ -597,7 +597,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         long rootPage,
         CancellationToken cancellationToken)
     {
-        long pageCount = writer.stream.Length / writer.pgSz;
+        long pageCount = writer.PhysicalPageCount;
         var pages = new List<long>();
         var seen = new HashSet<long>();
         var stack = new Stack<long>();
@@ -634,7 +634,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return null;
             }
 
-            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.pgSz);
+            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
             if (entries.Count == 0)
             {
                 return null;
@@ -722,8 +722,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
-        IndexLayout idxLayout = writer.indexLayout;
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLayout idxLayout = writer.IndexLayoutInfo;
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.Format);
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -973,7 +973,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                         return false;
                     }
 
-                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz));
+                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes));
                     walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
                 }
 
@@ -984,11 +984,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     return false;
                 }
 
-                long firstNewPage = writer.stream.Length / writer.pgSz;
+                long firstNewPage = writer.PhysicalPageCount;
                 IndexBTreeBuilder.BuildResult mlBuild;
                 try
                 {
-                    mlBuild = IndexBTreeBuilder.Build(layout, writer.pgSz, tdefPage, splicedAll, firstNewPage);
+                    mlBuild = IndexBTreeBuilder.Build(layout, writer.PageSizeBytes, tdefPage, splicedAll, firstNewPage);
                 }
                 catch (ArgumentOutOfRangeException ex)
                 {
@@ -1006,7 +1006,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, writer.pgSz);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, writer.PageSizeBytes);
             List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
@@ -1014,7 +1014,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return false;
             }
 
-            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, writer.pgSz, tdefPage, spliced);
+            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, writer.PageSizeBytes, tdefPage, spliced);
             if (newLeaf is null)
             {
                 LastIncrementalBail = $"C13 spliced={spliced.Count}";
@@ -1030,7 +1030,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return false;
         }
 
-        if (writer.format != DatabaseFormat.Jet3Mdb)
+        if (writer.Format != DatabaseFormat.Jet3Mdb)
         {
             tdefDirty = true;
         }
@@ -1056,7 +1056,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <param name="cells">The cells.</param>
     private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
     {
-        bool legacyNumeric = writer.format == DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = writer.Format == DatabaseFormat.Jet4Mdb;
 
         byte[][] perColumn = new byte[keyColInfos.Count][];
         int totalLen = 0;
@@ -1211,7 +1211,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.Format);
 
         LastIncrementalBail = null;
 
@@ -1242,8 +1242,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // doesn't gate on IsUnique); names are unused so we skip them.
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuf,
-            writer.indexLayout,
-            writer.indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
+            writer.IndexLayoutInfo,
+            writer.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
@@ -1319,7 +1319,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     break;
                 }
 
-                List<IndexEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
+                List<IndexEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
                 if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[probe.Count - 1].Key) <= 0)
                 {
                     // composite belongs in this leaf (or earlier).
@@ -1347,7 +1347,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
             int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
-            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.pgSz);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
 
             var addEntries = new List<IndexEntry>(1)
             {
@@ -1369,7 +1369,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             {
                 rewritten = IndexLeafPageBuilder.BuildLeafPage(
                     layout,
-                    writer.pgSz,
+                    writer.PageSizeBytes,
                     tdefPage,
                     spliced,
                     prevPage: leafPrev,
@@ -1382,7 +1382,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             {
                 // Leaf overflow → N-way split.
                 SplitPages? splitPages = btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
-                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, writer.pgSz, spliced);
+                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, writer.PageSizeBytes, spliced);
                 if (splitPages is null)
                 {
                     LastIncrementalBail = $"S12 ri={ri} split failed";

@@ -204,10 +204,7 @@ internal static class OfficeCryptoStandard
     // Key derivation (MS-OFFCRYPTO §2.3.6.2)
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] DeriveKey(ReadOnlySpan<char> password, StandardDescriptor d)
-    {
-        return DeriveKeyCore(password, d.Salt, d.KeyBits / 8, d.SpinCount);
-    }
+    private static byte[] DeriveKey(ReadOnlySpan<char> password, StandardDescriptor d) => DeriveKeyCore(password, d.Salt, d.KeyBits / 8, d.SpinCount);
 
     private static byte[] DeriveKeyCore(ReadOnlySpan<char> password, byte[] salt, int keyByteCount, int spinCount)
     {

@@ -9,17 +9,11 @@ internal static class NameCleaner
 {
     /// <summary>Converts a table name to PascalCase class name.</summary>
     /// <param name="tableName">The table name.</param>
-    internal static string ToClassName(string tableName)
-    {
-        return SanitizeToPascalCase(tableName);
-    }
+    internal static string ToClassName(string tableName) => SanitizeToPascalCase(tableName);
 
     /// <summary>Converts a column name to PascalCase property name.</summary>
     /// <param name="columnName">The column name.</param>
-    internal static string ToPropertyName(string columnName)
-    {
-        return SanitizeToPascalCase(columnName);
-    }
+    internal static string ToPropertyName(string columnName) => SanitizeToPascalCase(columnName);
 
     internal static string SanitizeToPascalCase(string raw)
     {

@@ -20,7 +20,7 @@ using JetDatabaseWriter.Infrastructure;
 ///   • By default, mini-stream cutoff is set to 0, so every stream uses the regular FAT
 ///   • FAT sectors addressed by the header DIFAT and, when needed, DIFAT
 ///     extension sectors
-///   • Directory entries stored in regular directory sectors
+///   • Directory entries stored in regular directory sectors.
 /// </para>
 /// <para>
 /// The directory red-black tree is laid out as an ascending right-sibling
@@ -35,16 +35,14 @@ internal static class CompoundFileWriter
     /// top-level streams. Stream names must be ≤ 31 UTF-16 code units.
     /// </summary>
     /// <param name="streams">The streams.</param>
-    public static byte[] Build(IReadOnlyList<KeyValuePair<string, byte[]>> streams)
-    {
-        return Build(
+    public static byte[] Build(IReadOnlyList<KeyValuePair<string, byte[]>> streams) =>
+        Build(
             streams,
             sectorSize: Constants.CompoundFile.V3.SectorSize,
             sectorShift: Constants.CompoundFile.V3.SectorShift,
             majorVersion: Constants.CompoundFile.V3.MajorVersion,
             miniStreamCutoff: 0,
             requireRegularFatStreams: false);
-    }
 
     /// <summary>
     /// Builds an Office-crypto-compatible CFB compound document with the
@@ -52,16 +50,14 @@ internal static class CompoundFileWriter
     /// FAT, so callers must pad any non-empty stream to at least the cutoff.
     /// </summary>
     /// <param name="streams">The streams.</param>
-    public static byte[] BuildOfficeCrypto(IReadOnlyList<KeyValuePair<string, byte[]>> streams)
-    {
-        return Build(
+    public static byte[] BuildOfficeCrypto(IReadOnlyList<KeyValuePair<string, byte[]>> streams) =>
+        Build(
             streams,
             sectorSize: Constants.CompoundFile.V4.SectorSize,
             sectorShift: Constants.CompoundFile.V4.SectorShift,
             majorVersion: Constants.CompoundFile.V4.MajorVersion,
             miniStreamCutoff: Constants.CompoundFile.StandardMiniStreamCutoff,
             requireRegularFatStreams: true);
-    }
 
     private static byte[] Build(
         IReadOnlyList<KeyValuePair<string, byte[]>> streams,
@@ -332,8 +328,7 @@ internal static class CompoundFileWriter
         }
     }
 
-    private static void WriteRootEntry(byte[] file, int offset, uint child)
-    {
+    private static void WriteRootEntry(byte[] file, int offset, uint child) =>
         WriteDirEntry(
             file,
             offset,
@@ -345,7 +340,6 @@ internal static class CompoundFileWriter
             leftSibling: Constants.CompoundFile.FreeSect,
             rightSibling: Constants.CompoundFile.FreeSect,
             child: child);
-    }
 
     private static void WriteStreamEntry(
         byte[] file,
@@ -354,9 +348,7 @@ internal static class CompoundFileWriter
         uint startSector,
         long size,
         uint leftSibling,
-        uint rightSibling)
-    {
-        WriteDirEntry(
+        uint rightSibling) => WriteDirEntry(
             file,
             offset,
             name,
@@ -367,7 +359,6 @@ internal static class CompoundFileWriter
             leftSibling: leftSibling,
             rightSibling: rightSibling,
             child: Constants.CompoundFile.FreeSect);
-    }
 
     private static void WriteUnusedEntry(byte[] file, int offset)
     {

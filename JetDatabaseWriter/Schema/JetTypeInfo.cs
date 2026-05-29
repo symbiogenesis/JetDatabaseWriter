@@ -371,12 +371,9 @@ internal static class JetTypeInfo
     /// <param name="start">The start.</param>
     /// <param name="scale">The scale.</param>
     /// <param name="strict">The strict.</param>
-    private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, int scale, bool strict)
-    {
-        return TryReadNumericDecimal(b, start, scale, strict, out decimal value)
+    private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, int scale, bool strict) => TryReadNumericDecimal(b, start, scale, strict, out decimal value)
             ? value
             : DBNull.Value;
-    }
 
     private static bool TryReadNumericDecimal(ReadOnlySpan<byte> b, int start, int scale, bool strict, out decimal value)
     {

@@ -3684,13 +3684,10 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
     }
 
-    private static string FormatContribSamples(Dictionary<byte, ushort> contrib)
-    {
-        return string.Join(" ", contrib
+    private static string FormatContribSamples(Dictionary<byte, ushort> contrib) => string.Join(" ", contrib
             .OrderBy(kvp => kvp.Key)
             .Take(8)
             .Select(kvp => $"0x{kvp.Key:X2}→0x{kvp.Value:X4}"));
-    }
 
     /// <summary>
     /// Tests whether the suffix is a GF(2^16) linear accumulator with a per-byte lookup table:
@@ -5446,16 +5443,13 @@ internal static class LongRowSuffixProbe
         return null;
     }
 
-    private static string DescribeCorpusValue(object? value)
+    private static string DescribeCorpusValue(object? value) => value switch
     {
-        return value switch
-        {
-            null => "`<null>`",
-            byte[] bytes => $"`0x{Convert.ToHexString(bytes.AsSpan(0, Math.Min(bytes.Length, 24)))}{(bytes.Length > 24 ? "..." : string.Empty)}` ({bytes.Length} bytes)",
-            string text => $"`{EscapeMarkdown(TruncateForReport(text, 60))}` ({text.Length} chars)",
-            _ => $"`{EscapeMarkdown(value.ToString() ?? string.Empty)}`",
-        };
-    }
+        null => "`<null>`",
+        byte[] bytes => $"`0x{Convert.ToHexString(bytes.AsSpan(0, Math.Min(bytes.Length, 24)))}{(bytes.Length > 24 ? "..." : string.Empty)}` ({bytes.Length} bytes)",
+        string text => $"`{EscapeMarkdown(TruncateForReport(text, 60))}` ({text.Length} chars)",
+        _ => $"`{EscapeMarkdown(value.ToString() ?? string.Empty)}`",
+    };
 
     private static string DescribeCorpusRowLabel(DataRow row)
     {
@@ -6674,7 +6668,7 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            long owner = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(reader.dataPage.TDefOff, 4));
+            long owner = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(reader.DataPage.TDefOff, 4));
             if (owner != tdefPage)
             {
                 continue;
@@ -6682,7 +6676,7 @@ internal static class LongRowSuffixProbe
 
             foreach (RowLocation location in reader.EnumerateLiveRowLocations(pageNumber, page))
             {
-                if (location.RowSize >= reader.rowSz.NumCols)
+                if (location.RowSize >= reader.RowFields.NumCols)
                 {
                     result.Add(location);
                 }

@@ -707,15 +707,14 @@ public sealed class LockFileTests : IDisposable
     /// </summary>
     /// <param name="dbPath">Path to the database (can be a synthetic empty file).</param>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static void OpenAndAbandonSlot(string dbPath)
-    {
+    private static void OpenAndAbandonSlot(string dbPath) =>
 #pragma warning disable CA2000 // Intentional: this test exercises the finalizer when the caller forgets to dispose.
         _ = LockFileSlotWriter.Open(
             dbPath,
             ownerTypeName: nameof(LockFileTests),
             respectExisting: false);
 #pragma warning restore CA2000
-    }
+
 
     private static string ReadAsciiField(byte[] bytes, int offset, int length)
     {

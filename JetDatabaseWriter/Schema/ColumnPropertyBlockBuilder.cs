@@ -296,15 +296,9 @@ internal sealed class ColumnPropertyBlockBuilder
         return payload;
     }
 
-    private static int AddChunkLength(int totalLength, int payloadLength)
-    {
-        return AddLength(totalLength, GetChunkLength(payloadLength), "Property block blob", null);
-    }
+    private static int AddChunkLength(int totalLength, int payloadLength) => AddLength(totalLength, GetChunkLength(payloadLength), "Property block blob", null);
 
-    private static int AddPayloadLength(int payloadLength, int additionalLength, string payloadDescription)
-    {
-        return AddLength(payloadLength, additionalLength, "Property", payloadDescription);
-    }
+    private static int AddPayloadLength(int payloadLength, int additionalLength, string payloadDescription) => AddLength(payloadLength, additionalLength, "Property", payloadDescription);
 
     private static int AddLength(int length, long additionalLength, string valueDescription, string? detail)
     {
@@ -365,10 +359,7 @@ internal sealed class ColumnPropertyBlockBuilder
         WriteEncodedString(buffer, ref offset, encoding, value, byteCount);
     }
 
-    private static void WriteEncodedString(byte[] buffer, ref int offset, Encoding encoding, string value, int byteCount)
-    {
-        offset += encoding.GetBytes(value.AsSpan(), buffer.AsSpan(offset, byteCount));
-    }
+    private static void WriteEncodedString(byte[] buffer, ref int offset, Encoding encoding, string value, int byteCount) => offset += encoding.GetBytes(value.AsSpan(), buffer.AsSpan(offset, byteCount));
 
     private static void WriteUInt16(byte[] buffer, ref int offset, ushort value)
     {

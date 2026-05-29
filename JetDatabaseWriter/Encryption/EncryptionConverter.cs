@@ -328,10 +328,7 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password)
-    {
-        return OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
-    }
+    private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password) => OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
 
     private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
     {

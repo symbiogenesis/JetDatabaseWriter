@@ -259,7 +259,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     {
         foreach ((string name, ColumnDefinition[]? cols) in _complexTypeTemplates)
         {
-            TableDef tableDef = AccessWriter.BuildTableDefinition(cols, _writer.format);
+            TableDef tableDef = AccessWriter.BuildTableDefinition(cols, _writer.Format);
             (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
             long tdefPageNumber = await pageAllocator.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -431,7 +431,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return null;
         }
 
-        if (_writer.format != DatabaseFormat.AceAccdb)
+        if (_writer.Format != DatabaseFormat.AceAccdb)
         {
             throw new NotSupportedException(
                 "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
@@ -469,7 +469,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
         int maxId = 0;
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -482,7 +482,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysComplexPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysComplexPg)
                 {
                     continue;
                 }
@@ -762,7 +762,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             throw new ArgumentException("At least one key column is required.", nameof(parentRowKey));
         }
 
-        if (_writer.format != DatabaseFormat.AceAccdb)
+        if (_writer.Format != DatabaseFormat.AceAccdb)
         {
             throw new NotSupportedException(
                 "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
@@ -938,7 +938,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return 0;
         }
 
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -951,7 +951,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysPg)
                 {
                     continue;
                 }
@@ -997,7 +997,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         (long, int, int, int) match = default;
         bool found = false;
 
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1010,7 +1010,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != parentTdefPage)
+                if (Ri32(page, _writer.DataPage.TDefOff) != parentTdefPage)
                 {
                     continue;
                 }
@@ -1079,7 +1079,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             int bitOff = complexCol.ColNum % 8;
             bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
 
-            int slotOff = parentRowStart + _writer.rowSz.NumCols + complexCol.FixedOff;
+            int slotOff = parentRowStart + _writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
             {
                 int existing = Ri32(page, slotOff);
@@ -1116,7 +1116,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             int numCols = _writer.ReadRowColumnCount(page, rowStart);
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = rowSize - nullMaskSz;
-            int slotOff = rowStart + _writer.rowSz.NumCols + complexCol.FixedOff;
+            int slotOff = rowStart + _writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotOff + 4 > rowStart + rowSize)
             {
                 throw new InvalidDataException("Complex column slot is out of row bounds.");
@@ -1152,7 +1152,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
 
         int maxId = 0;
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1165,7 +1165,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != flatTdefPage)
+                if (Ri32(page, _writer.DataPage.TDefOff) != flatTdefPage)
                 {
                     continue;
                 }
@@ -1343,7 +1343,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    int slotOff = loc.RowStart + _writer.rowSz.NumCols + col.FixedOff;
+                    int slotOff = loc.RowStart + _writer.RowFields.NumCols + col.FixedOff;
                     if (slotOff + 4 > loc.RowStart + loc.RowSize)
                     {
                         continue;
@@ -1390,7 +1390,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
 
             int deletedFromFlat = 0;
-            long total = _writer.stream.Length / _writer.pgSz;
+            long total = _writer.PhysicalPageCount;
             for (long pageNumber = 3; pageNumber < total; pageNumber++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1404,7 +1404,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    if (Ri32(page, _writer.dataPage.TDefOff) != flatTdefPage)
+                    if (Ri32(page, _writer.DataPage.TDefOff) != flatTdefPage)
                     {
                         continue;
                     }
@@ -1469,7 +1469,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         long flatTdefPage = 0;
         var deletedRows = new List<(long PageNumber, int RowIndex)>();
 
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1482,7 +1482,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1585,7 +1585,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1598,7 +1598,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1667,7 +1667,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1680,7 +1680,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1790,7 +1790,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var flatTdefPages = new HashSet<long>();
         var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
 
-        long total = _writer.stream.Length / _writer.pgSz;
+        long total = _writer.PhysicalPageCount;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1803,7 +1803,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (Ri32(page, _writer.dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer.DataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
