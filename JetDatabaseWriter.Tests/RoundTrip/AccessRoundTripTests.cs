@@ -51,9 +51,9 @@ public sealed class AccessRoundTripTests
 
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 #if NET8_0_OR_GREATER
-    private readonly Lock relationshipRoundTripSync = new();
+    private static readonly Lock relationshipRoundTripSync = new();
 #else
-    private readonly object relationshipRoundTripSync = new();
+    private static readonly object relationshipRoundTripSync = new();
 #endif
     private static Task<RelationshipRoundTripResult>? relationshipRoundTripTask;
 
