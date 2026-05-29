@@ -1699,7 +1699,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (canProject)
             {
                 return await ReadProjectedTableAsync<T>(
-                    tableName,
                     resolved.Value.Entry.TDefPage,
                     resolved.Value.Td,
                     projectedColumns,
@@ -1786,7 +1785,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private async ValueTask<List<T>> ReadProjectedTableAsync<T>(
-        string tableName,
         long tdefPage,
         TableDef td,
         List<(string Name, ColumnInfo Column)> projectedColumns,
