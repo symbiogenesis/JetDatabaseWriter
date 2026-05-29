@@ -26,8 +26,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
 {
     private enum LongRowValidationMode
     {
-        PrefixOnly,
-        FullKey,
+        PrefixOnly = 0,
+        FullKey = 1,
     }
 
     /// <summary>

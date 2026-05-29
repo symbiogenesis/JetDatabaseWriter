@@ -4,17 +4,17 @@ namespace JetDatabaseWriter.Enums;
 public enum ColumnSizeUnit
 {
     /// <summary>Size in bits (e.g., Yes/No stores 1 bit in the null mask).</summary>
-    Bits,
+    Bits = 0,
 
     /// <summary>Size in bytes.</summary>
-    Bytes,
+    Bytes = 1,
 
     /// <summary>Maximum character count for text columns.</summary>
-    Chars,
+    Chars = 2,
 
     /// <summary>Variable-length with no declared maximum.</summary>
-    Variable,
+    Variable = 3,
 
     /// <summary>Large-value data stored on LVAL pages (MEMO / OLE).</summary>
-    Lval,
+    Lval = 4,
 }

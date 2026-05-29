@@ -41,9 +41,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal enum SystemTableIndexMaintenancePath
 {
-    None,
-    SkippedNoMaintainableIndexes,
-    Incremental,
+    None = 0,
+    SkippedNoMaintainableIndexes = 1,
+    Incremental = 2,
 }
 
 /// <summary>

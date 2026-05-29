@@ -8,10 +8,10 @@ using JetDatabaseWriter.Benchmarks.Infrastructure;
 public enum OwnedPageDiscoveryPath
 {
     /// <summary>Use the recognized per-table owned-pages usage map.</summary>
-    RecognizedUsageMap,
+    RecognizedUsageMap = 0,
 
     /// <summary>Force the safety fallback that scans the whole file for owned data pages.</summary>
-    WholeFileFallback,
+    WholeFileFallback = 1,
 }
 
 /// <summary>

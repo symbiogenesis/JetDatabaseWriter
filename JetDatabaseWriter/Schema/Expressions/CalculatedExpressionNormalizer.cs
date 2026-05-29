@@ -537,15 +537,15 @@ internal static class CalculatedExpressionNormalizer
 
         private enum TokenKind
         {
-            End,
-            Identifier,
-            Value,
-            Word,
-            Operator,
-            Backslash,
-            OpenParen,
-            CloseParen,
-            Comma,
+            End = 0,
+            Identifier = 1,
+            Value = 2,
+            Word = 3,
+            Operator = 4,
+            Backslash = 5,
+            OpenParen = 6,
+            CloseParen = 7,
+            Comma = 8,
         }
     }
 }

@@ -8,14 +8,14 @@ using JetDatabaseWriter.Indexes;
 internal enum TdefPreambleStatus
 {
     /// <summary>Header parsed successfully; index work should proceed.</summary>
-    Ok,
+    Ok = 0,
 
     /// <summary>The TDEF declares no logical or real indexes; there is nothing to maintain.</summary>
-    Empty,
+    Empty = 1,
 
     /// <summary>numIdx or numRealIdx exceeded the sanity cap (corrupt header suspected).</summary>
-    TooMany,
+    TooMany = 2,
 
     /// <summary>The column-name walk failed before reaching the real-idx descriptor block.</summary>
-    ColumnNameWalkFailed,
+    ColumnNameWalkFailed = 3,
 }

@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Enums;
 
 internal enum IntermediateOpType
 {
-    Replace,
-    InsertAfter,
+    Replace = 0,
+    InsertAfter = 1,
 
     /// <summary>Drop the entry at <c>OriginalIndex</c>. The
     /// other field (<c>NewEntry</c>) is unused.</summary>
-    Remove,
+    Remove = 2,
 }

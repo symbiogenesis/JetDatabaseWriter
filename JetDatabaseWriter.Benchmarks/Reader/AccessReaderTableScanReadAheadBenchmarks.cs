@@ -8,22 +8,22 @@ using JetDatabaseWriter.Benchmarks.Infrastructure;
 public enum TableScanBenchmarkShape
 {
     /// <summary>Numeric/date-heavy table.</summary>
-    Numeric,
+    Numeric = 0,
 
     /// <summary>Short-text-heavy table.</summary>
-    Text,
+    Text = 1,
 
     /// <summary>Wide mixed-column table.</summary>
-    Wide,
+    Wide = 2,
 }
 
 public enum TableScanBenchmarkTemperature
 {
     /// <summary>Open a new reader and perform the first scan.</summary>
-    ColdOpenFirstScan,
+    ColdOpenFirstScan = 0,
 
     /// <summary>Reuse a primed reader for a repeat scan.</summary>
-    WarmRepeatScan,
+    WarmRepeatScan = 1,
 }
 
 /// <summary>
