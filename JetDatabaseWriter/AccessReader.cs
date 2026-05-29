@@ -62,9 +62,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </para>
 /// <para>
 /// Based on the mdbtools format specification:
-///   https://github.com/mdbtools/mdbtools/blob/master/HACKING.md
+///   <see href="https://github.com/mdbtools/mdbtools/blob/master/HACKING.md" />.
 /// </para>
-/// <para>Original C implementation by mdbtools contributors (see HACKING.md for details).</para>
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
