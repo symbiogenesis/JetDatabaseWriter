@@ -3127,21 +3127,22 @@ internal static class LongRowSuffixProbe
         for (int i = 0; i < input.Length; i++)
         {
             byte b = input[i];
-            switch (variant)
+            h = variant switch
             {
-                case 0: // h = rotl(h, k) + b
-                    h = unchecked((ushort)(Rotl16(h, k) + b));
-                    break;
-                case 1: // h = rotl(h, k) ^ b
-                    h = unchecked((ushort)(Rotl16(h, k) ^ b));
-                    break;
-                case 2: // h = rotl(h ^ b, k)
-                    h = Rotl16(unchecked((ushort)(h ^ b)), k);
-                    break;
-                case 3: // h = rotl(h + b, k)
-                    h = Rotl16(unchecked((ushort)(h + b)), k);
-                    break;
-            }
+                // h = rotl(h, k) + b
+                0 => unchecked((ushort)(Rotl16(h, k) + b)),
+
+                // h = rotl(h, k) ^ b
+                1 => unchecked((ushort)(Rotl16(h, k) ^ b)),
+
+                // h = rotl(h ^ b, k)
+                2 => Rotl16(unchecked((ushort)(h ^ b)), k),
+
+                // h = rotl(h + b, k)
+                3 => Rotl16(unchecked((ushort)(h + b)), k),
+
+                _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null),
+            };
         }
 
         return h;
@@ -4712,6 +4713,10 @@ internal static class LongRowSuffixProbe
                     tail *= c2;
                     hash ^= tail;
                     break;
+                case 0:
+                    break;
+                default:
+                    throw new UnreachableException("Invalid tail length");
             }
 
             hash ^= (uint)bytes.Length;
