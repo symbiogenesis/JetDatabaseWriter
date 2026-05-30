@@ -144,8 +144,8 @@ public sealed class ComplexColumnsCascadeDeleteTests
             "Labels",
             TestContext.Current.CancellationToken);
 
-        (int ConceptualTableId, object? Value) only = Assert.Single(items);
-        Assert.Equal(21, Convert.ToInt32(only.Value, System.Globalization.CultureInfo.InvariantCulture));
+        (int conceptualTableId, object? value) = Assert.Single(items);
+        Assert.Equal(21, Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]
@@ -395,7 +395,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
 
         // MultiValue flat table: only row 2's item survives.
         IReadOnlyList<(int ConceptualTableId, object? Value)> mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
-        (int ConceptualTableId, object? Value) singleMv = Assert.Single(mvItems);
-        Assert.Equal(300, Convert.ToInt32(singleMv.Value, System.Globalization.CultureInfo.InvariantCulture));
+        (int conceptualTableId, object? value) = Assert.Single(mvItems);
+        Assert.Equal(300, Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
     }
 }

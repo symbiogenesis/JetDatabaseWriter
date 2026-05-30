@@ -56,11 +56,11 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             Assert.NotNull(entry);
 
             (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry.TDefPage, reader.PageSize);
-            foreach ((int Primary, int Redundant) pair in pairs)
+            foreach ((int Primary, int Redundant) in pairs)
             {
                 Assert.True(
-                    pair.Primary == pair.Redundant,
-                    $"DAO-authored {tableName}: column descriptor offset 5-6 ({pair.Primary}) != offset 9-10 ({pair.Redundant}). Ground-truth assumption broken — re-read mdbtools HACKING.md.");
+                    Primary == Redundant,
+                    $"DAO-authored {tableName}: column descriptor offset 5-6 ({Primary}) != offset 9-10 ({Redundant}). Ground-truth assumption broken — re-read mdbtools HACKING.md.");
                 totalColumnsChecked++;
             }
         }

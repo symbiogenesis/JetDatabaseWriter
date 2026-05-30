@@ -636,10 +636,10 @@ internal static class FormatProbeApplication
             hits.Add((c.Name, c.TdefPage, "hidden flat (child) table — `f_<guid>_<userColName>`", null));
         }
 
-        foreach ((string Name, long Page, string Reason, byte[]? Bytes) hit in hits.DistinctBy(h => h.Page))
+        foreach ((string name, long page, string reason, byte[]? bytes) in hits.DistinctBy(h => h.Page))
         {
-            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### Reason: {hit.Reason}");
-            await EmitTDefAsync(reader, sb, hit.Name, hit.Page, includeIndexAnnotations: false, includeComplexAnnotations: true, preloadedBytes: hit.Bytes);
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### Reason: {reason}");
+            await EmitTDefAsync(reader, sb, name, page, includeIndexAnnotations: false, includeComplexAnnotations: true, preloadedBytes: bytes);
         }
 
         await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
@@ -705,24 +705,24 @@ internal static class FormatProbeApplication
         int idxColHits = 0;
         int errors = 0;
         int totalCatalogRows = 0;
-        foreach ((string RelPath, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) verdict in verdicts)
+        foreach ((string relPath1, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) in verdicts)
         {
-            if (verdict.HasIndexes == true)
+            if (HasIndexes == true)
             {
                 idxHits++;
             }
 
-            if (verdict.HasIndexColumns == true)
+            if (HasIndexColumns == true)
             {
                 idxColHits++;
             }
 
-            if (verdict.Error is not null)
+            if (Error is not null)
             {
                 errors++;
             }
 
-            totalCatalogRows += verdict.CatalogRows;
+            totalCatalogRows += CatalogRows;
         }
 
         _ = sb.AppendLine("## Headline result");
@@ -785,29 +785,29 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Fixture (relative to `Databases/`) | Format | Catalog rows | `MSysIndexes` | `MSysIndexColumns` | `MSysRelationships` | First name containing \"index\" (if any) | Notes |");
         _ = sb.AppendLine("|---|---|---:|:---:|:---:|:---:|---|---|");
-        foreach ((string RelPath, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) v in verdicts)
+        foreach ((string relPath1, string format, int catalogRows, bool? hasIndexes, bool? hasIndexColumns, bool? hasRelationships, string? anyIndexNamed, string? error) in verdicts)
         {
-            string idx = v.HasIndexes switch
+            string idx = hasIndexes switch
             {
                 null => "—",
                 true => "**yes**",
                 false => "no",
             };
-            string idxCols = v.HasIndexColumns switch
+            string idxCols = hasIndexColumns switch
             {
                 null => "—",
                 true => "**yes**",
                 false => "no",
             };
-            string rel = v.HasRelationships switch
+            string rel = hasRelationships switch
             {
                 null => "—",
                 true => "yes",
                 false => "no",
             };
-            string anyIdx = v.AnyIndexNamed is null ? string.Empty : $"`{Md(v.AnyIndexNamed)}`";
-            string note = v.Error is null ? string.Empty : $"open failed: {Md(v.Error)}";
-            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `{Md(v.RelPath)}` | {v.Format} | {v.CatalogRows} | {idx} | {idxCols} | {rel} | {anyIdx} | {note} |");
+            string anyIdx = anyIndexNamed is null ? string.Empty : $"`{Md(anyIndexNamed)}`";
+            string note = error is null ? string.Empty : $"open failed: {Md(error)}";
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `{Md(relPath1)}` | {format} | {catalogRows} | {idx} | {idxCols} | {rel} | {anyIdx} | {note} |");
         }
 
         _ = sb.AppendLine();
