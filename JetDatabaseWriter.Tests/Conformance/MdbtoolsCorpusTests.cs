@@ -15,16 +15,15 @@ using Xunit;
 /// corpus (https://github.com/mdbtools/mdbtestdata/tree/master/data).
 /// </para>
 /// <para>
-/// Each test mirrors something mdbtools' own test scripts assert against the
-/// same files:
+/// Each test mirrors something mdbtools' own test scripts assert against the same files:
 ///   * test_script.sh — runs every mdb-* utility against nwind.mdb and
 ///                      ASampleDatabase.accdb, including the German-named
 ///                      "Umsätze" table and the "Asset Items" table.
-///                      https://github.com/mdbtools/mdbtools/blob/dev/test_script.sh
+///                      <see href="https://github.com/mdbtools/mdbtools/blob/dev/test_script.sh" />
 ///   * test_sql.sh    — runs three SELECTs against nwind.mdb's Customers table
 ///                      via mdb-sql.
-///                      https://github.com/mdbtools/mdbtools/blob/dev/test_sql.sh
-///                      https://github.com/mdbtools/mdbtestdata/blob/master/sql/nwind.sql
+///                      <see href="https://github.com/mdbtools/mdbtools/blob/dev/test_sql.sh" />
+///                      <see href="https://github.com/mdbtools/mdbtestdata/blob/master/sql/nwind.sql" />.
 /// </para>
 /// <para>
 /// Tests are skipped (not failed) when the fixture is absent so the suite still

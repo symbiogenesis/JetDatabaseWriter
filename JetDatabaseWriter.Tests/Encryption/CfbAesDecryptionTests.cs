@@ -18,7 +18,7 @@ using Xunit;
 /// Each test creates a synthetic AES-encrypted ACCDB by:
 ///   1. Cloning NorthwindTraders.accdb
 ///   2. Setting CFB magic header (D0 CF 11 E0) + encoding the password
-///   3. AES-encrypting all data pages (pages 1+)
+///   3. AES-encrypting all data pages (pages 1+).
 /// </para>
 /// <para>
 /// The reader is expected to detect CFB magic, verify the password, and

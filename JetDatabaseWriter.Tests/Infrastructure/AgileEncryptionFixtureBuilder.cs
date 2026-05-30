@@ -14,7 +14,7 @@ using JetDatabaseWriter.Tests.Encryption;
 /// containing two streams:
 ///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
 ///   • <c>EncryptedPackage</c> — 8-byte LE size + AES-256-CBC encrypted
-///                               segments (4096 bytes each)
+///                               segments, 4096 bytes each.
 /// </para>
 /// <para>
 /// Used exclusively by <see cref="AgileEncryptionTests"/>. Once the
