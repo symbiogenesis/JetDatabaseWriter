@@ -20,8 +20,8 @@ using Xunit;
 /// </summary>
 public sealed class LinkedTableTests : IDisposable
 {
-    private readonly List<string> _tempFiles = [];
-    private readonly List<string> _tempDirectories = [];
+    private readonly List<string> tempFiles = [];
+    private readonly List<string> tempDirectories = [];
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. API SHAPE — ListTables / ListLinkedTables
@@ -473,7 +473,7 @@ public sealed class LinkedTableTests : IDisposable
 
         string hostDirectory = Path.Combine(Path.GetTempPath(), $"LinkAbsHost_{Guid.NewGuid():N}");
         Directory.CreateDirectory(hostDirectory);
-        this._tempDirectories.Add(hostDirectory);
+        this.tempDirectories.Add(hostDirectory);
 
         string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("LinkAbsFE", hostDirectory);
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedAbsolute", sourcePath, "TrustedData", ct);
@@ -546,7 +546,7 @@ public sealed class LinkedTableTests : IDisposable
 
         string nestedDir = Path.Combine(Path.GetTempPath(), $"LinkPolicy_{Guid.NewGuid():N}");
         Directory.CreateDirectory(nestedDir);
-        this._tempDirectories.Add(nestedDir);
+        this.tempDirectories.Add(nestedDir);
 
         string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("LinkPolicyFE", nestedDir);
         string relativePath = Path.Combine("..", Path.GetFileName(sourcePath));
@@ -590,7 +590,7 @@ public sealed class LinkedTableTests : IDisposable
 
         string allowlistedDir = Path.Combine(Path.GetTempPath(), $"AllowOnly_{Guid.NewGuid():N}");
         Directory.CreateDirectory(allowlistedDir);
-        this._tempDirectories.Add(allowlistedDir);
+        this.tempDirectories.Add(allowlistedDir);
 
         var options = new AccessReaderOptions
         {
@@ -613,7 +613,7 @@ public sealed class LinkedTableTests : IDisposable
         Directory.CreateDirectory(allowlistedDirectory);
         Directory.CreateDirectory(siblingDirectory);
         Directory.CreateDirectory(hostDirectory);
-        this._tempDirectories.Add(parentDirectory);
+        this.tempDirectories.Add(parentDirectory);
 
         string sourcePath = await this.CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixSrc", siblingDirectory);
         string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixFE", hostDirectory);
@@ -697,7 +697,7 @@ public sealed class LinkedTableTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string path in this._tempFiles)
+        foreach (string path in this.tempFiles)
         {
             try
             {
@@ -709,7 +709,7 @@ public sealed class LinkedTableTests : IDisposable
             }
         }
 
-        foreach (string dir in this._tempDirectories.OrderByDescending(d => d.Length))
+        foreach (string dir in this.tempDirectories.OrderByDescending(d => d.Length))
         {
             try
             {
@@ -758,7 +758,7 @@ public sealed class LinkedTableTests : IDisposable
         {
         }
 
-        this._tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 
@@ -773,7 +773,7 @@ public sealed class LinkedTableTests : IDisposable
         {
         }
 
-        this._tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 }

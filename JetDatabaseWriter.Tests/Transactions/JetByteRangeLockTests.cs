@@ -17,19 +17,19 @@ public sealed class JetByteRangeLockTests : IDisposable
 {
     private static readonly bool IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
-    private readonly string _tempPath;
+    private readonly string tempPath;
 
     public JetByteRangeLockTests()
     {
-        this._tempPath = Path.Combine(Path.GetTempPath(), $"JetByteRangeLockTests_{Guid.NewGuid():N}.bin");
-        File.WriteAllBytes(this._tempPath, new byte[16 * 4096]);
+        this.tempPath = Path.Combine(Path.GetTempPath(), $"JetByteRangeLockTests_{Guid.NewGuid():N}.bin");
+        File.WriteAllBytes(this.tempPath, new byte[16 * 4096]);
     }
 
     public void Dispose()
     {
         try
         {
-            File.Delete(this._tempPath);
+            File.Delete(this.tempPath);
         }
         catch (IOException)
         {
@@ -40,7 +40,7 @@ public sealed class JetByteRangeLockTests : IDisposable
     [Fact]
     public void Disabled_ReturnsInertInstance_NoOps()
     {
-        using FileStream fs = OpenReadWriteStream(this._tempPath);
+        using FileStream fs = OpenReadWriteStream(this.tempPath);
 
         var helper = JetByteRangeLock.Create(fs, enabled: false, lockTimeoutMilliseconds: 1_000);
 
@@ -64,7 +64,7 @@ public sealed class JetByteRangeLockTests : IDisposable
     [Fact]
     public void Acquire_SameInstance_TwoPages_BothSucceed()
     {
-        using FileStream fs = OpenReadWriteStream(this._tempPath);
+        using FileStream fs = OpenReadWriteStream(this.tempPath);
         var helper = JetByteRangeLock.Create(fs, enabled: true, lockTimeoutMilliseconds: 1_000);
 
         Assert.Equal(JetByteRangeLock.PlatformSupportsByteRangeLocks(), helper.IsEnabled);
@@ -81,8 +81,8 @@ public sealed class JetByteRangeLockTests : IDisposable
             return;
         }
 
-        using FileStream first = OpenReadWriteStream(this._tempPath);
-        using FileStream second = OpenReadWriteStream(this._tempPath);
+        using FileStream first = OpenReadWriteStream(this.tempPath);
+        using FileStream second = OpenReadWriteStream(this.tempPath);
 
         var holder = JetByteRangeLock.Create(first, enabled: true, lockTimeoutMilliseconds: 1_000);
         var contender = JetByteRangeLock.Create(second, enabled: true, lockTimeoutMilliseconds: 200);
@@ -104,8 +104,8 @@ public sealed class JetByteRangeLockTests : IDisposable
             return;
         }
 
-        await using FileStream first = OpenReadWriteStream(this._tempPath, FileOptions.Asynchronous);
-        await using FileStream second = OpenReadWriteStream(this._tempPath, FileOptions.Asynchronous);
+        await using FileStream first = OpenReadWriteStream(this.tempPath, FileOptions.Asynchronous);
+        await using FileStream second = OpenReadWriteStream(this.tempPath, FileOptions.Asynchronous);
 
         var holder = JetByteRangeLock.Create(first, enabled: true, lockTimeoutMilliseconds: 1_000);
         var contender = JetByteRangeLock.Create(second, enabled: true, lockTimeoutMilliseconds: 200);
@@ -124,8 +124,8 @@ public sealed class JetByteRangeLockTests : IDisposable
             return;
         }
 
-        using FileStream first = OpenReadWriteStream(this._tempPath);
-        using FileStream second = OpenReadWriteStream(this._tempPath);
+        using FileStream first = OpenReadWriteStream(this.tempPath);
+        using FileStream second = OpenReadWriteStream(this.tempPath);
 
         var a = JetByteRangeLock.Create(first, enabled: true, lockTimeoutMilliseconds: 500);
         var b = JetByteRangeLock.Create(second, enabled: true, lockTimeoutMilliseconds: 500);

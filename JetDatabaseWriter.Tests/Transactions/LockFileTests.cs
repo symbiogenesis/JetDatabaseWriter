@@ -16,7 +16,7 @@ using Xunit;
 /// </summary>
 public sealed class LockFileTests : IDisposable
 {
-    private readonly List<string> _tempFiles = [];
+    private readonly List<string> tempFiles = [];
 
     // ── Reader: UseLockFile = true (default) ──────────────────────────
 
@@ -96,7 +96,7 @@ public sealed class LockFileTests : IDisposable
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
         await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
-        this._tempFiles.Add(lockPath);
+        this.tempFiles.Add(lockPath);
 
         var options = new AccessReaderOptions { UseLockFile = false };
         AccessReader reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
@@ -219,7 +219,7 @@ public sealed class LockFileTests : IDisposable
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
         await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
-        this._tempFiles.Add(lockPath);
+        this.tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = false };
         AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
@@ -291,7 +291,7 @@ public sealed class LockFileTests : IDisposable
 
         // Pre-create a lockfile to simulate another process
         await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
-        this._tempFiles.Add(lockPath);
+        this.tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true };
 
@@ -307,7 +307,7 @@ public sealed class LockFileTests : IDisposable
 
         // Pre-create a lockfile to simulate another process
         await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
-        this._tempFiles.Add(lockPath);
+        this.tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = false };
 
@@ -681,7 +681,7 @@ public sealed class LockFileTests : IDisposable
         // writer only needs the path, not a real Access database.
         string dbPath = Path.Combine(Path.GetTempPath(), $"JetLockFin_{Guid.NewGuid():N}.accdb");
         File.WriteAllBytes(dbPath, []);
-        this._tempFiles.Add(dbPath);
+        this.tempFiles.Add(dbPath);
         string lockPath = Path.ChangeExtension(dbPath, ".laccdb");
 
         OpenAndAbandonSlot(dbPath);
@@ -770,7 +770,7 @@ public sealed class LockFileTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string file in this._tempFiles)
+        foreach (string file in this.tempFiles)
         {
             try
             {
@@ -814,7 +814,7 @@ public sealed class LockFileTests : IDisposable
         string ext = Path.GetExtension(sourcePath);
         string temp = Path.Combine(Path.GetTempPath(), $"JetLockTest_{Guid.NewGuid():N}{ext}");
         File.Copy(sourcePath, temp, overwrite: true);
-        this._tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 }
