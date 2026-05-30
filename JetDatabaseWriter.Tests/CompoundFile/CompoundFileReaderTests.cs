@@ -756,7 +756,7 @@ public sealed class CompoundFileReaderTests
 
         const int miniSectorsPerStream = (streamSize + ms - 1) / ms; // 64
         const int totalMiniSectorsActual = miniSectorsPerStream * streamCount; // 192
-        int miniStreamBytes = totalMiniSectorsActual * ms; // 12288
+        const int miniStreamBytes = totalMiniSectorsActual * ms; // 12288
 
         // Sector layout:
         //   0:        Directory (4 entries × 128 = 512 bytes = 1 sector)
