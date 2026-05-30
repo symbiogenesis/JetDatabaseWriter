@@ -305,6 +305,7 @@ internal static class FormatProbeApplication
             WriteComplexAppendixAsync(
             Path.Combine(fixtures, "ComplexFields.accdb"),
             FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md")),
+
             // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
             // limitation in docs/design/index-and-relationship-format-notes.md says Jet3
             // rejects IndexDefinition entirely; format probe establishes empirical ground truth
