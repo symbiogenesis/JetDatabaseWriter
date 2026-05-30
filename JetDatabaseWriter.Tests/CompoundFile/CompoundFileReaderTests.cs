@@ -798,7 +798,7 @@ public sealed class CompoundFileReaderTests
             "Root Entry",
             5,
             1,
-            (uint)miniStreamBytes,
+            miniStreamBytes,
             child: 2,
             left: 0xFFFFFFFF,
             right: 0xFFFFFFFF);
