@@ -317,8 +317,11 @@ internal sealed class RowDecodePlan
                         ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing)
                         : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, this.strictParsing);
 
-                default:
+                case BooleanType:
                     return DBNull.Value;
+
+                default:
+                    throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
             }
         }
         catch (JetLimitationException)
@@ -360,11 +363,26 @@ internal sealed class RowDecodePlan
                 case OleType:
                     needsLongValue = true;
                     return new CalculatedLongValueRef(start, length, column.Type == OleType);
-                default:
+                case BooleanType:
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case MoneyType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case GuidType:
+                case NumericType:
+                case AttachmentType:
+                case ComplexType:
+                case BigIntType:
+                case DateTimeExtendedType:
                     return CalculatedColumnUtil.ReadPayloadTyped(
                         CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
                         JetTypeInfo.ResolveValueType(column),
                         this.strictParsing);
+                default:
+                    throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
             }
         }
         catch (JetLimitationException)

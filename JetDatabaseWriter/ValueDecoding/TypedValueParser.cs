@@ -125,6 +125,18 @@ internal static class TypedValueParser
 
                 failure = "expected a date/time value";
                 return false;
+            case TypeCode.Empty:
+            case TypeCode.Object:
+            case TypeCode.DBNull:
+            case TypeCode.Char:
+            case TypeCode.SByte:
+            case TypeCode.UInt16:
+            case TypeCode.UInt32:
+            case TypeCode.UInt64:
+                break;
+            default:
+                failure = $"unsupported target type {targetType}";
+                return false;
         }
 
         if (targetType == typeof(Guid))

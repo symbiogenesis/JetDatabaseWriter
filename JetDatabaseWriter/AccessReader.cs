@@ -2024,11 +2024,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return DecodeOleValueBytes(payload, 0, payload.Length);
             }
 
-            default:
+            case BooleanType:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case GuidType:
+            case NumericType:
+            case AttachmentType:
+            case ComplexType:
+            case BigIntType:
+            case DateTimeExtendedType:
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
                     JetTypeInfo.ResolveValueType(col),
                     this.strictParsing);
+
+            default:
+                throw new InvalidOperationException($"Calculated column of type {GetTypeDisplayName(col.Type)} is unknown.");
         }
     }
 
@@ -3315,11 +3331,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     return this.longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
                 }
 
-                default:
+                case BooleanType:
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case MoneyType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case GuidType:
+                case NumericType:
+                case AttachmentType:
+                case ComplexType:
+                case BigIntType:
+                case DateTimeExtendedType:
                     return CalculatedColumnUtil.ReadPayloadString(
                         CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
                         JetTypeInfo.ResolveValueType(col),
                         this.strictParsing);
+
+                default:
+                    throw new InvalidOperationException($"Calculated column of type {GetTypeDisplayName(col.Type)} is unknown.");
             }
         }
         catch (JetLimitationException)
