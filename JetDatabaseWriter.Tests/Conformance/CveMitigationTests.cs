@@ -50,7 +50,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         const int tdefPage2Start = 2 * 4096;
         const int numColsOffset = tdefPage2Start + 45;
 
-        if (numColsOffset + 2 > corrupted.Length)
+        if (corrupted.Length < numColsOffset + 2)
         {
             return;
         }
@@ -96,7 +96,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         const int tdefPage2Start = 2 * 4096;
         const int numColsOffset = tdefPage2Start + 45;
 
-        if (numColsOffset + 2 > corrupted.Length)
+        if (corrupted.Length < numColsOffset + 2)
         {
             return;
         }
@@ -144,7 +144,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         const int tdefPage2Start = 2 * 4096;
         const int numRealIdxOffset = tdefPage2Start + 51;
 
-        if (numRealIdxOffset + 4 > corrupted.Length)
+        if (corrupted.Length < numRealIdxOffset + 4)
         {
             return;
         }
