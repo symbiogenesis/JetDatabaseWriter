@@ -3710,8 +3710,7 @@ internal static class LongRowSuffixProbe
         var suffixes = new ushort[size * size];
         var present = new bool[size * size];
 
-        IReadOnlyList<SuffixPatternRow> rows = table.Rows;
-        foreach (SuffixPatternRow row in rows)
+        foreach (SuffixPatternRow row in table.Rows)
         {
             if (row.Seed is not int seed)
             {
