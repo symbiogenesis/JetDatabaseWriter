@@ -22,16 +22,16 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
 
     private static readonly TimeSpan DefaultCompactTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan DefaultDaoCreateTimeout = TimeSpan.FromMinutes(1);
-    private readonly string _databaseExtension;
-    private readonly TimeSpan _compactTimeout;
+    private readonly string databaseExtension;
+    private readonly TimeSpan compactTimeout;
 
     private AccessRoundTripSession(string workDir, string sourcePath, string compactedPath, TimeSpan compactTimeout, string databaseExtension)
     {
         this.WorkDir = workDir;
         this.SourcePath = sourcePath;
         this.CompactedPath = compactedPath;
-        this._databaseExtension = databaseExtension;
-        this._compactTimeout = compactTimeout;
+        this.databaseExtension = databaseExtension;
+        this.compactTimeout = compactTimeout;
     }
 
     /// <summary>Gets the temporary working directory for scripts and databases.</summary>
@@ -148,7 +148,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="prefix">Filename prefix.</param>
     /// <returns>Unique ACCDB path.</returns>
     public string CreateDatabasePath(string prefix) =>
-        Path.Combine(this.WorkDir, $"{prefix}_{Guid.NewGuid():N}{this._databaseExtension}");
+        Path.Combine(this.WorkDir, $"{prefix}_{Guid.NewGuid():N}{this.databaseExtension}");
 
     /// <summary>Copies the Northwind fixture to a unique ACCDB path in the workspace.</summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -173,7 +173,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         AccessRoundTripEnvironment.CompactResult result = AccessRoundTripEnvironment.RunDaoCompact(
             this.SourcePath,
             this.CompactedPath,
-            this._compactTimeout);
+            this.compactTimeout);
 
         if (result.ExitCode != 0 || !File.Exists(this.CompactedPath))
         {

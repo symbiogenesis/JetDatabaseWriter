@@ -11,7 +11,7 @@ using Xunit;
 
 public sealed class AccessReaderRandomAccessTests : IDisposable
 {
-    private readonly List<string> _paths = [];
+    private readonly List<string> paths = [];
 
     [Fact]
     public async Task OpenAsync_PathWithParallelPageReads_UsesRandomAccessPageReads()
@@ -98,7 +98,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string path in this._paths)
+        foreach (string path in this.paths)
         {
             TryDeleteFile(path);
         }
@@ -131,8 +131,8 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     private async ValueTask<string> CreateReadableDatabaseAsync(int rowCount = 1)
     {
         string path = Path.Combine(Path.GetTempPath(), $"ReaderRandomAccess_{Guid.NewGuid():N}.mdb");
-        this._paths.Add(path);
-        this._paths.Add(Path.ChangeExtension(path, ".ldb"));
+        this.paths.Add(path);
+        this.paths.Add(Path.ChangeExtension(path, ".ldb"));
 
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             path,

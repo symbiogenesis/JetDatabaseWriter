@@ -26,7 +26,7 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
-    private readonly List<string> _tempFiles = [];
+    private readonly List<string> tempFiles = [];
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. JET3 XOR MASK
@@ -401,7 +401,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
     public void Dispose()
     {
-        foreach (string path in this._tempFiles)
+        foreach (string path in this.tempFiles)
         {
             try
             {
@@ -627,7 +627,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         string temp = Path.Combine(Path.GetTempPath(), $"JetEncTest_{Guid.NewGuid():N}{extension}");
         File.WriteAllBytes(temp, data);
-        this._tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 }

@@ -256,7 +256,7 @@ internal static class TestDatabases
         ExtDateTestV2019,
     ];
 
-    private static readonly ConcurrentDictionary<string, bool> _readableCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, bool> ReadableCache = new(StringComparer.OrdinalIgnoreCase);
 
     // ── MemberData sets (properties) ──────────────────────────────────
 
@@ -343,7 +343,7 @@ internal static class TestDatabases
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
     /// <param name="path">The file path.</param>
     internal static bool IsReadable(string path) =>
-        _readableCache.GetOrAdd(path, static p =>
+        ReadableCache.GetOrAdd(path, static p =>
         {
             if (!File.Exists(p))
             {
@@ -370,26 +370,26 @@ internal static class TestDatabases
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     internal static async ValueTask<bool> IsReadableAsync(string path, CancellationToken cancellationToken = default)
     {
-        if (_readableCache.TryGetValue(path, out bool cached))
+        if (ReadableCache.TryGetValue(path, out bool cached))
         {
             return cached;
         }
 
         if (!File.Exists(path))
         {
-            _readableCache.TryAdd(path, false);
+            ReadableCache.TryAdd(path, false);
             return false;
         }
 
         try
         {
             await using AccessReader r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
-            _readableCache.TryAdd(path, true);
+            ReadableCache.TryAdd(path, true);
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
         {
-            _readableCache.TryAdd(path, false);
+            ReadableCache.TryAdd(path, false);
             return false;
         }
     }

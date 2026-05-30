@@ -65,69 +65,69 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private static readonly TimeSpan StressCompactTimeout = TimeSpan.FromMinutes(3);
 
 #if NET8_0_OR_GREATER
-    private readonly Lock _sync = new();
+    private readonly Lock sync = new();
 #else
-    private readonly object _sync = new();
+    private readonly object sync = new();
 #endif
-    private readonly List<AccessRoundTripSession> _sessions = [];
-    private Task<ComplexCompactResult>? _complexCompactResultTask;
-    private Task<CoreValidationResult>? _coreResultTask;
-    private Task<DaoMemoResult>? _daoMemoResultTask;
-    private Task<EncryptedCompactResult>? _encryptedCompactResultTask;
-    private Task<StressCompactResult>? _stressCompactResultTask;
+    private readonly List<AccessRoundTripSession> sessions = [];
+    private Task<ComplexCompactResult>? complexCompactResultTask;
+    private Task<CoreValidationResult>? coreResultTask;
+    private Task<DaoMemoResult>? daoMemoResultTask;
+    private Task<EncryptedCompactResult>? encryptedCompactResultTask;
+    private Task<StressCompactResult>? stressCompactResultTask;
 
     internal Task<CoreValidationResult> GetCoreResultAsync(CancellationToken cancellationToken)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._coreResultTask ??= this.BuildCoreResultAsync(cancellationToken);
-            return this._coreResultTask;
+            this.coreResultTask ??= this.BuildCoreResultAsync(cancellationToken);
+            return this.coreResultTask;
         }
     }
 
     internal Task<DaoMemoResult> GetDaoMemoResultAsync(CancellationToken cancellationToken)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._daoMemoResultTask ??= this.BuildDaoMemoResultAsync(cancellationToken);
-            return this._daoMemoResultTask;
+            this.daoMemoResultTask ??= this.BuildDaoMemoResultAsync(cancellationToken);
+            return this.daoMemoResultTask;
         }
     }
 
     internal Task<EncryptedCompactResult> GetEncryptedCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._encryptedCompactResultTask ??= this.BuildEncryptedCompactResultAsync(cancellationToken);
-            return this._encryptedCompactResultTask;
+            this.encryptedCompactResultTask ??= this.BuildEncryptedCompactResultAsync(cancellationToken);
+            return this.encryptedCompactResultTask;
         }
     }
 
     internal Task<ComplexCompactResult> GetComplexCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._complexCompactResultTask ??= this.BuildComplexCompactResultAsync(cancellationToken);
-            return this._complexCompactResultTask;
+            this.complexCompactResultTask ??= this.BuildComplexCompactResultAsync(cancellationToken);
+            return this.complexCompactResultTask;
         }
     }
 
     internal Task<StressCompactResult> GetStressCompactResultAsync(CancellationToken cancellationToken)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._stressCompactResultTask ??= this.BuildStressCompactResultAsync(cancellationToken);
-            return this._stressCompactResultTask;
+            this.stressCompactResultTask ??= this.BuildStressCompactResultAsync(cancellationToken);
+            return this.stressCompactResultTask;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
         AccessRoundTripSession[] sessions;
-        lock (this._sync)
+        lock (this.sync)
         {
-            sessions = [.. this._sessions];
-            this._sessions.Clear();
+            sessions = [.. this.sessions];
+            this.sessions.Clear();
         }
 
         foreach (AccessRoundTripSession session in sessions)
@@ -379,9 +379,9 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private void Track(AccessRoundTripSession session)
     {
-        lock (this._sync)
+        lock (this.sync)
         {
-            this._sessions.Add(session);
+            this.sessions.Add(session);
         }
     }
 

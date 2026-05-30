@@ -332,8 +332,6 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     /// <param name="action">The action.</param>
     private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
     {
-        private readonly Action<T> _action = action;
-
-        public void Report(T value) => this._action(value);
+        public void Report(T value) => action(value);
     }
 }

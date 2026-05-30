@@ -37,11 +37,11 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     private const string FirstPassword = "OriginalPa$$";
     private const string SecondPassword = "Rotated2!Pa$";
 
-    private readonly List<string> _tempFiles = [];
+    private readonly List<string> tempFiles = [];
 
     public void Dispose()
     {
-        foreach (string path in this._tempFiles)
+        foreach (string path in this.tempFiles)
         {
             try
             {
@@ -76,7 +76,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         string blockedPath = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         string blockedLockPath = LockFileSlotWriter.GetLockFilePath(blockedPath);
         await File.WriteAllBytesAsync(blockedLockPath, [1], ct);
-        this._tempFiles.Add(blockedLockPath);
+        this.tempFiles.Add(blockedLockPath);
 
         await Assert.ThrowsAsync<IOException>(async () =>
             await AccessWriter.EncryptAsync(
@@ -90,7 +90,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         string allowedPath = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         string allowedLockPath = LockFileSlotWriter.GetLockFilePath(allowedPath);
         await File.WriteAllBytesAsync(allowedLockPath, new byte[LockFileSlotWriter.SlotSize], ct);
-        this._tempFiles.Add(allowedLockPath);
+        this.tempFiles.Add(allowedLockPath);
 
         var options = new AccessWriterOptions
         {
@@ -585,7 +585,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
         string temp = Path.Combine(Path.GetTempPath(), $"jdwenc_{Guid.NewGuid():N}{ext}");
         await File.WriteAllBytesAsync(temp, bytes, TestContext.Current.CancellationToken);
-        this._tempFiles.Add(temp);
+        this.tempFiles.Add(temp);
         return temp;
     }
 }

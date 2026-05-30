@@ -387,8 +387,8 @@ public sealed class ScaffoldRunnerTests : IDisposable
         Dictionary<string, List<ColumnMetadata>>? columnsByTable = null,
         Dictionary<string, Exception>? failingTables = null) : IAccessReader
     {
-        private readonly Dictionary<string, List<ColumnMetadata>> _columnsByTable = columnsByTable ?? [];
-        private readonly Dictionary<string, Exception> _failingTables = failingTables ?? [];
+        private readonly Dictionary<string, List<ColumnMetadata>> columnsByTable = columnsByTable ?? [];
+        private readonly Dictionary<string, Exception> failingTables = failingTables ?? [];
 
         public DatabaseFormat DatabaseFormat => DatabaseFormat.Jet4Mdb;
 
@@ -413,12 +413,12 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (this._failingTables.TryGetValue(tableName, out Exception? ex))
+            if (this.failingTables.TryGetValue(tableName, out Exception? ex))
             {
                 throw ex;
             }
 
-            if (this._columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
+            if (this.columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
             {
                 return new ValueTask<List<ColumnMetadata>>(cols);
             }

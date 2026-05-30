@@ -17,11 +17,11 @@ public sealed class DatabaseCache : IAsyncDisposable
 {
     private static readonly AccessReaderOptions DefaultOptions = new() { UseLockFile = false };
 
-    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _fileCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, Lazy<Task<AccessReader>>> _readers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> fileCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<AccessReader>>> readers = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<byte[]> GetFileAsync(string path, CancellationToken cancellationToken = default) =>
-        this._fileCache.GetOrAdd(
+        this.fileCache.GetOrAdd(
             path,
             static (p, ct) => new Lazy<Task<byte[]>>(() => File.ReadAllBytesAsync(p, ct)),
             cancellationToken).Value;
@@ -44,7 +44,7 @@ public sealed class DatabaseCache : IAsyncDisposable
     }
 
     public Task<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
-        this._readers.GetOrAdd(
+        this.readers.GetOrAdd(
             path,
             static (p, state) => new Lazy<Task<AccessReader>>(() => AccessReader.OpenAsync(p, state.Options, state.Token).AsTask()),
             (Options: options, Token: cancellationToken)).Value;
@@ -57,7 +57,7 @@ public sealed class DatabaseCache : IAsyncDisposable
         List<Task> disposeTasks = [];
         List<Exception> exceptions = [];
 
-        foreach ((string? key, Lazy<Task<AccessReader>>? lazy) in this._readers)
+        foreach ((string? key, Lazy<Task<AccessReader>>? lazy) in this.readers)
         {
             if (!lazy.IsValueCreated)
             {
@@ -80,8 +80,8 @@ public sealed class DatabaseCache : IAsyncDisposable
             exceptions.Add(new TaskCanceledException(allDisposals));
         }
 
-        this._readers.Clear();
-        this._fileCache.Clear();
+        this.readers.Clear();
+        this.fileCache.Clear();
 
         if (exceptions.Count > 0)
         {
