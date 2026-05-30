@@ -30,12 +30,12 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaIndexDefinition_RoundTrips()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_Single";
+        const string tableName = "Pk_Single";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
@@ -45,7 +45,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal("PK_Pk_Single", pk.Name);
@@ -59,12 +59,12 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaColumnFlag_SynthesizesNamedPrimaryKey()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_ColFlag";
+        const string tableName = "Pk_ColFlag";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
@@ -73,7 +73,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
@@ -86,12 +86,12 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_WithCompositePrimaryKey_RoundTripsAllKeyColumnsInOrder()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_Composite";
+        const string tableName = "Pk_Composite";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("OrderId", typeof(int)),
                     new ColumnDefinition("LineNo", typeof(int)),
@@ -104,7 +104,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
@@ -119,12 +119,12 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_WithCompositePrimaryKey_ViaColumnFlags_PreservesDeclarationOrder()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_CompositeFlag";
+        const string tableName = "Pk_CompositeFlag";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
@@ -134,7 +134,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal("PrimaryKey", pk.Name);
@@ -146,13 +146,13 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_PrimaryKeyColumns_AreForcedNonNullable()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_NonNull";
+        const string tableName = "Pk_NonNull";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Default IsNullable=true on the Id column; the PK shortcut must override it to false.
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
@@ -161,7 +161,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         ColumnMetadata id = meta.Single(c => c.Name == "Id");
         ColumnMetadata name = meta.Single(c => c.Name == "Name");
         Assert.False(id.IsNullable);
@@ -172,12 +172,12 @@ public sealed class IndexPrimaryKeyWriterTests
     public async Task CreateTable_PrimaryKeyAlongsideRegularIndex_BothEmitted()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        const string TableName = "Pk_PlusIx";
+        const string tableName = "Pk_PlusIx";
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Score", typeof(int)),
@@ -190,7 +190,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, indexes.Count);
         IndexMetadata pk = Assert.Single(indexes, i => i.Kind == IndexKind.PrimaryKey);

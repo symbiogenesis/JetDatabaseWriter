@@ -91,7 +91,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken,
             compactTimeout: CompactTimeout);
 
-        const string TableName = "SM_NorthwindCatalog";
+        const string tableName = "SM_NorthwindCatalog";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -99,7 +99,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("Label", typeof(string), maxLength: 80),
@@ -107,7 +107,7 @@ public sealed class DaoStorageMaintenanceTests
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
-                TableName,
+                tableName,
                 [[1, "northwind-hosted-one"], [2, "northwind-hosted-two"]],
                 TestContext.Current.CancellationToken);
         }
@@ -119,7 +119,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable writerRows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable writerRows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, writerRows.Rows.Count);
         Assert.Contains(
             writerRows.AsEnumerable(),
@@ -187,7 +187,7 @@ public sealed class DaoStorageMaintenanceTests
 
         AssertDaoSuccess(jet3OpenProbe, "DAO Jet3 fixture open probe");
 
-        const string TableName = "SM_Jet3Index";
+        const string tableName = "SM_Jet3Index";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -195,7 +195,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("Code", typeof(string), maxLength: 32) { IsNullable = false },
@@ -207,10 +207,10 @@ public sealed class DaoStorageMaintenanceTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowsAsync(TableName, BuildJet3IndexRows(), TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, BuildJet3IndexRows(), TestContext.Current.CancellationToken);
 
             int updated = await writer.UpdateRowsAsync(
-                TableName,
+                tableName,
                 "Id",
                 42,
                 new Dictionary<string, object?>
@@ -221,10 +221,10 @@ public sealed class DaoStorageMaintenanceTests
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
 
-            int deleted = await writer.DeleteRowsAsync(TableName, "Id", 17, TestContext.Current.CancellationToken);
+            int deleted = await writer.DeleteRowsAsync(tableName, "Id", 17, TestContext.Current.CancellationToken);
             Assert.Equal(1, deleted);
 
-            await writer.InsertRowAsync(TableName, [Jet3IndexRows + 1, "J3_INSERTED", 12345], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [Jet3IndexRows + 1, "J3_INSERTED", 12345], TestContext.Current.CancellationToken);
         }
 
         const string preCompactScript =
@@ -248,7 +248,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(Jet3IndexRows, rows.Rows.Count);
         Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
         Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == Jet3IndexRows + 1);
@@ -257,7 +257,7 @@ public sealed class DaoStorageMaintenanceTests
         Assert.Equal("J3_UPDATED", SafeString(updatedRow, "Code"));
         Assert.Equal(-420, Convert.ToInt32(updatedRow["Score"], CultureInfo.InvariantCulture));
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(indexes, index => index.Kind == IndexKind.PrimaryKey && HasSingleColumn(index, "Id"));
         Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Code" && HasSingleColumn(index, "Code"));
         Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Score" && HasSingleColumn(index, "Score"));
@@ -272,8 +272,8 @@ public sealed class DaoStorageMaintenanceTests
         await using var session = AccessRoundTripSession.CreateEmpty(compactTimeout: CompactTimeout);
         await CopyDatabaseAsync(TestDatabases.ComplexFields, session.SourcePath, TestContext.Current.CancellationToken);
 
-        const string TableName = "Documents";
-        const string AttachmentColumn = "Attachments";
+        const string tableName = "Documents";
+        const string attachmentColumn = "Attachments";
         byte[] largeAttachmentPayload = BuildPayload(12 * 1024, 0x6A);
         byte[] extraAttachmentPayload = BuildPayload(8 * 1024, 0x2B);
         byte[] secondParentAttachmentPayload = BuildPayload(10 * 1024, 0x3C);
@@ -286,20 +286,20 @@ public sealed class DaoStorageMaintenanceTests
             var firstParentKey = new Dictionary<string, object?> { ["ID"] = 1 };
             var secondParentKey = new Dictionary<string, object?> { ["ID"] = 2 };
             await writer.AddAttachmentAsync(
-                TableName,
-                AttachmentColumn,
+                tableName,
+                attachmentColumn,
                 firstParentKey,
                 new AttachmentInput("fixture-complex.jpg", largeAttachmentPayload),
                 TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync(
-                TableName,
-                AttachmentColumn,
+                tableName,
+                attachmentColumn,
                 firstParentKey,
                 new AttachmentInput("fixture-complex-extra.jpg", extraAttachmentPayload),
                 TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync(
-                TableName,
-                AttachmentColumn,
+                tableName,
+                attachmentColumn,
                 secondParentKey,
                 new AttachmentInput("fixture-second.jpg", secondParentAttachmentPayload),
                 TestContext.Current.CancellationToken);
@@ -312,19 +312,19 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable parent = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable parent = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, parent.Rows.Count);
         Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["ID"], CultureInfo.InvariantCulture) == 1);
         Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["ID"], CultureInfo.InvariantCulture) == 2);
 
-        IReadOnlyList<ComplexColumnInfo> complexColumns = await reader.GetComplexColumnsAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ComplexColumnInfo> complexColumns = await reader.GetComplexColumnsAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Single(complexColumns);
 
-        ComplexColumnInfo attachmentInfo = Assert.Single(complexColumns, column => string.Equals(column.ColumnName, AttachmentColumn, StringComparison.OrdinalIgnoreCase));
+        ComplexColumnInfo attachmentInfo = Assert.Single(complexColumns, column => string.Equals(column.ColumnName, attachmentColumn, StringComparison.OrdinalIgnoreCase));
         Assert.Equal(ComplexColumnKind.Attachment, attachmentInfo.Kind);
         Assert.False(string.IsNullOrEmpty(attachmentInfo.FlatTableName));
 
-        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(TableName, AttachmentColumn, TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(tableName, attachmentColumn, TestContext.Current.CancellationToken);
         Assert.True(attachments.Count >= 5, $"Expected the two fixture attachments plus three writer-added attachments, got {attachments.Count}.");
         AttachmentRecord largeAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-complex.jpg", StringComparison.Ordinal));
         AttachmentRecord extraAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-complex-extra.jpg", StringComparison.Ordinal));
@@ -436,7 +436,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken,
             compactTimeout: CompactTimeout);
 
-        const string TableName = "SM_AdvancedIndex";
+        const string tableName = "SM_AdvancedIndex";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -444,7 +444,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("Code", typeof(string), maxLength: 80) { IsNullable = false },
@@ -461,10 +461,10 @@ public sealed class DaoStorageMaintenanceTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowsAsync(TableName, BuildAdvancedIndexRows(), TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, BuildAdvancedIndexRows(), TestContext.Current.CancellationToken);
 
             int updated = await writer.UpdateRowsAsync(
-                TableName,
+                tableName,
                 "Id",
                 42,
                 new Dictionary<string, object?>
@@ -478,10 +478,10 @@ public sealed class DaoStorageMaintenanceTests
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
 
-            int deleted = await writer.DeleteRowsAsync(TableName, "Id", 17, TestContext.Current.CancellationToken);
+            int deleted = await writer.DeleteRowsAsync(tableName, "Id", 17, TestContext.Current.CancellationToken);
             Assert.Equal(1, deleted);
 
-            await writer.InsertRowsAsync(TableName, [BuildAdvancedIndexRow(301)], TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, [BuildAdvancedIndexRow(301)], TestContext.Current.CancellationToken);
         }
 
         const string advancedIndexSeekProbe =
@@ -536,7 +536,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(AdvancedIndexRows, rows.Rows.Count);
         Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
         Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 301);
@@ -548,7 +548,7 @@ public sealed class DaoStorageMaintenanceTests
         Assert.Equal(BuildAdvancedBinaryKey(4200), Assert.IsType<byte[]>(updatedRow["BinKey"]));
         Assert.Equal(-4200, Convert.ToInt32(updatedRow["Score"], CultureInfo.InvariantCulture));
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Single(indexes, index => index.Kind == IndexKind.PrimaryKey);
 
         IndexMetadata codeScoreIndex = Assert.Single(indexes, index => index.Name == "IX_CodeScore");
@@ -590,10 +590,10 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken,
             compactTimeout: CompactTimeout);
 
-        const string Parent = "SM_RenameParent";
-        const string WideChild = "SM_RenameWideChild";
-        const string OldRelationship = "SM_FK_RenameWide_Old";
-        const string NewRelationship = "SM_FK_RenameWide_New";
+        const string parent = "SM_RenameParent";
+        const string wideChild = "SM_RenameWideChild";
+        const string oldRelationship = "SM_FK_RenameWide_Old";
+        const string newRelationship = "SM_FK_RenameWide_New";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -601,12 +601,12 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                Parent,
+                parent,
                 [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
                 TestContext.Current.CancellationToken);
             await CreateWideTDefTableAsync(
                 writer,
-                WideChild,
+                wideChild,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("ParentId", typeof(int)) { IsNullable = false },
@@ -615,25 +615,25 @@ public sealed class DaoStorageMaintenanceTests
                 indexCount: 30,
                 cancellationToken: TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(Parent, [1], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(parent, [1], TestContext.Current.CancellationToken);
 
             object[] wideChildRow = Enumerable.Range(0, 40).Select(value => (object)value).ToArray();
             wideChildRow[0] = 1;
             wideChildRow[1] = 1;
-            await writer.InsertRowAsync(WideChild, wideChildRow, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(wideChild, wideChildRow, TestContext.Current.CancellationToken);
 
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition(OldRelationship, Parent, "Id", WideChild, "ParentId")
+                new RelationshipDefinition(oldRelationship, parent, "Id", wideChild, "ParentId")
                 {
                     EnforceReferentialIntegrity = true,
                 },
                 TestContext.Current.CancellationToken);
 
-            await writer.RenameRelationshipAsync(OldRelationship, NewRelationship, TestContext.Current.CancellationToken);
+            await writer.RenameRelationshipAsync(oldRelationship, newRelationship, TestContext.Current.CancellationToken);
         }
 
-        int widePagesAfterRename = await CountTDefChainPagesAsync(WideChild, session.SourcePath, TestContext.Current.CancellationToken);
-        Assert.True(widePagesAfterRename > 1, $"Expected {WideChild} to exercise a multi-page TDEF chain before DAO compact.");
+        int widePagesAfterRename = await CountTDefChainPagesAsync(wideChild, session.SourcePath, TestContext.Current.CancellationToken);
+        Assert.True(widePagesAfterRename > 1, $"Expected {wideChild} to exercise a multi-page TDEF chain before DAO compact.");
 
         session.RunDaoCompact();
 
@@ -642,14 +642,14 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable wideChildRows = await reader.ReadDataTableAsync(WideChild, cancellationToken: TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(Parent, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(WideChild, TestContext.Current.CancellationToken);
+        DataTable wideChildRows = await reader.ReadDataTableAsync(wideChild, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(wideChild, TestContext.Current.CancellationToken);
         DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, wideChildRows.Rows.Count);
-        AssertRenamedRelationshipSurvived(relationships, Parent, parentIndexes, OldRelationship, NewRelationship, requireNamedIndex: false);
-        AssertRenamedRelationshipSurvived(relationships, WideChild, childIndexes, OldRelationship, NewRelationship, requireNamedIndex: true);
+        AssertRenamedRelationshipSurvived(relationships, parent, parentIndexes, oldRelationship, newRelationship, requireNamedIndex: false);
+        AssertRenamedRelationshipSurvived(relationships, wideChild, childIndexes, oldRelationship, newRelationship, requireNamedIndex: true);
     }
 
     [Fact(
@@ -662,12 +662,12 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken,
             compactTimeout: CompactTimeout);
 
-        const string IndexedParent = "SM_IndexParent";
-        const string IndexedChild = "SM_IndexChild";
-        const string IndexedRelationship = "SM_FK_IndexChild_Parent";
-        const string WideParent = "SM_WideParent";
-        const string WideChild = "SM_WideChild";
-        const string WideRelationship = "SM_FK_WideChild_Parent";
+        const string indexedParent = "SM_IndexParent";
+        const string indexedChild = "SM_IndexChild";
+        const string indexedRelationship = "SM_FK_IndexChild_Parent";
+        const string wideParent = "SM_WideParent";
+        const string wideChild = "SM_WideChild";
+        const string wideRelationship = "SM_FK_WideChild_Parent";
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -675,7 +675,7 @@ public sealed class DaoStorageMaintenanceTests
             TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                IndexedParent,
+                indexedParent,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -683,7 +683,7 @@ public sealed class DaoStorageMaintenanceTests
                 TestContext.Current.CancellationToken);
 
             await writer.CreateTableAsync(
-                IndexedChild,
+                indexedChild,
                 [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("ParentId", typeof(int)) { IsNullable = false },
@@ -691,11 +691,11 @@ public sealed class DaoStorageMaintenanceTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowsAsync(IndexedParent, BuildIndexedParentRows(), TestContext.Current.CancellationToken);
-            await writer.InsertRowsAsync(IndexedChild, BuildIndexedChildRows(), TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(indexedParent, BuildIndexedParentRows(), TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(indexedChild, BuildIndexedChildRows(), TestContext.Current.CancellationToken);
 
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition(IndexedRelationship, IndexedParent, "Id", IndexedChild, "ParentId")
+                new RelationshipDefinition(indexedRelationship, indexedParent, "Id", indexedChild, "ParentId")
                 {
                     EnforceReferentialIntegrity = true,
                 },
@@ -703,31 +703,31 @@ public sealed class DaoStorageMaintenanceTests
 
             await CreateWideTDefTableAsync(
                 writer,
-                WideParent,
+                wideParent,
                 [new("Id", typeof(int))],
                 columnCount: 115,
                 indexCount: 0,
                 cancellationToken: TestContext.Current.CancellationToken);
-            await writer.CreateTableAsync(WideChild, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(wideChild, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition(WideRelationship, WideParent, "Id", WideChild, "ParentId"),
+                new RelationshipDefinition(wideRelationship, wideParent, "Id", wideChild, "ParentId"),
                 TestContext.Current.CancellationToken);
         }
 
-        int widePagesWithRelationship = await CountTDefChainPagesAsync(WideParent, session.SourcePath, TestContext.Current.CancellationToken);
+        int widePagesWithRelationship = await CountTDefChainPagesAsync(wideParent, session.SourcePath, TestContext.Current.CancellationToken);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
             new AccessWriterOptions { UseLockFile = false },
             TestContext.Current.CancellationToken))
         {
-            await writer.DropRelationshipAsync(WideRelationship, TestContext.Current.CancellationToken);
+            await writer.DropRelationshipAsync(wideRelationship, TestContext.Current.CancellationToken);
         }
 
-        int widePagesAfterDrop = await CountTDefChainPagesAsync(WideParent, session.SourcePath, TestContext.Current.CancellationToken);
+        int widePagesAfterDrop = await CountTDefChainPagesAsync(wideParent, session.SourcePath, TestContext.Current.CancellationToken);
         Assert.True(
             widePagesAfterDrop < widePagesWithRelationship,
-            $"Expected {WideParent} TDEF chain to shorten after dropping {WideRelationship}; before={widePagesWithRelationship}, after={widePagesAfterDrop}.");
+            $"Expected {wideParent} TDEF chain to shorten after dropping {wideRelationship}; before={widePagesWithRelationship}, after={widePagesAfterDrop}.");
 
         session.RunDaoCompact();
 
@@ -736,19 +736,19 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable child = await reader.ReadDataTableAsync(IndexedChild, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable child = await reader.ReadDataTableAsync(indexedChild, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(IndexRows, child.Rows.Count);
 
-        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(IndexedChild, TestContext.Current.CancellationToken);
-        Assert.Contains(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == IndexedRelationship);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(indexedChild, TestContext.Current.CancellationToken);
+        Assert.Contains(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == indexedRelationship);
 
-        IReadOnlyList<IndexMetadata> wideParentIndexes = await reader.ListIndexesAsync(WideParent, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> wideChildIndexes = await reader.ListIndexesAsync(WideChild, TestContext.Current.CancellationToken);
-        Assert.DoesNotContain(wideParentIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == WideRelationship);
-        Assert.DoesNotContain(wideChildIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == WideRelationship);
+        IReadOnlyList<IndexMetadata> wideParentIndexes = await reader.ListIndexesAsync(wideParent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> wideChildIndexes = await reader.ListIndexesAsync(wideChild, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(wideParentIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == wideRelationship);
+        Assert.DoesNotContain(wideChildIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == wideRelationship);
 
         DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), WideRelationship, StringComparison.Ordinal));
+        Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), wideRelationship, StringComparison.Ordinal));
     }
 
     private static object[][] BuildIndexedParentRows()

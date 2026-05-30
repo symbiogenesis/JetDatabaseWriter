@@ -255,7 +255,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_WriterRoundTrip_InsertedRow_VisibleAfterReopen()
     {
-        const string TableName = "StandardWriteRoundTrip";
+        const string tableName = "StandardWriteRoundTrip";
 
         byte[] data = await this.BuildStandardEncryptedFixtureAsync();
         string temp = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.accdb");
@@ -272,7 +272,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync(
-                    TableName,
+                    tableName,
                     [
                         new ColumnDefinition("Id", typeof(int)),
                         new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -280,7 +280,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                     TestContext.Current.CancellationToken);
 
                 await writer.InsertRowAsync(
-                    TableName,
+                    tableName,
                     [99, "standard-write-roundtrip"],
                     TestContext.Current.CancellationToken);
             }
@@ -290,7 +290,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             // Reopen via AccessReader: must detect Standard encryption,
             // decrypt, and surface the freshly-inserted row.
             await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);
@@ -624,7 +624,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task Standard_ChangePassword_OnlyNewPasswordWorks()
     {
-        const string NewPassword = "rotated!Pa$$";
+        const string newPassword = "rotated!Pa$$";
         string path = await this.CloneTempFileAsync(".accdb");
         try
         {
@@ -638,7 +638,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             await AccessWriter.ChangePasswordAsync(
                 path,
                 TestPassword,
-                NewPassword,
+                newPassword,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 
@@ -650,7 +650,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                 async () => await AccessReader.OpenAsync(path, oldOpts, TestContext.Current.CancellationToken));
 
             // New password should work.
-            var newOpts = new AccessReaderOptions { Password = NewPassword.AsMemory(), UseLockFile = false };
+            var newOpts = new AccessReaderOptions { Password = newPassword.AsMemory(), UseLockFile = false };
             await using AccessReader reader = await AccessReader.OpenAsync(path, newOpts, TestContext.Current.CancellationToken);
             List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.NotEmpty(tables);

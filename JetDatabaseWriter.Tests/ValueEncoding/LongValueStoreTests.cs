@@ -42,19 +42,19 @@ public sealed class LongValueStoreTests
     [Fact]
     public async Task ReadChainedPayloadAsync_StopsAtCycleAndReturnsBytesRead()
     {
-        const int PageSize = 64;
+        const int pageSize = 64;
         uint firstDp = LongValueStore.MakeRowPointer(4, rowIndex: 0);
         uint secondDp = LongValueStore.MakeRowPointer(5, rowIndex: 0);
         var rows = new Dictionary<uint, LongValueStore.LvalRowLocation>
         {
-            [firstDp] = CreateChainedRow(secondDp, [0x41, 0x42, 0x43], PageSize),
-            [secondDp] = CreateChainedRow(firstDp, [0x44, 0x45, 0x46], PageSize),
+            [firstDp] = CreateChainedRow(secondDp, [0x41, 0x42, 0x43], pageSize),
+            [secondDp] = CreateChainedRow(firstDp, [0x44, 0x45, 0x46], pageSize),
         };
 
         LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
             firstDp,
             maxLength: 10,
-            PageSize,
+            pageSize,
             (lvalDp, _) => new ValueTask<LongValueStore.LvalRowLocation>(rows[lvalDp]),
             CancellationToken.None);
 

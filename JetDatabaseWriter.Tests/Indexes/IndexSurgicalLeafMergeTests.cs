@@ -161,8 +161,8 @@ public sealed class IndexSurgicalLeafMergeTests
         // reclaimed by Compact & Repair).
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        const int Total = 1200;
-        const int LeftAndMidCount = 802; // matches the bulk builder split
+        const int total = 1200;
+        const int leftAndMidCount = 802; // matches the bulk builder split
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -175,10 +175,10 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[Total][];
-            for (int i = 0; i < Total; i++)
+            var rows = new object[total][];
+            for (int i = 0; i < total; i++)
             {
-                rows[i] = [i * 10, i < LeftAndMidCount ? "AB" : "C"];
+                rows[i] = [i * 10, i < leftAndMidCount ? "AB" : "C"];
             }
 
             await writer.InsertRowsAsync("T", rows, this.ct);
@@ -186,11 +186,11 @@ public sealed class IndexSurgicalLeafMergeTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        const int ExpectedDeletes = Total - LeftAndMidCount; // 398
+        const int expectedDeletes = total - leftAndMidCount; // 398
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Region", "C", this.ct);
-            Assert.Equal(ExpectedDeletes, deleted);
+            Assert.Equal(expectedDeletes, deleted);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
@@ -199,7 +199,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(LeftAndMidCount, dt.Rows.Count);
+        Assert.Equal(leftAndMidCount, dt.Rows.Count);
 
         foreach (DataRow r in dt.Rows)
         {
@@ -345,8 +345,8 @@ public sealed class IndexSurgicalLeafMergeTests
         // are valid — the seeker descends through their lone child pointer.
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        const int Total = 800;
-        const int LeftLeafCount = 401; // matches the bulk builder split
+        const int total = 800;
+        const int leftLeafCount = 401; // matches the bulk builder split
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -359,10 +359,10 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[Total][];
-            for (int i = 0; i < Total; i++)
+            var rows = new object[total][];
+            for (int i = 0; i < total; i++)
             {
-                rows[i] = [i * 10, i < LeftLeafCount ? "A" : "B"];
+                rows[i] = [i * 10, i < leftLeafCount ? "A" : "B"];
             }
 
             await writer.InsertRowsAsync("T", rows, this.ct);
@@ -370,11 +370,11 @@ public sealed class IndexSurgicalLeafMergeTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        const int ExpectedDeletes = Total - LeftLeafCount; // 399
+        const int expectedDeletes = total - leftLeafCount; // 399
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Region", "B", this.ct);
-            Assert.Equal(ExpectedDeletes, deleted);
+            Assert.Equal(expectedDeletes, deleted);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
@@ -383,7 +383,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Equal(LeftLeafCount, dt.Rows.Count);
+        Assert.Equal(leftLeafCount, dt.Rows.Count);
         foreach (DataRow r in dt.Rows)
         {
             Assert.Equal("A", (string)r["Region"]);

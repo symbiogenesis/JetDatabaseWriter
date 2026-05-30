@@ -50,15 +50,15 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
     {
         await using var session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
         string dbPath = session.CreateDatabasePath("vh_lval_stress");
-        const string TableName = "VhLval";
-        const string MemoColumn = "Notes";
+        const string tableName = "VhLval";
+        const string memoColumn = "Notes";
 
         // Each version's text is a deterministic, easy-to-verify string of
         // a known length. Long versions repeat a single character so we can
         // recompute them in-process for byte-exact comparison.
         string[] versions = BuildVersionPayloads();
 
-        string script = BuildAuthoringScript(dbPath, TableName, MemoColumn, versions);
+        string script = BuildAuthoringScript(dbPath, tableName, memoColumn, versions);
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
@@ -70,7 +70,7 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
             TestContext.Current.CancellationToken);
 
         IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync(
-            TableName,
+            tableName,
             TestContext.Current.CancellationToken);
 
         ComplexColumnInfo vhCol = Assert.Single(

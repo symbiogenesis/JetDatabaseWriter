@@ -127,8 +127,8 @@ public sealed class WriterRealIdxFlagsOffsetTests
         // Record which offset DAO uses so the writer test below can assert
         // the writer agrees with ground truth (not with mdbtools docs).
         int daoFlagsOffset = offset42IsFlags ? CandidateOffset_Mdbtools : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
-        const string Fmt = "H23 CONFIRMED: DAO writes the real-idx flags byte at offset {0} (NOT the writer's current offset {1}). The writer must move the flags stamp from Constants.TableDefinition.Jet4.RealIdx.FlagsOffset = 46 to {0}. {2}";
-        string h23Message = string.Format(CultureInfo.InvariantCulture, Fmt, daoFlagsOffset, Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, summary);
+        const string fmt = "H23 CONFIRMED: DAO writes the real-idx flags byte at offset {0} (NOT the writer's current offset {1}). The writer must move the flags stamp from Constants.TableDefinition.Jet4.RealIdx.FlagsOffset = 46 to {0}. {2}";
+        string h23Message = string.Format(CultureInfo.InvariantCulture, fmt, daoFlagsOffset, Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, summary);
         Assert.True(daoFlagsOffset == Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, h23Message);
     }
 

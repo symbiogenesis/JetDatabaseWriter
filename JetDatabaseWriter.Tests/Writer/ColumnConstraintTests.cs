@@ -243,7 +243,7 @@ public sealed class ColumnConstraintTests
         }
 
         byte[] disk = stream.ToArray();
-        const byte AllowedFlagsMask = Constants.ColumnDescriptorFlags.Fixed
+        const byte allowedFlagsMask = Constants.ColumnDescriptorFlags.Fixed
             | Constants.ColumnDescriptorFlags.Unknown
             | Constants.ColumnDescriptorFlags.AutoNumber
             | Constants.ColumnDescriptorFlags.Hyperlink;
@@ -270,7 +270,7 @@ public sealed class ColumnConstraintTests
             {
                 int co = colStart + (c * 25);
                 byte flags = disk[co + 15]; // descriptor-relative flags offset
-                Assert.Equal(0, flags & ~AllowedFlagsMask);
+                Assert.Equal(0, flags & ~allowedFlagsMask);
                 Assert.Equal(0, flags & 0x08); // explicit guard against the removed NOT-NULL bit
             }
 

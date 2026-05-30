@@ -51,9 +51,9 @@ public sealed class AccessRoundTripTests
 
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 #if NET8_0_OR_GREATER
-    private static readonly Lock relationshipRoundTripSync = new();
+    private static readonly Lock RelationshipRoundTripSync = new();
 #else
-    private static readonly object relationshipRoundTripSync = new();
+    private static readonly object RelationshipRoundTripSync = new();
 #endif
     private static Task<RelationshipRoundTripResult>? relationshipRoundTripTask;
 
@@ -86,7 +86,7 @@ public sealed class AccessRoundTripTests
 
     private static Task<RelationshipRoundTripResult> GetRelationshipRoundTripResultAsync(CancellationToken cancellationToken)
     {
-        lock (relationshipRoundTripSync)
+        lock (RelationshipRoundTripSync)
         {
             relationshipRoundTripTask ??= BuildRelationshipRoundTripResultAsync(cancellationToken);
             return relationshipRoundTripTask;

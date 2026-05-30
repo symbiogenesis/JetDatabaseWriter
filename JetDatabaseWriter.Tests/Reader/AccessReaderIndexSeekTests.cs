@@ -89,7 +89,7 @@ public sealed class AccessReaderIndexSeekTests
     [Fact]
     public async Task SeekRowsAsync_NonUniqueIndex_WalksSiblingLeavesAndMatchesFullTableScan()
     {
-        const int RowCount = 700;
+        const int rowCount = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -104,8 +104,8 @@ public sealed class AccessReaderIndexSeekTests
                 [new IndexDefinition("IX_Bucket", "Bucket")],
                 TestContext.Current.CancellationToken);
 
-            var rows = new List<object[]>(RowCount);
-            for (int id = 0; id < RowCount; id++)
+            var rows = new List<object[]>(rowCount);
+            for (int id = 0; id < rowCount; id++)
             {
                 rows.Add([id, 7, FormattableString.Invariant($"N{id:D3}")]);
             }
@@ -118,14 +118,14 @@ public sealed class AccessReaderIndexSeekTests
         List<object[]> expected = await ScanAsync(reader, "Dupes", row => (int)row[1] == 7);
         List<object[]> actual = await SeekAsync(reader, "Dupes", "IX_Bucket", [7]);
 
-        Assert.Equal(RowCount, actual.Count);
+        Assert.Equal(rowCount, actual.Count);
         Assert.Equal(RowIds(expected, 0), RowIds(actual, 0));
     }
 
     [Fact]
     public async Task SeekRowsAsync_AppendedTailKey_UsesTailPageFallThrough()
     {
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -139,8 +139,8 @@ public sealed class AccessReaderIndexSeekTests
                 [new IndexDefinition("IX_Id", "Id")],
                 TestContext.Current.CancellationToken);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int id = 0; id < InitialRows; id++)
+            var rows = new List<object[]>(initialRows);
+            for (int id = 0; id < initialRows; id++)
             {
                 rows.Add([id, FormattableString.Invariant($"row-{id:D3}")]);
             }
@@ -150,14 +150,14 @@ public sealed class AccessReaderIndexSeekTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.InsertRowAsync("T", [InitialRows, "tail"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [initialRows, "tail"], TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<object[]> rowsFound = await SeekAsync(reader, "T", "IX_Id", [InitialRows]);
+        List<object[]> rowsFound = await SeekAsync(reader, "T", "IX_Id", [initialRows]);
 
         object[] row = Assert.Single(rowsFound);
-        Assert.Equal([InitialRows, "tail"], row);
+        Assert.Equal([initialRows, "tail"], row);
     }
 
     [Fact]

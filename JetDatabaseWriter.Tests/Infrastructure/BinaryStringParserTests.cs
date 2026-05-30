@@ -9,10 +9,10 @@ public sealed class BinaryStringParserTests
     [Fact]
     public void TryDecodeBase64_DecodesPayloadSpan()
     {
-        const string DataUri = "data:application/octet-stream;base64,AAECAwQ=";
-        int comma = DataUri.IndexOf(',', StringComparison.Ordinal);
+        const string dataUri = "data:application/octet-stream;base64,AAECAwQ=";
+        int comma = dataUri.IndexOf(',', StringComparison.Ordinal);
 
-        bool decoded = BinaryStringParser.TryDecodeBase64(DataUri.AsSpan(comma + 1), out byte[] bytes);
+        bool decoded = BinaryStringParser.TryDecodeBase64(dataUri.AsSpan(comma + 1), out byte[] bytes);
 
         byte[] expected = [0, 1, 2, 3, 4];
         Assert.True(decoded);

@@ -29,7 +29,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             return;
         }
 
-        const int ReaderCount = 8;
+        const int readerCount = 8;
         CancellationToken ct = TestContext.Current.CancellationToken;
 
         // Establish ground-truth row counts via the shared cached reader.
@@ -47,8 +47,8 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
         // count rows in every table. Any locking / shared-state bug in the
         // page cache, lock-file coordinator, or stream wrapper surfaces as a
         // mismatched row count, an exception, or a deadlock.
-        var tasks = new Task<Dictionary<string, long>>[ReaderCount];
-        for (int i = 0; i < ReaderCount; i++)
+        var tasks = new Task<Dictionary<string, long>>[readerCount];
+        for (int i = 0; i < readerCount; i++)
         {
             tasks[i] = Task.Run(
                 async () =>
@@ -179,8 +179,8 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             }
         }
 
-        const int ReadCount = 6;
-        Task<int>[] tasks = Enumerable.Range(0, ReadCount)
+        const int readCount = 6;
+        Task<int>[] tasks = Enumerable.Range(0, readCount)
             .Select(_ => Task.Run(
                 async () =>
                 {

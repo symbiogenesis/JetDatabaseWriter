@@ -50,7 +50,7 @@ public sealed class IndexBulkInsertStressTests
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        const int RowCount = 1500;
+        const int rowCount = 1500;
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -60,14 +60,14 @@ public sealed class IndexBulkInsertStressTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[RowCount][];
-            for (int i = 0; i < RowCount; i++)
+            var rows = new object[rowCount][];
+            for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [i + 1];
             }
 
             int inserted = await writer.InsertRowsAsync("Big", rows, this.ct);
-            Assert.Equal(RowCount, inserted);
+            Assert.Equal(rowCount, inserted);
         }
 
         // Reader must surface every row. (Round-trip via ReadDataTableAsync
@@ -75,16 +75,16 @@ public sealed class IndexBulkInsertStressTests
         // exercised purely on the write side.)
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(RowCount, dt.Rows.Count);
+        Assert.Equal(rowCount, dt.Rows.Count);
         var seen = new HashSet<int>();
         foreach (DataRow r in dt.Rows)
         {
             seen.Add((int)r["Id"]);
         }
 
-        Assert.Equal(RowCount, seen.Count);
+        Assert.Equal(rowCount, seen.Count);
         Assert.Equal(1, seen.Min());
-        Assert.Equal(RowCount, seen.Max());
+        Assert.Equal(rowCount, seen.Max());
 
         // Sanity-check on the file structure: at least two index leaf pages
         // were emitted by the rebuild — that's the hallmark of a multi-leaf
@@ -211,7 +211,7 @@ public sealed class IndexBulkInsertStressTests
     public async Task BulkInsert_ThenDeleteRange_LeavesConsistentIndex(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
-        const int RowCount = 800;
+        const int rowCount = 800;
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -224,8 +224,8 @@ public sealed class IndexBulkInsertStressTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[RowCount][];
-            for (int i = 0; i < RowCount; i++)
+            var rows = new object[rowCount][];
+            for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [i + 1, "n" + i];
             }
@@ -243,13 +243,13 @@ public sealed class IndexBulkInsertStressTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(RowCount - 2, dt.Rows.Count);
+        Assert.Equal(rowCount - 2, dt.Rows.Count);
 
         var ids = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();
         Assert.DoesNotContain(400, ids);
         Assert.DoesNotContain(799, ids);
         Assert.Contains(1, ids);
-        Assert.Contains(RowCount, ids);
+        Assert.Contains(rowCount, ids);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────

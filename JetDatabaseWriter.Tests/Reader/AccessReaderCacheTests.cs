@@ -444,13 +444,13 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static byte[] ConvertOwnedUsageMapToReference(byte[] fileBytes, int pageSize, long tdefPage)
     {
-        const int DataPageRowsStart = 14;
+        const int dataPageRowsStart = 14;
 
         int tdefOffset = checked((int)(tdefPage * pageSize));
         int usageMapRow = fileBytes[tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset];
         int usageMapPage = ReadUInt24(fileBytes, tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset + 1);
         int usageMapOffset = checked(usageMapPage * pageSize);
-        int rowOffsetPosition = usageMapOffset + DataPageRowsStart + (usageMapRow * 2);
+        int rowOffsetPosition = usageMapOffset + dataPageRowsStart + (usageMapRow * 2);
         int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;
         int rowAbsoluteStart = usageMapOffset + rowStart;
         Assert.Equal(Constants.UsageMap.InlineMapType, fileBytes[rowAbsoluteStart]);

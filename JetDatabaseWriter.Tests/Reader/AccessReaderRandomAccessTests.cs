@@ -34,8 +34,8 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     [Fact]
     public async Task OpenAsync_PathWithParallelPageReads_ReadsMultiPageTableInOrder()
     {
-        const int RowCount = 2_000;
-        string path = await this.CreateReadableDatabaseAsync(RowCount);
+        const int rowCount = 2_000;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
@@ -54,7 +54,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             Assert.Equal(count, Assert.IsType<int>(row[0]));
         }
 
-        Assert.Equal(RowCount, count);
+        Assert.Equal(rowCount, count);
     }
 
     [Fact]

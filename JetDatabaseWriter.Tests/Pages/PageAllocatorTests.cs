@@ -77,8 +77,8 @@ public sealed class PageAllocatorTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateTableAsync_ReusesPageMarkedFreeInReferenceGlobalMap(DatabaseFormat format)
     {
-        const int ReusablePage = 520;
-        await using MemoryStream stream = await CreateDatabaseWithReferenceMappedFreePageAsync(format, ReusablePage);
+        const int reusablePage = 520;
+        await using MemoryStream stream = await CreateDatabaseWithReferenceMappedFreePageAsync(format, reusablePage);
         int pageSize = PageSizeOf(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -90,8 +90,8 @@ public sealed class PageAllocatorTests
         }
 
         byte[] bytes = stream.ToArray();
-        Assert.Equal(0x02, bytes[ReusablePage * pageSize]);
-        Assert.False(IsReferenceGlobalMapBitSet(bytes, format, ReusablePage));
+        Assert.Equal(0x02, bytes[reusablePage * pageSize]);
+        Assert.False(IsReferenceGlobalMapBitSet(bytes, format, reusablePage));
     }
 
     [Theory]

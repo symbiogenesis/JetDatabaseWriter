@@ -507,21 +507,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task CreateTable_Over127VarColumns_RoundTrips()
     {
-        const int VarColCount = 130;
+        const int varColCount = 130;
         await using var ms = new MemoryStream();
 
-        var columns = new List<ColumnDefinition>(VarColCount + 1)
+        var columns = new List<ColumnDefinition>(varColCount + 1)
         {
             new("Id", typeof(int)),
         };
-        for (int i = 0; i < VarColCount; i++)
+        for (int i = 0; i < varColCount; i++)
         {
             columns.Add(new ColumnDefinition($"V{i:D3}", typeof(string), maxLength: 50));
         }
 
-        var rowValues = new object[VarColCount + 1];
+        var rowValues = new object[varColCount + 1];
         rowValues[0] = 1;
-        for (int i = 0; i < VarColCount; i++)
+        for (int i = 0; i < varColCount; i++)
         {
             rowValues[i + 1] = $"val{i}";
         }
@@ -544,7 +544,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             cancellationToken: TestContext.Current.CancellationToken);
 
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Wide", TestContext.Current.CancellationToken);
-        Assert.Equal(VarColCount + 1, meta.Count);
+        Assert.Equal(varColCount + 1, meta.Count);
 
         var rows = new List<object[]>();
         await foreach (object[] row in reader.Rows("Wide", cancellationToken: TestContext.Current.CancellationToken))

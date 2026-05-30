@@ -182,11 +182,11 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "test".AsMemory(),
         };
 
-        const string TableName = "JetWriteEncTest";
+        const string tableName = "JetWriteEncTest";
         await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -194,14 +194,14 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
-                TableName,
+                tableName,
                 [42, "encrypted-write"],
                 TestContext.Current.CancellationToken);
         }
 
         var readerOptions = new AccessReaderOptions { Password = "test".AsMemory() };
         await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -221,11 +221,11 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         var writerOptions = new AccessWriterOptions { UseLockFile = false };
 
-        const string TableName = "Jet3WriteEncTest";
+        const string tableName = "Jet3WriteEncTest";
         await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -233,13 +233,13 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
-                TableName,
+                tableName,
                 [7, "jet3-xor-write"],
                 TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -254,7 +254,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // but flat per-page AES-128-ECB beneath) are now writable in place: the
         // existing PrepareEncryptedPageForWrite pipeline re-encrypts every page
         // we flush. Verify a round-trip by inserting a row and reading it back.
-        const string TableName = "AesWriteRoundTrip";
+        const string tableName = "AesWriteRoundTrip";
 
         byte[] data = await this.CloneFileAsync(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(data);
@@ -269,7 +269,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -277,7 +277,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
-                TableName,
+                tableName,
                 [11, "legacy-aes-cfb-write"],
                 TestContext.Current.CancellationToken);
         }
@@ -288,7 +288,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
         await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);

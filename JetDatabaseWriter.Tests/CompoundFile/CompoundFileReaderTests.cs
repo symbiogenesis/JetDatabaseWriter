@@ -411,12 +411,12 @@ public sealed class CompoundFileReaderTests
     /// </summary>
     private static byte[] BuildSyntheticDifatFile()
     {
-        const int Ss = 512; // sector size
-        const int SectorCount = 5;
-        byte[] file = new byte[Ss + (SectorCount * Ss)];
+        const int ss = 512; // sector size
+        const int sectorCount = 5;
+        byte[] file = new byte[ss + (sectorCount * ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        Span<byte> h = file.AsSpan(0, ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);          // v3
@@ -437,21 +437,21 @@ public sealed class CompoundFileReaderTests
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
-        const int dirOff = Ss;
+        const int dirOff = ss;
         WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
         WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, 10, child: 0xFFFFFFFF);
         WriteDirEntryUnused(file, dirOff + 256);
         WriteDirEntryUnused(file, dirOff + 384);
 
         // ── Sector 1: Data payload (10 bytes) ─────────────────────────
-        const int dataOff = Ss + (1 * Ss);
+        const int dataOff = ss + (1 * ss);
         for (int i = 0; i < 10; i++)
         {
             file[dataOff + i] = unchecked((byte)i);
         }
 
         // ── Sector 2: First FAT sector (sectors 0-127) ───────────────
-        const int fat0Off = Ss + (2 * Ss);
+        const int fat0Off = ss + (2 * ss);
         for (int i = 0; i < 128; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (i * 4)), 0xFFFFFFFF);
@@ -463,7 +463,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (4 * 4)), 0xFFFFFFFD); // sector 4 FAT → FatSect
 
         // ── Sector 3: DIFAT extension ─────────────────────────────────
-        const int difOff = Ss + (3 * Ss);
+        const int difOff = ss + (3 * ss);
         for (int i = 0; i < 128; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difOff + (i * 4)), 0xFFFFFFFF);
@@ -473,7 +473,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difOff + 508), 0xFFFFFFFE); // next DIFAT → EndOfChain
 
         // ── Sector 4: Second FAT sector (sectors 128-255, all free) ───
-        const int fat1Off = Ss + (4 * Ss);
+        const int fat1Off = ss + (4 * ss);
         for (int i = 0; i < 128; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat1Off + (i * 4)), 0xFFFFFFFF);
@@ -518,15 +518,15 @@ public sealed class CompoundFileReaderTests
     {
         // Build a minimal v3 CFB with a 10-byte stream occupying one
         // 512-byte sector. Fill the unused portion with a sentinel.
-        const int Ss = 512;
-        const int StreamSize = 10;
-        const byte Sentinel = 0xCC;
-        const int SectorCount = 3; // dir, data, FAT
+        const int ss = 512;
+        const int streamSize = 10;
+        const byte sentinel = 0xCC;
+        const int sectorCount = 3; // dir, data, FAT
 
-        byte[] file = new byte[Ss + (SectorCount * Ss)];
+        byte[] file = new byte[ss + (sectorCount * ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        Span<byte> h = file.AsSpan(0, ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
@@ -547,27 +547,27 @@ public sealed class CompoundFileReaderTests
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
-        const int dirOff = Ss;
+        const int dirOff = ss;
         WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
-        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, streamSize, child: 0xFFFFFFFF);
         WriteDirEntryUnused(file, dirOff + 256);
         WriteDirEntryUnused(file, dirOff + 384);
 
         // ── Sector 1: Data — 10 valid bytes + sentinel padding ────────
-        const int dataOff = Ss + (1 * Ss);
-        for (int i = 0; i < StreamSize; i++)
+        const int dataOff = ss + (1 * ss);
+        for (int i = 0; i < streamSize; i++)
         {
             file[dataOff + i] = unchecked((byte)i);
         }
 
         // Fill remainder of sector with sentinel to simulate disk garbage.
-        for (int i = StreamSize; i < Ss; i++)
+        for (int i = streamSize; i < ss; i++)
         {
-            file[dataOff + i] = Sentinel;
+            file[dataOff + i] = sentinel;
         }
 
         // ── Sector 2: FAT ─────────────────────────────────────────────
-        const int fatOff = Ss + (2 * Ss);
+        const int fatOff = ss + (2 * ss);
         for (int i = 0; i < 128; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
@@ -585,10 +585,10 @@ public sealed class CompoundFileReaderTests
 
         // The returned buffer must be exactly StreamSize bytes — no
         // trailing sector padding is leaked (CVE-2019-0560 mitigation).
-        Assert.Equal(StreamSize, payload.Length);
+        Assert.Equal(streamSize, payload.Length);
 
         // Verify the valid bytes are correct.
-        for (int i = 0; i < StreamSize; i++)
+        for (int i = 0; i < streamSize; i++)
         {
             Assert.Equal(unchecked((byte)i), payload[i]);
         }
@@ -604,15 +604,15 @@ public sealed class CompoundFileReaderTests
     {
         // Stream of 600 bytes spans 2 × 512 sectors = 1024 capacity.
         // The trailing 424 bytes of sector 2 must not be returned.
-        const int Ss = 512;
-        const int StreamSize = 600;
-        const byte Sentinel = 0xDD;
-        const int SectorCount = 4; // dir, data0, data1, FAT
+        const int ss = 512;
+        const int streamSize = 600;
+        const byte sentinel = 0xDD;
+        const int sectorCount = 4; // dir, data0, data1, FAT
 
-        byte[] file = new byte[Ss + (SectorCount * Ss)];
+        byte[] file = new byte[ss + (sectorCount * ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        Span<byte> h = file.AsSpan(0, ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
@@ -633,33 +633,33 @@ public sealed class CompoundFileReaderTests
         }
 
         // ── Sector 0: Directory ───────────────────────────────────────
-        const int dirOff = Ss;
+        const int dirOff = ss;
         WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
-        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, streamSize, child: 0xFFFFFFFF);
         WriteDirEntryUnused(file, dirOff + 256);
         WriteDirEntryUnused(file, dirOff + 384);
 
         // ── Sector 1: Data (first 512 bytes) ─────────────────────────
-        const int data0Off = Ss + (1 * Ss);
-        for (int i = 0; i < Ss; i++)
+        const int data0Off = ss + (1 * ss);
+        for (int i = 0; i < ss; i++)
         {
             file[data0Off + i] = unchecked((byte)i);
         }
 
         // ── Sector 2: Data (remaining 88 bytes + sentinel padding) ───
-        const int data1Off = Ss + (2 * Ss);
-        for (int i = 0; i < StreamSize - Ss; i++)
+        const int data1Off = ss + (2 * ss);
+        for (int i = 0; i < streamSize - ss; i++)
         {
-            file[data1Off + i] = unchecked((byte)(Ss + i));
+            file[data1Off + i] = unchecked((byte)(ss + i));
         }
 
-        for (int i = StreamSize - Ss; i < Ss; i++)
+        for (int i = streamSize - ss; i < ss; i++)
         {
-            file[data1Off + i] = Sentinel;
+            file[data1Off + i] = sentinel;
         }
 
         // ── Sector 3: FAT ─────────────────────────────────────────────
-        const int fatOff = Ss + (3 * Ss);
+        const int fatOff = ss + (3 * ss);
         for (int i = 0; i < 128; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
@@ -677,7 +677,7 @@ public sealed class CompoundFileReaderTests
         byte[] payload = streams["TestStream"];
 
         // Exact declared size — no final-sector padding leaked.
-        Assert.Equal(StreamSize, payload.Length);
+        Assert.Equal(streamSize, payload.Length);
 
         // Verify no sentinel bytes snuck in.
         for (int i = 0; i < payload.Length; i++)
@@ -749,30 +749,30 @@ public sealed class CompoundFileReaderTests
 
     private static byte[] BuildMiniFatLargeChainFile()
     {
-        const int Ss = 512; // regular sector size
-        const int Ms = 64;  // mini-sector size
-        const int StreamSize = 4095; // each stream just under the 4096 cutoff
-        const int StreamCount = 3;
+        const int ss = 512; // regular sector size
+        const int ms = 64;  // mini-sector size
+        const int streamSize = 4095; // each stream just under the 4096 cutoff
+        const int streamCount = 3;
 
-        const int miniSectorsPerStream = (StreamSize + Ms - 1) / Ms; // 64
-        int totalMiniSectorsActual = miniSectorsPerStream * StreamCount; // 192
-        int miniStreamBytes = totalMiniSectorsActual * Ms; // 12288
+        const int miniSectorsPerStream = (streamSize + ms - 1) / ms; // 64
+        int totalMiniSectorsActual = miniSectorsPerStream * streamCount; // 192
+        int miniStreamBytes = totalMiniSectorsActual * ms; // 12288
 
         // Sector layout:
         //   0:        Directory (4 entries × 128 = 512 bytes = 1 sector)
         //   1..24:    Mini-stream data (root entry FAT chain)
         //   25..26:   Mini-FAT (192 entries > 128 per sector → 2 sectors)
         //   27:       FAT
-        int miniStreamSectors = miniStreamBytes / Ss; // 24
+        int miniStreamSectors = miniStreamBytes / ss; // 24
         const int miniFatSectors = 2;
         int firstMiniFatSector = 1 + miniStreamSectors; // 25
         int fatSector = firstMiniFatSector + miniFatSectors; // 27
         int totalSectors = 1 + miniStreamSectors + miniFatSectors + 1; // 28
 
-        byte[] file = new byte[Ss + (totalSectors * Ss)];
+        byte[] file = new byte[ss + (totalSectors * ss)];
 
         // ── Header ────────────────────────────────────────────────────
-        Span<byte> h = file.AsSpan(0, Ss);
+        Span<byte> h = file.AsSpan(0, ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
@@ -794,7 +794,7 @@ public sealed class CompoundFileReaderTests
 
         // ── Sector 0: Directory ───────────────────────────────────────
         // Red-black tree: root child = entry 2 ("B"), B.left=1("A"), B.right=3("C")
-        const int dirOff = Ss;
+        const int dirOff = ss;
         WriteDirEntryFull(
             file,
             dirOff,
@@ -811,7 +811,7 @@ public sealed class CompoundFileReaderTests
             "A",
             2,
             0,
-            StreamSize,
+            streamSize,
             child: 0xFFFFFFFF,
             left: 0xFFFFFFFF,
             right: 0xFFFFFFFF);
@@ -821,7 +821,7 @@ public sealed class CompoundFileReaderTests
             "B",
             2,
             miniSectorsPerStream,
-            StreamSize,
+            streamSize,
             child: 0xFFFFFFFF,
             left: 1,
             right: 3);
@@ -831,25 +831,25 @@ public sealed class CompoundFileReaderTests
             "C",
             2,
             miniSectorsPerStream * 2,
-            StreamSize,
+            streamSize,
             child: 0xFFFFFFFF,
             left: 0xFFFFFFFF,
             right: 0xFFFFFFFF);
 
         // ── Sectors 1..24: Mini-stream data ───────────────────────────
-        const int miniStreamOff = Ss + Ss;
-        for (int s = 0; s < StreamCount; s++)
+        const int miniStreamOff = ss + ss;
+        for (int s = 0; s < streamCount; s++)
         {
-            int baseOffset = s * miniSectorsPerStream * Ms;
-            for (int i = 0; i < StreamSize; i++)
+            int baseOffset = s * miniSectorsPerStream * ms;
+            for (int i = 0; i < streamSize; i++)
             {
                 file[miniStreamOff + baseOffset + i] = unchecked((byte)(i + (s * 0x40)));
             }
         }
 
         // ── Mini-FAT (2 sectors, 192 entries) ─────────────────────────
-        int miniFatOff = Ss + ((1 + miniStreamSectors) * Ss);
-        const int entriesPerSector = Ss / 4; // 128
+        int miniFatOff = ss + ((1 + miniStreamSectors) * ss);
+        const int entriesPerSector = ss / 4; // 128
 
         // Initialize all entries to FreeSect.
         for (int i = 0; i < miniFatSectors * entriesPerSector; i++)
@@ -885,7 +885,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((cStart + miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
 
         // ── FAT sector ────────────────────────────────────────────────
-        int fatOff = Ss + (fatSector * Ss);
+        int fatOff = ss + (fatSector * ss);
         for (int i = 0; i < entriesPerSector; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);

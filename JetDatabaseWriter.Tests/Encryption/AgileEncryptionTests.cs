@@ -246,7 +246,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_WriterRoundTrip_InsertedRow_VisibleAfterReopen()
     {
-        const string TableName = "AgileWriteRoundTrip";
+        const string tableName = "AgileWriteRoundTrip";
 
         byte[] data = await this.BuildAgileEncryptedFixtureAsync();
         string temp = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.accdb");
@@ -263,7 +263,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync(
-                    TableName,
+                    tableName,
                     [
                         new ColumnDefinition("Id", typeof(int)),
                         new ColumnDefinition("Label", typeof(string), maxLength: 64),
@@ -271,7 +271,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
                     TestContext.Current.CancellationToken);
 
                 await writer.InsertRowAsync(
-                    TableName,
+                    tableName,
                     [42, "agile-write-roundtrip"],
                     TestContext.Current.CancellationToken);
             }
@@ -282,7 +282,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             // Reopen via AccessReader: must still detect Agile, decrypt,
             // and surface the freshly-inserted row.
             await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);

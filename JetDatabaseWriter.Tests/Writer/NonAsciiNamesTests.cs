@@ -29,8 +29,8 @@ public sealed class NonAsciiNamesTests
     [MemberData(nameof(Formats))]
     public async Task CreateTable_WithUmlautName_RoundTrips(DatabaseFormat format)
     {
-        const string TableName = "Umsätze";
-        const string ColumnName = "Beträge";
+        const string tableName = "Umsätze";
+        const string columnName = "Beträge";
 
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -40,15 +40,15 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new("Id", typeof(int)),
-                    new(ColumnName, typeof(string), maxLength: 50),
+                    new(columnName, typeof(string), maxLength: 50),
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, [1, "Größe"], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(TableName, [2, "Straße"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "Größe"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [2, "Straße"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -59,24 +59,24 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.Contains(TableName, tables);
+        Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
-        Assert.Contains(meta, c => c.Name == ColumnName);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(rows);
         Assert.Equal(2, rows.Rows.Count);
-        Assert.Equal("Größe", rows.Rows[0][ColumnName]);
-        Assert.Equal("Straße", rows.Rows[1][ColumnName]);
+        Assert.Equal("Größe", rows.Rows[0][columnName]);
+        Assert.Equal("Straße", rows.Rows[1][columnName]);
     }
 
     [Theory]
     [MemberData(nameof(Formats))]
     public async Task CreateTable_WithAccentedName_RoundTrips(DatabaseFormat format)
     {
-        const string TableName = "Café";
-        const string ColumnName = "Crêpe";
+        const string tableName = "Café";
+        const string columnName = "Crêpe";
 
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -86,14 +86,14 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new("Id", typeof(int)),
-                    new(ColumnName, typeof(string), maxLength: 50),
+                    new(columnName, typeof(string), maxLength: 50),
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, [1, "Océ"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "Océ"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -104,13 +104,13 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.Contains(TableName, tables);
+        Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
-        Assert.Contains(meta, c => c.Name == ColumnName);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("Océ", rows.Rows[0][ColumnName]);
+        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("Océ", rows.Rows[0][columnName]);
     }
 
     [Theory]
@@ -121,8 +121,8 @@ public sealed class NonAsciiNamesTests
         // Jet4 / ACE store object names in UTF-16, so CJK round-trips verbatim.
         // Jet3 names are codepage-encoded and would require a CJK codepage —
         // outside scope of this regression test.
-        const string TableName = "顧客";
-        const string ColumnName = "氏名";
+        const string tableName = "顧客";
+        const string columnName = "氏名";
 
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -132,14 +132,14 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new("Id", typeof(int)),
-                    new(ColumnName, typeof(string), maxLength: 50),
+                    new(columnName, typeof(string), maxLength: 50),
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, [1, "山田太郎"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "山田太郎"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -150,13 +150,13 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.Contains(TableName, tables);
+        Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
-        Assert.Contains(meta, c => c.Name == ColumnName);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("山田太郎", rows.Rows[0][ColumnName]);
+        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("山田太郎", rows.Rows[0][columnName]);
     }
 
     [Theory]
@@ -165,7 +165,7 @@ public sealed class NonAsciiNamesTests
     {
         // Mirrors `mdb-json nwind.mdb "Umsätze"` and `mdb-count nwind.mdb "Umsätze"`
         // exit-zero smoke checks in mdbtools' test_script.sh.
-        const string TableName = "Umsätze";
+        const string tableName = "Umsätze";
 
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -175,7 +175,7 @@ public sealed class NonAsciiNamesTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                TableName,
+                tableName,
                 [
                     new("Id", typeof(int)),
                     new("Wert", typeof(int)),
@@ -188,7 +188,7 @@ public sealed class NonAsciiNamesTests
                 rows.Add([i, i * 10]);
             }
 
-            await writer.InsertRowsAsync(TableName, rows, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -198,7 +198,7 @@ public sealed class NonAsciiNamesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        int count = await reader.Rows(TableName, cancellationToken: TestContext.Current.CancellationToken)
+        int count = await reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken)
             .CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(5, count);

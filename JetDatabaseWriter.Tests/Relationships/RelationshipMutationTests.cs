@@ -361,18 +361,18 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         IReadOnlyList<ColumnDefinition> leadingColumns,
         CancellationToken cancellationToken)
     {
-        const int ColumnCount = 200;
-        const int IndexCount = 30;
+        const int columnCount = 200;
+        const int indexCount = 30;
 
-        var columns = new List<ColumnDefinition>(ColumnCount);
+        var columns = new List<ColumnDefinition>(columnCount);
         columns.AddRange(leadingColumns);
-        for (int columnOrdinal = columns.Count; columnOrdinal < ColumnCount; columnOrdinal++)
+        for (int columnOrdinal = columns.Count; columnOrdinal < columnCount; columnOrdinal++)
         {
             columns.Add(new ColumnDefinition($"C{columnOrdinal:D3}", typeof(int)));
         }
 
-        var indexes = new List<IndexDefinition>(IndexCount);
-        for (int indexOrdinal = 0; indexOrdinal < IndexCount; indexOrdinal++)
+        var indexes = new List<IndexDefinition>(indexCount);
+        for (int indexOrdinal = 0; indexOrdinal < indexCount; indexOrdinal++)
         {
             int indexedColumnOrdinal = leadingColumns.Count + indexOrdinal;
             indexes.Add(new IndexDefinition($"IX_{indexOrdinal:D2}", $"C{indexedColumnOrdinal:D3}"));

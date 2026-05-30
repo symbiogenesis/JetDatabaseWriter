@@ -419,7 +419,7 @@ public sealed class IndexMaintenanceTests
         // Forces a multi-level B-tree by inserting more entries than fit on a
         // single leaf for either format (~400 for Jet4, ~200 for Jet3).
         // 700 rows guarantees a multi-level tree on both formats.
-        const int RowCount = 700;
+        const int rowCount = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -430,8 +430,8 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(RowCount);
-            for (int i = 0; i < RowCount; i++)
+            var rows = new List<object[]>(rowCount);
+            for (int i = 0; i < rowCount; i++)
             {
                 rows.Add([i]);
             }
@@ -449,7 +449,7 @@ public sealed class IndexMaintenanceTests
         // Rows still readable via table scan (the reader does not consume the
         // index, but the rows-on-disk count is the index's truth source).
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(RowCount, rowsRead.Rows.Count);
+        Assert.Equal(rowCount, rowsRead.Rows.Count);
     }
 
     [Theory]
@@ -461,7 +461,7 @@ public sealed class IndexMaintenanceTests
         // path must descend into the tree, walk the leaf chain, splice in
         // the new entry, and emit a fresh root. The reader's row count must
         // include the late insert.
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -472,8 +472,8 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -481,14 +481,14 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Late single insert against the now-multi-level tree.
-            await writer.InsertRowAsync("T", [InitialRows], this.ct);
+            await writer.InsertRowAsync("T", [initialRows], this.ct);
         }
 
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
+        Assert.Equal(initialRows + 1, rowsRead.Rows.Count);
     }
 
     [Theory]
@@ -496,7 +496,7 @@ public sealed class IndexMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task DeleteRows_AfterMultiLevelTreeExists_ShrinksTreeAndStaysConsistent(DatabaseFormat format)
     {
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -507,8 +507,8 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -521,7 +521,7 @@ public sealed class IndexMaintenanceTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows - 1, rowsRead.Rows.Count);
+        Assert.Equal(initialRows - 1, rowsRead.Rows.Count);
     }
 
     [Theory]
@@ -586,7 +586,7 @@ public sealed class IndexMaintenanceTests
         // Build a multi-level tree (700 rows for both formats), then exercise
         // the incremental path by inserting and deleting one more row.
         // The reader must still see the correct total row count after maintenance.
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -597,8 +597,8 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -606,7 +606,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Late insert: incremental descent into multi-level tree.
-            await writer.InsertRowAsync("T", [InitialRows], this.ct);
+            await writer.InsertRowAsync("T", [initialRows], this.ct);
 
             // Late delete: incremental splice.
             int deleted = await writer.DeleteRowsAsync("T", "Id", 0, this.ct);
@@ -616,7 +616,7 @@ public sealed class IndexMaintenanceTests
         // Net: InitialRows + 1 insert − 1 delete = InitialRows.
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows, rowsRead.Rows.Count);
+        Assert.Equal(initialRows, rowsRead.Rows.Count);
     }
 
     /// <summary>

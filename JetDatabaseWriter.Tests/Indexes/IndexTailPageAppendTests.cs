@@ -178,7 +178,7 @@ public sealed class IndexTailPageAppendTests
         // the data page that got the new row appears at the end). A
         // regression to bulk rebuild would allocate ~50 fresh leaf + intermediate
         // pages, growing the file by hundreds of KB.
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -189,8 +189,8 @@ public sealed class IndexTailPageAppendTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -204,7 +204,7 @@ public sealed class IndexTailPageAppendTests
         {
             // Strictly-greater-than current tree max. Triggers the tail-page append
             // append-only fast path.
-            await writer.InsertRowAsync("T", [InitialRows], this.ct);
+            await writer.InsertRowAsync("T", [initialRows], this.ct);
         }
 
         long sizeAfterAppend = stream.Length;
@@ -222,7 +222,7 @@ public sealed class IndexTailPageAppendTests
         // Row count must still be correct after the append.
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
+        Assert.Equal(initialRows + 1, rowsRead.Rows.Count);
     }
 
     [Fact]
@@ -235,7 +235,7 @@ public sealed class IndexTailPageAppendTests
         // assert correctness rather than size because more than one
         // fall-back path (single-leaf splice single-leaf splice, multi-level rebuild
         // bulk rebuild) can fire depending on tree shape.
-        const int InitialRows = 1400;
+        const int initialRows = 1400;
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -246,8 +246,8 @@ public sealed class IndexTailPageAppendTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i += 2)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i += 2)
             {
                 // Even ids only — leaves a gap at every odd id for the
                 // out-of-order insert to land in.
@@ -267,7 +267,7 @@ public sealed class IndexTailPageAppendTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal((InitialRows / 2) + 1, rowsRead.Rows.Count);
+        Assert.Equal((initialRows / 2) + 1, rowsRead.Rows.Count);
     }
 
     [Fact]
@@ -277,8 +277,8 @@ public sealed class IndexTailPageAppendTests
         // the fast path. With ≥ 1.5 rows per page-aligned data page, a
         // bulk rebuild regression would balloon the file. Cap total growth at a
         // generous bound: 16 fresh data pages + 16 misc = 32 pages.
-        const int InitialRows = 700;
-        const int Appends = 50;
+        const int initialRows = 700;
+        const int appends = 50;
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -289,8 +289,8 @@ public sealed class IndexTailPageAppendTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -302,20 +302,20 @@ public sealed class IndexTailPageAppendTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            for (int j = 0; j < Appends; j++)
+            for (int j = 0; j < appends; j++)
             {
-                await writer.InsertRowAsync("T", [InitialRows + j], this.ct);
+                await writer.InsertRowAsync("T", [initialRows + j], this.ct);
             }
         }
 
         long growth = stream.Length - sizeAfterBulk;
         Assert.True(
             growth <= 32 * Constants.PageSizes.Jet4,
-            $"Expected {Appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
+            $"Expected {appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows + Appends, rowsRead.Rows.Count);
+        Assert.Equal(initialRows + appends, rowsRead.Rows.Count);
     }
 
     [Fact]
@@ -325,7 +325,7 @@ public sealed class IndexTailPageAppendTests
         // visible to a follow-up reader and must round-trip with the right
         // value (i.e. they ended up in the correct on-disk row, not lost
         // or duplicated).
-        const int InitialRows = 700;
+        const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -336,8 +336,8 @@ public sealed class IndexTailPageAppendTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new List<object[]>(InitialRows);
-            for (int i = 0; i < InitialRows; i++)
+            var rows = new List<object[]>(initialRows);
+            for (int i = 0; i < initialRows; i++)
             {
                 rows.Add([i]);
             }
@@ -345,14 +345,14 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowsAsync("T", rows, this.ct);
 
             // Three sequential append-only inserts.
-            await writer.InsertRowAsync("T", [InitialRows], this.ct);
-            await writer.InsertRowAsync("T", [InitialRows + 1], this.ct);
-            await writer.InsertRowAsync("T", [InitialRows + 2], this.ct);
+            await writer.InsertRowAsync("T", [initialRows], this.ct);
+            await writer.InsertRowAsync("T", [initialRows + 1], this.ct);
+            await writer.InsertRowAsync("T", [initialRows + 2], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
-        Assert.Equal(InitialRows + 3, rowsRead.Rows.Count);
+        Assert.Equal(initialRows + 3, rowsRead.Rows.Count);
 
         // The three appended values must be present at least once each.
         var ids = new HashSet<int>();
@@ -361,9 +361,9 @@ public sealed class IndexTailPageAppendTests
             ids.Add((int)row["Id"]);
         }
 
-        Assert.Contains(InitialRows, ids);
-        Assert.Contains(InitialRows + 1, ids);
-        Assert.Contains(InitialRows + 2, ids);
+        Assert.Contains(initialRows, ids);
+        Assert.Contains(initialRows + 1, ids);
+        Assert.Contains(initialRows + 2, ids);
     }
 
     private static int ReadI32(byte[] b, int o) =>
