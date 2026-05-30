@@ -4020,35 +4020,34 @@ internal static class LongRowSuffixProbe
         var rules = new List<CandidateRule>();
         foreach ((string label, int inputIndex) in BuildByteInputs())
         {
-            Func<SuffixCandidateContext, byte[]> getBytes = context => context.GetByteRuleInput(inputIndex);
-            rules.Add(new CandidateRule($"{label} word BE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: true)));
-            rules.Add(new CandidateRule($"{label} word LE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: false)));
-            rules.Add(new CandidateRule($"{label} FNV1a16", context => Fnv1A16(getBytes(context))));
-            AddHash32WordRules(rules, label, "FNV1a32", context => Fnv1A32(getBytes(context)));
-            rules.Add(new CandidateRule($"{label} DJB2-16", context => Djb216(getBytes(context))));
-            AddHash32WordRules(rules, label, "DJB2-32", context => Djb232(getBytes(context)));
-            AddHash32WordRules(rules, label, "SDBM-32", context => Sdbm32(getBytes(context)));
-            AddHash32WordRules(rules, label, "JenkinsOAAT-32", context => JenkinsOneAtATime32(getBytes(context)));
-            AddHash32WordRules(rules, label, "Murmur3-32 seed0", context => Murmur3X86_32(getBytes(context), 0));
-            AddHash32WordRules(rules, label, "Murmur3-32 seedFFFF", context => Murmur3X86_32(getBytes(context), 0xFFFF));
-            AddHash32WordRules(rules, label, "CRC32", context => Crc32(getBytes(context)));
-            AddRotateMix16Rules(rules, label, getBytes);
+            rules.Add(new CandidateRule($"{label} word BE", context => ReadWordOrNull(context.GetBytes(inputIndex), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} word LE", context => ReadWordOrNull(context.GetBytes(inputIndex), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{label} FNV1a16", context => Fnv1A16(context.GetBytes(inputIndex))));
+            AddHash32WordRules(rules, label, "FNV1a32", context => Fnv1A32(context.GetBytes(inputIndex)));
+            rules.Add(new CandidateRule($"{label} DJB2-16", context => Djb216(context.GetBytes(inputIndex))));
+            AddHash32WordRules(rules, label, "DJB2-32", context => Djb232(context.GetBytes(inputIndex)));
+            AddHash32WordRules(rules, label, "SDBM-32", context => Sdbm32(context.GetBytes(inputIndex)));
+            AddHash32WordRules(rules, label, "JenkinsOAAT-32", context => JenkinsOneAtATime32(context.GetBytes(inputIndex)));
+            AddHash32WordRules(rules, label, "Murmur3-32 seed0", context => Murmur3X86_32(context.GetBytes(inputIndex), 0));
+            AddHash32WordRules(rules, label, "Murmur3-32 seedFFFF", context => Murmur3X86_32(context.GetBytes(inputIndex), 0xFFFF));
+            AddHash32WordRules(rules, label, "CRC32", context => Crc32(context.GetBytes(inputIndex)));
+            AddRotateMix16Rules(rules, label, context => context.GetBytes(inputIndex));
 #pragma warning disable CA5350, CA5351, RS0030 // Research-only scoring of legacy hash candidates; not used for security.
             AddDigestWordRules(rules, label, "MD5", context => context.GetDigestBytes("MD5", inputIndex, bytes => MD5.HashData(bytes)));
             AddDigestWordRules(rules, label, "SHA1", context => context.GetDigestBytes("SHA1", inputIndex, bytes => SHA1.HashData(bytes)));
 #pragma warning restore CA5350, CA5351, RS0030
-            rules.Add(new CandidateRule($"{label} Adler16", context => Adler16(getBytes(context))));
-            rules.Add(new CandidateRule($"{label} Fletcher16", context => Fletcher16(getBytes(context))));
-            rules.Add(new CandidateRule($"{label} EseChecksum lo16", context => EseChecksum16(getBytes(context), low: true)));
-            rules.Add(new CandidateRule($"{label} EseChecksum hi16", context => EseChecksum16(getBytes(context), low: false)));
-            rules.Add(new CandidateRule($"{label} InternetCksum", context => InternetChecksum(getBytes(context))));
-            rules.Add(new CandidateRule($"{label} XorFold16", context => XorFold16(getBytes(context))));
-            rules.Add(new CandidateRule($"{label} AddFold16", context => AddFold16(getBytes(context))));
-            rules.Add(new CandidateRule($"{label} XorFoldWord16 BE", context => XorFoldWord16(getBytes(context), bigEndian: true)));
-            rules.Add(new CandidateRule($"{label} XorFoldWord16 LE", context => XorFoldWord16(getBytes(context), bigEndian: false)));
-            rules.Add(new CandidateRule($"{label} AddFoldWord16 BE", context => AddFoldWord16(getBytes(context), bigEndian: true)));
-            rules.Add(new CandidateRule($"{label} AddFoldWord16 LE", context => AddFoldWord16(getBytes(context), bigEndian: false)));
-            AddCrc16DirectRules(rules, label, getBytes);
+            rules.Add(new CandidateRule($"{label} Adler16", context => Adler16(context.GetBytes(inputIndex))));
+            rules.Add(new CandidateRule($"{label} Fletcher16", context => Fletcher16(context.GetBytes(inputIndex))));
+            rules.Add(new CandidateRule($"{label} EseChecksum lo16", context => EseChecksum16(context.GetBytes(inputIndex), low: true)));
+            rules.Add(new CandidateRule($"{label} EseChecksum hi16", context => EseChecksum16(context.GetBytes(inputIndex), low: false)));
+            rules.Add(new CandidateRule($"{label} InternetCksum", context => InternetChecksum(context.GetBytes(inputIndex))));
+            rules.Add(new CandidateRule($"{label} XorFold16", context => XorFold16(context.GetBytes(inputIndex))));
+            rules.Add(new CandidateRule($"{label} AddFold16", context => AddFold16(context.GetBytes(inputIndex))));
+            rules.Add(new CandidateRule($"{label} XorFoldWord16 BE", context => XorFoldWord16(context.GetBytes(inputIndex), bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} XorFoldWord16 LE", context => XorFoldWord16(context.GetBytes(inputIndex), bigEndian: false)));
+            rules.Add(new CandidateRule($"{label} AddFoldWord16 BE", context => AddFoldWord16(context.GetBytes(inputIndex), bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} AddFoldWord16 LE", context => AddFoldWord16(context.GetBytes(inputIndex), bigEndian: false)));
+            AddCrc16DirectRules(rules, label, context => context.GetBytes(inputIndex));
         }
 
         // Seeded CRC-16: init from key length or truncation boundary bytes.
@@ -4069,6 +4068,8 @@ internal static class LongRowSuffixProbe
 
         return rules;
     }
+
+    private static byte[] GetBytes(this SuffixCandidateContext context, int inputIndex) => context.GetByteRuleInput(inputIndex);
 
     private static IEnumerable<(string Label, int InputIndex)> BuildByteInputs()
     {
