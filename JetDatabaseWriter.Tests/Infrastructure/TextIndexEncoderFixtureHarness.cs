@@ -95,8 +95,8 @@ internal static class TextIndexEncoderFixtureHarness
                 }
 
                 var encoded = values
-                    .Select(v => (Value: v, Key: encode(v, keyCol.IsAscending)))
-                    .ToList();
+                    .ConvertAll(v => (Value: v, Key: encode(v, keyCol.IsAscending)))
+;
                 encoded.Sort((a, b) => CompareBytesUnsigned(a.Key, b.Key));
 
                 Assert.Equal(encoded.Count, onDiskKeys.Count);

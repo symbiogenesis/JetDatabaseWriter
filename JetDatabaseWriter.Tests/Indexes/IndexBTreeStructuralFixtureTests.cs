@@ -407,7 +407,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         CancellationToken ct)
     {
         List<IndexEntry> entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
-        return entries.Select(e => e.Key).ToList();
+        return entries.ConvertAll(e => e.Key);
     }
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesAsync(

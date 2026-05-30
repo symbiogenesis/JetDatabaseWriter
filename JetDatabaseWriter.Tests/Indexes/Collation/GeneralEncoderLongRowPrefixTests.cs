@@ -205,8 +205,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
             }
 
             var encoded = values
-                .Select(v => (Value: v, Key: GeneralTextIndexEncoder.Encode(v, keyCol.IsAscending)))
-                .ToList();
+                .ConvertAll(v => (Value: v, Key: GeneralTextIndexEncoder.Encode(v, keyCol.IsAscending)))
+;
             encoded.Sort((a, b) => CompareBytesUnsignedPrefix(a.Key, b.Key));
 
             Assert.Equal(encoded.Count, onDiskKeys.Count);
