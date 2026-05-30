@@ -98,8 +98,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
                 allTextColumns.Select(c =>
                     $"{c.Table}.col[{c.ColIndex}](type=0x{c.ColType:X2}) LCID=0x{c.Lcid:X4} ver={c.SortVersion}"));
             Assert.Fail(
-                $"Expected a single (LCID, sort-version) pair across all TEXT/MEMO columns of NorthwindTraders, "
-                + $"found {distinct.Length}: [{distinctRender}]. Per-column: [{columnDump}].");
+                $"Expected a single (LCID, sort-version) pair across all TEXT/MEMO columns of NorthwindTraders, found {distinct.Length}: [{distinctRender}]. Per-column: [{columnDump}].");
         }
 
         (ushort lcid, ushort version) = distinct[0];
