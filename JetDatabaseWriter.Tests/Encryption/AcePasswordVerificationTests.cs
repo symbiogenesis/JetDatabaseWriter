@@ -19,7 +19,7 @@ using Xunit;
 ///   • Version byte 0x14: 0x03 (Access 2010 / ACE 14)
 ///   • Encryption flag 0x62: 0x07 (bits 0/1/2 set)
 ///   • Data pages: NOT AES-encrypted; readable without decryption
-///   • Password: stored via ACE internal scheme (not the Jet4 XOR mask at 0x42)
+///   • Password: stored via ACE internal scheme, not the Jet4 XOR mask at 0x42.
 /// </para>
 /// <para>
 /// The reader detects the ACE password flag at offset 0x62 for ACCDB files
