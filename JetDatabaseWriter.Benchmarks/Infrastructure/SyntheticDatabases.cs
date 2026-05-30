@@ -137,6 +137,7 @@ internal static class SyntheticDatabases
         var baseDate = new DateTime(2020, 1, 1);
         for (int i = 0; i < NumericRows; i++)
         {
+            int discountBucket = i % 10;
             rows.Add(
             [
                 i,
@@ -144,7 +145,7 @@ internal static class SyntheticDatabases
                 (i % 200) + 1,
                 (short)((i % 50) + 1),
                 (decimal)(1.99 + (i % 100)),
-                (float)((i % 10) * 0.05),
+                (float)(discountBucket * 0.05),
                 (i % 5) + 1,
                 baseDate.AddMinutes(i),
                 baseDate.AddMinutes(i + 30),
