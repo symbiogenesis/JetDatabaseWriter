@@ -75,7 +75,7 @@ internal static class LongRowBisect
     {
         if (!File.Exists(path))
         {
-            sb.AppendLine(CultureInfo.InvariantCulture, $"_(missing)_");
+            sb.AppendLine("_(missing)_");
             return;
         }
 
@@ -113,8 +113,7 @@ internal static class LongRowBisect
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, CancellationToken.None);
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize);
-            foreach (IndexEntry e in entries)
+            foreach (IndexEntry e in IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize))
             {
                 allKeys.Add(e.Key);
             }
@@ -247,7 +246,7 @@ internal static class LongRowBisect
             }
             else
             {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: no match found");
+                sb.AppendLine("  chunk #2: no match found");
 
                 // Show first 60 bytes after the separator for diagnosis.
                 int n = Math.Min(60, leafBytes.Length - chunk2Start);

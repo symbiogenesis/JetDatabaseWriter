@@ -861,8 +861,7 @@ internal static class DaoBaselineProbe
         const int numRowsOff = 12;
         const int rowsStartOff = 14;
 
-        IEnumerable<long> candidates = snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline);
-        foreach (long p in candidates)
+        foreach (long p in snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline))
         {
             if (!snap.PageTypes.TryGetValue(p, out byte pt) || pt != 0x01)
             {
@@ -1891,7 +1890,7 @@ internal static class DaoBaselineProbe
     private static string Truncate(string s)
     {
         s = (s ?? string.Empty).Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
-        return s.Length > 250 ? string.Concat(s.AsSpan(0, 250), "…") : s;
+        return s.Length > 250 ? $"{s.AsSpan(0, 250)}…" : s;
     }
 
     private static string DescribeCompact(int code, string err)

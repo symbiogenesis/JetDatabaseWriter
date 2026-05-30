@@ -183,8 +183,7 @@ internal static class FkDaoBaselineProbe
                 continue;
             }
 
-            int id = ToInt32(GetValue(row, ordinals, "Id"));
-            ids[name] = id;
+            ids[name] = ToInt32(GetValue(row, ordinals, "Id"));
 
             object? owner = GetValue(row, ordinals, "Owner");
             object? lvProp = GetValue(row, ordinals, "LvProp");

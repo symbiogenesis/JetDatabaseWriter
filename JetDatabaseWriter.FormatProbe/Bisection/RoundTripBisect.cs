@@ -185,7 +185,7 @@ internal static class RoundTripBisect
                 string firstLine = (err ?? string.Empty).Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
                 if (firstLine.Length > 250)
                 {
-                    firstLine = string.Concat(firstLine.AsSpan(0, 250), "…");
+                    firstLine = $"{firstLine.AsSpan(0, 250)}…";
                 }
 
                 Console.WriteLine($"           stderr: {firstLine}");

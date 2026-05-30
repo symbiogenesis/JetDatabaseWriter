@@ -1915,7 +1915,7 @@ internal static class LongRowSuffixProbe
                 {
                     Context = context,
                     Signature = Convert.ToHexString(inputs[AuxInputCandidateIndex]),
-                    Length = inputs[AuxInputCandidateIndex].Length,
+                    inputs[AuxInputCandidateIndex].Length,
                 };
             })
             .Where(item => item.Length > 0)
