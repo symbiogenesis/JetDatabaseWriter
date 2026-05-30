@@ -1491,7 +1491,9 @@ public abstract class AccessBase : IAccessBase
                     case DateTimeType:
                     case MoneyType:
                     case BigIntType:
+                    case NumericType:
                     case GuidType:
+                    case DateTimeExtendedType:
                     case ComplexType:
                     case AttachmentType:
                         int required = column.Type is ComplexType or AttachmentType ? 4 : GetFixedSize(column.Type);

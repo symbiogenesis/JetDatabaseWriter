@@ -3255,7 +3255,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case DateTimeType:
                 case MoneyType:
                 case BigIntType:
+                case NumericType:
                 case GuidType:
+                case DateTimeExtendedType:
                 case ComplexType:
                 case AttachmentType:
                     // Delegate fixed-width primitive and complex-id formatting to the shared
@@ -3269,8 +3271,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     int required = col.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                     return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
                 case BooleanType:
-                case NumericType:
-                case DateTimeExtendedType:
                     return string.Empty;
                 default:
                     throw new InvalidOperationException($"Column '{col.Name}' has unknown type code 0x{(byte)col.Type:X2}.");

@@ -553,9 +553,9 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             TextType => GetTextDeclaredSize(maxLength, format),
             BinaryType => maxLength > 0 ? maxLength : 255,
             AttachmentType or ComplexType => 4,
+            DateTimeExtendedType => GetFixedSize(DateTimeExtendedType),
             OleType or
             MemoType or
-            DateTimeExtendedType or
             _ => 0,
         };
 
@@ -566,7 +566,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         {
             DatabaseFormat.Jet3Mdb => effectiveLength,
             DatabaseFormat.Jet4Mdb or DatabaseFormat.AceAccdb => Math.Max(2, effectiveLength * 2),
-            _ => throw new NotSupportedException($"Unsupported database format: {format}"),
+            _ => throw new NotSupportedException($"Unknown database format: {format}"),
         };
     }
 

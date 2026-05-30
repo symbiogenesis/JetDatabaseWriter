@@ -2232,6 +2232,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return ComplexType;
         }
 
+        if (column.ColumnTypeOverride is ColumnType descriptorType)
+        {
+            return descriptorType;
+        }
+
         Type clrType = column.ClrType;
 
         switch (Type.GetTypeCode(clrType))
@@ -2957,11 +2962,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case GuidType:
             case NumericType:
             case BigIntType:
-            case DateTimeExtendedType:
-                Type clrType = JetTypeInfo.GetClrType(column.Type)
+                Type clrType = GetClrType(column.Type)
                     ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{(byte)column.Type:X2}.");
-                baseDef = new ColumnDefinition(column.Name, clrType);
+                baseDef = new ColumnDefinition(column.Name, clrType)
+                {
+                    ColumnTypeOverride = column.Type,
+                };
                 break;
+            case DateTimeExtendedType:
+                throw new NotSupportedException(
+                    $"Column '{column.Name}' uses Date/Time Extended type 0x{(byte)DateTimeExtendedType:X2}, which schema evolution cannot rewrite yet.");
             default:
                 throw new InvalidOperationException($"Column '{column.Name}' has unknown type code 0x{(byte)column.Type:X2}.");
         }

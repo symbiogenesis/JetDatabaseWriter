@@ -213,6 +213,8 @@ public sealed record ColumnDefinition
 
     internal byte? DescriptorFlagsOverride { get; init; }
 
+    internal ColumnType? ColumnTypeOverride { get; init; }
+
     internal byte? DescriptorExtraFlagsOverride { get; init; }
 
     internal int? DescriptorMiscOverride { get; init; }

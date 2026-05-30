@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
@@ -165,6 +166,39 @@ public sealed class SchemaEvolutionTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.AddColumnAsync(table, new ColumnDefinition("name", typeof(string), 20), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task AddColumnAsync_PreservesMoneyDescriptorType()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "Ledger";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new ColumnDefinition("Amount", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [1, 12.3456m], TestContext.Current.CancellationToken);
+
+            await writer.AddColumnAsync(
+                table,
+                new ColumnDefinition("Note", typeof(string), maxLength: 20),
+                TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        ColumnMetadata amount = Assert.Single(metadata, column => column.Name == "Amount");
+        Assert.Equal("Currency", amount.TypeName);
+
+        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(12.3456m, rows.Rows[0]["Amount"]);
     }
 
     [Fact]
