@@ -1825,7 +1825,7 @@ internal static class DaoBaselineProbe
     private static void EmitSideBySideHex(StringBuilder sb, string label, byte[] a, byte[] b, int maxBytes)
     {
         int n = Math.Min(maxBytes, Math.Max(a.Length, b.Length));
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"```text");
+        _ = sb.AppendLine("```text");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"{label}: writer (left) vs dao (right) — first {n} bytes; '<>' marks per-byte diffs");
         for (int row = 0; row < n; row += 16)
         {
@@ -1852,7 +1852,7 @@ internal static class DaoBaselineProbe
     private static void EmitSingleHex(StringBuilder sb, string label, byte[] bytes, int maxBytes)
     {
         int n = Math.Min(maxBytes, bytes.Length);
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"```text");
+        _ = sb.AppendLine("```text");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"{label} — first {n} bytes");
         for (int row = 0; row < n; row += 16)
         {
