@@ -378,13 +378,13 @@ internal static class SyntheticDatabases
 
     private static int FindOwnedUsageMapRowStart(byte[] fileBytes, int pageSize, long tdefPage)
     {
-        const int DataPageRowsStart = 14;
-        const int OwnedPagesPointerOffset = 0x37;
+        const int dataPageRowsStart = 14;
+        const int ownedPagesPointerOffset = 0x37;
         int tdefOffset = checked((int)(tdefPage * pageSize));
-        int usageMapRow = fileBytes[tdefOffset + OwnedPagesPointerOffset];
-        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + OwnedPagesPointerOffset + 1);
+        int usageMapRow = fileBytes[tdefOffset + ownedPagesPointerOffset];
+        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + ownedPagesPointerOffset + 1);
         int usageMapOffset = checked(usageMapPage * pageSize);
-        int rowOffsetPosition = usageMapOffset + DataPageRowsStart + (usageMapRow * 2);
+        int rowOffsetPosition = usageMapOffset + dataPageRowsStart + (usageMapRow * 2);
         int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;
         int rowAbsoluteStart = usageMapOffset + rowStart;
 
