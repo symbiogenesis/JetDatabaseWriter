@@ -592,7 +592,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             var cRows = new List<object[]>(200);
             for (int i = 1; i <= 200; i++)
             {
-                cRows.Add([i, ((i * 7) % 200) + 1]);
+                int parentId = i * 7;
+                parentId %= 200;
+                parentId++;
+                cRows.Add([i, parentId]);
             }
 
             await writer.InsertRowsAsync(child, cRows, TestContext.Current.CancellationToken);
