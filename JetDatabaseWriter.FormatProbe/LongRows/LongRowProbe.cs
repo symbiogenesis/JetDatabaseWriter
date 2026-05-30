@@ -102,7 +102,6 @@ internal static class LongRowProbe
                     .AppendLine()
                     .AppendLine("Row values (length, first 60 chars):");
 
-
                 // Sort source values the same way the leaves are sorted (unsigned bytes).
                 // We can't sort by encoded key (the encoder is what we're trying to validate).
                 // Just print all rows and all leaves; the human cross-references them.
