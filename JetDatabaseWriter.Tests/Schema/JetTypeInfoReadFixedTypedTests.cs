@@ -276,11 +276,10 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Theory]
     [InlineData(ComplexType)]
     [InlineData(AttachmentType)]
-    public void Complex_ReturnsCxSentinelString(byte type)
+    public void Complex_ReturnsCxSentinelString(ColumnType columnType)
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(row, 42);
-        ColumnType columnType = (ColumnType)type;
 
         object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, columnType, size: 4);
         string viaString = JetTypeInfo.ReadFixedString(row, start: 0, columnType, size: 4);
@@ -297,10 +296,9 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Theory]
     [InlineData(ComplexType)]
     [InlineData(AttachmentType)]
-    public void Complex_TooShort_ReturnsDBNull(byte type)
+    public void Complex_TooShort_ReturnsDBNull(ColumnType columnType)
     {
         byte[] row = new byte[2]; // size < 4
-        ColumnType columnType = (ColumnType)type;
 
         object result = JetTypeInfo.ReadFixedTyped(row, start: 0, columnType, size: 2);
 
