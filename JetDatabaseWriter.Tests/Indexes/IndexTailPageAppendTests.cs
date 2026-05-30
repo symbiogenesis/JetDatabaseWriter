@@ -34,7 +34,7 @@ using Xunit;
 /// The fast path's signal is the rewritten tail-leaf page count: the bulk rebuild
 /// path always allocates a fresh tree at the end of the file, so a
 /// successful tail-page append fast path leaves the file shorter than the equivalent
-/// bulk rebuild rebuild (the new tail-leaf bytes overwrite the existing tail page
+/// bulk rebuild (the new tail-leaf bytes overwrite the existing tail page
 /// number rather than appending fresh pages). A regression to bulk rebuild would
 /// allocate a fresh leaf chain plus intermediates, growing the file
 /// dramatically.

@@ -401,7 +401,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     /// Finds the file offset of the EncryptedPackage stream's data
     /// (the first byte of its first sector) in the CFB fixture.
     /// </summary>
-    /// <param name="cfbFile">The compound file file.</param>
+    /// <param name="cfbFile">The compound file.</param>
     /// <exception cref="InvalidOperationException">Thrown when the EncryptedPackage directory entry is not present in the fixture.</exception>
     private static int FindEncryptedPackageDataOffset(byte[] cfbFile)
     {
