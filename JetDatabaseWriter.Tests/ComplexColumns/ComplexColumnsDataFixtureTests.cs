@@ -131,7 +131,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
             "attach-data",
             TestContext.Current.CancellationToken);
 
-        string[] names = attachments.Select(a => a.FileName).OrderBy(n => n).ToArray();
+        string[] names = attachments.Select(a => a.FileName).Order().ToArray();
         Assert.Equal("test_data.txt", names[0]);
         Assert.Equal("test_data2.txt", names[1]);
         Assert.Equal("test_data2.txt", names[2]);

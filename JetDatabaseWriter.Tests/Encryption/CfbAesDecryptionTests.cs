@@ -234,7 +234,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
 
         List<string> actualTables = await encReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(expectedTables.OrderBy(t => t), actualTables.OrderBy(t => t));
+        Assert.Equal(expectedTables.Order(), actualTables.Order());
     }
 
     [Fact]

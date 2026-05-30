@@ -149,7 +149,7 @@ public sealed class ComplexColumnsFlatIndexesTests
 
         var scalars = dt.Rows.Cast<System.Data.DataRow>()
             .Select(r => Convert.ToInt32(r["Documents_Files"], System.Globalization.CultureInfo.InvariantCulture))
-            .OrderBy(v => v)
+            .Order()
             .ToArray();
         Assert.Equal(2, scalars.Distinct().Count());
         Assert.True(scalars[1] > scalars[0], "Autoincrement scalar PK must be monotonically increasing.");

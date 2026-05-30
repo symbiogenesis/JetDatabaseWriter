@@ -672,7 +672,7 @@ internal static class LongRowSuffixProbe
             string encoderCount = rows.Select(row => row.EncoderSuffix).Distinct().Count().ToString(CultureInfo.InvariantCulture);
             string lengths = rows.Count == 0
                 ? "-"
-                : string.Join(", ", rows.Select(row => row.FullLength).Distinct().OrderBy(length => length).Select(length => length?.ToString(CultureInfo.InvariantCulture) ?? "-"));
+                : string.Join(", ", rows.Select(row => row.FullLength).Distinct().Order().Select(length => length?.ToString(CultureInfo.InvariantCulture) ?? "-"));
 
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
@@ -1819,7 +1819,7 @@ internal static class LongRowSuffixProbe
         foreach (IGrouping<string, SuffixPatternRow>? group in duplicateGroups.Take(8))
         {
             SuffixPatternRow[] rows = group.OrderBy(row => row.Position).ToArray();
-            string suffixes = string.Join(" ", rows.Select(row => row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
+            string suffixes = string.Join(" ", rows.Select(row => row.AccessSuffix).Distinct().Order().Select(value => $"`{value:X4}`"));
             string seeds = string.Join(" ", rows.Select(row => row.Seed?.ToString(CultureInfo.InvariantCulture) ?? row.RowLabel));
             string ptrs = string.Join(" ", rows.Select(row => string.Create(CultureInfo.InvariantCulture, $"{row.DataPage}:{row.DataRow}")));
             sb.AppendLine(CultureInfo.InvariantCulture, $"| {rows.Length} | {suffixes} | `{seeds}` | `{ptrs}` |");
@@ -1938,7 +1938,7 @@ internal static class LongRowSuffixProbe
             .AppendLine("|---:|---|---|---|");
         foreach (var group in groups)
         {
-            string suffixes = string.Join(" ", group.Select(item => item.Context.Row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
+            string suffixes = string.Join(" ", group.Select(item => item.Context.Row.AccessSuffix).Distinct().Order().Select(value => $"`{value:X4}`"));
             string rows = string.Join(" ", group.Take(6).Select(item => item.Context.Row.RowLabel));
             sb.AppendLine(CultureInfo.InvariantCulture, $"| {group.Count()} | {suffixes} | `{rows}` | `{group.Key}` |");
         }
@@ -1973,7 +1973,7 @@ internal static class LongRowSuffixProbe
                 group.Key.Window,
                 group.Key.AuxSignature,
                 Rows = group.ToArray(),
-                Suffixes = group.Select(item => item.Context.Row.AccessSuffix).Distinct().OrderBy(value => value).ToArray(),
+                Suffixes = group.Select(item => item.Context.Row.AccessSuffix).Distinct().Order().ToArray(),
             })
             .ToList();
 
@@ -2982,7 +2982,7 @@ internal static class LongRowSuffixProbe
                 .ThenBy(o => o.Key.ByteLo)
                 .Take(20))
             {
-                string deltas = string.Join(" ", kv.Value.OrderBy(d => d).Select(d => $"`{d:X4}`"));
+                string deltas = string.Join(" ", kv.Value.Order().Select(d => $"`{d:X4}`"));
                 sb.AppendLine(
                     CultureInfo.InvariantCulture,
                     $"| {kv.Key.Position} | `{kv.Key.ByteLo:X2}` | `{kv.Key.ByteHi:X2}` | {deltas} |");

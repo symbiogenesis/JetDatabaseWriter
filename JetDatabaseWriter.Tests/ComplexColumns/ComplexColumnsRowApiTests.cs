@@ -321,7 +321,7 @@ public sealed class ComplexColumnsRowApiTests
 
         Assert.Equal(3, items.Count);
         Assert.All(items, t => Assert.Equal(items[0].ConceptualTableId, t.ConceptualTableId));
-        var sortedValues = items.Select(t => Convert.ToInt32(t.Value, System.Globalization.CultureInfo.InvariantCulture)).OrderBy(v => v).ToArray();
+        var sortedValues = items.Select(t => Convert.ToInt32(t.Value, System.Globalization.CultureInfo.InvariantCulture)).Order().ToArray();
         Assert.Equal(100, sortedValues[0]);
         Assert.Equal(200, sortedValues[1]);
         Assert.Equal(300, sortedValues[2]);

@@ -218,7 +218,7 @@ public sealed class AccessReaderIndexSeekTests
 
     private static int[] RowIds(List<object[]> rows, int columnIndex) => rows
         .Select(row => (int)row[columnIndex])
-        .OrderBy(id => id)
+        .Order()
         .ToArray();
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)

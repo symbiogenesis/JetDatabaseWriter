@@ -104,7 +104,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Equal(ExpectedIds123, ids);
     }
 

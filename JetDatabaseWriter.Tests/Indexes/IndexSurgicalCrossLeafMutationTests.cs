@@ -81,7 +81,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.NotNull(dt);
         Assert.Equal(802, dt.Rows.Count);
 
-        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Contains(5, ids);
         Assert.Contains(4005, ids);
     }
@@ -140,7 +140,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.NotNull(dt);
         Assert.Equal(802, dt.Rows.Count);
 
-        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Contains(3991, ids);
         Assert.Contains(4005, ids);
     }
@@ -197,7 +197,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
 
         // Spot-check sort order is preserved (the index leaves still sort
         // ascending after surgical rewrites).
-        var ordered = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ordered = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Equal(0, ordered[0]);
         Assert.Equal(7990, ordered[^1]);
     }
@@ -319,7 +319,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.NotNull(dt);
         Assert.Equal(807, dt.Rows.Count);
 
-        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).OrderBy(x => x).ToArray();
+        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         for (int v = 1; v <= 4; v++)
         {
             Assert.Contains(v, ids);
