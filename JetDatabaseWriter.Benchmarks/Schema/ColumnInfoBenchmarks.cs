@@ -1,8 +1,7 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Benchmarks.Schema;
 
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
