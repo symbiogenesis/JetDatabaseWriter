@@ -304,10 +304,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)rootPageNumber));
-            if (rebuiltIndexPageGroups is not null)
-            {
-                rebuiltIndexPageGroups[rieKey] = pageNumbers;
-            }
+            rebuiltIndexPageGroups?[rieKey] = pageNumbers;
 
             tdefDirty = true;
         }
