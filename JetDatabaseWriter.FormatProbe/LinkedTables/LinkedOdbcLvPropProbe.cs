@@ -494,7 +494,7 @@ internal static class LinkedOdbcLvPropProbe
         $"{JetTypeInfo.GetTypeDisplayName(dataType)} (0x{(byte)dataType:X2})";
 
     private static string Truncate(string value, int maxCharacters) =>
-        value.Length <= maxCharacters ? value : string.Concat(value.AsSpan(0, maxCharacters), "...");
+        value.Length <= maxCharacters ? value : $"{value.AsSpan(0, maxCharacters)}...";
 
     private static string EscapeMarkdown(string value) =>
         value.Replace("|", "\\|", StringComparison.Ordinal)
