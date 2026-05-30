@@ -40,13 +40,23 @@ public sealed class LinkedTextTableTests : IDisposable
         { "Text;HDR=YES;FMT=LotusDelimited", "LotusDelimited" },
     };
 
-    public static TheoryData<string, Encoding, bool> LinkedTextEncodingCases => new()
+    public static TheoryData<string, bool> LinkedTextEncodingCases => new()
     {
-        { "UTF-8 with BOM", new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), true },
-        { "UTF-8 without BOM", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), false },
-        { "UTF-16 LE with BOM", Encoding.Unicode, true },
-        { "UTF-16 BE with BOM", Encoding.BigEndianUnicode, true },
+        { "UTF-8 with BOM", true },
+        { "UTF-8 without BOM", false },
+        { "UTF-16 LE with BOM", true },
+        { "UTF-16 BE with BOM", true },
     };
+
+    private static Encoding GetLinkedTextEncoding(string encodingName) =>
+        encodingName switch
+        {
+            "UTF-8 with BOM" => new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            "UTF-8 without BOM" => new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            "UTF-16 LE with BOM" => Encoding.Unicode,
+            "UTF-16 BE with BOM" => Encoding.BigEndianUnicode,
+            _ => throw new ArgumentOutOfRangeException(nameof(encodingName), encodingName, "Unknown linked text encoding case."),
+        };
 
     private static async ValueTask WriteEncodedTextAsync(
         string path,
@@ -477,11 +487,10 @@ public sealed class LinkedTextTableTests : IDisposable
     [MemberData(nameof(LinkedTextEncodingCases))]
     public async Task LinkedTextTable_CsvFile_BomAndEncoding_ReadsNonAsciiData(
         string encodingName,
-        Encoding encoding,
         bool includePreamble)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(encodingName);
-        ArgumentNullException.ThrowIfNull(encoding);
+        Encoding encoding = GetLinkedTextEncoding(encodingName);
 
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkEncodingFE");
