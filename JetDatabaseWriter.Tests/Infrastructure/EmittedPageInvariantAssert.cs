@@ -288,7 +288,7 @@ internal static class EmittedPageInvariantAssert
 
     private static bool IsTdefHead(ReadOnlySpan<byte> page, TDefHeaderLayout layout)
     {
-        if (layout.NumCols - 5 < 0 || layout.NumCols + 2 >= page.Length)
+        if (layout.NumCols < 5 || layout.NumCols + 2 >= page.Length)
         {
             return false;
         }
