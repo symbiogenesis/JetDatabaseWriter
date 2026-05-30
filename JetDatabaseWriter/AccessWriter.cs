@@ -2261,7 +2261,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return NumericType;
             case TypeCode.String:
                 return column.MaxLength is > 0 and <= 255 ? TextType : MemoType;
-            default:
+            case TypeCode.Object:
                 if (clrType == typeof(Guid))
                 {
                     return GuidType;
@@ -2269,8 +2269,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (clrType == typeof(Hyperlink))
                 {
-                    // Hyperlink columns are MEMO + the HYPERLINK_FLAG_MASK (0x80) bit
-                    // OR'd into the TDEF column-flag byte by BuildTableDefinition.
+                    // typeof(Hyperlink) is shorthand for a MEMO column; BuildTableDefinition
+                    // adds HYPERLINK_FLAG_MASK (0x80) unless DescriptorFlagsOverride replaces
+                    // the computed TDEF column-flag byte.
                     return MemoType;
                 }
 
@@ -2280,6 +2281,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
                 throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+            case TypeCode.Char:
+            case TypeCode.DBNull:
+            case TypeCode.Empty:
+            case TypeCode.SByte:
+            case TypeCode.UInt16:
+            case TypeCode.UInt32:
+            case TypeCode.UInt64:
+                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+            default:
+                throw new InvalidOperationException($"CLR type '{clrType}' is unknown.");
         }
     }
 
@@ -3894,10 +3905,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// long-value (Memo, Ole) or complex (Complex, Attachment)
     /// traversal outside this inline reader; the cascade-seek caller falls back to the snapshot
     /// path in that case. Index-key column types (the focus of this helper)
-    /// only include scalar fixed and var-inline kinds — JET indexes cannot
-    /// cover MEMO / OLE / Complex columns at all (rejected by
-    /// <see cref="IndexHelpers.ResolveIndexes"/>) so the LVAL fall-through is safety
-    /// netting, not the common path.
+    /// usually include scalar fixed and var-inline kinds. Memo is indexable
+    /// but routes through the snapshot path when pre-write uniqueness checks
+    /// need existing-row values; OLE / Attachment / Complex columns are
+    /// rejected by <see cref="IndexHelpers.ResolveIndexes"/>.
     /// </summary>
     /// <param name="loc">The row location.</param>
     /// <param name="tableDef">The table def.</param>

@@ -18,7 +18,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// fast path. The builder inspects the bound
 /// columns and refuses (returns <see langword="null"/>) when any column
 /// requires the slow path — calculated columns, Memo/Ole LVAL chains,
-/// Binary, Numeric, Complex/Attachment, or any property typed as
+/// Complex/Attachment, or any property typed as
 /// <see cref="Hyperlink"/>.
 /// </summary>
 internal static class DirectRowDecoderBuilder
@@ -42,6 +42,16 @@ internal static class DirectRowDecoderBuilder
         typeof(AccessReader).GetMethod(
             nameof(AccessReader.DecodeTextSliceForDirectDecode),
             BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static readonly MethodInfo ReadBinarySliceMethod =
+        typeof(DirectRowDecoderBuilder).GetMethod(
+            nameof(ReadBinarySlice),
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+    private static readonly MethodInfo ReadHexPreviewMethod =
+        typeof(DirectRowDecoderBuilder).GetMethod(
+            nameof(ReadHexPreview),
+            BindingFlags.Static | BindingFlags.NonPublic);
 
     private static readonly PropertyInfo NumColsFieldSizeProp =
         typeof(AccessReader).GetProperty(
@@ -245,14 +255,18 @@ internal static class DirectRowDecoderBuilder
             return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Bool));
         }
 
-        if (colType == TextType)
+        if (colType is TextType or BinaryType)
         {
             return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Var));
         }
 
         int expectedSize = JetTypeInfo.GetFixedSize(colType);
-        return Expression.AndAlso(
+        BinaryExpression fixedOrVariableKind = Expression.OrElse(
             Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Fixed)),
+            Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Var)));
+
+        return Expression.AndAlso(
+            fixedOrVariableKind,
             Expression.GreaterThanOrEqual(dataLenExpr, Expression.Constant(expectedSize)));
     }
 
@@ -276,8 +290,19 @@ internal static class DirectRowDecoderBuilder
             GuidType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
             TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
+            BinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
+            DateTimeExtendedType => Expression.Call(ReadHexPreviewMethod, pageParam, offsetExpr, dataLenExpr),
+            OleType or
+            MemoType or
+            AttachmentType or
+            ComplexType or
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{(byte)column.Type:X2}."),
         };
+
+    private static byte[] ReadBinarySlice(byte[] page, int start, int length) => length <= 0 ? [] : page.AsSpan(start, length).ToArray();
+
+    private static string ReadHexPreview(byte[] page, int start, int length)
+        => length <= 0 ? string.Empty : JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, Math.Min(length, 8)));
 
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying) => colType switch
     {
@@ -293,12 +318,12 @@ internal static class DirectRowDecoderBuilder
         GuidType => targetUnderlying == typeof(Guid),
         NumericType => targetUnderlying == typeof(decimal),
         TextType => targetUnderlying == typeof(string),
-        BinaryType or
+        BinaryType => targetUnderlying == typeof(byte[]),
+        DateTimeExtendedType => targetUnderlying == typeof(string),
         OleType or
         MemoType or
         AttachmentType or
         ComplexType or
-        DateTimeExtendedType or
         _ => false,
     };
 }

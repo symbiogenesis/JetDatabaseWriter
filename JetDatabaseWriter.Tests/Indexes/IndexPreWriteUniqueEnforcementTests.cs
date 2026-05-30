@@ -52,6 +52,31 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     }
 
     [Fact]
+    public async Task SingleInsert_MemoDuplicateAgainstExisting_ThrowsBeforeWrite()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "T",
+            [new ColumnDefinition("Body", typeof(string))],
+            [new IndexDefinition("UQ_Body", "Body") { IsUnique = true }],
+            this.ct);
+
+        await writer.InsertRowAsync("T", ["duplicate memo key"], this.ct);
+
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync("T", ["duplicate memo key"], this.ct));
+
+        Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        Assert.NotNull(dt);
+        Assert.Single(dt.Rows);
+    }
+
+    [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_DoesNotConsumeAutoIncrement()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();

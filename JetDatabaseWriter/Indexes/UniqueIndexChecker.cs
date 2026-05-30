@@ -11,7 +11,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
-using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
+using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;
 
 /// <summary>
 /// Pre-write unique-index enforcement: detects duplicate keys before any
@@ -169,28 +169,11 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         // Fast path: read only the key columns directly from data pages via
-        // TryReadColumnValuesTypedAsync. Keep Numeric indexes on the full-table
-        // snapshot path until the byte-for-byte key normalization is validated
-        // against the descriptor scale and Jet4/ACE numeric encoding variants.
-        bool needsSnapshot = false;
-        foreach (UniqueIndexDescriptor desc in descriptors)
-        {
-            foreach ((ColumnInfo? col, _, _) in desc.KeyColumns)
-            {
-                if (col.Type == NumericType)
-                {
-                    needsSnapshot = true;
-                    break;
-                }
-            }
-
-            if (needsSnapshot)
-            {
-                break;
-            }
-        }
-
-        if (needsSnapshot)
+        // TryReadColumnValuesTypedAsync. Keep Numeric and Memo indexes on the
+        // full-table snapshot path: Numeric needs descriptor-scale validation,
+        // and Memo/Hyperlink values may require LVAL traversal outside the
+        // partial inline reader.
+        if (RequiresSnapshotForPreInsert(descriptors))
         {
             using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
             this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
@@ -222,7 +205,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         // Build ordered column indices for each descriptor.
-        var descriptorOrdinals = new int[descriptors.Count][];
+        int[][] descriptorOrdinals = new int[descriptors.Count][];
         for (int d = 0; d < descriptors.Count; d++)
         {
             descriptorOrdinals[d] = new int[descriptors[d].KeyColumns.Count];
@@ -233,7 +216,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         // Collect unique set of all key column ordinals to read.
-        var allOrdinals = new HashSet<int>();
+        HashSet<int> allOrdinals = [];
         foreach (int[] ords in descriptorOrdinals)
         {
             foreach (int ord in ords)
@@ -265,10 +248,10 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
+                int[] numericTargetScales = BuildNumericScales(descriptor);
 
                 // Map from the columnOrdinalsArray position back to the full row object[].
-                object[] fullRow = UniqueIndexChecker.BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
+                object[] fullRow = BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
                 _ = seenSets[d].Add(key);
             }
@@ -280,7 +263,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
+                int[] numericTargetScales = BuildNumericScales(descriptor);
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
 
                 if (!seenSets[d].Add(key))
@@ -321,13 +304,29 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        var replaceAt = new Dictionary<int, object[]>(updates.Count);
+        Dictionary<int, object[]> replaceAt = new(updates.Count);
         foreach ((int idx, object[] newRow) in updates)
         {
             replaceAt[idx] = newRow;
         }
 
         this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
+    }
+
+    private static bool RequiresSnapshotForPreInsert(IReadOnlyList<UniqueIndexDescriptor> descriptors)
+    {
+        foreach (UniqueIndexDescriptor descriptor in descriptors)
+        {
+            foreach (IndexLayout.KeyColumnInfo keyColumn in descriptor.KeyColumns)
+            {
+                if (keyColumn.Col.Type is NumericType or MemoType)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
@@ -354,7 +353,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             }
         }
 
-        var row = new object[maxIdx + 1];
+        object[] row = new object[maxIdx + 1];
         for (int i = 0; i < row.Length; i++)
         {
             row[i] = DBNull.Value;

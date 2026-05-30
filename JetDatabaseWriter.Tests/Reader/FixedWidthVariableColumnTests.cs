@@ -7,6 +7,8 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCO is instantiated by Rows<T>.
+
 public sealed class FixedWidthVariableColumnTests
 {
     [Fact]
@@ -59,5 +61,20 @@ public sealed class FixedWidthVariableColumnTests
 
         Assert.NotNull(stringRow);
         Assert.Equal("123.45", stringRow[0]);
+
+        VarNumericRow? typedRow = null;
+        await foreach (VarNumericRow row in reader.Rows<VarNumericRow>(tableName, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            typedRow = row;
+            break;
+        }
+
+        Assert.NotNull(typedRow);
+        Assert.Equal(123.45m, typedRow.Amount);
+    }
+
+    private sealed class VarNumericRow
+    {
+        public decimal Amount { get; set; }
     }
 }

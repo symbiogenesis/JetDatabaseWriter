@@ -1446,6 +1446,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="rowStart">The row start.</param>
     /// <param name="rowSize">The row size.</param>
     /// <param name="column">The column.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the column type is unknown.</exception>
     internal string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
         if (column == null || rowSize < this.RowFields.NumCols)
@@ -1500,8 +1501,12 @@ public abstract class AccessBase : IAccessBase
                         return required > 0 && slice.DataLen >= required
                             ? ReadFixedString(page, rowStart + slice.DataStart, column, required)
                             : string.Empty;
-                    default:
+                    case BooleanType:
+                    case OleType:
+                    case MemoType:
                         return string.Empty;
+                    default:
+                        throw new InvalidOperationException($"Unknown column type: {column.Type}");
                 }
 
             default:

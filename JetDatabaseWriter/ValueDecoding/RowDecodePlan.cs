@@ -116,9 +116,14 @@ internal sealed class RowDecodePlan
 
                     value = JetTypeInfo.ReadFixedTyped(page, start, column, column.Type == NumericType ? length : required, strictNumeric: true);
                     return value is not DBNull;
-
-                default:
+                case BooleanType:
+                case OleType:
+                case MemoType:
+                case AttachmentType:
+                case ComplexType:
                     return false;
+                default:
+                    throw new InvalidOperationException($"Unknown column type: {column.Type}");
             }
         }
         catch (JetLimitationException)

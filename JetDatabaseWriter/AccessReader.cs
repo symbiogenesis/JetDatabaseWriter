@@ -534,8 +534,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // Try to compile a direct page → T decoder that skips the per-row
         // object?[] buffer and primitive boxing entirely. The builder returns
         // null when any bound column requires the slow path (Memo/Ole
-        // LVAL chain, Binary, Numeric, Complex/Attachment, Hyperlink
-        // prop).
+        // LVAL chain, Complex/Attachment, Hyperlink prop).
         DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
             ? null
             : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
@@ -3525,10 +3524,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // page bytes and assigns them to T's properties; only the columns
     // the mapper actually binds are decoded (the projection mask is
     // baked in). Callers gate the fast path with
-    // RowMapper<T>.TryBuildDirectDecoder which inspects each bound
+    // DirectRowDecoderBuilder.TryBuild which inspects each bound
     // column and returns null when any column requires the slow path
-    // (Memo/Ole LVAL chain, Binary, Numeric, Complex/
-    // Attachment, Hyperlink-typed properties).
+    // (Memo/Ole LVAL chain, Complex/Attachment, Hyperlink-typed
+    // properties).
     //
     // The compiled delegate calls back into a small set of internal
     // helpers below for the reader's per-instance state (format,

@@ -10,12 +10,19 @@ using static JetDatabaseWriter.Enums.ColumnType;
 internal static class TypedRowFallbackPolicy
 {
     internal static object EmptyVariableValue(ColumnInfo column)
-        => column.Type switch
+    {
+        if (column.Type is TextType or MemoType)
         {
-            TextType or MemoType => string.Empty,
-            BinaryType or OleType => Array.Empty<byte>(),
-            _ => DBNull.Value,
-        };
+            return string.Empty;
+        }
+
+        if (column.Type is BinaryType or OleType)
+        {
+            return Array.Empty<byte>();
+        }
+
+        return DBNull.Value;
+    }
 
     internal static object FixedVariableSlotTooShort(ColumnInfo column, int actualLength, int requiredLength, bool strictParsing)
     {

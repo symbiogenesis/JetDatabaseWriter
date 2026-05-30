@@ -124,6 +124,9 @@ internal sealed class RowEncoder(AccessWriter writer)
                 EncodeNumericValue(column, Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
                 return 17;
 
+            case DateTimeExtendedType:
+                return EncodeDateTimeExtendedValue(column, value, dest);
+
             case ComplexType:
             case AttachmentType:
                 int complexId = value is ComplexIdRef complexRef
@@ -142,10 +145,34 @@ internal sealed class RowEncoder(AccessWriter writer)
                 }
 
                 return 16;
-
-            default:
+            case BooleanType:
+            case BinaryType:
+            case TextType:
+            case OleType:
+            case MemoType:
                 return 0;
+            default:
+                throw new InvalidOperationException($"Unknown column type: {column.Type}");
         }
+    }
+
+    private static int EncodeDateTimeExtendedValue(ColumnInfo column, object value, Span<byte> dest)
+    {
+        int required = JetTypeInfo.GetFixedSize(DateTimeExtendedType);
+        if (value is not byte[] payload)
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' uses Date/Time Extended type 0x{(byte)DateTimeExtendedType:X2}; supply a byte[{required}] raw payload.");
+        }
+
+        if (payload.Length != required)
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' Date/Time Extended payload must be exactly {required} bytes but received {payload.Length}.");
+        }
+
+        payload.CopyTo(dest);
+        return required;
     }
 
     private static void EncodeNumericValue(ColumnInfo column, decimal value, Span<byte> dest)
@@ -490,6 +517,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             case GuidType:
             case ComplexType:
             case AttachmentType:
+            case DateTimeExtendedType:
                 int fixedSize = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                 if (fixedSize <= 0)
                 {
@@ -509,9 +537,10 @@ internal sealed class RowEncoder(AccessWriter writer)
                 }
 
                 return payload;
-
-            default:
+            case BooleanType:
                 return null;
+            default:
+                throw new InvalidOperationException($"Unknown column type: {column.Type}");
         }
     }
 
@@ -528,9 +557,24 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return this.EncodeCalculatedMemoValue(value);
             case OleType:
                 return EncodeCalculatedOleValue(value);
-            default:
+            case BooleanType:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case GuidType:
+            case NumericType:
+            case AttachmentType:
+            case ComplexType:
+            case BigIntType:
+            case DateTimeExtendedType:
                 byte[]? payload = EncodeCalculatedFixedPayload(column, value);
                 return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
+            default:
+                throw new InvalidOperationException($"Unsupported column type: {column.Type}");
         }
     }
 
