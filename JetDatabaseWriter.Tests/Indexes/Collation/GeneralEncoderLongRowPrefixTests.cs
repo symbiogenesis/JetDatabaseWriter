@@ -237,10 +237,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
                 }
 
                 string actualLenMsg =
-                    $"Encoder output at position {i} in {tableName}.{index.Name} "
-                    + $"has length {actual.Length}, expected {LongRowEntryLength}-byte "
-                    + $"long-row entry to match the on-disk leaf. "
-                    + $"value=\"{encoded[i].Value}\".";
+                    $"Encoder output at position {i} in {tableName}.{index.Name} has length {actual.Length}, expected {LongRowEntryLength}-byte long-row entry to match the on-disk leaf. value=\"{encoded[i].Value}\".";
                 Assert.True(actual.Length == LongRowEntryLength, actualLenMsg);
 
                 if (validationMode == LongRowValidationMode.FullKey)
