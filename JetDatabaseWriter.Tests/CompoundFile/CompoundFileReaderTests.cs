@@ -762,9 +762,9 @@ public sealed class CompoundFileReaderTests
         //   27:       FAT
         const int miniStreamSectors = miniStreamBytes / ss; // 24
         const int miniFatSectors = 2;
-        int firstMiniFatSector = 1 + miniStreamSectors; // 25
-        int fatSector = firstMiniFatSector + miniFatSectors; // 27
-        int totalSectors = 1 + miniStreamSectors + miniFatSectors + 1; // 28
+        const int firstMiniFatSector = 1 + miniStreamSectors; // 25
+        const int fatSector = firstMiniFatSector + miniFatSectors; // 27
+        const int totalSectors = 1 + miniStreamSectors + miniFatSectors + 1; // 28
 
         byte[] file = new byte[ss + (totalSectors * ss)];
 
@@ -845,7 +845,7 @@ public sealed class CompoundFileReaderTests
         }
 
         // ── Mini-FAT (2 sectors, 192 entries) ─────────────────────────
-        int miniFatOff = ss + ((1 + miniStreamSectors) * ss);
+        const int miniFatOff = ss + ((1 + miniStreamSectors) * ss);
         const int entriesPerSector = ss / 4; // 128
 
         // Initialize all entries to FreeSect.
@@ -882,7 +882,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((cStart + miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
 
         // ── FAT sector ────────────────────────────────────────────────
-        int fatOff = ss + (fatSector * ss);
+        const int fatOff = ss + (fatSector * ss);
         for (int i = 0; i < entriesPerSector; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
