@@ -80,7 +80,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     if (type != MemoType)
                     {
                         throw new ArgumentException(
-                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type 0x{(byte)type:X2}; " +
+                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type {GetTypeDisplayName(type)}; " +
                             "hyperlink columns must be MEMO (string with no MaxLength, or typeof(Hyperlink)).",
                             nameof(columns));
                     }

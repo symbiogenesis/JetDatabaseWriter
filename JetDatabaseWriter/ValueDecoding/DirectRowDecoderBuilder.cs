@@ -295,7 +295,7 @@ internal static class DirectRowDecoderBuilder
             MemoType or
             AttachmentType or
             ComplexType or
-            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{(byte)column.Type:X2}."),
+            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
         };
 
     private static byte[] ReadBinarySlice(byte[] page, int start, int length) => length <= 0 ? [] : page.AsSpan(start, length).ToArray();
@@ -303,28 +303,20 @@ internal static class DirectRowDecoderBuilder
     private static string ReadHexPreview(byte[] page, int start, int length)
         => length <= 0 ? string.Empty : JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, Math.Min(length, 8)));
 
-    private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying) => colType switch
+    private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)
     {
-        BooleanType => targetUnderlying == typeof(bool),
-        ByteType => targetUnderlying == typeof(byte),
-        IntegerType => targetUnderlying == typeof(short),
-        LongIntegerType => targetUnderlying == typeof(int),
-        BigIntType => targetUnderlying == typeof(long),
-        MoneyType => targetUnderlying == typeof(decimal),
-        FloatType => targetUnderlying == typeof(float),
-        DoubleType => targetUnderlying == typeof(double),
-        DateTimeType => targetUnderlying == typeof(DateTime),
-        GuidType => targetUnderlying == typeof(Guid),
-        NumericType => targetUnderlying == typeof(decimal),
-        TextType => targetUnderlying == typeof(string),
-        BinaryType => targetUnderlying == typeof(byte[]),
-        DateTimeExtendedType => targetUnderlying == typeof(string),
-        OleType or
-        MemoType or
-        AttachmentType or
-        ComplexType or
-        _ => false,
-    };
+        if (colType is OleType or MemoType or AttachmentType or ComplexType)
+        {
+            return false;
+        }
+
+        if (colType == DateTimeExtendedType)
+        {
+            return targetUnderlying == typeof(string);
+        }
+
+        return JetTypeInfo.GetClrType(colType) == targetUnderlying;
+    }
 }
 
 /// <summary>

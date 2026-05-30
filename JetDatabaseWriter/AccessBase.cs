@@ -1508,7 +1508,7 @@ public abstract class AccessBase : IAccessBase
                     case MemoType:
                         return string.Empty;
                     default:
-                        throw new InvalidOperationException($"Unknown column type: {column.Type}");
+                        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(column.Type)}");
                 }
 
             default:

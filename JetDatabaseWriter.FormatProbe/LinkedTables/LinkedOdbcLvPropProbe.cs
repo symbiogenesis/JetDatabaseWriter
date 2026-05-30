@@ -294,7 +294,7 @@ internal static class LinkedOdbcLvPropProbe
         foreach ((string target, ColumnPropertyEntry? entry) in entries)
         {
             string stringRuns = BuildStringRunSummary(entry.Value, format);
-            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target)} | `0x{entry.DataType:X2}` | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | `{ToHex(entry.Value, 64)}` | {Cell(stringRuns)} |");
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target)} | {Cell(FormatDataType(entry.DataType))} | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | `{ToHex(entry.Value, 64)}` | {Cell(stringRuns)} |");
         }
 
         _ = sb.AppendLine();
@@ -315,7 +315,7 @@ internal static class LinkedOdbcLvPropProbe
 
         foreach (IGrouping<string, (string Target, ColumnPropertyEntry Entry)>? group in frequencies)
         {
-            string types = string.Join(", ", group.Select(static item => $"0x{item.Entry.DataType:X2}").Distinct(StringComparer.Ordinal));
+            string types = string.Join(", ", group.Select(static item => FormatDataType(item.Entry.DataType)).Distinct(StringComparer.Ordinal));
             int targetCount = group.Select(static item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(group.Key)} | {group.Count()} | {targetCount} | `{types}` |");
         }
@@ -356,7 +356,7 @@ internal static class LinkedOdbcLvPropProbe
         {
             foreach (ColumnPropertyEntry entry in target.Entries)
             {
-                _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target.Name)} | {Cell(entry.Name)} | `0x{entry.DataType:X2}` | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | {Cell(FormatValuePreview(entry, format))} |");
+                _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {Cell(target.Name)} | {Cell(entry.Name)} | {Cell(FormatDataType(entry.DataType))} | `0x{entry.DdlFlag:X2}` | {entry.Value.Length} | {Cell(FormatValuePreview(entry, format))} |");
             }
         }
 
@@ -489,6 +489,9 @@ internal static class LinkedOdbcLvPropProbe
     }
 
     private static string Cell(string value) => EscapeMarkdown(Truncate(SanitizeText(value), MaxCellCharacters));
+
+    private static string FormatDataType(ColumnType dataType) =>
+        $"{JetTypeInfo.GetTypeDisplayName(dataType)} (0x{(byte)dataType:X2})";
 
     private static string Truncate(string value, int maxCharacters) =>
         value.Length <= maxCharacters ? value : string.Concat(value.AsSpan(0, maxCharacters), "...");

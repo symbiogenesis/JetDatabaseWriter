@@ -152,7 +152,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             case MemoType:
                 return 0;
             default:
-                throw new InvalidOperationException($"Unknown column type: {column.Type}");
+                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
     }
 
@@ -162,7 +162,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         if (value is not byte[] payload)
         {
             throw new ArgumentException(
-                $"Column '{column.Name}' uses Date/Time Extended type 0x{(byte)DateTimeExtendedType:X2}; supply a byte[{required}] raw payload.");
+                $"Column '{column.Name}' uses the {JetTypeInfo.GetTypeDisplayName(DateTimeExtendedType)} type; supply a byte[{required}] raw payload.");
         }
 
         if (payload.Length != required)
@@ -540,7 +540,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             case BooleanType:
                 return null;
             default:
-                throw new InvalidOperationException($"Unknown column type: {column.Type}");
+                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
     }
 
@@ -574,7 +574,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 byte[]? payload = EncodeCalculatedFixedPayload(column, value);
                 return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
             default:
-                throw new InvalidOperationException($"Unsupported column type: {column.Type}");
+                throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
     }
 

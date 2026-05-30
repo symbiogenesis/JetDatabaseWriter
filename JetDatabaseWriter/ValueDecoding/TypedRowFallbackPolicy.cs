@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
@@ -29,7 +30,7 @@ internal static class TypedRowFallbackPolicy
         if (strictParsing)
         {
             throw new InvalidDataException(
-                $"Variable-area payload for column '{column.Name}' is too short for type 0x{(byte)column.Type:X2}: need {requiredLength} byte(s), found {Math.Max(0, actualLength)}.");
+                $"Variable-area payload for column '{column.Name}' is too short for type {JetTypeInfo.GetTypeDisplayName(column.Type)}: need {requiredLength} byte(s), found {Math.Max(0, actualLength)}.");
         }
 
         return DBNull.Value;
@@ -45,7 +46,7 @@ internal static class TypedRowFallbackPolicy
         if (strictParsing)
         {
             throw new InvalidDataException(
-                $"Malformed variable-area payload for column '{column.Name}' (type 0x{(byte)column.Type:X2}).",
+                $"Malformed variable-area payload for column '{column.Name}' (type {JetTypeInfo.GetTypeDisplayName(column.Type)}).",
                 exception);
         }
 

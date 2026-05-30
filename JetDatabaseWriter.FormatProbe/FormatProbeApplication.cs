@@ -18,6 +18,7 @@ using JetDatabaseWriter.FormatProbe.Bisection;
 using JetDatabaseWriter.FormatProbe.Dao;
 using JetDatabaseWriter.FormatProbe.LinkedTables;
 using JetDatabaseWriter.FormatProbe.LongRows;
+using JetDatabaseWriter.Schema;
 
 internal static class FormatProbeApplication
 {
@@ -1423,7 +1424,7 @@ internal static class FormatProbeApplication
             string misc4 = jet4
                 ? Hex(bytes, o + 11, 4) // misc(2) + misc_ext(2) — for complex cols this is the 4-byte ComplexID
                 : Hex(bytes, o + 9, 4);
-            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {i} | `{Md(colNames[i])}` | 0x{type:X2} | {TypeName(type)} | {colNum} | {offF} | {colLen} | 0x{flags:X2} | `{misc4}` |");
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {i} | `{Md(colNames[i])}` | 0x{type:X2} | {JetTypeInfo.GetTypeDisplayName((ColumnType)type)} | {colNum} | {offF} | {colLen} | 0x{flags:X2} | `{misc4}` |");
         }
 
         _ = sb.AppendLine();
@@ -1453,7 +1454,7 @@ internal static class FormatProbeApplication
                 _ = sb.AppendLine();
                 foreach ((int i, string? n, byte t, string? id) in complexCols)
                 {
-                    _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Column #{i} `{Md(n)}` — type 0x{t:X2} ({TypeName(t)}) — ComplexID bytes (LE u32 in misc): `{id}` = **{U32FromHex(id)}**");
+                    _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Column #{i} `{Md(n)}` — type 0x{t:X2} ({JetTypeInfo.GetTypeDisplayName((ColumnType)t)}) — ComplexID bytes (LE u32 in misc): `{id}` = **{U32FromHex(id)}**");
                 }
 
                 _ = sb.AppendLine();
@@ -1749,27 +1750,6 @@ internal static class FormatProbeApplication
     private static long U32(byte[] b, int o) => unchecked((uint)(b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)));
 
     private static string Md(string s) => s.Replace("|", "\\|", StringComparison.Ordinal).Replace("`", "\\`", StringComparison.Ordinal);
-
-    private static string TypeName(byte t) => t switch
-    {
-        0x01 => "BOOL",
-        0x02 => "BYTE",
-        0x03 => "INT",
-        0x04 => "LONG",
-        0x05 => "MONEY",
-        0x06 => "FLOAT",
-        0x07 => "DOUBLE",
-        0x08 => "DATETIME",
-        0x09 => "BINARY",
-        0x0A => "TEXT",
-        0x0B => "OLE",
-        0x0C => "MEMO",
-        0x0F => "GUID",
-        0x10 => "NUMERIC",
-        0x11 => "ATTACHMENT (complex)",
-        0x12 => "COMPLEX (multi-value/version)",
-        _ => "?",
-    };
 
     private sealed record CatalogScanResult(
         string RelPath,

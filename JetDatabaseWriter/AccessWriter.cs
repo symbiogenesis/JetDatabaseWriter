@@ -2351,10 +2351,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case ComplexType:
             case DateTimeExtendedType:
                 throw new NotSupportedException(
-                    $"Column '{column.Name}': calculated result type 0x{(byte)type:X2} is not supported.");
+                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is not supported.");
             default:
                 throw new InvalidOperationException(
-                    $"Column '{column.Name}': calculated result type 0x{(byte)type:X2} is unknown.");
+                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is unknown.");
         }
     }
 
@@ -2974,7 +2974,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case NumericType:
             case BigIntType:
                 Type clrType = GetClrType(column.Type)
-                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{(byte)column.Type:X2}.");
+                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type {GetTypeDisplayName(column.Type)}.");
                 baseDef = new ColumnDefinition(column.Name, clrType)
                 {
                     ColumnTypeOverride = column.Type,
@@ -2982,9 +2982,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 break;
             case DateTimeExtendedType:
                 throw new NotSupportedException(
-                    $"Column '{column.Name}' uses Date/Time Extended type 0x{(byte)DateTimeExtendedType:X2}, which schema evolution cannot rewrite yet.");
+                    $"Column '{column.Name}' uses the {GetTypeDisplayName(DateTimeExtendedType)} type, which schema evolution cannot rewrite yet.");
             default:
-                throw new InvalidOperationException($"Column '{column.Name}' has unknown type code 0x{(byte)column.Type:X2}.");
+                throw new InvalidOperationException($"Column '{column.Name}' has unknown type {GetTypeDisplayName(column.Type)}.");
         }
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the

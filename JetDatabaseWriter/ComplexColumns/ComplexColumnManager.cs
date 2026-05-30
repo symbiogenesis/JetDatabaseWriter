@@ -797,7 +797,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         if (!isComplexCol)
         {
             throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type=0x{(byte)complexCol.Type:X2}).");
+                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type={GetTypeDisplayName(complexCol.Type)}).");
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.

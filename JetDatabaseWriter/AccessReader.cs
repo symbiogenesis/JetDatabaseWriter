@@ -2960,7 +2960,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             var diag = new StringBuilder();
             _ = diag.AppendLine($"JET: {(this.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {this.PageSizeBytes}  TotalPages: {this.DatabaseStream.Length / this.PageSizeBytes}");
             _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
-                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{(byte)c.Type:X2}]")));
+                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[{GetTypeDisplayName(c.Type)}]")));
             _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
             foreach (CatalogEntry e in result)
             {
@@ -3272,7 +3272,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case BooleanType:
                     return string.Empty;
                 default:
-                    throw new InvalidOperationException($"Column '{col.Name}' has unknown type code 0x{(byte)col.Type:X2}.");
+                    throw new InvalidOperationException($"Column '{col.Name}' has unknown type {GetTypeDisplayName(col.Type)}.");
             }
         }
         catch (JetLimitationException)

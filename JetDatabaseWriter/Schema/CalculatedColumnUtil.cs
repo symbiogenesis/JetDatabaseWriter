@@ -112,7 +112,7 @@ internal static class CalculatedColumnUtil
                     ? JetTypeInfo.ReadFixedString(payload, 0, type, required, strictNumeric)
                     : string.Empty;
             default:
-                throw new InvalidOperationException($"Unknown column type: {type}");
+                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
         }
     }
 
@@ -145,7 +145,7 @@ internal static class CalculatedColumnUtil
                     ? JetTypeInfo.ReadFixedTyped(payload, 0, type, required, strictNumeric)
                     : DBNull.Value;
             default:
-                throw new InvalidOperationException($"Unknown column type: {type}");
+                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
         }
     }
 

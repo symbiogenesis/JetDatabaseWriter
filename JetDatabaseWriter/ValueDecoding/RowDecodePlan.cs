@@ -123,7 +123,7 @@ internal sealed class RowDecodePlan
                 case ComplexType:
                     return false;
                 default:
-                    throw new InvalidOperationException($"Unknown column type: {column.Type}");
+                    throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
             }
         }
         catch (JetLimitationException)

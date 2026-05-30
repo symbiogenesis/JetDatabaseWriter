@@ -7,6 +7,7 @@ using System.Numerics;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -218,10 +219,10 @@ internal static class IndexKeyEncoder
             case ComplexType:
             case DateTimeExtendedType:
                 throw new NotSupportedException(
-                    $"Index key encoding for column type 0x{(byte)columnType:X2} is not supported. " +
+                    $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is not supported. " +
                     "Supported types: BYTE, INT, LONG, BIGINT, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
             default:
-                throw new InvalidOperationException($"Index key encoding for column type 0x{(byte)columnType:X2} is unknown.");
+                throw new InvalidOperationException($"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is unknown.");
         }
     }
 
