@@ -205,8 +205,8 @@ public sealed class IndexBTreeBuilderTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
 
         // Two entries that diverge at byte 0 → no shared prefix.
-        var k1 = new byte[] { 0x10, 0x20 };
-        var k2 = new byte[] { 0x30, 0x40 };
+        byte[] k1 = [0x10, 0x20];
+        byte[] k2 = [0x30, 0x40];
         List<IndexEntry> entries =
         [
             new(k1, 1, 0),
