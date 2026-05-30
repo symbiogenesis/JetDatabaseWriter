@@ -858,8 +858,8 @@ internal static class DaoBaselineProbe
         // Jet4 data-page header layout (per DataPageLayout.cs): NumRows @ offset 12 (u16 LE),
         // RowsStart @ offset 14. Bit 15 of an offset = deleted; bit 14 = pointer-to-next-page (overflow).
         // Rows are packed from page tail downward.
-        const int NumRowsOff = 12;
-        const int RowsStartOff = 14;
+        const int numRowsOff = 12;
+        const int rowsStartOff = 14;
 
         IEnumerable<long> candidates = snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline);
         foreach (long p in candidates)
@@ -874,15 +874,15 @@ internal static class DaoBaselineProbe
                 continue;
             }
 
-            if (page.Length < RowsStartOff + 2)
+            if (page.Length < rowsStartOff + 2)
             {
                 continue;
             }
 
             try
             {
-                ushort rowCount = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(NumRowsOff, 2));
-                if (rowCount == 0 || RowsStartOff + (rowCount * 2) > page.Length)
+                ushort rowCount = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(numRowsOff, 2));
+                if (rowCount == 0 || rowsStartOff + (rowCount * 2) > page.Length)
                 {
                     continue;
                 }
@@ -894,7 +894,7 @@ internal static class DaoBaselineProbe
                 var allOffsets = new List<int>(rowCount);
                 for (int i = 0; i < rowCount; i++)
                 {
-                    ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(RowsStartOff + (i * 2), 2));
+                    ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(rowsStartOff + (i * 2), 2));
                     allOffsets.Add(slot & 0x1FFF);
                 }
 
@@ -902,7 +902,7 @@ internal static class DaoBaselineProbe
 
                 for (int i = 0; i < rowCount; i++)
                 {
-                    ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(RowsStartOff + (i * 2), 2));
+                    ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(rowsStartOff + (i * 2), 2));
                     if ((slot & 0xC000) != 0)
                     {
                         continue; // deleted or overflow
@@ -1393,7 +1393,7 @@ internal static class DaoBaselineProbe
     private static HypothesisRow CheckRealIdxFlags(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
     {
         // PK = first index (RT_Customers has only one).
-        const byte ExpectedMask = Constants.TableDefinition.UniqueIndexFlag
+        const byte expectedMask = Constants.TableDefinition.UniqueIndexFlag
             | Constants.TableDefinition.RequiredIndexFlag
             | Constants.TableDefinition.UnknownIndexFlag;
         if (wHdr.NumRealIdx == 0 || dHdr.NumRealIdx == 0)
@@ -1410,7 +1410,7 @@ internal static class DaoBaselineProbe
 
         byte wFlags = wt[wOff];
         byte dFlags = dt[dOff];
-        bool ok = (wFlags & ExpectedMask) == ExpectedMask;
+        bool ok = (wFlags & expectedMask) == expectedMask;
         string verdict = ok ? "✅ PASS" : "❌ FAIL";
         return new HypothesisRow(
             "H37",
@@ -1694,20 +1694,20 @@ internal static class DaoBaselineProbe
     {
         // Usage-map page layout: page-type byte at 0; row offsets array at offset 14 onward
         // (Jet4 data-page-style header). Each slot is 2 bytes; mask 0x1FFF for offset.
-        const int RowsStartOff = 14;
-        const int NumRowsOff = 12;
-        if (page.Length < RowsStartOff + 2)
+        const int rowsStartOff = 14;
+        const int numRowsOff = 12;
+        if (page.Length < rowsStartOff + 2)
         {
             return (null, null);
         }
 
-        ushort numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(NumRowsOff, 2));
+        ushort numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(numRowsOff, 2));
         if (rowIndex >= numRows)
         {
             return (null, null);
         }
 
-        int slotOff = RowsStartOff + (rowIndex * 2);
+        int slotOff = rowsStartOff + (rowIndex * 2);
         if (slotOff + 2 > page.Length)
         {
             return (null, null);

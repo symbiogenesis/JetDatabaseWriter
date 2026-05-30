@@ -2846,9 +2846,9 @@ internal static class LongRowSuffixProbe
     /// <param name="contexts">The contexts.</param>
     private static void AppendLinearTableExtractorSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        const int WindowStart = 503;
-        const int WindowLength = 9;
-        const int MaxRowsPerGroupForPairs = 256; // O(n^2) pair enumeration cap.
+        const int windowStart = 503;
+        const int windowLength = 9;
+        const int maxRowsPerGroupForPairs = 256; // O(n^2) pair enumeration cap.
 
         sb.AppendLine("Per-position XOR contribution-table extractor (9-byte window at positions 503–511):")
             .AppendLine()
@@ -2859,14 +2859,14 @@ internal static class LongRowSuffixProbe
 
         Encoding cp1252 = Cp1252Encoding;
         var rows = contexts
-            .Where(c => c.NormalizedFullKey.Length >= WindowStart + WindowLength)
+            .Where(c => c.NormalizedFullKey.Length >= windowStart + windowLength)
             .Select(c =>
             {
                 byte[][] aux = c.GetNormalizedInputCandidates(cp1252);
                 return new
                 {
                     AuxSig = Convert.ToHexString(aux[AuxInputCandidateIndex]),
-                    Window = c.NormalizedFullKey[WindowStart..(WindowStart + WindowLength)],
+                    Window = c.NormalizedFullKey[windowStart..(windowStart + windowLength)],
                     Suffix = c.Row.AccessSuffix,
                 };
             })
@@ -2889,7 +2889,7 @@ internal static class LongRowSuffixProbe
 
         foreach (var group in rows)
         {
-            var groupRows = group.Take(MaxRowsPerGroupForPairs).ToArray();
+            var groupRows = group.Take(maxRowsPerGroupForPairs).ToArray();
             for (int i = 0; i < groupRows.Length; i++)
             {
                 byte[] wi = groupRows[i].Window;
@@ -2900,7 +2900,7 @@ internal static class LongRowSuffixProbe
                     byte[] wj = groupRows[j].Window;
                     int diffCount = 0;
                     int diffPos = -1;
-                    for (int p = 0; p < WindowLength; p++)
+                    for (int p = 0; p < windowLength; p++)
                     {
                         if (wi[p] != wj[p])
                         {
@@ -2922,7 +2922,7 @@ internal static class LongRowSuffixProbe
                     ushort delta = (ushort)(si ^ groupRows[j].Suffix);
                     byte ba = wi[diffPos];
                     byte bb = wj[diffPos];
-                    (int diffPos, byte, byte) key = ba < bb
+                    (int, byte, byte) key = ba < bb
                         ? (diffPos, ba, bb)
                         : (diffPos, bb, ba);
                     if (!observations.TryGetValue(key, out HashSet<ushort>? set))
@@ -2937,8 +2937,8 @@ internal static class LongRowSuffixProbe
         }
 
         int contradictoryKeys = observations.Count(kv => kv.Value.Count > 1);
-        var positionStats = new int[WindowLength][]; // [pos] -> {distinct keys, total observations, contradictory keys}
-        for (int p = 0; p < WindowLength; p++)
+        var positionStats = new int[windowLength][]; // [pos] -> {distinct keys, total observations, contradictory keys}
+        for (int p = 0; p < windowLength; p++)
         {
             positionStats[p] = new int[3];
         }
@@ -2963,11 +2963,11 @@ internal static class LongRowSuffixProbe
             .AppendLine("Per-position coverage and contradictions:")
             .AppendLine("| Position | Byte index | Distinct byte-pairs | Distinct deltas observed | Contradictory pairs |")
             .AppendLine("|---:|---:|---:|---:|---:|");
-        for (int i = 0; i < WindowLength; i++)
+        for (int i = 0; i < windowLength; i++)
         {
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
-                $"| {i} | byte[{WindowStart + i}] | {positionStats[i][0]} | {positionStats[i][1]} | {positionStats[i][2]} |");
+                $"| {i} | byte[{windowStart + i}] | {positionStats[i][0]} | {positionStats[i][1]} | {positionStats[i][2]} |");
         }
 
         sb.AppendLine();
@@ -4679,17 +4679,17 @@ internal static class LongRowSuffixProbe
     {
         unchecked
         {
-            const uint C1 = 0xCC9E2D51;
-            const uint C2 = 0x1B873593;
+            const uint c1 = 0xCC9E2D51;
+            const uint c2 = 0x1B873593;
             uint hash = seed;
             int roundedEnd = bytes.Length & ~3;
 
             for (int index = 0; index < roundedEnd; index += 4)
             {
                 uint k1 = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(index, 4));
-                k1 *= C1;
+                k1 *= c1;
                 k1 = RotateLeft(k1, 15);
-                k1 *= C2;
+                k1 *= c2;
 
                 hash ^= k1;
                 hash = RotateLeft(hash, 13);
@@ -4707,9 +4707,9 @@ internal static class LongRowSuffixProbe
                     goto case 1;
                 case 1:
                     tail ^= bytes[roundedEnd];
-                    tail *= C1;
+                    tail *= c1;
                     tail = RotateLeft(tail, 15);
-                    tail *= C2;
+                    tail *= c2;
                     hash ^= tail;
                     break;
             }
@@ -4747,13 +4747,13 @@ internal static class LongRowSuffixProbe
 
     private static ushort Adler16(byte[] bytes)
     {
-        const int Mod = 251;
+        const int mod = 251;
         int a = 1;
         int b = 0;
         foreach (byte value in bytes)
         {
-            a = (a + value) % Mod;
-            b = (b + a) % Mod;
+            a = (a + value) % mod;
+            b = (b + a) % mod;
         }
 
         return (ushort)((b << 8) | a);

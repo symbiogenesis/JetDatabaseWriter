@@ -347,15 +347,15 @@ internal static class FkDaoBaselineProbe
         }
 
         byte[] page = await reader.ReadPageAsync(pageNumber);
-        const int RowsStart = 14;
-        const int NumRowsOffset = 12;
-        int rowCount = BitConverter.ToUInt16(page, NumRowsOffset);
+        const int rowsStart = 14;
+        const int numRowsOffset = 12;
+        int rowCount = BitConverter.ToUInt16(page, numRowsOffset);
         if (rowIndex < 0 || rowIndex >= rowCount)
         {
             return FormattableString.Invariant($"<row outside count={rowCount}>");
         }
 
-        int rowStart = BitConverter.ToUInt16(page, RowsStart + (rowIndex * 2)) & 0x1FFF;
+        int rowStart = BitConverter.ToUInt16(page, rowsStart + (rowIndex * 2)) & 0x1FFF;
         if (rowStart <= 0 || rowStart + 69 > page.Length)
         {
             return FormattableString.Invariant($"<bad rowStart={rowStart} count={rowCount}>");
