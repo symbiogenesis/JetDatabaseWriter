@@ -18,11 +18,11 @@ using Xunit;
 /// </summary>
 public sealed class NonAsciiNamesTests
 {
-    public static IEnumerable<object[]> Formats =>
+    public static TheoryData<DatabaseFormat> Formats =>
     [
-        [DatabaseFormat.Jet3Mdb],
-        [DatabaseFormat.Jet4Mdb],
-        [DatabaseFormat.AceAccdb],
+        DatabaseFormat.Jet3Mdb,
+        DatabaseFormat.Jet4Mdb,
+        DatabaseFormat.AceAccdb,
     ];
 
     [Theory]

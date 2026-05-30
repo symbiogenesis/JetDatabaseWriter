@@ -25,11 +25,11 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    public static IEnumerable<object[]> LinkedTableFixtures()
-    {
-        yield return [TestDatabases.LinkerTestV2007];
-        yield return [TestDatabases.OdbcLinkerTestV2007];
-    }
+    public static TheoryData<string> LinkedTableFixtures =>
+    [
+        TestDatabases.LinkerTestV2007,
+        TestDatabases.OdbcLinkerTestV2007,
+    ];
 
     /// <summary>
     /// The linkee fixture can be opened and lists at least one table.

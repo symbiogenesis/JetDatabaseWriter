@@ -25,14 +25,14 @@ using Xunit;
 /// </summary>
 public sealed class AccessReaderFuzzRobustnessTests
 {
-    public static IEnumerable<object[]> EmptyAndTinyBuffers()
-    {
-        yield return new object[] { Array.Empty<byte>() };
-        yield return new object[] { new byte[1] };
-        yield return new object[] { new byte[16] };
-        yield return new object[] { new byte[2048] }; // smaller than a single Jet4 page
-        yield return new object[] { new byte[4096] }; // exactly one Jet4 page, all zeros
-    }
+    public static TheoryData<byte[]> EmptyAndTinyBuffers =>
+    [
+        Array.Empty<byte>(),
+        new byte[1],
+        new byte[16],
+        new byte[2048], // smaller than a single Jet4 page
+        new byte[4096], // exactly one Jet4 page, all zeros
+    ];
 
     [Theory]
     [MemberData(nameof(EmptyAndTinyBuffers))]
