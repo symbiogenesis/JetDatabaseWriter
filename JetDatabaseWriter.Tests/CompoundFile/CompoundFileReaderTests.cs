@@ -163,8 +163,7 @@ public sealed class CompoundFileReaderTests
     /// major-version field at offset 0x1A so it no longer matches the sector
     /// shift at 0x1E MUST be rejected.
     /// </summary>
-    /// <param name="fileName"></param>
-    /// <returns></returns>
+    /// <param name="fileName">The name of the fixture file.</param>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptMajorVersion_Throws(string fileName)
@@ -183,8 +182,7 @@ public sealed class CompoundFileReaderTests
     /// sector-shift field at offset 0x1E so it is neither 9 nor 12 MUST be
     /// rejected.
     /// </summary>
-    /// <param name="fileName"></param>
-    /// <returns></returns>
+    /// <param name="fileName">The name of the fixture file.</param>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptSectorShift_Throws(string fileName)
@@ -204,8 +202,7 @@ public sealed class CompoundFileReaderTests
     /// The reader clamps NumFatSectors to the physical sector count
     /// derivable from the stream length.
     /// </summary>
-    /// <param name="fileName"></param>
-    /// <returns></returns>
+    /// <param name="fileName">The name of the fixture file.</param>
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptNumFatSectors_DoesNotOom(string fileName)
