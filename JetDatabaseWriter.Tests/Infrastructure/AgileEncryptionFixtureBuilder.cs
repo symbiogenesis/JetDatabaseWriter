@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Tests.Encryption;
 
 /// <summary>
@@ -566,7 +567,7 @@ internal static class AgileEncryptionFixtureBuilder
         aes.Key = key;
         aes.IV = iv;
 
-        using ICryptoTransform t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+        using ICryptoTransform t = OfficeCryptoPrimitives.CreateAesTransform(aes, encrypt);
 #pragma warning restore CA5401, RS0030 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         return t.TransformFinalBlock(data, 0, data.Length);
     }

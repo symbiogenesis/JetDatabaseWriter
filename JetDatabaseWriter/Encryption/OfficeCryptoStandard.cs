@@ -455,43 +455,8 @@ internal static class OfficeCryptoStandard
 
     private static byte[] AesCbcZeroIv(byte[] data, byte[] key, bool encrypt)
     {
-        var aes = Aes.Create();
-#pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
-        if (aes is null)
-        {
-            throw new CryptographicException("AES provider creation failed.");
-        }
-#pragma warning restore CA1508
-
-        using (aes)
-        {
-#if NET6_0_OR_GREATER
-            aes.Key = key;
-            ReadOnlySpan<byte> zeroIv = stackalloc byte[16];
-            return encrypt
-                ? aes.EncryptCbc(data, zeroIv, PaddingMode.None)
-                : aes.DecryptCbc(data, zeroIv, PaddingMode.None);
-#else
-#pragma warning disable RS0030 // AES-CBC with IV=0 is the spec-mandated mode for MS-OFFCRYPTO Standard encryption.
-            aes.Mode = CipherMode.CBC;
-#pragma warning restore RS0030
-            aes.Padding = PaddingMode.None;
-            aes.Key = key;
-            aes.IV = new byte[16]; // All zeros.
-
-            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
-            if (transform is null)
-            {
-                throw new CryptographicException("AES transform creation failed.");
-            }
-
-            using (transform)
-            {
-                byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
-                return result ?? throw new CryptographicException("AES transform returned no data.");
-            }
-#endif
-        }
+        byte[] zeroIv = new byte[16];
+        return OfficeCryptoPrimitives.AesCbcNoPadding(data, key, zeroIv, encrypt);
     }
 
     // ════════════════════════════════════════════════════════════════

@@ -2,8 +2,10 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Security.Cryptography;
+using JetDatabaseWriter.Infrastructure;
 
 #pragma warning disable CA5350 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
+#pragma warning disable CA5358, CA5401 // AES-CBC mode and IV handling are mandated by Office Crypto specs.
 
 internal static class OfficeCryptoPrimitives
 {
@@ -86,6 +88,52 @@ internal static class OfficeCryptoPrimitives
         }
 
         return hash;
+    }
+
+    public static byte[] AesCbcNoPadding(byte[] data, byte[] key, byte[] iv, bool encrypt)
+    {
+        Guard.NotNull(data, nameof(data));
+        Guard.NotNull(key, nameof(key));
+        Guard.NotNull(iv, nameof(iv));
+
+        var aes = Aes.Create();
+#pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
+        if (aes is null)
+        {
+            throw new CryptographicException("AES provider creation failed.");
+        }
+#pragma warning restore CA1508
+
+        using (aes)
+        {
+#if NET6_0_OR_GREATER
+            aes.Key = key;
+            return encrypt
+                ? aes.EncryptCbc(data, iv, PaddingMode.None)
+                : aes.DecryptCbc(data, iv, PaddingMode.None);
+#else
+#pragma warning disable RS0030 // AES-CBC is required by Office Crypto Standard and Agile encryption.
+            aes.Mode = CipherMode.CBC;
+#pragma warning restore RS0030
+            aes.Padding = PaddingMode.None;
+            aes.Key = key;
+            aes.IV = iv;
+
+            using var transform = CreateAesTransform(aes, encrypt);
+
+            byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
+            return result ?? throw new CryptographicException("AES transform returned no data.");
+#endif
+        }
+    }
+
+    public static ICryptoTransform CreateAesTransform(Aes aes, bool encrypt)
+    {
+        ICryptoTransform? transform = encrypt
+            ? aes.CreateEncryptor()
+            : aes.CreateDecryptor();
+
+        return transform ?? throw new CryptographicException("AES transform creation failed.");
     }
 
     public static bool FixedTimeEquals(ReadOnlySpan<byte> left, ReadOnlySpan<byte> right, int length)
