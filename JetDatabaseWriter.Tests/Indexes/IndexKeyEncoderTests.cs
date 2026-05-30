@@ -445,8 +445,7 @@ public sealed class IndexKeyEncoderTests
         // and a string long enough that the inverted payload contains at
         // least one 0xFF byte (every END_EXTRA_TEXT 0x00 in the unflipped
         // payload becomes 0xFF after inversion).
-        string[] values = [string.Empty, "   ", "A", "ABC", "Hello, World!", new('Z', 50)];
-        foreach (string value in values)
+        foreach (string value in (string[])[string.Empty, "   ", "A", "ABC", "Hello, World!", new('Z', 50)])
         {
             byte[] encoded = IndexKeyEncoder.EncodeEntry(TextType, value, ascending: false);
 

@@ -263,8 +263,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         Assert.Null(ReadPrivateField(uncachedReader, PageCacheFieldName));
         Assert.Null(ReadPrivateField(uncachedReader, RowBoundsCacheFieldName));
 
-        string[] tableNames = [AlphaRowsTable, BetaRowsTable];
-        foreach (string tableName in tableNames)
+        foreach (string tableName in (string[])[AlphaRowsTable, BetaRowsTable])
         {
             List<string> cachedRows = await ReadRowSignaturesAsync(cachedReader, tableName, TestContext.Current.CancellationToken);
             List<string> uncachedRows = await ReadRowSignaturesAsync(uncachedReader, tableName, TestContext.Current.CancellationToken);

@@ -257,8 +257,7 @@ public sealed class IndexCodesAggregateTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (IndexEntry e in entries)
+            foreach (IndexEntry e in IndexLeafIncremental.DecodeEntries(layout, page, pageSize))
             {
                 result.Add(e.Key);
             }

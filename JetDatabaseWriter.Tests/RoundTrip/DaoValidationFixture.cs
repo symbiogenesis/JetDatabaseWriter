@@ -782,8 +782,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private static Dictionary<string, string> ParseKeyValueOutput(string stdout)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        string[] lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (string line in lines)
+        foreach (string line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             int separator = line.IndexOf('=', StringComparison.Ordinal);
             if (separator <= 0)

@@ -504,8 +504,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         var result = new Dictionary<string, List<ColumnMetadata>>(StringComparer.Ordinal);
         foreach (string table in tables)
         {
-            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
-            result[table] = cols;
+            result[table] = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         }
 
         return result;
