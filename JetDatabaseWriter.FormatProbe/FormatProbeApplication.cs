@@ -1381,11 +1381,11 @@ internal static class FormatProbeApplication
             logicalIdxNamesStart = afterLogicalIdx;
         }
 
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### Section offsets (computed)");
+        _ = sb.AppendLine("### Section offsets (computed)");
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Section | Start | Size | End (excl) |");
         _ = sb.AppendLine("|---|---:|---:|---:|");
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Page header | 0 | 8 | 8 |");
+        _ = sb.AppendLine("| Page header | 0 | 8 | 8 |");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| TDEF block ({(jet4 ? "Jet4: 55" : "Jet3: 35")} bytes) | 8 | {blockEnd - 8} | {blockEnd} |");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Real-idx skip entries (numRealIdx × {realIdxEntrySz}) | {blockEnd} | {numRealIdx * realIdxEntrySz} | {colStart} |");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Column descriptors (numCols × {colDescSz}) | {colStart} | {numCols * colDescSz} | {namesStart} |");
@@ -1401,7 +1401,7 @@ internal static class FormatProbeApplication
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Logical-idx names | {logicalIdxNamesStart} | (variable) | (computed by walk) |");
         }
 
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Variable trailing block (per-var-col page ptrs) | (after names) | (variable, terminated by col_num=0xFFFF) | — |");
+        _ = sb.AppendLine("| Variable trailing block (per-var-col page ptrs) | (after names) | (variable, terminated by col_num=0xFFFF) | — |");
         _ = sb.AppendLine();
 
         _ = sb.AppendLine("### Column descriptors");
@@ -1484,7 +1484,7 @@ internal static class FormatProbeApplication
                 if (jet4)
                 {
                     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  0..3  unknown(4): `{Hex(bytes, start + 0, 4)}`");
-                    _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  4..33 col_map (10 × {{col_num(2),col_order(1)}}):");
+                    _ = sb.AppendLine("- bytes  4..33 col_map (10 × {{col_num(2),col_order(1)}}):");
                     for (int slot = 0; slot < 10; slot++)
                     {
                         int so = start + 4 + (slot * 3);
@@ -1512,7 +1512,7 @@ internal static class FormatProbeApplication
                     // for. The exact layout of those last 5 bytes is what format probe is trying
                     // to pin down.
                     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  0..3  unknown(4):  `{Hex(bytes, start + 0, 4)}`");
-                    _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  4..33 col_map (10 × {{col_num(2),col_order(1)}}):");
+                    _ = sb.AppendLine("- bytes  4..33 col_map (10 × {{col_num(2),col_order(1)}}):");
                     for (int slot = 0; slot < 10; slot++)
                     {
                         int so = start + 4 + (slot * 3);
