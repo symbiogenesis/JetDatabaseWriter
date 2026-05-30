@@ -281,35 +281,14 @@ internal sealed class ConstraintRegistry(
         return value;
     }
 
-    private static Type TdefTypeToClrType(ColumnType type) => type switch
-    {
-        BooleanType => typeof(bool),
-        ByteType => typeof(byte),
-        IntegerType => typeof(short),
-        LongIntegerType => typeof(int),
-        BigIntType => typeof(long),
-        MoneyType => typeof(decimal),
-        FloatType => typeof(float),
-        DoubleType => typeof(double),
-        DateTimeType => typeof(DateTime),
-        NumericType => typeof(decimal),
-        GuidType => typeof(Guid),
-        TextType or MemoType => typeof(string),
-        BinaryType or OleType => typeof(byte[]),
-        AttachmentType or
-        ComplexType or
-        DateTimeExtendedType or
-        _ => typeof(object),
-    };
-
-    private static ColumnType ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyBlock? properties)
+    private static ColumnType ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyTarget? target)
     {
         if (!col.IsCalculated)
         {
             return default;
         }
 
-        ColumnPropertyEntry? resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
+        ColumnPropertyEntry? resultType = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return resultType?.Value.Length > 0 ? (ColumnType)resultType.Value[0] : col.Type;
     }
 
@@ -347,6 +326,8 @@ internal sealed class ConstraintRegistry(
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
         foreach (ColumnInfo col in tableDef.Columns)
         {
+            ColumnPropertyTarget? propertyTarget = properties?.FindTarget(col.Name);
+
             // Complex columns (Attachment / Complex) carry a magic Flags = 0x07
             // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
             // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
@@ -366,19 +347,24 @@ internal sealed class ConstraintRegistry(
             }
             else
             {
-                bool? required = properties?.FindTarget(col.Name)?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
+                bool? required = propertyTarget?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
                 isNullable = required is bool r ? !r : (col.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
             }
+
+            ColumnType calculatedResultType = ResolveCalculatedResultType(col, propertyTarget);
+            ColumnType constraintType = calculatedResultType != default ? calculatedResultType : col.Type;
+            DatabaseFormat propertyFormat = properties?.Format ?? default;
+            string? calculationExpression = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat);
 
             ColumnConstraint c = new()
             {
                 Name = col.Name,
-                ClrType = TdefTypeToClrType(col.Type),
+                ClrType = JetTypeInfo.GetClrType(constraintType) ?? typeof(object),
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
                 IsCalculated = col.IsCalculated,
-                CalculationExpression = properties?.FindTarget(col.Name)?.GetTextValue(Constants.ColumnPropertyNames.Expression, properties.Format),
-                CalculatedResultType = ResolveCalculatedResultType(col, properties),
+                CalculationExpression = calculationExpression,
+                CalculatedResultType = calculatedResultType,
             };
 
             list.Add(c);
