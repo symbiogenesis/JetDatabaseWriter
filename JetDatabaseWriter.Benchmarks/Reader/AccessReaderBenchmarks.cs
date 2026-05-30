@@ -39,7 +39,8 @@ public class AccessReaderBenchmarks
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        this.tableName = (await reader.ListTablesAsync()).First();
+        List<string> tableNames = await reader.ListTablesAsync();
+        this.tableName = tableNames[0];
     }
 
     [Benchmark]
