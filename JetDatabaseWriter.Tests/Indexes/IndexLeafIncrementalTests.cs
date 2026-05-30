@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
-using static JetDatabaseWriter.Enums.ColumnType;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Unit tests for <see cref="IndexLeafIncremental"/> — the single-leaf incremental

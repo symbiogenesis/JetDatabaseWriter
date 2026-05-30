@@ -6,8 +6,8 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
-using static JetDatabaseWriter.Enums.ColumnType;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Unit tests for <see cref="IndexLeafPageBuilder"/>. Both Jet4 / ACE and Jet3
