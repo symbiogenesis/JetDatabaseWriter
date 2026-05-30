@@ -760,7 +760,7 @@ public sealed class CompoundFileReaderTests
         //   1..24:    Mini-stream data (root entry FAT chain)
         //   25..26:   Mini-FAT (192 entries > 128 per sector → 2 sectors)
         //   27:       FAT
-        int miniStreamSectors = miniStreamBytes / ss; // 24
+        const int miniStreamSectors = miniStreamBytes / ss; // 24
         const int miniFatSectors = 2;
         int firstMiniFatSector = 1 + miniStreamSectors; // 25
         int fatSector = firstMiniFatSector + miniFatSectors; // 27
