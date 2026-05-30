@@ -167,6 +167,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         AccessWriter.OpenAsync(this.SourcePath, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
 
     /// <summary>Runs DAO CompactDatabase from <see cref="SourcePath"/> to <see cref="CompactedPath"/>.</summary>
+    /// <exception cref="Xunit.Sdk.XunitException">Thrown when DAO CompactDatabase fails or does not produce the compacted file.</exception>
     public void RunDaoCompact()
     {
         AccessRoundTripEnvironment.CompactResult result = AccessRoundTripEnvironment.RunDaoCompact(

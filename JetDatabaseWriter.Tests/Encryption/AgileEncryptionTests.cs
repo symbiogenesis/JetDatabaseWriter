@@ -402,6 +402,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     /// (the first byte of its first sector) in the CFB fixture.
     /// </summary>
     /// <param name="cfbFile">The compound file file.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the EncryptedPackage directory entry is not present in the fixture.</exception>
     private static int FindEncryptedPackageDataOffset(byte[] cfbFile)
     {
         // The fixture builder uses v4 (4096-byte sectors). The directory

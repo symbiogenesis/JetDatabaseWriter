@@ -228,6 +228,7 @@ internal static class AccessRoundTripEnvironment
     /// <param name="dest">Output path; will be overwritten if it exists.</param>
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Tuple of (process exit code, captured stdout, captured stderr).</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the DAO round-trip environment is unavailable.</exception>
     public static CompactResult RunDaoCompact(string source, string dest, TimeSpan timeout)
     {
         if (!IsAvailable)
@@ -294,6 +295,7 @@ internal static class AccessRoundTripEnvironment
     /// <param name="workDir">Directory for the temp .ps1 file.</param>
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the DAO round-trip environment is unavailable.</exception>
     public static CompactResult RunDaoScript(string script, string workDir, TimeSpan timeout)
     {
         if (!IsAvailable)
