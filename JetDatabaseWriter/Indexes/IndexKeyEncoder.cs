@@ -342,7 +342,7 @@ internal static class IndexKeyEncoder
 
     private static byte[] EncodeDateTimeExtendedPayload(DateTime value)
     {
-        var data = new byte[42];
+        byte[] data = new byte[42];
         JetTypeInfo.WriteDateTimeExtended(data, value);
         return data;
     }

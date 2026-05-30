@@ -120,7 +120,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
             else
             {
-                fixedOffset += JetTypeInfo.GetFixedSize(type);
+                fixedOffset += GetFixedSize(type);
             }
         }
 
@@ -583,7 +583,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             return 0;
         }
 
-        if (JetTypeInfo.IsAlwaysVariableLength(type))
+        if (IsAlwaysVariableLength(type))
         {
             return declaredSize + Constants.CalculatedColumn.ExtraDataLen;
         }

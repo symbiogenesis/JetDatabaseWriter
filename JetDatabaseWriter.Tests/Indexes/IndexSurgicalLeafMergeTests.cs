@@ -45,7 +45,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Tag", "Tag")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 400; i++)
             {
                 rows[i] = [0, i];
@@ -113,7 +113,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Tag", "Tag")],
                 this.ct);
 
-            var rows = new object[1200][];
+            object[][] rows = new object[1200][];
             for (int t = 0; t < 3; t++)
             {
                 for (int i = 0; i < 400; i++)
@@ -175,7 +175,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[total][];
+            object[][] rows = new object[total][];
             for (int i = 0; i < total; i++)
             {
                 rows[i] = [i * 10, i < leftAndMidCount ? "AB" : "C"];
@@ -228,7 +228,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1, (i % 2 == 0) ? "DEL" : "KEEP"];
@@ -284,7 +284,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Tag", "Tag")],
                 this.ct);
 
-            var rows = new object[1200][];
+            object[][] rows = new object[1200][];
             for (int t = 0; t < 3; t++)
             {
                 for (int i = 0; i < 400; i++)
@@ -359,7 +359,7 @@ public sealed class IndexSurgicalLeafMergeTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[total][];
+            object[][] rows = new object[total][];
             for (int i = 0; i < total; i++)
             {
                 rows[i] = [i * 10, i < leftLeafCount ? "A" : "B"];

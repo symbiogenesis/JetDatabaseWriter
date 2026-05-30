@@ -43,7 +43,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1, 0];
@@ -95,7 +95,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
             // Insert ids 0, 10, 20, ..., 7990 — gaps allow a true "middle"
             // insert later that doesn't change the affected leaf's max.
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i * 10];
@@ -148,7 +148,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1];
@@ -195,7 +195,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             // Sparse layout: ids 0, 100, 200, ..., 79900. Plenty of room to
             // pick an insert key between the max of one leaf and the min of
             // its right sibling.
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i * 100];
@@ -247,7 +247,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             // 1200 entries → multi-leaf tree. Each int entry is ~9 bytes
             // (1 flag + 4 key + 3 page + 1 row) and a single 4096-byte page
             // holds ~400 entries; 1200 entries occupies 3 leaves.
-            var rows = new object[1200][];
+            object[][] rows = new object[1200][];
             for (int i = 0; i < 1200; i++)
             {
                 rows[i] = [i * 10];
@@ -270,7 +270,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
             // area but well within two pages. Keys 1, 7, 13, ..., 175 — all
             // strictly < 200, so all land in leaf 1 with key < its existing
             // max of ~3990.
-            var inserts = new object[30][];
+            object[][] inserts = new object[30][];
             for (int i = 0; i < 30; i++)
             {
                 inserts[i] = [(i * 6) + 1];
@@ -312,7 +312,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1];
@@ -350,7 +350,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 [new IndexDefinition("IX_Id", "Id")],
                 this.ct);
 
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1];

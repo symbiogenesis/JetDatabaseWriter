@@ -111,7 +111,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                         continue;
                     }
 
-                    var values = new object[msysRelDef.Columns.Count];
+                    object[] values = new object[msysRelDef.Columns.Count];
                     for (int column = 0; column < values.Length; column++)
                     {
                         ColumnInfo tableColumn = msysRelDef.Columns[column];
@@ -243,8 +243,8 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                var primaryColumns = new string[rows.Count];
-                var foreignColumns = new string[rows.Count];
+                string[] primaryColumns = new string[rows.Count];
+                string[] foreignColumns = new string[rows.Count];
                 bool malformedColumns = false;
                 for (int column = 0; column < rows.Count; column++)
                 {

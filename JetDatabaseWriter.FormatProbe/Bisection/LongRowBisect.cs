@@ -64,10 +64,10 @@ internal static class LongRowBisect
 
     private static InlineEncoder LoadEncoder(string typeName)
     {
-        var suffix = typeName == "GeneralTextIndexEncoder" ? "gen" : "genleg";
+        string suffix = typeName == "GeneralTextIndexEncoder" ? "gen" : "genleg";
 
-        var codes = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_{suffix}.txt.gz", (char)0x0000, (char)0x00FF])!;
-        var ext = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_ext_{suffix}.txt.gz", (char)0x0100, (char)0xFFFF])!;
+        object[] codes = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_{suffix}.txt.gz", (char)0x0000, (char)0x00FF])!;
+        object[] ext = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_ext_{suffix}.txt.gz", (char)0x0100, (char)0xFFFF])!;
         return new InlineEncoder(codes, ext);
     }
 

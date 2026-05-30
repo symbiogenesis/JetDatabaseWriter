@@ -180,7 +180,7 @@ public sealed class LvalFormAssertionTests
 
     private static byte[] BuildDeterministicPayload(int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int i = 0; i < length; i++)
         {
             unchecked

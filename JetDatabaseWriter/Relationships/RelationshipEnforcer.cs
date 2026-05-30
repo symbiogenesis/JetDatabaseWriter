@@ -30,7 +30,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            var primaryColumnIndexes = new int[rel.PrimaryColumns.Count];
+            int[] primaryColumnIndexes = new int[rel.PrimaryColumns.Count];
             bool ok = true;
             for (int index = 0; index < rel.PrimaryColumns.Count; index++)
             {
@@ -80,7 +80,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
 
         try
         {
-            var indexesByColumn = new int[rel.PrimaryColumns.Count];
+            int[] indexesByColumn = new int[rel.PrimaryColumns.Count];
             bool ok = true;
             for (int index = 0; index < rel.PrimaryColumns.Count; index++)
             {
@@ -127,7 +127,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            var foreignColumnIndexes = new int[rel.ForeignColumns.Count];
+            int[] foreignColumnIndexes = new int[rel.ForeignColumns.Count];
             bool ok = true;
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
@@ -349,8 +349,8 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                var newPkSubset = new object[rel.PrimaryColumns.Count];
-                var oldPkSubset = new object?[rel.PrimaryColumns.Count];
+                object[] newPkSubset = new object[rel.PrimaryColumns.Count];
+                object?[] oldPkSubset = new object?[rel.PrimaryColumns.Count];
                 for (int index = 0; index < rel.PrimaryColumns.Count; index++)
                 {
                     newPkSubset[index] = newPkValues[primaryPkIdx[index]];
@@ -457,7 +457,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
         List<RowLocation> locations,
         CancellationToken cancellationToken)
     {
-        var allColumnOrdinals = new int[def.Columns.Count];
+        int[] allColumnOrdinals = new int[def.Columns.Count];
         for (int index = 0; index < allColumnOrdinals.Length; index++)
         {
             allColumnOrdinals[index] = index;

@@ -71,7 +71,7 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously appends a new column to an existing table. Existing rows receive
-    /// <see cref="System.DBNull.Value"/> for the new column. Implemented by copying the
+    /// <see cref="DBNull.Value"/> for the new column. Implemented by copying the
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
@@ -200,17 +200,17 @@ public interface IAccessSchema : IAccessBase
     /// must not duplicate any existing relationship.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="System.NotSupportedException">
+    /// <exception cref="NotSupportedException">
     /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
     /// Full-catalog ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c>
     /// include this table; Jet/MDB outputs and slim-catalog databases may require
     /// an Access-authored source before declaring relationships.
     /// </exception>
-    /// <exception cref="System.InvalidOperationException">
+    /// <exception cref="InvalidOperationException">
     /// Thrown when a referenced table does not exist or when a relationship with the
     /// same name already exists in the database.
     /// </exception>
-    /// <exception cref="System.ArgumentException">
+    /// <exception cref="ArgumentException">
     /// Thrown when a referenced column does not exist on its table.
     /// </exception>
     public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
@@ -229,10 +229,10 @@ public interface IAccessSchema : IAccessBase
     /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="System.NotSupportedException">
+    /// <exception cref="NotSupportedException">
     /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
     /// </exception>
-    /// <exception cref="System.InvalidOperationException">
+    /// <exception cref="InvalidOperationException">
     /// Thrown when no relationship named <paramref name="relationshipName"/> exists.
     /// </exception>
     /// <remarks>
@@ -258,14 +258,14 @@ public interface IAccessSchema : IAccessBase
     /// relationship (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="System.NotSupportedException">
+    /// <exception cref="NotSupportedException">
     /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
     /// </exception>
-    /// <exception cref="System.InvalidOperationException">
+    /// <exception cref="InvalidOperationException">
     /// Thrown when no relationship named <paramref name="oldName"/> exists,
     /// or when a relationship named <paramref name="newName"/> already exists.
     /// </exception>
-    /// <exception cref="System.ArgumentException">
+    /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="newName"/> is null or empty.
     /// </exception>
     public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default);

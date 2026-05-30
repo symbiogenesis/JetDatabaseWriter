@@ -46,7 +46,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
 
     public byte[] ToHeaderBytes()
     {
-        var header = new byte[Constants.LongValue.HeaderSize];
+        byte[] header = new byte[Constants.LongValue.HeaderSize];
         this.WriteTo(header);
         return header;
     }

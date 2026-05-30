@@ -702,7 +702,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                     continue;
                 }
 
-                var serialized = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
+                byte[] serialized = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
                 BinaryPrimitives.WriteUInt16LittleEndian(serialized, (ushort)fileNameBytes.Length);
                 Buffer.BlockCopy(fileNameBytes, 0, serialized, 2, fileNameBytes.Length);
                 Buffer.BlockCopy(fileDataBytes, 0, serialized, 2 + fileNameBytes.Length, fileDataBytes.Length);

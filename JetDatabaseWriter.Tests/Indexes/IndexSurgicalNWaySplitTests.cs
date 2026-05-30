@@ -52,7 +52,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
@@ -85,7 +85,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
@@ -120,7 +120,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var seed = new object[5][];
+            object[][] seed = new object[5][];
             for (int i = 0; i < 5; i++)
             {
                 seed[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i];
@@ -132,7 +132,7 @@ public sealed class IndexSurgicalNWaySplitTests
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // 60 ascending-key rows whose values all sort AFTER the seed.
-            var batch = new object[60][];
+            object[][] batch = new object[60][];
             for (int i = 0; i < 60; i++)
             {
                 int n = 1_000 + i;
@@ -171,7 +171,7 @@ public sealed class IndexSurgicalNWaySplitTests
             // Seed: 300 rows in one bulk insert, distributed across many
             // leaves (the bulk rebuild bulk-rebuild path is engaged for this
             // initial population on an empty tree).
-            var seed = new object[300][];
+            object[][] seed = new object[300][];
             for (int i = 0; i < 300; i++)
             {
                 int n = i * 10;
@@ -188,7 +188,7 @@ public sealed class IndexSurgicalNWaySplitTests
             // leaf intermediates to grow toward capacity.
             for (int b = 0; b < 30; b++)
             {
-                var batch = new object[5][];
+                object[][] batch = new object[5][];
                 for (int i = 0; i < 5; i++)
                 {
                     int n = (b * 5 * 10) + i + 1; // odd offsets between seed rows
@@ -205,7 +205,7 @@ public sealed class IndexSurgicalNWaySplitTests
             // → all land on one leaf → splice runs to multiple pages →
             // N-way leaf split → multiple summaries pushed into a
             // potentially-full parent → recursive intermediate split.
-            var bigBatch = new object[50][];
+            object[][] bigBatch = new object[50][];
             for (int i = 0; i < 50; i++)
             {
                 int n = 5_000 + i; // cluster well above seeded range, single leaf target
@@ -240,7 +240,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns) { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')];
@@ -266,7 +266,7 @@ public sealed class IndexSurgicalNWaySplitTests
         await AssertAllRowsPresentAsync(stream, expectedRows: rowCount, this.ct);
     }
 
-    private static async Task AssertAllRowsPresentAsync(MemoryStream stream, int expectedRows, System.Threading.CancellationToken ct)
+    private static async Task AssertAllRowsPresentAsync(MemoryStream stream, int expectedRows, CancellationToken ct)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);

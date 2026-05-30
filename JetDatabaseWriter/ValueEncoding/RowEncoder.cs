@@ -171,7 +171,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return required;
         }
 
-        DateTime dateTime = Convert.ToDateTime(value, CultureInfo.InvariantCulture);
+        var dateTime = Convert.ToDateTime(value, CultureInfo.InvariantCulture);
         JetTypeInfo.WriteDateTimeExtended(dest, dateTime);
         return required;
     }
@@ -247,7 +247,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        var payload = new byte[fixedSize];
+        byte[] payload = new byte[fixedSize];
         int written = TryEncodeFixedValue(column, value, payload);
         if (written <= 0)
         {
@@ -292,7 +292,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
     private static byte[] EncodeCalculatedNumericValue(decimal value)
     {
-        var payload = new byte[16];
+        byte[] payload = new byte[16];
         BinaryPrimitives.WriteInt16LittleEndian(payload.AsSpan(0, 2), 14);
 
         Span<byte> mantissa = stackalloc byte[12];
@@ -351,7 +351,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         nullMask.Clear();
 
         int fixedAreaSize = 0;
-        var varEntries = varLen > 0 ? new byte[varLen][] : [];
+        byte[][] varEntries = varLen > 0 ? new byte[varLen][] : [];
         int varPayloadSize = 0;
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
@@ -426,7 +426,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             rowLength = baseRowLength + jumpSize;
         }
 
-        var row = new byte[rowLength];
+        byte[] row = new byte[rowLength];
         int pos = 0;
 
         WriteField(row, pos, writer.RowFields.NumCols, numCols);
@@ -525,7 +525,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                     return null;
                 }
 
-                var payload = new byte[fixedSize];
+                byte[] payload = new byte[fixedSize];
                 int written = TryEncodeFixedValue(column, value, payload);
                 if (written <= 0)
                 {

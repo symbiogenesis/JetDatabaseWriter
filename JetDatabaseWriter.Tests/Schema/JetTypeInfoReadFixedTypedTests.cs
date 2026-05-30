@@ -12,9 +12,9 @@ using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(System.ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>: the typed
+/// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>: the typed
 /// fixed-width decode that powers the typed-row read path. Each test verifies
-/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, ColumnType, int, bool)"/> +
+/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/> +
 /// <see cref="TypedValueParser.ParseValue"/> round-trip the typed reader is
 /// replacing — except where the round-trip is documented as lossy (sub-second
 /// DateTime precision), in which case the typed path is asserted to keep
@@ -193,7 +193,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(row, oaCurrency);
-        var expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
+        decimal expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
 
         AssertParity(row, start: 0, MoneyType, size: 8, expected: expected);
     }
@@ -225,7 +225,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     public void Numeric_InRange_RoundTripsThroughParseValue(uint lo, uint mid, uint hi, bool negative, byte scale, string expectedDecimal)
     {
         byte[] row = BuildNumericRow(lo, mid, hi, negative);
-        var expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
+        decimal expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
 
         AssertNumericParity(row, scale, expected, strictNumeric: true);
     }

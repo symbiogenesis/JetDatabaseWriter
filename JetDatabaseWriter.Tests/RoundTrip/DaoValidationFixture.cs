@@ -400,7 +400,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ],
             cancellationToken).ConfigureAwait(false);
 
-        var countRows = new object[CoreRowCount][];
+        object[][] countRows = new object[CoreRowCount][];
         for (int i = 0; i < CoreRowCount; i++)
         {
             countRows[i] = [DBNull.Value, $"Row_{i}"];
@@ -416,7 +416,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ],
             cancellationToken).ConfigureAwait(false);
 
-        var seekRows = new object[30][];
+        object[][] seekRows = new object[30][];
         for (int i = 0; i < seekRows.Length; i++)
         {
             seekRows[i] = [DBNull.Value, $"Item_{i + 1}"];
@@ -432,7 +432,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ],
             cancellationToken).ConfigureAwait(false);
 
-        var autoNumberRows = new object[CoreWriterRowCount][];
+        object[][] autoNumberRows = new object[CoreWriterRowCount][];
         for (int i = 0; i < CoreWriterRowCount; i++)
         {
             autoNumberRows[i] = [DBNull.Value, $"Writer_{i + 1}"];
@@ -503,7 +503,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 ],
                 cancellationToken).ConfigureAwait(false);
 
-            var rows = new object[EncryptedCompactRowCount][];
+            object[][] rows = new object[EncryptedCompactRowCount][];
             for (int i = 0; i < rows.Length; i++)
             {
                 rows[i] = [DBNull.Value, $"EncRow_{i}"];
@@ -581,7 +581,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ],
             cancellationToken).ConfigureAwait(false);
 
-        var parentRows = new object[StressRowsPerTable][];
+        object[][] parentRows = new object[StressRowsPerTable][];
         for (int row = 0; row < StressRowsPerTable; row++)
         {
             parentRows[row] = [DBNull.Value, $"Parent_{row}"];
@@ -619,7 +619,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
             }
 
-            var rows = new object[StressRowsPerTable][];
+            object[][] rows = new object[StressRowsPerTable][];
             for (int row = 0; row < StressRowsPerTable; row++)
             {
                 rows[row] =
@@ -810,7 +810,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static byte[] BuildDeterministicPayload(int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int index = 0; index < bytes.Length; index++)
         {
             unchecked

@@ -48,7 +48,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 int tag = i < leftSubtreeRows ? 9 : (i % 5);
@@ -108,7 +108,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[1500][];
+            object[][] rows = new object[1500][];
             for (int i = 0; i < 1500; i++)
             {
                 int tag = (i % 60 == 0) ? 2 : 1;
@@ -158,7 +158,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 int tag = i < leftSubtreeRows ? 9 : (i % 5);
@@ -175,7 +175,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            var reins = new object[reinsertCount][];
+            object[][] reins = new object[reinsertCount][];
             for (int i = 0; i < reinsertCount; i++)
             {
                 reins[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), 7];

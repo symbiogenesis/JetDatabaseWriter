@@ -239,7 +239,7 @@ internal static class IndexHelpers
             }
 
             var seenCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var colNums = new int[def.Columns.Count];
+            int[] colNums = new int[def.Columns.Count];
             for (int k = 0; k < def.Columns.Count; k++)
             {
                 string columnName = def.Columns[k];
@@ -363,7 +363,7 @@ internal static class IndexHelpers
                 continue;
             }
 
-            var pkCols = new string[idx.Columns.Count];
+            string[] pkCols = new string[idx.Columns.Count];
             var descendingCols = new List<string>();
             for (int i = 0; i < idx.Columns.Count; i++)
             {
@@ -479,7 +479,7 @@ internal static class IndexHelpers
     /// <param name="values">The values.</param>
     public static byte[]? TryEncodeSeekKey(ParentSeekIndex idx, object[] values)
     {
-        var pieces = new byte[idx.KeyColumns.Count][];
+        byte[][] pieces = new byte[idx.KeyColumns.Count][];
         int total = 0;
         try
         {
@@ -554,7 +554,7 @@ internal static class IndexHelpers
             return null;
         }
 
-        var pieces = new byte[idx.KeyColumns.Count][];
+        byte[][] pieces = new byte[idx.KeyColumns.Count][];
         int total = 0;
         try
         {

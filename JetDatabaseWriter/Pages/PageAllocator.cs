@@ -311,7 +311,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             if (!UsageMap.TryGetFirstRowBound(globalPage, writer.DataPage, writer.PageSizeBytes, out RowBound rowBound))
             {
                 this.InitializeGlobalUsageMapPage(globalPage);
-                rowBound = new AccessBase.RowBound(0, writer.PageSizeBytes - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
+                rowBound = new RowBound(0, writer.PageSizeBytes - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
             }
 
             byte mapType = globalPage[rowBound.RowStart];

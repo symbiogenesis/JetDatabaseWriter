@@ -225,7 +225,7 @@ public sealed class IndexIncrementalMaintenanceTests
 
             // ~9 bytes per int entry; ~3616 byte payload area / 9 ≈ 400 entries
             // per leaf. Insert 800 to force a multi-leaf bulk rebuild.
-            var rows = new object[800][];
+            object[][] rows = new object[800][];
             for (int i = 0; i < 800; i++)
             {
                 rows[i] = [i + 1];

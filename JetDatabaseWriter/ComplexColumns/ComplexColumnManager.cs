@@ -829,8 +829,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Resolve predicate column ordinals + decode parent key (string-form for comparison).
-        var predIndexes = new int[parentRowKey.Count];
-        var predValues = new string[parentRowKey.Count];
+        int[] predIndexes = new int[parentRowKey.Count];
+        string[] predValues = new string[parentRowKey.Count];
         int pi = 0;
         foreach (KeyValuePair<string, object?> kvp in parentRowKey)
         {
@@ -1630,7 +1630,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    var values = new object[msysCxDef.Columns.Count];
+                    object[] values = new object[msysCxDef.Columns.Count];
                     for (int i = 0; i < values.Length; i++)
                     {
                         string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
@@ -1706,7 +1706,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    var values = new object[msysCxDef.Columns.Count];
+                    object[] values = new object[msysCxDef.Columns.Count];
                     for (int i = 0; i < values.Length; i++)
                     {
                         string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);

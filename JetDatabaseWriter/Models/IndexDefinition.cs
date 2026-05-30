@@ -69,7 +69,7 @@ public sealed record IndexDefinition
             throw new ArgumentException("At least one column is required.", nameof(columns));
         }
 
-        var copy = new string[columns.Count];
+        string[] copy = new string[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
             copy[i] = columns[i];

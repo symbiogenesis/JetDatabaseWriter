@@ -104,7 +104,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        var ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
+        int[] ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Equal(ExpectedIds123, ids);
     }
 
@@ -121,7 +121,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var batch = new[]
+            object[][] batch = new[]
             {
                 new object[] { 1 },
                 [2],

@@ -14,8 +14,8 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
-using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
-using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
+using KeyColumnInfo = IndexLayout.KeyColumnInfo;
+using RealIdxEntry = IndexLayout.RealIdxEntry;
 
 #pragma warning disable SA1202, SA1204
 
@@ -394,7 +394,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return null;
             }
 
-            var result = new long[numRealIdx][];
+            long[][] result = new long[numRealIdx][];
             for (int i = 0; i < result.Length; i++)
             {
                 result[i] = [];
@@ -547,7 +547,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return false;
         }
 
-        var indexPageGroups = new long[numRealIdx][];
+        long[][] indexPageGroups = new long[numRealIdx][];
         for (int i = 0; i < indexPageGroups.Length; i++)
         {
             indexPageGroups[i] = [];

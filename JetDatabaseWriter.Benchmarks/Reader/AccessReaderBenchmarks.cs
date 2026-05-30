@@ -107,7 +107,7 @@ public class AccessReaderBenchmarks
     public async Task<int> StreamRowsTyped_All_Numeric()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        var count = 0;
+        int count = 0;
         await foreach (OrderDetails row in reader.Rows<OrderDetails>(NumericTable))
         {
             _ = row;

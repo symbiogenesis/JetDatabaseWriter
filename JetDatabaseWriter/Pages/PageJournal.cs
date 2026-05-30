@@ -84,7 +84,7 @@ internal sealed class PageJournal
                 this.maxPages));
         }
 
-        var copy = new byte[this.pageSize];
+        byte[] copy = new byte[this.pageSize];
         page.CopyTo(copy);
         this.pages.Add(pageNumber, copy);
     }

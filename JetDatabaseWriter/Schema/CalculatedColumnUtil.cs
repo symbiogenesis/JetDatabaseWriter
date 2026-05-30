@@ -37,7 +37,7 @@ internal static class CalculatedColumnUtil
     public static byte[] Wrap(byte[] payload)
     {
         Guard.NotNull(payload, nameof(payload));
-        var wrapped = new byte[CalculatedColumn.ExtraDataLen + payload.Length];
+        byte[] wrapped = new byte[CalculatedColumn.ExtraDataLen + payload.Length];
         Wi32(wrapped, CalculatedColumn.DataLenOffset, payload.Length);
         Buffer.BlockCopy(payload, 0, wrapped, CalculatedColumn.DataOffset, payload.Length);
         return wrapped;
@@ -60,7 +60,7 @@ internal static class CalculatedColumnUtil
         int dataLen = Ri32(data, CalculatedColumn.DataLenOffset);
         int available = data.Length - CalculatedColumn.DataOffset;
         int copyLen = Math.Max(0, Math.Min(available, dataLen));
-        var unwrapped = new byte[copyLen];
+        byte[] unwrapped = new byte[copyLen];
         Buffer.BlockCopy(data, CalculatedColumn.DataOffset, unwrapped, 0, copyLen);
         return unwrapped;
     }
@@ -75,7 +75,7 @@ internal static class CalculatedColumnUtil
         int dataLen = Ri32(data, CalculatedColumn.DataLenOffset);
         int available = data.Length - CalculatedColumn.DataOffset;
         int copyLen = Math.Max(0, Math.Min(available, dataLen));
-        var unwrapped = new byte[copyLen];
+        byte[] unwrapped = new byte[copyLen];
         data.Slice(CalculatedColumn.DataOffset, copyLen).CopyTo(unwrapped);
         return unwrapped;
     }
@@ -107,9 +107,9 @@ internal static class CalculatedColumnUtil
             case ComplexType:
             case BigIntType:
             case DateTimeExtendedType:
-                int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
+                int required = type is ComplexType or AttachmentType ? 4 : GetFixedSize(type);
                 return required > 0 && payload.Length >= required
-                    ? JetTypeInfo.ReadFixedString(payload, 0, type, required, strictNumeric)
+                    ? ReadFixedString(payload, 0, type, required, strictNumeric)
                     : string.Empty;
             default:
                 throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
@@ -140,9 +140,9 @@ internal static class CalculatedColumnUtil
             case ComplexType:
             case BigIntType:
             case DateTimeExtendedType:
-                int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
+                int required = type is ComplexType or AttachmentType ? 4 : GetFixedSize(type);
                 return required > 0 && payload.Length >= required
-                    ? JetTypeInfo.ReadFixedTyped(payload, 0, type, required, strictNumeric)
+                    ? ReadFixedTyped(payload, 0, type, required, strictNumeric)
                     : DBNull.Value;
             default:
                 throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");

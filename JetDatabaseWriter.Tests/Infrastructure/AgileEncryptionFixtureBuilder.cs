@@ -118,7 +118,7 @@ internal static class AgileEncryptionFixtureBuilder
         // both the key and the computed value with the intermediate key.
         byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
         byte[] hmacValue;
-        using (var hmac = new System.Security.Cryptography.HMACSHA512(hmacKey))
+        using (var hmac = new HMACSHA512(hmacKey))
         {
             hmacValue = hmac.ComputeHash(encryptedPackage);
         }

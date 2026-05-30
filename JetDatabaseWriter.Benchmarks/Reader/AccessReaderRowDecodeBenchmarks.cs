@@ -241,7 +241,7 @@ public class AccessReaderRowDecodeBenchmarks
     public async Task<int> Decode_Memo_Typed()
     {
         int count = 0;
-        await foreach (MemoRow? row in this.memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        await foreach (MemoRow? row in this.memoReader.Rows<MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
         {
             _ = row;
             count++;

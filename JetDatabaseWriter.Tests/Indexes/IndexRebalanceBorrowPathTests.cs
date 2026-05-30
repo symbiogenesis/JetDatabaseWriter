@@ -60,7 +60,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[initialRows][];
+            object[][] rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
             {
                 rows[i] = [i * 10, string.Create(CultureInfo.InvariantCulture, $"v{i}"), i % 3 == 0 ? 0 : 1];
@@ -89,7 +89,7 @@ public sealed class IndexRebalanceBorrowPathTests
         var insertedIds = new HashSet<int>();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            var rows = new object[insertCount][];
+            object[][] rows = new object[insertCount][];
             for (int i = 0; i < insertCount; i++)
             {
                 // Keys that fall between existing survivors: id*10 + 5
@@ -150,7 +150,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[initialRows][];
+            object[][] rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
             {
                 rows[i] = [i, 0];
@@ -180,7 +180,7 @@ public sealed class IndexRebalanceBorrowPathTests
             int toInsert = toDelete.Count / 2;
             await using (AccessWriter writer = await OpenWriterAsync(stream))
             {
-                var rows = new object[toInsert][];
+                object[][] rows = new object[toInsert][];
                 for (int i = 0; i < toInsert; i++)
                 {
                     rows[i] = [nextId, round];
@@ -232,7 +232,7 @@ public sealed class IndexRebalanceBorrowPathTests
                 [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 string zone;

@@ -164,7 +164,7 @@ internal static class CompoundFileReader
 
         // ── Materialise the FAT itself by reading each FAT sector. ──
         int entriesPerSector = hdr.SectorSize / 4;
-        var fat = new uint[fatSectorIds.Count * entriesPerSector];
+        uint[] fat = new uint[fatSectorIds.Count * entriesPerSector];
         for (int i = 0; i < fatSectorIds.Count; i++)
         {
             await ReadSectorIntoAsync(stream, fatSectorIds[i], scratch, hdr.SectorSize, cancellationToken).ConfigureAwait(false);
@@ -193,7 +193,7 @@ internal static class CompoundFileReader
 
         byte[] miniFatBytes = await ReadChainAsync(stream, hdr.FirstMiniFatSector, hdr.SectorSize, fat, cancellationToken).ConfigureAwait(false);
         int count = miniFatBytes.Length / 4;
-        var miniFat = new uint[count];
+        uint[] miniFat = new uint[count];
         for (int i = 0; i < count; i++)
         {
             miniFat[i] = BinaryPrimitives.ReadUInt32LittleEndian(miniFatBytes.AsSpan(i * 4));

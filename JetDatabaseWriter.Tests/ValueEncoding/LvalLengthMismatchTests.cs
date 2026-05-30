@@ -188,7 +188,7 @@ public sealed class LvalLengthMismatchTests
 
     private static byte[] BuildPayload(int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int i = 0; i < length; i++)
         {
             unchecked

@@ -20,7 +20,7 @@ using Xunit;
 /// reach:
 /// <list type="bullet">
 ///   <item><description>A bulk insert large enough to force a multi-level B-tree (intermediate index pages, not just a single leaf).</description></item>
-///   <item><description>The bulk-rebuild uniqueness check on a duplicate key inside an <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, System.Threading.CancellationToken)"/> batch.</description></item>
+///   <item><description>The bulk-rebuild uniqueness check on a duplicate key inside an <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/> batch.</description></item>
 ///   <item><description>The auto-increment counter must <b>not</b> skip a value when a prior row was rejected by a unique-index violation.</description></item>
 /// </list>
 /// </summary>
@@ -60,7 +60,7 @@ public sealed class IndexBulkInsertStressTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [i + 1];
@@ -96,7 +96,7 @@ public sealed class IndexBulkInsertStressTests
 
     /// <summary>
     /// Mirror of Jackcess <c>IndexTest.testConstraintViolation</c>: feeding
-    /// a duplicate key into <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, System.Threading.CancellationToken)"/>
+    /// a duplicate key into <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
     /// must surface a uniqueness failure. Our implementation defers the
     /// check until the bulk B-tree rebuild that runs after every row has
     /// been written (see <c>AccessWriter.MaintainIndexesAsync</c>), so the
@@ -118,7 +118,7 @@ public sealed class IndexBulkInsertStressTests
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
             this.ct);
 
-        var batch = new[]
+        object[][] batch = new[]
         {
             new object[] { 1 },
             [2],
@@ -224,7 +224,7 @@ public sealed class IndexBulkInsertStressTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [i + 1, "n" + i];

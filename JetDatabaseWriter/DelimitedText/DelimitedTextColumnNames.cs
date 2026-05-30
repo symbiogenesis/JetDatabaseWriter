@@ -10,7 +10,7 @@ internal static class DelimitedTextColumnNames
     {
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var nextSuffixByBaseName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var columnNames = new string[rawColumnNames.Count];
+        string[] columnNames = new string[rawColumnNames.Count];
         for (int i = 0; i < rawColumnNames.Count; i++)
         {
             string baseName = string.IsNullOrWhiteSpace(rawColumnNames[i]) ? $"F{i + 1}" : rawColumnNames[i].Trim();
@@ -39,7 +39,7 @@ internal static class DelimitedTextColumnNames
 
     internal static string[] CreateGenerated(int columnCount)
     {
-        var columnNames = new string[columnCount];
+        string[] columnNames = new string[columnCount];
         for (int i = 0; i < columnNames.Length; i++)
         {
             columnNames[i] = $"F{i + 1}";

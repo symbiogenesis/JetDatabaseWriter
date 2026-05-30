@@ -201,7 +201,7 @@ internal static class IndexPageCodec
             }
 
             int trailerOffset = entryStart + suffixLength;
-            long dataPage = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
+            long dataPage = ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
             byte dataRow = page[trailerOffset + 3];
             result.Add(new IndexEntry(canonicalKey, dataPage, dataRow));
 
@@ -259,7 +259,7 @@ internal static class IndexPageCodec
             }
 
             int trailerOffset = entryStart + suffixLength;
-            long dataPage = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
+            long dataPage = ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
             byte dataRow = page[trailerOffset + 3];
             long childPage = DecodeIntermediateChildPointer(page, trailerOffset + 4);
             result.Add(new DecodedIntermediateEntry(new IndexEntry(canonicalKey, dataPage, dataRow), childPage));
@@ -519,7 +519,7 @@ internal static class IndexPageCodec
                 }
 
                 int pointerOffset = entryStart + suffixLength;
-                long dataPage = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
+                long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
                 matches.Add((dataPage, page[pointerOffset + 3]));
             }
 
@@ -587,12 +587,12 @@ internal static class IndexPageCodec
     {
         if (isFirstEntry)
         {
-            var canonical = new byte[suffixLength];
+            byte[] canonical = new byte[suffixLength];
             Buffer.BlockCopy(page, entryStart, canonical, 0, suffixLength);
             return canonical;
         }
 
-        var key = new byte[prefixLength + suffixLength];
+        byte[] key = new byte[prefixLength + suffixLength];
         if (prefixLength > 0 && sharedPrefix != null)
         {
             Buffer.BlockCopy(sharedPrefix, 0, key, 0, prefixLength);

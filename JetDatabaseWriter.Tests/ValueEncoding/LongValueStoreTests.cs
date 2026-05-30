@@ -89,7 +89,7 @@ public sealed class LongValueStoreTests
 
     private static LongValueStore.LvalRowLocation CreateChainedRow(uint nextDp, byte[] payload, int pageSize)
     {
-        var page = new byte[pageSize];
+        byte[] page = new byte[pageSize];
         Wi32(page, 0, unchecked((int)nextDp));
         payload.CopyTo(page.AsSpan(4));
         return new LongValueStore.LvalRowLocation(page, 0, payload.Length + 4, null);

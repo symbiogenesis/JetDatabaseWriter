@@ -336,12 +336,12 @@ internal static class LongRowSuffixProbe
         }
 
         ushort baseValue = suffixes[baseOffset];
-        var rowContributions = new ushort[size];
-        var columnContributions = new ushort[size];
-        var shiftedSuffixes = new ushort[size];
-        var rowPresent = new bool[size];
-        var columnPresent = new bool[size];
-        var shiftedPresent = new bool[size];
+        ushort[] rowContributions = new ushort[size];
+        ushort[] columnContributions = new ushort[size];
+        ushort[] shiftedSuffixes = new ushort[size];
+        bool[] rowPresent = new bool[size];
+        bool[] columnPresent = new bool[size];
+        bool[] shiftedPresent = new bool[size];
 
         for (int index = 0; index < size; index++)
         {
@@ -945,8 +945,8 @@ internal static class LongRowSuffixProbe
     private static void AppendPairMatrixModelSummary(StringBuilder sb, SuffixPatternTable table, List<SuffixPatternRow> rows, int matrixStart, bool includeCrc16)
     {
         int size = DaoLabAlphabet.Length;
-        var suffixes = new ushort[size * size];
-        var present = new bool[size * size];
+        ushort[] suffixes = new ushort[size * size];
+        bool[] present = new bool[size * size];
         var rowByOffset = new SuffixPatternRow?[size * size];
         foreach (SuffixPatternRow row in rows)
         {
@@ -1199,12 +1199,12 @@ internal static class LongRowSuffixProbe
         ushort normalBase = normalSuffixes[normalBaseOffset];
         ushort trailingBase = trailingSuffixes[trailingBaseOffset];
 
-        var rowContributions = new ushort[size];
-        var columnContributions = new ushort[size];
-        var trailingContributions = new ushort[size];
-        var hasRowContribution = new bool[size];
-        var hasColumnContribution = new bool[size];
-        var hasTrailingContribution = new bool[size];
+        ushort[] rowContributions = new ushort[size];
+        ushort[] columnContributions = new ushort[size];
+        ushort[] trailingContributions = new ushort[size];
+        bool[] hasRowContribution = new bool[size];
+        bool[] hasColumnContribution = new bool[size];
+        bool[] hasTrailingContribution = new bool[size];
 
         for (int index = 0; index < size; index++)
         {
@@ -1369,8 +1369,8 @@ internal static class LongRowSuffixProbe
         }
 
         RollingConstraint[] searchConstraints = BuildCrcSearchSample(constraints, maxCount: 64);
-        var normalTable = new ushort[256];
-        var reflectedTable = new ushort[256];
+        ushort[] normalTable = new ushort[256];
+        ushort[] reflectedTable = new ushort[256];
 
         for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
         {
@@ -1708,8 +1708,8 @@ internal static class LongRowSuffixProbe
         coefficients = new ulong[16];
         for (int targetBit = 0; targetBit < 16; targetBit++)
         {
-            var basis = new ulong[variableCount];
-            var basisRhs = new int[variableCount];
+            ulong[] basis = new ulong[variableCount];
+            int[] basisRhs = new int[variableCount];
             for (int row = 0; row < features.Length; row++)
             {
                 ulong mask = features[row];
@@ -2344,7 +2344,7 @@ internal static class LongRowSuffixProbe
         for (int targetBit = 0; targetBit < 16; targetBit++)
         {
             var basis = new BigInteger[variableCount];
-            var basisRhs = new int[variableCount];
+            int[] basisRhs = new int[variableCount];
             for (int row = 0; row < features.Length; row++)
             {
                 BigInteger mask = features[row];
@@ -2574,8 +2574,8 @@ internal static class LongRowSuffixProbe
 
             int hitCount = 0;
             var hitDetails = new List<string>();
-            var normalTable = new ushort[256];
-            var reflectedTable = new ushort[256];
+            ushort[] normalTable = new ushort[256];
+            ushort[] reflectedTable = new ushort[256];
 
             for (int poly = 0; poly <= 0xFFFF; poly++)
             {
@@ -2915,7 +2915,7 @@ internal static class LongRowSuffixProbe
         }
 
         int contradictoryKeys = observations.Count(kv => kv.Value.Count > 1);
-        var positionStats = new int[windowLength][]; // [pos] -> {distinct keys, total observations, contradictory keys}
+        int[][] positionStats = new int[windowLength][]; // [pos] -> {distinct keys, total observations, contradictory keys}
         for (int p = 0; p < windowLength; p++)
         {
             positionStats[p] = new int[3];
@@ -3686,8 +3686,8 @@ internal static class LongRowSuffixProbe
             .AppendLine();
 
         const int size = DaoLabAlphabetLength;
-        var suffixes = new ushort[size * size];
-        var present = new bool[size * size];
+        ushort[] suffixes = new ushort[size * size];
+        bool[] present = new bool[size * size];
 
         foreach (SuffixPatternRow row in table.Rows)
         {
@@ -4145,7 +4145,7 @@ internal static class LongRowSuffixProbe
     private static byte[] AppendTextLengthBE(byte[] bytes, string? text)
     {
         int textLength = text?.Length ?? 0;
-        var result = new byte[bytes.Length + 2];
+        byte[] result = new byte[bytes.Length + 2];
         bytes.CopyTo(result, 0);
         BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(bytes.Length), (ushort)textLength);
         return result;
@@ -4154,7 +4154,7 @@ internal static class LongRowSuffixProbe
     private static byte[] AppendTextLengthLE(byte[] bytes, string? text)
     {
         int textLength = text?.Length ?? 0;
-        var result = new byte[bytes.Length + 2];
+        byte[] result = new byte[bytes.Length + 2];
         bytes.CopyTo(result, 0);
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(bytes.Length), (ushort)textLength);
         return result;
@@ -4172,7 +4172,7 @@ internal static class LongRowSuffixProbe
             return first;
         }
 
-        var result = new byte[first.Length + second.Length];
+        byte[] result = new byte[first.Length + second.Length];
         first.CopyTo(result, 0);
         second.CopyTo(result, first.Length);
         return result;
@@ -4887,7 +4887,7 @@ internal static class LongRowSuffixProbe
 
     private static byte[] AppendLengthLE(byte[] bytes)
     {
-        var result = new byte[bytes.Length + 2];
+        byte[] result = new byte[bytes.Length + 2];
         bytes.CopyTo(result, 0);
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(bytes.Length), (ushort)bytes.Length);
         return result;
@@ -5948,8 +5948,8 @@ internal static class LongRowSuffixProbe
 
         var hits = new List<CrcSweepHit>();
         ConstraintSet firstConstraint = constraints[0];
-        var normalTable = new ushort[256];
-        var reflectedTable = new ushort[256];
+        ushort[] normalTable = new ushort[256];
+        ushort[] reflectedTable = new ushort[256];
 
         for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
         {
@@ -6967,7 +6967,7 @@ internal static class LongRowSuffixProbe
         }
     }
 
-    private sealed class SuffixCandidateContext(LongRowSuffixProbe.SuffixPatternRow row, bool ascending)
+    private sealed class SuffixCandidateContext(SuffixPatternRow row, bool ascending)
     {
         private readonly Dictionary<CompareSortKeyCacheKey, byte[]> compareSortKeyBytes = [];
         private readonly Dictionary<DigestCacheKey, byte[]> digestBytes = [];

@@ -296,7 +296,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
         Assert.Equal(1, pageCache.Count);
 
-        var journaledPage = new byte[reader.PageSize];
+        byte[] journaledPage = new byte[reader.PageSize];
         Buffer.BlockCopy(cachedPage, 0, journaledPage, 0, reader.PageSize);
         journaledPage[0x14] = unchecked((byte)(journaledPage[0x14] + 1));
 
@@ -391,7 +391,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static string CreateRowSignature(object[] row)
     {
-        var values = new string[row.Length];
+        string[] values = new string[row.Length];
         for (int columnIndex = 0; columnIndex < row.Length; columnIndex++)
         {
             values[columnIndex] = Convert.ToString(row[columnIndex], CultureInfo.InvariantCulture) ?? string.Empty;

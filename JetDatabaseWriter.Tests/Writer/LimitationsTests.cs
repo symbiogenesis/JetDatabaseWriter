@@ -89,7 +89,7 @@ public sealed class LimitationsTests
 
     private static void AssertNoMethodMatching(Type type, string substring)
     {
-        var matches = type
+        string[] matches = type
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
             .Where(m => m.Name.Contains(substring, StringComparison.OrdinalIgnoreCase))
             .Select(m => m.Name)

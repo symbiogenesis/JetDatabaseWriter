@@ -117,7 +117,7 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
 
     private static string[] BuildVersionPayloads()
     {
-        var versions = new string[VersionCount];
+        string[] versions = new string[VersionCount];
         for (int i = 0; i < VersionCount; i++)
         {
             if (LongVersionIndices.Contains(i))

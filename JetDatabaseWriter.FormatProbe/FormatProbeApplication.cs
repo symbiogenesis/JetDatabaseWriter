@@ -645,7 +645,7 @@ internal static class FormatProbeApplication
     private static async Task WriteMdbCatalogAppendixAsync(string fixturesDir, string outPath)
     {
         // Recursively discover every .mdb / .accdb under fixturesDir.
-        var fixturePaths = Directory
+        string[] fixturePaths = Directory
             .EnumerateFiles(fixturesDir, "*.*", SearchOption.AllDirectories)
             .Where(p =>
             {
@@ -670,7 +670,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Probed every `.mdb` / `.accdb` under `JetDatabaseWriter.Tests/Databases/` ({fixturePaths.Length} files), including the upstream Jackcess corpus (`Databases/Jackcess/V1997/` … `V2019/`).");
         _ = sb.AppendLine();
 
-        using var catalogScanThrottle = new System.Threading.SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());
+        using var catalogScanThrottle = new SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());
         CatalogScanResult[] scans = await Task.WhenAll(
             fixturePaths.Select(path => ScanCatalogFixtureAsync(fixturesDir, path, catalogScanThrottle)));
 
@@ -845,7 +845,7 @@ internal static class FormatProbeApplication
     private static async Task<CatalogScanResult> ScanCatalogFixtureAsync(
         string fixturesDir,
         string fixturePath,
-        System.Threading.SemaphoreSlim throttle)
+        SemaphoreSlim throttle)
     {
         string relPath = Path.GetRelativePath(fixturesDir, fixturePath).Replace('\\', '/');
         await throttle.WaitAsync();
@@ -918,7 +918,7 @@ internal static class FormatProbeApplication
         int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
 
         var result = new List<(long Id, string Name, int Type, long Flags, long TdefPage)>();
-        await foreach (var row in reader.EnumerateMSysObjectsRowsAsync(msys, default))
+        await foreach (string[] row in reader.EnumerateMSysObjectsRowsAsync(msys, default))
         {
             long id = CatalogValueReader.ParseInt64OrZero(row, idxId);
             string name = CatalogValueReader.GetStringOrEmpty(row, idxName);

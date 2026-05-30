@@ -462,7 +462,7 @@ internal static class DaoBaselineProbe
 
     private static async Task<byte[]> ReadPageDirectAsync(FileStream stream, int pageSize, long pageNumber)
     {
-        var page = new byte[pageSize];
+        byte[] page = new byte[pageSize];
         stream.Position = checked(pageNumber * pageSize);
         int offset = 0;
         while (offset < page.Length)
@@ -481,7 +481,7 @@ internal static class DaoBaselineProbe
 
     private static async Task<byte[][]> LoadPagesDirectAsync(string path, int pageSize, int pageCount)
     {
-        var pages = new byte[pageCount][];
+        byte[][] pages = new byte[pageCount][];
         await using FileStream stream = OpenPageReadStream(path, pageSize);
         for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
         {
@@ -1928,7 +1928,7 @@ internal static class DaoBaselineProbe
         int idxFlags = msys.Columns.FindIndex(c => c.Name.Equals("Flags", StringComparison.OrdinalIgnoreCase));
         int idxParent = msys.Columns.FindIndex(c => c.Name.Equals("ParentId", StringComparison.OrdinalIgnoreCase));
         var list = new List<CatalogEntry>();
-        await foreach (var row in r.EnumerateMSysObjectsRowsAsync(msys, default))
+        await foreach (string[] row in r.EnumerateMSysObjectsRowsAsync(msys, default))
         {
             string Get(int i) => i >= 0 && i < row.Length ? row[i] ?? string.Empty : string.Empty;
             long id = long.TryParse(Get(idxId), NumberStyles.Integer, CultureInfo.InvariantCulture, out long v1) ? v1 : 0;

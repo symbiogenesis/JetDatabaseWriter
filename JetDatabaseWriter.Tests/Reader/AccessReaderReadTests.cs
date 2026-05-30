@@ -97,7 +97,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
 
         AccessReader reader = await db.GetReaderAsync(path, ct);
 
-        foreach (var table in await reader.ListTablesAsync(ct))
+        foreach (string table in await reader.ListTablesAsync(ct))
         {
             DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: ct);
             Assert.NotNull(dt);

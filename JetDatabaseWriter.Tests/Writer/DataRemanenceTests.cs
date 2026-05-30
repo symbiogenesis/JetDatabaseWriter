@@ -461,7 +461,7 @@ public sealed class DataRemanenceTests
 
     private static byte[] BuildPayload(int length, byte markerByte)
     {
-        var payload = new byte[length];
+        byte[] payload = new byte[length];
         for (int byteIndex = 0; byteIndex < payload.Length; byteIndex++)
         {
             unchecked

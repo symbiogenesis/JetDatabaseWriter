@@ -116,7 +116,7 @@ internal sealed class TableDef
     /// <param name="columnNames">The column names.</param>
     public int[] ResolveColNumsOrEmpty(string[] columnNames)
     {
-        var result = new int[columnNames.Length];
+        int[] result = new int[columnNames.Length];
         for (int i = 0; i < columnNames.Length; i++)
         {
             int idx = this.FindColumnIndex(columnNames[i]);
@@ -155,7 +155,7 @@ internal sealed class TableDef
     /// </summary>
     public object[] CreateNullValueRow()
     {
-        var values = new object[this.Columns.Count];
+        object[] values = new object[this.Columns.Count];
         for (int i = 0; i < values.Length; i++)
         {
             values[i] = DBNull.Value;

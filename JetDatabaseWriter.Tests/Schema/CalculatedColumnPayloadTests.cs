@@ -262,7 +262,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         if (column.IsFixed)
         {
             dataStart = rowSizes.NumCols + column.FixedOff;
-            dataLength = column.IsCalculated ? column.Size : JetTypeInfo.GetFixedSize(column.Type);
+            dataLength = column.IsCalculated ? column.Size : GetFixedSize(column.Type);
         }
         else
         {
@@ -326,7 +326,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
 
     private static byte[] Int32Payload(object value)
     {
-        var bytes = new byte[4];
+        byte[] bytes = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, Convert.ToInt32(value, CultureInfo.InvariantCulture));
         return bytes;
     }

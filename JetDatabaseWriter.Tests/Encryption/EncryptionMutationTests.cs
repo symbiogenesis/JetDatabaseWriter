@@ -18,9 +18,9 @@ using Xunit;
 /// <summary>
 /// <para>
 /// Round-trip tests for the encryption-mutation API exposed by
-/// <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>,
-/// <see cref="AccessWriter.ChangePasswordAsync(string, string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>,
-/// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>.
+/// <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
+/// <see cref="AccessWriter.ChangePasswordAsync(string, string, string, AccessWriterOptions?, CancellationToken)"/>,
+/// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>.
 /// </para>
 /// <para>
 /// Each selectable format follows the same round-trip:

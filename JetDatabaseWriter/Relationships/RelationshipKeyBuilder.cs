@@ -72,7 +72,7 @@ internal static class RelationshipKeyBuilder
 
     public static int[] CreateIdentityOrdinals(int count)
     {
-        var identity = new int[count];
+        int[] identity = new int[count];
         for (int index = 0; index < identity.Length; index++)
         {
             identity[index] = index;

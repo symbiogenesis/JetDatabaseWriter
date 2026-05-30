@@ -165,7 +165,7 @@ public sealed class GeneralEncoderSharedTests
         string[] sortedInputs,
         TextIndexEncoderFixtureHarness.EncodeText encode)
     {
-        var encoded = sortedInputs.Select(s => encode(s, ascending: true)).ToArray();
+        byte[][] encoded = sortedInputs.Select(s => encode(s, ascending: true)).ToArray();
         for (int i = 1; i < encoded.Length; i++)
         {
             int cmp = CompareUnsigned(encoded[i - 1], encoded[i]);

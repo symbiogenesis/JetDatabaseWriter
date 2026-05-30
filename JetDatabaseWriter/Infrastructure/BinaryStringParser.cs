@@ -18,7 +18,7 @@ internal static class BinaryStringParser
             return true;
         }
 
-        var buffer = new byte[decodedLength];
+        byte[] buffer = new byte[decodedLength];
         if (!Convert.TryFromBase64Chars(value, buffer, out int bytesWritten) || bytesWritten != decodedLength)
         {
             return false;
@@ -84,7 +84,7 @@ internal static class BinaryStringParser
     {
         bytes = [];
 
-        var buffer = new byte[byteCount];
+        byte[] buffer = new byte[byteCount];
         int sourceIndex = 0;
         for (int i = 0; i < buffer.Length; i++)
         {

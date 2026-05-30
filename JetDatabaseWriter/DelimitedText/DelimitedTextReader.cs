@@ -383,7 +383,7 @@ internal sealed class DelimitedTextReader : IDisposable
             throw new InvalidOperationException("Delimited text records must be materialized before reading the next record.");
         }
 
-        var result = new string[fieldCount];
+        string[] result = new string[fieldCount];
         for (int i = 0; i < result.Length; i++)
         {
             DelimitedTextField field = this.fields[i];

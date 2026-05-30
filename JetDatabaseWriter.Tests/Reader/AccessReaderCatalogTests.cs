@@ -285,7 +285,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         // the reader must always resolve a friendly name (incl. for complex columns).
         AccessReader reader = await db.GetReaderAsync(path, ct);
 
-        foreach (var table in await reader.ListTablesAsync(ct))
+        foreach (string table in await reader.ListTablesAsync(ct))
         {
             List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, ct);
             ColumnMetadata? bad = meta.FirstOrDefault(col => col.TypeName.StartsWith("0x", StringComparison.Ordinal));

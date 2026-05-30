@@ -356,7 +356,7 @@ public sealed class IndexTailPageAppendTests
 
         // The three appended values must be present at least once each.
         var ids = new HashSet<int>();
-        foreach (System.Data.DataRow row in rowsRead.Rows)
+        foreach (DataRow row in rowsRead.Rows)
         {
             ids.Add((int)row["Id"]);
         }

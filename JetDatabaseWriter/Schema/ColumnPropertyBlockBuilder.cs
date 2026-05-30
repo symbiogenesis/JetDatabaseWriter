@@ -184,7 +184,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         byte[] namePoolPayload = BuildNamePoolPayload(nameOrder, stringEncoding);
 
-        var propertyBlockPayloads = new byte[this.Targets.Count][];
+        byte[][] propertyBlockPayloads = new byte[this.Targets.Count][];
         int totalLength = MagicLength;
         totalLength = AddChunkLength(totalLength, namePoolPayload.Length);
 
@@ -224,7 +224,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
     private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
     {
-        var byteCounts = new int[names.Count];
+        int[] byteCounts = new int[names.Count];
         int payloadLength = 0;
         for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
         {
@@ -251,7 +251,7 @@ internal sealed class ColumnPropertyBlockBuilder
     {
         int targetNameByteCount = GetUInt16StringByteCount(encoding, target.Name, "Property target name");
         int payloadLength = PropertyBlockTargetHeaderLength + targetNameByteCount;
-        var entryLengths = new int[target.Entries.Count];
+        int[] entryLengths = new int[target.Entries.Count];
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
             EntryBuilder entry = target.Entries[entryIndex];

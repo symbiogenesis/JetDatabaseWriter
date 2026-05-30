@@ -277,7 +277,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     private static void EncodeJet4Password(byte[] data, string password)
     {
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
-        var encoded = new byte[40];
+        byte[] encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;

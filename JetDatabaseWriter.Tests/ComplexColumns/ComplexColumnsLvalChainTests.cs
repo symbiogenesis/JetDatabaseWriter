@@ -45,7 +45,7 @@ public sealed class ComplexColumnsLvalChainTests
     {
         // 2 KB highly-compressible text payload — covers the deflate path
         // (typeFlag = 0x01) over LVAL pages.
-        var bytes = new byte[2048];
+        byte[] bytes = new byte[2048];
         for (int i = 0; i < bytes.Length; i++)
         {
             bytes[i] = (byte)'a';
@@ -103,7 +103,7 @@ public sealed class ComplexColumnsLvalChainTests
 
     private static byte[] BuildDeterministicPayload(int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int i = 0; i < length; i++)
         {
             // Mix two strides so simple page-boundary copy bugs surface as

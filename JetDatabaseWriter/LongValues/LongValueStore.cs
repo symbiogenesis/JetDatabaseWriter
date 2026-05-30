@@ -22,7 +22,7 @@ internal static class LongValueStore
             return null;
         }
 
-        var buffer = new byte[Constants.LongValue.HeaderSize + data.Length];
+        byte[] buffer = new byte[Constants.LongValue.HeaderSize + data.Length];
         LongValueDescriptor.Inline(data.Length).WriteTo(buffer);
         Buffer.BlockCopy(data, 0, buffer, Constants.LongValue.HeaderSize, data.Length);
         return buffer;
@@ -189,7 +189,7 @@ internal static class LongValueStore
                 return LvalChainResult.Success(buffer);
             }
 
-            var result = new byte[totalLength];
+            byte[] result = new byte[totalLength];
             Buffer.BlockCopy(buffer, 0, result, 0, totalLength);
             return LvalChainResult.Success(result);
         }

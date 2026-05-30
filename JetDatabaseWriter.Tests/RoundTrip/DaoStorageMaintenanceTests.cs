@@ -753,7 +753,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static object[][] BuildIndexedParentRows()
     {
-        var rows = new object[IndexRows][];
+        object[][] rows = new object[IndexRows][];
         for (int row = 0; row < rows.Length; row++)
         {
             rows[row] = [row + 1, $"Parent_{row + 1:D4}"];
@@ -764,7 +764,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static object[][] BuildIndexedChildRows()
     {
-        var rows = new object[IndexRows][];
+        object[][] rows = new object[IndexRows][];
         for (int row = 0; row < rows.Length; row++)
         {
             int id = row + 1;
@@ -776,7 +776,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static object[][] BuildJet3IndexRows()
     {
-        var rows = new object[Jet3IndexRows][];
+        object[][] rows = new object[Jet3IndexRows][];
         for (int rowOrdinal = 0; rowOrdinal < rows.Length; rowOrdinal++)
         {
             int id = rowOrdinal + 1;
@@ -788,7 +788,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static object[][] BuildAdvancedIndexRows()
     {
-        var rows = new object[AdvancedIndexRows][];
+        object[][] rows = new object[AdvancedIndexRows][];
         for (int rowOrdinal = 0; rowOrdinal < rows.Length; rowOrdinal++)
         {
             rows[rowOrdinal] = BuildAdvancedIndexRow(rowOrdinal + 1);
@@ -828,7 +828,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static byte[] BuildAdvancedBinaryKey(int id)
     {
-        var payload = new byte[16];
+        byte[] payload = new byte[16];
         for (int byteIndex = 0; byteIndex < payload.Length; byteIndex++)
         {
             payload[byteIndex] = unchecked((byte)((id * 29) + (byteIndex * 17)));
@@ -864,7 +864,7 @@ public sealed class DaoStorageMaintenanceTests
 
     private static byte[] BuildPayload(int length, byte markerByte)
     {
-        var payload = new byte[length];
+        byte[] payload = new byte[length];
         for (int byteIndex = 0; byteIndex < payload.Length; byteIndex++)
         {
             unchecked

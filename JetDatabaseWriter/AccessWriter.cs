@@ -797,7 +797,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             },
             (oldRow, _) =>
             {
-                var next = new object[oldRow.Length + 1];
+                object[] next = new object[oldRow.Length + 1];
                 Array.Copy(oldRow, 0, next, 0, oldRow.Length);
                 next[oldRow.Length] = DBNull.Value;
                 return next;
@@ -837,7 +837,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             },
             (oldRow, _) =>
             {
-                var next = new object[oldRow.Length - 1];
+                object[] next = new object[oldRow.Length - 1];
                 int j = 0;
                 for (int i = 0; i < oldRow.Length; i++)
                 {
@@ -1293,7 +1293,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     continue;
                 }
 
-                var pkIdx = new int[rel.PrimaryColumns.Count];
+                int[] pkIdx = new int[rel.PrimaryColumns.Count];
                 bool ok = true;
                 bool anyPkUpdated = false;
                 for (int i = 0; i < rel.PrimaryColumns.Count; i++)
@@ -2002,7 +2002,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         Guard.NotNull(values, paramName);
 
-        var normalized = new object[values.Length];
+        object[] normalized = new object[values.Length];
         for (int i = 0; i < values.Length; i++)
         {
             normalized[i] = values[i] ?? DBNull.Value;
@@ -2693,7 +2693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             cancellationToken.ThrowIfCancellationRequested();
             object?[] sourceItems = row.ItemArray;
-            var sourceRow = new object[sourceItems.Length];
+            object[] sourceRow = new object[sourceItems.Length];
             for (int i = 0; i < sourceItems.Length; i++)
             {
                 sourceRow[i] = sourceItems[i] ?? DBNull.Value;
@@ -3195,7 +3195,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private static long[][] ToSinglePageGroups(long[] pageNumbers)
     {
-        var pageGroups = new long[pageNumbers.Length][];
+        long[][] pageGroups = new long[pageNumbers.Length][];
         for (int i = 0; i < pageNumbers.Length; i++)
         {
             pageGroups[i] = [pageNumbers[i]];
@@ -3947,7 +3947,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             var decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
-            var result = new object?[columnOrdinals.Length];
+            object?[] result = new object?[columnOrdinals.Length];
             return decodePlan.TryDecodePartialColumns(this, pageBytes, loc.RowStart, loc.RowSize, result)
                 ? result
                 : null;
@@ -4023,7 +4023,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        if (this.DatabaseFormat != Enums.DatabaseFormat.Jet3Mdb)
+        if (this.DatabaseFormat != DatabaseFormat.Jet3Mdb)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
         }

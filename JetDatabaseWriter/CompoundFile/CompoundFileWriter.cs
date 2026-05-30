@@ -93,8 +93,8 @@ internal static class CompoundFileWriter
         int numDirSectors = (dirEntryCount + entriesPerDirSector - 1) / entriesPerDirSector;
 
         // Stream sector counts and start sectors.
-        var streamStart = new int[streams.Count];
-        var streamSectors = new int[streams.Count];
+        int[] streamStart = new int[streams.Count];
+        int[] streamSectors = new int[streams.Count];
         int sectorCursor = numDirSectors;
         for (int i = 0; i < streams.Count; i++)
         {
@@ -139,13 +139,13 @@ internal static class CompoundFileWriter
         }
 
         // FAT sectors follow all data sectors; DIFAT extension sectors follow FAT.
-        var fatSectorIds = new int[numFatSectors];
+        int[] fatSectorIds = new int[numFatSectors];
         for (int i = 0; i < numFatSectors; i++)
         {
             fatSectorIds[i] = dataSectors + i;
         }
 
-        var difatSectorIds = new int[numDifatSectors];
+        int[] difatSectorIds = new int[numDifatSectors];
         for (int i = 0; i < numDifatSectors; i++)
         {
             difatSectorIds[i] = dataSectors + numFatSectors + i;
@@ -162,7 +162,7 @@ internal static class CompoundFileWriter
         byte[] file = new byte[fileSize];
 
         // ── Build the FAT (in a flat array first, then lay into sectors) ─
-        var fat = new uint[(long)numFatSectors * entriesPerFatSector];
+        uint[] fat = new uint[(long)numFatSectors * entriesPerFatSector];
         for (long i = 0; i < fat.LongLength; i++)
         {
             fat[i] = Constants.CompoundFile.FreeSect;

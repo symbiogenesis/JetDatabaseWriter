@@ -212,7 +212,7 @@ internal static class General97TextIndexEncoder
     private static short[] LoadMappings(string resourceName, char firstChar, char lastChar)
     {
         int numMappings = lastChar - firstChar + 1;
-        var values = new short[numMappings];
+        short[] values = new short[numMappings];
 
         Assembly asm = typeof(General97TextIndexEncoder).Assembly;
         using Stream raw = asm.GetManifestResourceStream(resourceName)

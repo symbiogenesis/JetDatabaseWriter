@@ -147,7 +147,7 @@ public sealed class ComplexColumnsFlatIndexesTests
             ?? throw new InvalidOperationException("Flat table not found.");
         Assert.Equal(2, dt.Rows.Count);
 
-        var scalars = dt.Rows.Cast<System.Data.DataRow>()
+        int[] scalars = dt.Rows.Cast<System.Data.DataRow>()
             .Select(r => Convert.ToInt32(r["Documents_Files"], System.Globalization.CultureInfo.InvariantCulture))
             .Order()
             .ToArray();

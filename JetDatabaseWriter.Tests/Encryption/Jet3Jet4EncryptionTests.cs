@@ -440,7 +440,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // Encode password "test" as UTF-16LE, XOR with masks, write to 0x42
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("test");
-        var encoded = new byte[40];
+        byte[] encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
@@ -493,7 +493,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     private static void SetJet4Rc4EncryptionFlag(byte[] data, string password)
     {
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
-        var encoded = new byte[40];
+        byte[] encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
@@ -573,7 +573,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);
-        var encoded = new byte[40];
+        byte[] encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;

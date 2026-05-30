@@ -102,7 +102,7 @@ internal sealed class ColumnPropertyBlock
                     break;
 
                 default:
-                    var opaque = new byte[payloadLen];
+                    byte[] opaque = new byte[payloadLen];
                     Buffer.BlockCopy(blob, payloadStart, opaque, 0, payloadLen);
                     unknown.Add(new ColumnPropertyUnknownChunk((ushort)chunkType, opaque));
                     break;
@@ -212,7 +212,7 @@ internal sealed class ColumnPropertyBlock
                 break;
             }
 
-            var value = new byte[valueLen];
+            byte[] value = new byte[valueLen];
             Buffer.BlockCopy(blob, pos + 8, value, 0, valueLen);
 
             entries.Add(new ColumnPropertyEntry(

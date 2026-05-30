@@ -234,7 +234,7 @@ internal static class LinkedOdbcLvPropBuilder
         short value,
         byte ddlFlag)
     {
-        var bytes = new byte[sizeof(short)];
+        byte[] bytes = new byte[sizeof(short)];
         BinaryPrimitives.WriteInt16LittleEndian(bytes, value);
         AddEntry(target, propertyName, ColumnType.IntegerType, ddlFlag, bytes);
     }
@@ -245,7 +245,7 @@ internal static class LinkedOdbcLvPropBuilder
         int value,
         byte ddlFlag)
     {
-        var bytes = new byte[sizeof(int)];
+        byte[] bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
         AddEntry(target, propertyName, ColumnType.IntegerType, ddlFlag, bytes);
     }
@@ -256,7 +256,7 @@ internal static class LinkedOdbcLvPropBuilder
         int value,
         byte ddlFlag)
     {
-        var bytes = new byte[sizeof(int)];
+        byte[] bytes = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
         AddEntry(target, propertyName, ColumnType.LongIntegerType, ddlFlag, bytes);
     }

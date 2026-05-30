@@ -1008,7 +1008,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Numeric_ComputeMaxNumericScale_ReturnsHighestScaleAcrossValues()
     {
-        var values = new object?[] { 1m, 1.5m, null, 1.50m, 0.001m, DBNull.Value };
+        object?[] values = new object?[] { 1m, 1.5m, null, 1.50m, 0.001m, DBNull.Value };
         Assert.Equal(3, IndexKeyEncoder.ComputeMaxNumericScale(values));
     }
 

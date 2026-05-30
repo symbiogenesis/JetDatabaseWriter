@@ -40,7 +40,7 @@ public sealed class ComplexColumnsWriterTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        var names = meta.Select(m => m.Name).ToArray();
+        string[] names = meta.Select(m => m.Name).ToArray();
 
         Assert.Contains("ColumnName", names);
         Assert.Contains("ComplexID", names);
@@ -261,7 +261,7 @@ public sealed class ComplexColumnsWriterTests
         IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
         ComplexColumnInfo attachment = Assert.Single(info);
         List<ColumnMetadata> flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
-        var names = flatMeta.Select(m => m.Name).ToArray();
+        string[] names = flatMeta.Select(m => m.Name).ToArray();
         Assert.Contains("FileURL", names);
         Assert.Contains("FileName", names);
         Assert.Contains("FileType", names);
@@ -360,7 +360,7 @@ public sealed class ComplexColumnsWriterTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
-        var names = meta.Select(m => m.Name).ToArray();
+        string[] names = meta.Select(m => m.Name).ToArray();
         Assert.Contains("FileData", names);
         Assert.Contains("FileFlags", names);
         Assert.Contains("FileName", names);

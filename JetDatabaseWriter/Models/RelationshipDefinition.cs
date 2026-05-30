@@ -85,8 +85,8 @@ public sealed record RelationshipDefinition
                 nameof(foreignColumns));
         }
 
-        var pkCopy = new string[primaryColumns.Count];
-        var fkCopy = new string[foreignColumns.Count];
+        string[] pkCopy = new string[primaryColumns.Count];
+        string[] fkCopy = new string[foreignColumns.Count];
         for (int i = 0; i < primaryColumns.Count; i++)
         {
             pkCopy[i] = primaryColumns[i];

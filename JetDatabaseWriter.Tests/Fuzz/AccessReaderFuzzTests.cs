@@ -44,7 +44,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 output.WriteLine($"[Fuzzing] FuzzRandom bytes: {fuzzedBytes.Length}");
 
                 // Preprocess fuzzed input: overlay onto a valid MDB file if needed
-                Stream processedStream = await PreprocessFuzzedInputAsync(new System.IO.MemoryStream(fuzzedBytes), random);
+                Stream processedStream = await PreprocessFuzzedInputAsync(new MemoryStream(fuzzedBytes), random);
                 var options = new AccessReaderOptions();
                 await using AccessReader reader = await AccessReader.OpenAsync(processedStream, options, cancellationToken: ct);
 
@@ -143,10 +143,10 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 {
                     try
                     {
-                        var crashDir = System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
-                        System.IO.Directory.CreateDirectory(crashDir);
-                        var filePath = System.IO.Path.Combine(crashDir, $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin");
-                        System.IO.File.WriteAllBytes(filePath, fuzzedBytes);
+                        string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
+                        Directory.CreateDirectory(crashDir);
+                        string filePath = Path.Combine(crashDir, $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin");
+                        File.WriteAllBytes(filePath, fuzzedBytes);
                         output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
                     }
                     catch (Exception saveEx)
@@ -168,7 +168,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
     /// </summary>
     /// <param name="fuzzed">The fuzzed.</param>
     /// <param name="random">The random.</param>
-    private static async Task<System.IO.Stream> PreprocessFuzzedInputAsync(System.IO.Stream fuzzed, FuzzRandom? random = null)
+    private static async Task<Stream> PreprocessFuzzedInputAsync(Stream fuzzed, FuzzRandom? random = null)
     {
         // Known MDB file signatures: 0x00 0x01 0x00 0x00 (Jet3), 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 (Jet4), etc.
         // We'll check the first 4 bytes for Jet3 signature as a simple heuristic.
@@ -192,7 +192,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
         // Overlay fuzzed bytes onto the base DB (up to the length of the base DB)
         int overlayLen = Math.Min(baseDb.Length, fuzzedBytes.Length);
         Array.Copy(fuzzedBytes, 0, baseDb, 0, overlayLen);
-        return new System.IO.MemoryStream(baseDb, writable: false);
+        return new MemoryStream(baseDb, writable: false);
     }
 
     /// <summary>
@@ -204,16 +204,16 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
         try
         {
             // Adjust this path if your test fixtures are elsewhere
-            string testDataDir = System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Fixtures");
-            if (!System.IO.Directory.Exists(testDataDir))
+            string testDataDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Fixtures");
+            if (!Directory.Exists(testDataDir))
             {
                 return null;
             }
 
             string[] fileTypes = ["*.mdb", "*.accdb"];
 
-            var files = fileTypes
-                .SelectMany(pattern => System.IO.Directory.GetFiles(testDataDir, pattern))
+            string[] files = fileTypes
+                .SelectMany(pattern => Directory.GetFiles(testDataDir, pattern))
                 .ToArray();
 
             if (files.Length == 0)
@@ -223,7 +223,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
 
             int idx = random?.Next(0, files.Length) ?? new Random().Next(files.Length);
             string chosen = files[idx];
-            return await System.IO.File.ReadAllBytesAsync(chosen);
+            return await File.ReadAllBytesAsync(chosen);
         }
         catch
         {

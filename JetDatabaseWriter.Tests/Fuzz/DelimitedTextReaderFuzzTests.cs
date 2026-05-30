@@ -79,7 +79,7 @@ public sealed class DelimitedTextReaderFuzzTests
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             int columnCount = raggedRows ? random.Next(1, MaxGeneratedColumns + 1) : fixedColumnCount;
-            var fields = new string[columnCount];
+            string[] fields = new string[columnCount];
             for (int columnIndex = 0; columnIndex < fields.Length; columnIndex++)
             {
                 fields[columnIndex] = GenerateField(random, delimiter);

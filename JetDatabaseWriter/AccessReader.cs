@@ -94,7 +94,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly ComplexColumnReader complexColumns;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
     private readonly LruCache<long, byte[]>? pageCache;
-    private readonly ValueDecoding.LongValueDecoder longValueDecoder;
+    private readonly LongValueDecoder longValueDecoder;
 
     /// <summary>
     /// Memoize the parsed live-row directory per data page. Same eviction
@@ -147,7 +147,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             this.rowBoundsCache = new LruCache<long, RowBound[]>(this.PageCacheSize);
         }
 
-        this.longValueDecoder = new ValueDecoding.LongValueDecoder(this);
+        this.longValueDecoder = new LongValueDecoder(this);
 
         bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
         (this.PageKeys.Rc4DbKey, this.PageKeys.AesPageKey) =
@@ -525,7 +525,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // headers + ClrTypes; avoids the GetColumnMetadataAsync round-trip
         // and the second async-iterator state machine that the previous
         // implementation built by re-entering Rows().
-        var headers = new string[td.Columns.Count];
+        string[] headers = new string[td.Columns.Count];
         for (int i = 0; i < td.Columns.Count; i++)
         {
             headers[i] = td.Columns[i].Name;
@@ -944,13 +944,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 TypeName = (col.Type == ComplexType && complexSubtypes.TryGetValue(col.Name, out string? subtype))
                     ? subtype
                     : ResolveTypeName(col),
-                ClrType = JetTypeInfo.ResolveClrType(col),
+                ClrType = ResolveClrType(col),
                 MaxLength = GetMetadataMaxLength(col),
                 IsNullable = ResolveIsNullable(col, target),
                 IsFixedLength = col.IsFixed,
-                IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
+                IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
-                Size = JetTypeInfo.GetColumnSize(JetTypeInfo.ResolveValueType(col), GetMetadataDeclaredSize(col)),
+                Size = GetColumnSize(ResolveValueType(col), GetMetadataDeclaredSize(col)),
                 DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, this.Format),
                 ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, this.Format),
                 ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, this.Format),
@@ -968,9 +968,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return rt?.Value.Length >= 1
-            && (rt.DataType == ColumnType.ByteType
-                || rt.DataType == ColumnType.IntegerType
-                || rt.DataType == ColumnType.LongIntegerType)
+            && (rt.DataType == ByteType
+                || rt.DataType == IntegerType
+                || rt.DataType == LongIntegerType)
             ? (ColumnType)rt.Value[0]
             : default;
     }
@@ -1215,7 +1215,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         // Pre-walk index names so we can pair each logical-idx entry with its name.
-        var names = new string[numIdx];
+        string[] names = new string[numIdx];
         int npos = logicalIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
@@ -1458,7 +1458,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 Type clrType = preserveComplexReferences && (col.Type == ComplexType || col.Type == AttachmentType)
                     ? typeof(object)
-                    : JetTypeInfo.ResolveClrType(col);
+                    : ResolveClrType(col);
                 _ = dt.Columns.Add(col.Name, clrType);
             }
 
@@ -1803,12 +1803,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken)
         where T : class, new()
     {
-        var headers = new string[projectedColumns.Count];
+        string[] headers = new string[projectedColumns.Count];
         var projectedSourceTypes = new Type[projectedColumns.Count];
         for (int i = 0; i < projectedColumns.Count; i++)
         {
             headers[i] = projectedColumns[i].Name;
-            projectedSourceTypes[i] = JetTypeInfo.ResolveClrType(projectedColumns[i].Column);
+            projectedSourceTypes[i] = ResolveClrType(projectedColumns[i].Column);
         }
 
         Func<object?[], T> factory = RowMapper<T>.Build(headers, projectedSourceTypes);
@@ -1889,7 +1889,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var values = new object[td.Columns.Count];
+        object[] values = new object[td.Columns.Count];
         for (int i = 0; i < td.Columns.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1932,7 +1932,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var values = new object[projectedColumns.Count];
+        object[] values = new object[projectedColumns.Count];
         for (int i = 0; i < projectedColumns.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1944,12 +1944,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
                 ColumnSliceKind.Null => string.Empty,
                 ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
+                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
                 ColumnSliceKind.Var => await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
                 _ => string.Empty,
             };
 
-            values[i] = TypedValueParser.ParseValue(rawValue, JetTypeInfo.ResolveClrType(col), this.strictParsing);
+            values[i] = TypedValueParser.ParseValue(rawValue, ResolveClrType(col), this.strictParsing);
         }
 
         return values;
@@ -1965,13 +1965,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnSliceKind.Bool => slice.BoolValue,
             ColumnSliceKind.Null => DBNull.Value,
             ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed => this.ParseColumnValue(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true), col),
+            ColumnSliceKind.Fixed => this.ParseColumnValue(ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true), col),
             ColumnSliceKind.Var => await this.ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
             _ => DBNull.Value,
         };
 
     private object ParseColumnValue(string rawValue, ColumnInfo col) =>
-        TypedValueParser.ParseValue(rawValue, JetTypeInfo.ResolveClrType(col), this.strictParsing);
+        TypedValueParser.ParseValue(rawValue, ResolveClrType(col), this.strictParsing);
 
     private async ValueTask<object> ReadVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
     {
@@ -1985,7 +1985,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return await this.ReadCalculatedVarValueAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
         }
 
-        Type targetType = JetTypeInfo.ResolveClrType(col);
+        Type targetType = ResolveClrType(col);
         if (targetType == typeof(byte[]))
         {
             if (col.Type is BinaryType)
@@ -2040,7 +2040,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case DateTimeExtendedType:
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                    JetTypeInfo.ResolveValueType(col),
+                    ResolveValueType(col),
                     this.strictParsing);
 
             default:
@@ -2247,7 +2247,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private static string ResolveTypeName(ColumnInfo col) =>
-        JetTypeInfo.IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(JetTypeInfo.ResolveValueType(col));
+        IsHyperlinkColumn(col) ? "Hyperlink" : GetTypeDisplayName(ResolveValueType(col));
 
     /// <summary>
     /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
@@ -2550,7 +2550,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>
     /// Wraps text payloads of Hyperlink-flagged columns in a typed row into
     /// <see cref="Hyperlink"/> instances, mirroring the projection
-    /// <see cref="JetTypeInfo.ResolveClrType"/> exposes via the public API.
+    /// <see cref="ResolveClrType"/> exposes via the public API.
     /// Non-string slots (e.g. <see cref="DBNull.Value"/>) are left untouched;
     /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
     /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
@@ -3021,11 +3021,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Verify the JET magic signature at offset 0: 00 01 00 00
         _ = this.DatabaseStream.Seek(0, SeekOrigin.Begin);
-        var magic = new byte[4];
+        byte[] magic = new byte[4];
         int read = this.DatabaseStream.Read(magic, 0, 4);
         if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
         {
-            var msg = $"File does not have a valid JET magic signature (expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).";
+            string msg = $"File does not have a valid JET magic signature (expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).";
             throw new InvalidDataException(msg);
         }
     }
@@ -3216,7 +3216,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var result = new string[td.Columns.Count];
+        string[] result = new string[td.Columns.Count];
 
         for (int i = 0; i < td.Columns.Count; i++)
         {
@@ -3229,7 +3229,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
                 ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
+                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
                 ColumnSliceKind.Var => await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
                 _ => string.Empty,
             };
@@ -3258,7 +3258,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     return this.DecodeTextForFormat(row, start, len);
 
                 case BinaryType:
-                    return JetTypeInfo.ToHexStringNoSeparator(row.AsSpan(start, len));
+                    return ToHexStringNoSeparator(row.AsSpan(start, len));
 
                 case MemoType:
                 case OleType:
@@ -3285,8 +3285,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     // contain the type's fixed payload) — JetTypeInfo gives
                     // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
                     // since they have no fixed-area size of their own.
-                    int required = col.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                    return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
+                    int required = col.Type is ComplexType or AttachmentType ? 4 : GetFixedSize(col.Type);
+                    return len >= required ? ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
                 case BooleanType:
                     return string.Empty;
                 default:
@@ -3316,7 +3316,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case TextType:
                     return this.DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
                 case BinaryType:
-                    return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
+                    return ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
                 case MemoType:
                 {
                     byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
@@ -3347,7 +3347,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case DateTimeExtendedType:
                     return CalculatedColumnUtil.ReadPayloadString(
                         CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                        JetTypeInfo.ResolveValueType(col),
+                        ResolveValueType(col),
                         this.strictParsing);
 
                 default:
@@ -3520,7 +3520,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="needsLongValue">The needs long value.</param>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, out object?[]? row, out bool needsLongValue)
     {
-        var result = new object?[decodePlan.ColumnCount];
+        object?[] result = new object?[decodePlan.ColumnCount];
         if (!this.TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, decodePlan, result, out needsLongValue))
         {
             row = null;
@@ -3569,7 +3569,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Internal accessor for <see cref="AccessBase.TryParseRowLayout"/>
-    /// callable from <see cref="JetDatabaseWriter.ValueDecoding.RowMapper{T}"/>'s
+    /// callable from <see cref="RowMapper{T}"/>'s
     /// compiled direct-decoder delegate.
     /// </summary>
     /// <param name="page">The page bytes.</param>
@@ -3682,7 +3682,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     internal async ValueTask<byte[]> GetRawPageBytesAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pooled = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        var copy = new byte[this.PageSizeBytes];
+        byte[] copy = new byte[this.PageSizeBytes];
         Buffer.BlockCopy(pooled, 0, copy, 0, this.PageSizeBytes);
         ReturnPage(pooled);
         return copy;

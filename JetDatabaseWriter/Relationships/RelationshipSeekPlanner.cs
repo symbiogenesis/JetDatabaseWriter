@@ -48,7 +48,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             }
 
             TableDef foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            var foreignRowIndexes = new int[rel.ForeignColumns.Count];
+            int[] foreignRowIndexes = new int[rel.ForeignColumns.Count];
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
                 foreignRowIndexes[index] = foreignDef.FindColumnIndex(rel.ForeignColumns[index]);
@@ -137,9 +137,9 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
 
         TableDef definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
-        var columnNumbers = new int[columnNames.Count];
+        int[] columnNumbers = new int[columnNames.Count];
         var columnTypes = new ColumnType[columnNames.Count];
-        var numericScales = new byte[columnNames.Count];
+        byte[] numericScales = new byte[columnNames.Count];
         for (int index = 0; index < columnNames.Count; index++)
         {
             int columnIndex = definition.FindColumnIndex(columnNames[index]);
@@ -212,7 +212,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
                 continue;
             }
 
-            var ascending = new bool[targetColumnNumbers.Length];
+            bool[] ascending = new bool[targetColumnNumbers.Length];
             for (int slot = 0; slot < targetColumnNumbers.Length; slot++)
             {
                 ascending[slot] = (tableDefinition[physicalDescriptorOffset + 4 + (slot * 3) + 2] & 0x01) != 0;

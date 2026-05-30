@@ -43,7 +43,7 @@ internal static class NumericEncoder
         int lo = Ri32(mantissaLe, 0);
         int mid = Ri32(mantissaLe, 4);
         int hi = Ri32(mantissaLe, 8);
-        var mantissa = new decimal(lo, mid, hi, isNegative: false, scale: 0);
+        decimal mantissa = new decimal(lo, mid, hi, isNegative: false, scale: 0);
         byte precision = 1;
         while (mantissa >= 10m)
         {

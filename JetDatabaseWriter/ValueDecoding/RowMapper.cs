@@ -64,7 +64,7 @@ internal static class RowMapper<T>
     {
         Guard.NotNull(headers, nameof(headers));
         int count = headers.Count;
-        var mask = new bool[count];
+        bool[] mask = new bool[count];
         for (int i = 0; i < count; i++)
         {
             mask[i] = PropertyMap.ContainsKey(headers[i]);
@@ -200,7 +200,7 @@ internal static class RowMapper<T>
     public static Func<object?[], T> Build(IReadOnlyList<ColumnMetadata> meta)
     {
         Guard.NotNull(meta, nameof(meta));
-        var headers = new string[meta.Count];
+        string[] headers = new string[meta.Count];
         var types = new Type[meta.Count];
         for (int i = 0; i < meta.Count; i++)
         {
@@ -220,7 +220,7 @@ internal static class RowMapper<T>
     public static Func<object?[], T> Build(TableDef td)
     {
         Guard.NotNull(td, nameof(td));
-        var headers = new string[td.Columns.Count];
+        string[] headers = new string[td.Columns.Count];
         for (int i = 0; i < td.Columns.Count; i++)
         {
             headers[i] = td.Columns[i].Name;

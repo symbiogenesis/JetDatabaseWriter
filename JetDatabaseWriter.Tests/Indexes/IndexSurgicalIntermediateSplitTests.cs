@@ -48,7 +48,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 [new IndexDefinition("IX_K", "K")],
                 this.ct);
 
-            var rows = new object[400][];
+            object[][] rows = new object[400][];
             for (int i = 0; i < 400; i++)
             {
                 rows[i] = [BuildKey(i), i % 5];
@@ -103,7 +103,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 this.ct);
 
             // Initial bulk to set up multi-level tree.
-            var seed = new object[200][];
+            object[][] seed = new object[200][];
             for (int i = 0; i < 200; i++)
             {
                 seed[i] = [BuildKey(i * 3), i];
@@ -116,7 +116,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
             // that may trigger leaf splits on the parent-of-leaf level.
             for (int b = 0; b < 6; b++)
             {
-                var batch = new object[5][];
+                object[][] batch = new object[5][];
                 for (int i = 0; i < 5; i++)
                 {
                     int idx = (b * 5) + i;
@@ -156,7 +156,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 [new IndexDefinition("IX_K", "K")],
                 this.ct);
 
-            var rows = new object[300][];
+            object[][] rows = new object[300][];
             for (int i = 0; i < 300; i++)
             {
                 rows[i] = [BuildKey(i)];
@@ -173,7 +173,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
                 await writer.DeleteRowsAsync("T", "K", BuildKey(i), this.ct);
             }
 
-            var fresh = new object[10][];
+            object[][] fresh = new object[10][];
             for (int i = 0; i < 10; i++)
             {
                 fresh[i] = [BuildKey(1000 + i)];

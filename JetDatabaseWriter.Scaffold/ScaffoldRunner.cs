@@ -59,7 +59,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             }
 
             string className = NameCleaner.ToClassName(table);
-            var filePath = Path.Combine(outputDir, $"{className}.cs");
+            string filePath = Path.Combine(outputDir, $"{className}.cs");
 
             await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, columns, ns, useRecords, nullable), cancellationToken);
             await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)");

@@ -53,7 +53,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[rowCount][];
+            object[][] rows = new object[rowCount][];
             for (int i = 0; i < rowCount; i++)
             {
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), i % 5];
@@ -104,7 +104,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
                 this.ct);
 
             // Initial bulk: 500 rows on even-numbered slot positions.
-            var seed = new object[500][];
+            object[][] seed = new object[500][];
             for (int i = 0; i < 500; i++)
             {
                 seed[i] = [BuildKey(i * 4, prefix: 'A'), BuildKey(i * 4, prefix: 'M'), i];
@@ -116,7 +116,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
             // spanning many leaves at odd-numbered slot positions.
             for (int b = 0; b < 10; b++)
             {
-                var batch = new object[6][];
+                object[][] batch = new object[6][];
                 for (int i = 0; i < 6; i++)
                 {
                     int idx = (b * 6) + i;
@@ -164,7 +164,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
                 [new IndexDefinition("IX_K", CompositeKeyColumns)],
                 this.ct);
 
-            var rows = new object[initialRows][];
+            object[][] rows = new object[initialRows][];
             for (int i = 0; i < initialRows; i++)
             {
                 rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')];
@@ -185,7 +185,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
                     this.ct);
             }
 
-            var fresh = new object[20][];
+            object[][] fresh = new object[20][];
             for (int i = 0; i < 20; i++)
             {
                 fresh[i] = [BuildKey(10_000 + i, prefix: 'A'), BuildKey(10_000 + i, prefix: 'M')];

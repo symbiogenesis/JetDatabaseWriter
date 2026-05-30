@@ -212,8 +212,8 @@ internal sealed class RelationshipManager
         CancellationToken cancellationToken)
     {
         // Resolve column numbers (deleted-column gaps mean ColNum != ordinal).
-        var pkColNums = new int[relationship.PrimaryColumns.Count];
-        var fkColNums = new int[relationship.ForeignColumns.Count];
+        int[] pkColNums = new int[relationship.PrimaryColumns.Count];
+        int[] fkColNums = new int[relationship.ForeignColumns.Count];
         for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
         {
             int pkIdx = primaryDef.FindColumnIndex(relationship.PrimaryColumns[i]);
@@ -462,7 +462,7 @@ internal sealed class RelationshipManager
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         // Build the rewritten page.
-        var newTd = new byte[this.GetLogicalTDefCapacity(currentEnd + totalGrowth)];
+        byte[] newTd = new byte[this.GetLogicalTDefCapacity(currentEnd + totalGrowth)];
         Buffer.BlockCopy(td, 0, newTd, 0, this.writer.TDef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
@@ -1100,7 +1100,7 @@ internal sealed class RelationshipManager
         // Build the set of real-idx slots that are still referenced by some
         // logical-idx entry. A logical-idx points at one real-idx via
         // index_num2 (offset +8 in the 28-byte Jet4 entry).
-        var referenced = new bool[layout.NumRealIdx];
+        bool[] referenced = new bool[layout.NumRealIdx];
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
@@ -1292,7 +1292,7 @@ internal sealed class RelationshipManager
         }
 
         int total = this.writer.PageSizeBytes + ((parts.Count - 1) * (this.writer.PageSizeBytes - 8));
-        var logical = new byte[total];
+        byte[] logical = new byte[total];
         Buffer.BlockCopy(parts[0], 0, logical, 0, this.writer.PageSizeBytes);
 
         int logicalOffset = this.writer.PageSizeBytes;
@@ -1345,7 +1345,7 @@ internal sealed class RelationshipManager
     {
         this.EnsureLogicalTDefCapacity(ref logicalBytes, usedLength);
         int pageCount = this.GetLogicalTDefPageCount(usedLength);
-        var pageNumbers = new long[pageCount];
+        long[] pageNumbers = new long[pageCount];
         int retainedCount = Math.Min(existingPageNumbers.Count, pageCount);
         for (int pageIndex = 0; pageIndex < retainedCount; pageIndex++)
         {
@@ -1377,7 +1377,7 @@ internal sealed class RelationshipManager
 
     private byte[][] MaterializeLogicalTDefPages(byte[] logicalBytes, int usedLength, long[] pageNumbers)
     {
-        var pages = new byte[pageNumbers.Length][];
+        byte[][] pages = new byte[pageNumbers.Length][];
 
         pages[0] = new byte[this.writer.PageSizeBytes];
         Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(this.writer.PageSizeBytes, logicalBytes.Length));
@@ -1673,8 +1673,8 @@ internal sealed class RelationshipManager
             // to col_num for col_map matching.
             var ordered = new List<RelationshipRowSnapshot>(pair.Value);
             ordered.Sort((a, b) => a.IColumn.CompareTo(b.IColumn));
-            var pkColNames = new string[ordered.Count];
-            var fkColNames = new string[ordered.Count];
+            string[] pkColNames = new string[ordered.Count];
+            string[] fkColNames = new string[ordered.Count];
             for (int i = 0; i < ordered.Count; i++)
             {
                 pkColNames[i] = ordered[i].SzReferencedColumn;

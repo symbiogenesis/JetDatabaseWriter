@@ -705,7 +705,7 @@ internal static class LinkedTableManager
             return row;
         }
 
-        var normalized = new string[columnCount];
+        string[] normalized = new string[columnCount];
         int copyCount = Math.Min(row.Length, columnCount);
         for (int i = 0; i < copyCount; i++)
         {

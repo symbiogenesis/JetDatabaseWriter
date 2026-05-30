@@ -95,7 +95,7 @@ internal sealed class FuzzRandom : Random
 
     public byte[] RandomBytes(int maxLength = 32)
     {
-        var arr = new byte[this.Next(0, maxLength)];
+        byte[] arr = new byte[this.Next(0, maxLength)];
         this.NextBytes(arr);
         return arr;
     }

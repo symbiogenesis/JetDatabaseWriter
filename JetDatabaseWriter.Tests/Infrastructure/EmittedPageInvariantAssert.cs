@@ -153,8 +153,8 @@ internal static class EmittedPageInvariantAssert
             return [];
         }
 
-        var rawOffsets = new int[numRows];
-        var starts = new int[numRows];
+        int[] rawOffsets = new int[numRows];
+        int[] starts = new int[numRows];
         for (int rowIndex = 0; rowIndex < numRows; rowIndex++)
         {
             int raw = ReadUInt16(page, layout.RowsStart + (rowIndex * 2));
@@ -496,7 +496,7 @@ internal static class EmittedPageInvariantAssert
 
     private static byte[] PageCopy(byte[] fileBytes, int pageNumber, int pageSize)
     {
-        var page = new byte[pageSize];
+        byte[] page = new byte[pageSize];
         Buffer.BlockCopy(fileBytes, pageNumber * pageSize, page, 0, pageSize);
         return page;
     }

@@ -14,7 +14,7 @@ using Xunit;
 /// <summary>
 /// Deterministic truncation-matrix robustness coverage. Lops the last
 /// <c>N</c> bytes off a real database file and asserts that
-/// <see cref="AccessReader.OpenAsync(System.IO.Stream, AccessReaderOptions?, bool, CancellationToken)"/>
+/// <see cref="AccessReader.OpenAsync(Stream, AccessReaderOptions?, bool, CancellationToken)"/>
 /// (and any subsequent table-list / row-iterate calls) either succeed
 /// against the surviving prefix or fail with a <em>controlled</em>
 /// exception type — never with an

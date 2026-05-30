@@ -14,8 +14,8 @@ using Xunit;
 
 /// <summary>
 /// Round-trip tests for the index B-tree maintenance hooks on
-/// <see cref="IAccessWriter.InsertRowAsync(string, object[], System.Threading.CancellationToken)"/>,
-/// <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, System.Threading.CancellationToken)"/>,
+/// <see cref="IAccessWriter.InsertRowAsync(string, object[], CancellationToken)"/>,
+/// <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>,
 /// <see cref="IAccessWriter.UpdateRowsAsync"/>,
 /// <see cref="IAccessWriter.DeleteRowsAsync"/>, and the copy-and-swap path used by
 /// <see cref="IAccessSchema.AddColumnAsync"/> /

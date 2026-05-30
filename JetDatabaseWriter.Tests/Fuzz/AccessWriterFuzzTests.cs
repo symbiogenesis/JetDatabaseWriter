@@ -110,7 +110,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
             List<string> tableNames = await reader.ListTablesAsync(ct);
             output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
-            foreach (var tableName in tableNames)
+            foreach (string tableName in tableNames)
             {
                 output.WriteLine($"[RoundTrip] Reading table: {tableName}");
                 int count = 0;
@@ -242,7 +242,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
 
     private static object[] CreateRandomRow(FuzzRandom random, ColumnDefinition[] columns)
     {
-        var row = new object[columns.Length];
+        object[] row = new object[columns.Length];
         for (int i = 0; i < columns.Length; i++)
         {
             row[i] = random.RandomValue(columns[i].ClrType) ?? DBNull.Value;

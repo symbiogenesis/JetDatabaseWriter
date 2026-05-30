@@ -194,7 +194,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             .First()
             .Key;
 
-        var mismatches = rows
+        string[] mismatches = rows
             .Where(r => r.SortVersion != expectedVersion || r.Lcid != expectedLcid)
             .Select(r => $"col[{r.ColIndex}](type=0x{r.ColType:X2}) LCID=0x{r.Lcid:X4} ver={r.SortVersion}")
             .ToArray();

@@ -220,7 +220,7 @@ internal static class SyntheticDatabases
         var rows = new List<object[]>(WideRows);
         for (int r = 0; r < WideRows; r++)
         {
-            var row = new object[WideColumnCount];
+            object[] row = new object[WideColumnCount];
             row[0] = r;
             for (int c = 1; c <= 20; c++)
             {
@@ -402,7 +402,7 @@ internal static class SyntheticDatabases
 
     private static string MakeMemoBody(int seed, int length)
     {
-        var buffer = new char[length];
+        char[] buffer = new char[length];
         string prefix = "row" + seed + ":";
         int prefixLength = Math.Min(prefix.Length, length);
         prefix.AsSpan(0, prefixLength).CopyTo(buffer);
@@ -416,7 +416,7 @@ internal static class SyntheticDatabases
 
     private static byte[] MakeOlePayload(int seed, int length)
     {
-        var payload = new byte[length];
+        byte[] payload = new byte[length];
         for (int index = 0; index < payload.Length; index++)
         {
             payload[index] = (byte)(((index + seed) % 251) + 1);

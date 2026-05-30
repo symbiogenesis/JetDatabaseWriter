@@ -519,7 +519,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             columns.Add(new ColumnDefinition($"V{i:D3}", typeof(string), maxLength: 50));
         }
 
-        var rowValues = new object[varColCount + 1];
+        object[] rowValues = new object[varColCount + 1];
         rowValues[0] = 1;
         for (int i = 0; i < varColCount; i++)
         {
@@ -552,7 +552,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             rows.Add(row);
         }
 
-        var only = Assert.Single(rows);
+        object[] only = Assert.Single(rows);
         Assert.Equal(1, only[0]);
 
         // Spot-check a few columns spanning the boundary.
@@ -894,7 +894,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [InlineData(18, 4, "-99999999999999.9999")]
     public async Task InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly(int precision, int scale, string literal)
     {
-        var expected = decimal.Parse(literal, System.Globalization.CultureInfo.InvariantCulture);
+        decimal expected = decimal.Parse(literal, System.Globalization.CultureInfo.InvariantCulture);
 
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -1964,7 +1964,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <param name="seed">The random seed.</param>
     private static object[] BuildDummyRow(List<ColumnMetadata> columns, int seed = 0)
     {
-        var values = new object[columns.Count];
+        object[] values = new object[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
             values[i] = GetDummyValue(columns[i].ClrType, seed + i);
