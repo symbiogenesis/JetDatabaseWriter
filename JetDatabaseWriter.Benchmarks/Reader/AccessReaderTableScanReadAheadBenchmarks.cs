@@ -35,9 +35,9 @@ public enum TableScanBenchmarkTemperature
 [MemoryDiagnoser]
 public class AccessReaderTableScanReadAheadBenchmarks
 {
-    private AccessReader? _warmReader;
-    private string _databasePath = null!;
-    private string _tableName = null!;
+    private AccessReader? warmReader;
+    private string databasePath = null!;
+    private string tableName = null!;
 
     [Params(TableScanBenchmarkShape.Numeric, TableScanBenchmarkShape.Text, TableScanBenchmarkShape.Wide)]
     public TableScanBenchmarkShape Shape { get; set; }
@@ -52,21 +52,21 @@ public class AccessReaderTableScanReadAheadBenchmarks
     public async Task Setup()
     {
         await SyntheticDatabases.EnsureAllAsync().ConfigureAwait(false);
-        (this._databasePath, this._tableName) = ResolveShape(this.Shape);
+        (this.databasePath, this.tableName) = ResolveShape(this.Shape);
 
         if (this.Temperature == TableScanBenchmarkTemperature.WarmRepeatScan)
         {
-            this._warmReader = await AccessReader.OpenAsync(this._databasePath, this.CreateOptions()).ConfigureAwait(false);
-            _ = await CountRowsAsync(this._warmReader, this._tableName).ConfigureAwait(false);
+            this.warmReader = await AccessReader.OpenAsync(this.databasePath, this.CreateOptions()).ConfigureAwait(false);
+            _ = await CountRowsAsync(this.warmReader, this.tableName).ConfigureAwait(false);
         }
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (this._warmReader is not null)
+        if (this.warmReader is not null)
         {
-            await this._warmReader.DisposeAsync().ConfigureAwait(false);
+            await this.warmReader.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -76,12 +76,12 @@ public class AccessReaderTableScanReadAheadBenchmarks
         if (this.Temperature == TableScanBenchmarkTemperature.WarmRepeatScan)
         {
             return await CountRowsAsync(
-                this._warmReader ?? throw new InvalidOperationException("Warm reader was not initialized."),
-                this._tableName).ConfigureAwait(false);
+                this.warmReader ?? throw new InvalidOperationException("Warm reader was not initialized."),
+                this.tableName).ConfigureAwait(false);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(this._databasePath, this.CreateOptions()).ConfigureAwait(false);
-        return await CountRowsAsync(reader, this._tableName).ConfigureAwait(false);
+        await using AccessReader reader = await AccessReader.OpenAsync(this.databasePath, this.CreateOptions()).ConfigureAwait(false);
+        return await CountRowsAsync(reader, this.tableName).ConfigureAwait(false);
     }
 
     [Benchmark]
@@ -90,12 +90,12 @@ public class AccessReaderTableScanReadAheadBenchmarks
         if (this.Temperature == TableScanBenchmarkTemperature.WarmRepeatScan)
         {
             return await CountFirstRowAsync(
-                this._warmReader ?? throw new InvalidOperationException("Warm reader was not initialized."),
-                this._tableName).ConfigureAwait(false);
+                this.warmReader ?? throw new InvalidOperationException("Warm reader was not initialized."),
+                this.tableName).ConfigureAwait(false);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(this._databasePath, this.CreateOptions()).ConfigureAwait(false);
-        return await CountFirstRowAsync(reader, this._tableName).ConfigureAwait(false);
+        await using AccessReader reader = await AccessReader.OpenAsync(this.databasePath, this.CreateOptions()).ConfigureAwait(false);
+        return await CountFirstRowAsync(reader, this.tableName).ConfigureAwait(false);
     }
 
     private static async Task<int> CountRowsAsync(AccessReader reader, string tableName)

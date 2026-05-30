@@ -32,7 +32,7 @@ public class DelimitedTextReaderBenchmarks
         MaxFieldLengthOptionName: "MaxFieldLength",
         MaxColumnCountOptionName: "MaxColumnCount");
 
-    private string _source = string.Empty;
+    private string source = string.Empty;
 
     /// <summary>Gets or sets the generated text shape to parse.</summary>
     [Params(PlainScenario, QuotedMultilineScenario, EmptyFieldsScenario, RepetitiveValuesScenario)]
@@ -40,7 +40,7 @@ public class DelimitedTextReaderBenchmarks
 
     /// <summary>Generates the source text for the selected scenario.</summary>
     [GlobalSetup]
-    public void Setup() => this._source = this.Scenario switch
+    public void Setup() => this.source = this.Scenario switch
     {
         PlainScenario => BuildPlainSource(),
         QuotedMultilineScenario => BuildQuotedMultilineSource(),
@@ -54,7 +54,7 @@ public class DelimitedTextReaderBenchmarks
     [Benchmark]
     public async Task<int> RowOnlyScan()
     {
-        using var stringReader = new StringReader(this._source);
+        using var stringReader = new StringReader(this.source);
         using var reader = new DelimitedTextReader(stringReader, Format, Limits);
         int rowCount = 0;
 
@@ -75,7 +75,7 @@ public class DelimitedTextReaderBenchmarks
     [Benchmark]
     public async Task<long> CountRecords()
     {
-        using var stringReader = new StringReader(this._source);
+        using var stringReader = new StringReader(this.source);
         using var reader = new DelimitedTextReader(stringReader, Format, Limits);
         return await reader.CountRecordsAsync(skipFirstRecord: false, CancellationToken.None).ConfigureAwait(false);
     }
@@ -85,7 +85,7 @@ public class DelimitedTextReaderBenchmarks
     [Benchmark]
     public async Task<int> MaterializeRows()
     {
-        using var stringReader = new StringReader(this._source);
+        using var stringReader = new StringReader(this.source);
         using var reader = new DelimitedTextReader(stringReader, Format, Limits);
         var rows = new List<string[]>(RowCount);
 

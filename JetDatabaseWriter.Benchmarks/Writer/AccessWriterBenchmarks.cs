@@ -22,9 +22,9 @@ public class AccessWriterBenchmarks
     private static readonly string SourceDbPath =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NorthwindTraders.accdb");
 
-    private string _baselinePath = string.Empty;
-    private string _tempPath = string.Empty;
-    private object?[] _dummyRow = null!;
+    private string baselinePath = string.Empty;
+    private string tempPath = string.Empty;
+    private object?[] dummyRow = null!;
 
     [GlobalSetup]
     public async Task GlobalSetup()
@@ -36,10 +36,10 @@ public class AccessWriterBenchmarks
                 "Copy NorthwindTraders.accdb to the benchmark output directory.");
         }
 
-        this._baselinePath = Path.Combine(Path.GetTempPath(), $"JetBenchBaseline_{Guid.NewGuid():N}.accdb");
-        File.Copy(SourceDbPath, this._baselinePath, overwrite: true);
+        this.baselinePath = Path.Combine(Path.GetTempPath(), $"JetBenchBaseline_{Guid.NewGuid():N}.accdb");
+        File.Copy(SourceDbPath, this.baselinePath, overwrite: true);
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._baselinePath);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.baselinePath);
         await writer.CreateTableAsync(
             BenchmarkTableName,
             [
@@ -47,15 +47,15 @@ public class AccessWriterBenchmarks
                 new(NameColumnName, typeof(string), 255),
             ]);
 
-        this._dummyRow = BuildDummyRow(0);
+        this.dummyRow = BuildDummyRow(0);
     }
 
     [GlobalCleanup]
     public void GlobalCleanup()
     {
-        if (File.Exists(this._baselinePath))
+        if (File.Exists(this.baselinePath))
         {
-            File.Delete(this._baselinePath);
+            File.Delete(this.baselinePath);
         }
     }
 
@@ -63,16 +63,16 @@ public class AccessWriterBenchmarks
     public void IterationSetup()
     {
         // Fresh copy for every iteration so writes don't accumulate.
-        this._tempPath = Path.Combine(Path.GetTempPath(), $"JetBench_{Guid.NewGuid():N}.accdb");
-        File.Copy(this._baselinePath, this._tempPath, overwrite: true);
+        this.tempPath = Path.Combine(Path.GetTempPath(), $"JetBench_{Guid.NewGuid():N}.accdb");
+        File.Copy(this.baselinePath, this.tempPath, overwrite: true);
     }
 
     [IterationCleanup]
     public void IterationCleanup()
     {
-        if (File.Exists(this._tempPath))
+        if (File.Exists(this.tempPath))
         {
-            File.Delete(this._tempPath);
+            File.Delete(this.tempPath);
         }
     }
 
@@ -81,8 +81,8 @@ public class AccessWriterBenchmarks
     [Benchmark]
     public async Task InsertRow_Single()
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
-        await writer.InsertRowAsync(BenchmarkTableName, this._dummyRow);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
+        await writer.InsertRowAsync(BenchmarkTableName, this.dummyRow);
     }
 
     [Benchmark]
@@ -91,14 +91,14 @@ public class AccessWriterBenchmarks
     public async Task<int> InsertRows_Batch(int count)
     {
         IEnumerable<object?[]> rows = Enumerable.Range(1, count).Select(BuildDummyRow);
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
         return await writer.InsertRowsAsync(BenchmarkTableName, rows);
     }
 
     [Benchmark]
     public async Task InsertRow_Typed()
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
         await writer.InsertRowAsync(BenchmarkTableName, new SimpleEntity
         {
             Id = IdBase,
@@ -111,7 +111,7 @@ public class AccessWriterBenchmarks
     [Benchmark]
     public async Task CreateTable()
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
         await writer.CreateTableAsync(
             "BenchTable",
             [
@@ -126,7 +126,7 @@ public class AccessWriterBenchmarks
     [Benchmark]
     public async Task CreateAndDropTable()
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
         await writer.CreateTableAsync(
             "BenchDrop",
             [
@@ -142,11 +142,11 @@ public class AccessWriterBenchmarks
     public async Task<int> UpdateRows()
     {
         // Insert a known row, then update it.
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
-        await writer.InsertRowAsync(BenchmarkTableName, this._dummyRow);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
+        await writer.InsertRowAsync(BenchmarkTableName, this.dummyRow);
 
         const string predicateCol = IdColumnName;
-        object? predicateVal = this._dummyRow[0];
+        object? predicateVal = this.dummyRow[0];
         var updates = new Dictionary<string, object?>
         {
             [NameColumnName] = "UpdatedBench",
@@ -157,11 +157,11 @@ public class AccessWriterBenchmarks
     [Benchmark]
     public async Task<int> DeleteRows()
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(this._tempPath);
-        await writer.InsertRowAsync(BenchmarkTableName, this._dummyRow);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(this.tempPath);
+        await writer.InsertRowAsync(BenchmarkTableName, this.dummyRow);
 
         const string predicateCol = IdColumnName;
-        object? predicateVal = this._dummyRow[0];
+        object? predicateVal = this.dummyRow[0];
         return await writer.DeleteRowsAsync(BenchmarkTableName, predicateCol, predicateVal);
     }
 

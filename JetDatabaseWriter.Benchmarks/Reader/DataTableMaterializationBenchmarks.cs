@@ -16,113 +16,113 @@ using JetDatabaseWriter.Models;
 [MemoryDiagnoser]
 public class DataTableMaterializationBenchmarks
 {
-    private AccessReader _numericReader = null!;
-    private AccessReader _textReader = null!;
-    private List<ColumnMetadata> _numericMetadata = null!;
-    private List<ColumnMetadata> _textMetadata = null!;
-    private int _numericRows;
-    private int _textRows;
+    private AccessReader numericReader = null!;
+    private AccessReader textReader = null!;
+    private List<ColumnMetadata> numericMetadata = null!;
+    private List<ColumnMetadata> textMetadata = null!;
+    private int numericRows;
+    private int textRows;
 
     [GlobalSetup]
     public async Task Setup()
     {
         await SyntheticDatabases.EnsureAllAsync().ConfigureAwait(false);
-        this._numericReader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
-        this._textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
-        this._numericMetadata = await this._numericReader.GetColumnMetadataAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
-        this._textMetadata = await this._textReader.GetColumnMetadataAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
-        this._numericRows = checked((int)await this._numericReader.GetRealRowCountAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false));
-        this._textRows = checked((int)await this._textReader.GetRealRowCountAsync(SyntheticDatabases.TextTable).ConfigureAwait(false));
+        this.numericReader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
+        this.textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
+        this.numericMetadata = await this.numericReader.GetColumnMetadataAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        this.textMetadata = await this.textReader.GetColumnMetadataAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        this.numericRows = checked((int)await this.numericReader.GetRealRowCountAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false));
+        this.textRows = checked((int)await this.textReader.GetRealRowCountAsync(SyntheticDatabases.TextTable).ConfigureAwait(false));
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        await this._numericReader.DisposeAsync().ConfigureAwait(false);
-        await this._textReader.DisposeAsync().ConfigureAwait(false);
+        await this.numericReader.DisposeAsync().ConfigureAwait(false);
+        await this.textReader.DisposeAsync().ConfigureAwait(false);
     }
 
     [Benchmark]
     public async Task<int> Numeric_PublicReadDataTable()
     {
-        using DataTable table = await this._numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        using DataTable table = await this.numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
     [Benchmark]
     public async Task<int> Numeric_NewRow()
         => await MaterializeWithNewRowAsync(
-            this._numericReader,
+            this.numericReader,
             SyntheticDatabases.NumericTable,
-            this._numericMetadata,
+            this.numericMetadata,
             beginLoadData: false,
             minimumCapacity: 0).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Numeric_NewRow_BeginLoadData()
         => await MaterializeWithNewRowAsync(
-            this._numericReader,
+            this.numericReader,
             SyntheticDatabases.NumericTable,
-            this._numericMetadata,
+            this.numericMetadata,
             beginLoadData: true,
             minimumCapacity: 0).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Numeric_NewRow_BeginLoadData_MinimumCapacity()
         => await MaterializeWithNewRowAsync(
-            this._numericReader,
+            this.numericReader,
             SyntheticDatabases.NumericTable,
-            this._numericMetadata,
+            this.numericMetadata,
             beginLoadData: true,
-            this._numericRows).ConfigureAwait(false);
+            this.numericRows).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Numeric_RowsAddObjectArray_BeginLoadData_MinimumCapacity()
         => await MaterializeWithRowsAddAsync(
-            this._numericReader,
+            this.numericReader,
             SyntheticDatabases.NumericTable,
-            this._numericMetadata,
-            this._numericRows).ConfigureAwait(false);
+            this.numericMetadata,
+            this.numericRows).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Numeric_LoadDataRow_BeginLoadData_MinimumCapacity()
         => await MaterializeWithLoadDataRowAsync(
-            this._numericReader,
+            this.numericReader,
             SyntheticDatabases.NumericTable,
-            this._numericMetadata,
-            this._numericRows).ConfigureAwait(false);
+            this.numericMetadata,
+            this.numericRows).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Text_PublicReadDataTable()
     {
-        using DataTable table = await this._textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        using DataTable table = await this.textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
     [Benchmark]
     public async Task<int> Text_NewRow_BeginLoadData_MinimumCapacity()
         => await MaterializeWithNewRowAsync(
-            this._textReader,
+            this.textReader,
             SyntheticDatabases.TextTable,
-            this._textMetadata,
+            this.textMetadata,
             beginLoadData: true,
-            this._textRows).ConfigureAwait(false);
+            this.textRows).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Text_RowsAddObjectArray_BeginLoadData_MinimumCapacity()
         => await MaterializeWithRowsAddAsync(
-            this._textReader,
+            this.textReader,
             SyntheticDatabases.TextTable,
-            this._textMetadata,
-            this._textRows).ConfigureAwait(false);
+            this.textMetadata,
+            this.textRows).ConfigureAwait(false);
 
     [Benchmark]
     public async Task<int> Text_LoadDataRow_BeginLoadData_MinimumCapacity()
         => await MaterializeWithLoadDataRowAsync(
-            this._textReader,
+            this.textReader,
             SyntheticDatabases.TextTable,
-            this._textMetadata,
-            this._textRows).ConfigureAwait(false);
+            this.textMetadata,
+            this.textRows).ConfigureAwait(false);
 
     private static async Task<int> MaterializeWithNewRowAsync(
         AccessReader reader,

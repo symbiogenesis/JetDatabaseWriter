@@ -8,19 +8,19 @@ using JetDatabaseWriter.ValueDecoding;
 [MemoryDiagnoser]
 public class RowMapperBenchmarks
 {
-    private RowMapper<SampleEntity>.Accessor?[] _index = null!;
-    private object[] _row = null!;
-    private string[] _headers = null!;
-    private TableDef _tableDef = null!;
-    private SampleEntity _entity = null!;
+    private RowMapper<SampleEntity>.Accessor?[] index = null!;
+    private object[] row = null!;
+    private string[] headers = null!;
+    private TableDef tableDef = null!;
+    private SampleEntity entity = null!;
 
     [GlobalSetup]
     public void Setup()
     {
-        this._headers = ["Id", "Name", "Value", "Description", "IsActive"];
-        this._index = RowMapper<SampleEntity>.BuildIndex(this._headers);
-        this._row = [42, "TestName", 3.14, "A description", true];
-        this._tableDef = new TableDef
+        this.headers = ["Id", "Name", "Value", "Description", "IsActive"];
+        this.index = RowMapper<SampleEntity>.BuildIndex(this.headers);
+        this.row = [42, "TestName", 3.14, "A description", true];
+        this.tableDef = new TableDef
         {
             Columns =
             [
@@ -31,7 +31,7 @@ public class RowMapperBenchmarks
                 new ColumnInfo { Name = "IsActive" },
             ],
         };
-        this._entity = new SampleEntity
+        this.entity = new SampleEntity
         {
             Id = 42,
             Name = "TestName",
@@ -42,20 +42,20 @@ public class RowMapperBenchmarks
     }
 
     [Benchmark]
-    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(this._headers);
+    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(this.headers);
 
     [Benchmark]
-    public SampleEntity Map() => RowMapper<SampleEntity>.Map(this._row, this._index);
+    public SampleEntity Map() => RowMapper<SampleEntity>.Map(this.row, this.index);
 
     [Benchmark]
-    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(this._tableDef, this._entity);
+    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(this.tableDef, this.entity);
 
     [Benchmark]
     public SampleEntity MapWithConversion()
     {
         // Int64 -> Int32 forces Convert.ChangeType path
         object[] row = [42L, "TestName", 3.14f, "Desc", true];
-        return RowMapper<SampleEntity>.Map(row, this._index);
+        return RowMapper<SampleEntity>.Map(row, this.index);
     }
 
     public class SampleEntity

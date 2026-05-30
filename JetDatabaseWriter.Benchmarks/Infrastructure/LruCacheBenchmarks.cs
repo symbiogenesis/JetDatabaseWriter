@@ -7,7 +7,7 @@ using JetDatabaseWriter.Infrastructure;
 [MemoryDiagnoser]
 public class LruCacheBenchmarks : IDisposable
 {
-    private LruCache<int, string> _cache = null!;
+    private LruCache<int, string> cache = null!;
 
     [Params(64, 256, 1024)]
     public int Capacity { get; set; }
@@ -15,38 +15,38 @@ public class LruCacheBenchmarks : IDisposable
     [GlobalSetup]
     public void Setup()
     {
-        this._cache = new LruCache<int, string>(this.Capacity);
+        this.cache = new LruCache<int, string>(this.Capacity);
         for (int i = 0; i < this.Capacity; i++)
         {
-            this._cache.Add(i, $"value_{i}");
+            this.cache.Add(i, $"value_{i}");
         }
     }
 
     [Benchmark]
     public bool TryGetValue_Hit()
     {
-        this._cache.TryGetValue(0, out _);
+        this.cache.TryGetValue(0, out _);
         return true;
     }
 
     [Benchmark]
     public bool TryGetValue_Miss()
     {
-        this._cache.TryGetValue(-1, out _);
+        this.cache.TryGetValue(-1, out _);
         return true;
     }
 
     [Benchmark]
-    public void Add_Existing() => this._cache.Add(0, "updated");
+    public void Add_Existing() => this.cache.Add(0, "updated");
 
     [Benchmark]
     public void Add_Evict()
     {
         // Exceeds capacity, forcing eviction of the LRU entry (key 0 gets evicted).
-        this._cache.Add(this.Capacity + 1, "new");
+        this.cache.Add(this.Capacity + 1, "new");
 
         // Restore steady state: evict the new key by re-adding the original.
-        this._cache.Add(0, "value_0");
+        this.cache.Add(0, "value_0");
     }
 
     [Benchmark]
@@ -54,8 +54,8 @@ public class LruCacheBenchmarks : IDisposable
     {
         for (int i = 0; i < 100; i++)
         {
-            this._cache.TryGetValue(i % this.Capacity, out _);
-            this._cache.Add(i % this.Capacity, $"v{i}");
+            this.cache.TryGetValue(i % this.Capacity, out _);
+            this.cache.Add(i % this.Capacity, $"v{i}");
         }
     }
 
@@ -69,7 +69,7 @@ public class LruCacheBenchmarks : IDisposable
     {
         if (disposing)
         {
-            this._cache.Dispose();
+            this.cache.Dispose();
         }
     }
 }

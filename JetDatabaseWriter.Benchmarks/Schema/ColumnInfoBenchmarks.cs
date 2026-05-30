@@ -9,10 +9,10 @@ using static JetDatabaseWriter.Enums.ColumnType;
 [MemoryDiagnoser]
 public class ColumnInfoBenchmarks
 {
-    private ColumnInfo[] _columns = null!;
+    private ColumnInfo[] columns = null!;
 
     [GlobalSetup]
-    public void Setup() => this._columns =
+    public void Setup() => this.columns =
         [
             new() { Type = BooleanType, Flags = 0x00, Name = "Bool" },       // Boolean → fixed
             new() { Type = LongIntegerType, Flags = 0x00, Name = "Long" },       // LongInteger → fixed
@@ -31,9 +31,9 @@ public class ColumnInfoBenchmarks
     public int IsFixed_AllColumns()
     {
         int fixedCount = 0;
-        for (int i = 0; i < this._columns.Length; i++)
+        for (int i = 0; i < this.columns.Length; i++)
         {
-            if (this._columns[i].IsFixed)
+            if (this.columns[i].IsFixed)
             {
                 fixedCount++;
             }
@@ -43,11 +43,11 @@ public class ColumnInfoBenchmarks
     }
 
     [Benchmark]
-    public bool IsFixed_FixedType() => this._columns[0].IsFixed;
+    public bool IsFixed_FixedType() => this.columns[0].IsFixed;
 
     [Benchmark]
-    public bool IsFixed_VariableType() => this._columns[5].IsFixed;
+    public bool IsFixed_VariableType() => this.columns[5].IsFixed;
 
     [Benchmark]
-    public bool IsFixed_FallbackFlag() => this._columns[9].IsFixed;
+    public bool IsFixed_FallbackFlag() => this.columns[9].IsFixed;
 }

@@ -26,7 +26,7 @@ public class AccessReaderBenchmarks
     private static readonly string DbPath =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NorthwindTraders.accdb");
 
-    private string _tableName = string.Empty;
+    private string tableName = string.Empty;
 
     [GlobalSetup]
     public async Task Setup()
@@ -39,7 +39,7 @@ public class AccessReaderBenchmarks
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        this._tableName = (await reader.ListTablesAsync()).First();
+        this.tableName = (await reader.ListTablesAsync()).First();
     }
 
     [Benchmark]
@@ -53,35 +53,35 @@ public class AccessReaderBenchmarks
     public async Task<DataTable?> ReadTable_100()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this._tableName, 100);
+        return await reader.ReadDataTableAsync(this.tableName, 100);
     }
 
     [Benchmark]
     public async Task<DataTable?> ReadTable_1000()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this._tableName, 1000);
+        return await reader.ReadDataTableAsync(this.tableName, 1000);
     }
 
     [Benchmark]
     public async Task<DataTable> ReadTableAsStrings_100()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadTableAsStringsAsync(this._tableName, 100);
+        return await reader.ReadTableAsStringsAsync(this.tableName, 100);
     }
 
     [Benchmark]
     public async Task<int> StreamRows_All()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Rows(this._tableName).CountAsync();
+        return await reader.Rows(this.tableName).CountAsync();
     }
 
     [Benchmark]
     public async Task<int> StreamRowsAsStrings_All()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.RowsAsStrings(this._tableName).CountAsync();
+        return await reader.RowsAsStrings(this.tableName).CountAsync();
     }
 
     /// <summary>
@@ -120,7 +120,7 @@ public class AccessReaderBenchmarks
     public async Task<List<ColumnMetadata>> GetColumnMetadata()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.GetColumnMetadataAsync(this._tableName);
+        return await reader.GetColumnMetadataAsync(this.tableName);
     }
 
     [Benchmark]
@@ -134,20 +134,20 @@ public class AccessReaderBenchmarks
     public async Task<DataTable?> ReadTable_AsDataTable()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this._tableName, 100);
+        return await reader.ReadDataTableAsync(this.tableName, 100);
     }
 
     [Benchmark]
     public async Task<int> Query_Where_Count()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Rows(this._tableName).Where(_ => true).CountAsync();
+        return await reader.Rows(this.tableName).Where(_ => true).CountAsync();
     }
 
     [Benchmark]
     public async Task<object[]?> Query_FirstOrDefault()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Rows(this._tableName).FirstOrDefaultAsync();
+        return await reader.Rows(this.tableName).FirstOrDefaultAsync();
     }
 }
