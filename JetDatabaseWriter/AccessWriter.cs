@@ -2944,11 +2944,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     IsMultiValue = true,
                     ComplexId = column.Misc,
                 };
-            default:
+            case BooleanType:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case OleType:
+            case MemoType:
+            case GuidType:
+            case NumericType:
+            case BigIntType:
+            case DateTimeExtendedType:
                 Type clrType = JetTypeInfo.GetClrType(column.Type)
                     ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{(byte)column.Type:X2}.");
                 baseDef = new ColumnDefinition(column.Name, clrType);
                 break;
+            default:
+                throw new InvalidOperationException($"Column '{column.Name}' has unknown type code 0x{(byte)column.Type:X2}.");
         }
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the

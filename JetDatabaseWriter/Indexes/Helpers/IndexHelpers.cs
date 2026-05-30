@@ -261,15 +261,8 @@ internal static class IndexHelpers
                 // diagnostic so callers correct the index definition.
                 if (column.Type is OleType or AttachmentType or ComplexType)
                 {
-                    string typeName = column.Type switch
-                    {
-                        OleType => "OLE Object",
-                        AttachmentType => "Attachment",
-                        ComplexType => "Multi-Value (Complex)",
-                        _ => $"0x{(byte)column.Type:X2}",
-                    };
                     throw new NotSupportedException(
-                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {typeName}; "
+                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {column.Type}; "
                         + "Microsoft Access does not permit indexes on this column type.");
                 }
 

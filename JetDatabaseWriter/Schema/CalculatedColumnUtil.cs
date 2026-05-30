@@ -91,11 +91,28 @@ internal static class CalculatedColumnUtil
                 return numeric is decimal decimalValue
                     ? decimalValue.ToString("G", CultureInfo.InvariantCulture)
                     : string.Empty;
-            default:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case BinaryType:
+            case TextType:
+            case OleType:
+            case MemoType:
+            case GuidType:
+            case AttachmentType:
+            case ComplexType:
+            case BigIntType:
+            case DateTimeExtendedType:
                 int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
                 return required > 0 && payload.Length >= required
                     ? JetTypeInfo.ReadFixedString(payload, 0, type, required, strictNumeric)
                     : string.Empty;
+            default:
+                throw new InvalidOperationException($"Unknown column type: {type}");
         }
     }
 
@@ -107,11 +124,28 @@ internal static class CalculatedColumnUtil
                 return ReadBooleanPayload(payload);
             case NumericType:
                 return ReadNumericPayload(payload, strictNumeric);
-            default:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case BinaryType:
+            case TextType:
+            case OleType:
+            case MemoType:
+            case GuidType:
+            case AttachmentType:
+            case ComplexType:
+            case BigIntType:
+            case DateTimeExtendedType:
                 int required = type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(type);
                 return required > 0 && payload.Length >= required
                     ? JetTypeInfo.ReadFixedTyped(payload, 0, type, required, strictNumeric)
                     : DBNull.Value;
+            default:
+                throw new InvalidOperationException($"Unknown column type: {type}");
         }
     }
 

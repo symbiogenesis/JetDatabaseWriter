@@ -222,6 +222,12 @@ internal static class JetTypeInfo
                 GuidType => new Guid(row.Slice(start, 16)).ToString("B"),
                 NumericType => ReadNumericString(row, start, scale: 0, strictNumeric),
                 ComplexType or AttachmentType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
+                BooleanType or
+                BinaryType or
+                TextType or
+                OleType or
+                MemoType or
+                DateTimeExtendedType or
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }

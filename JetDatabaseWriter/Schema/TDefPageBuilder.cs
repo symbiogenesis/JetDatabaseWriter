@@ -471,7 +471,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             DatabaseFormat.Jet3Mdb => 0x00,
             DatabaseFormat.Jet4Mdb => 0x01,
             DatabaseFormat.AceAccdb => 0x02,
-            _ => throw new NotImplementedException(),
+            _ => throw new NotImplementedException($"Unsupported database format: {format}"),
         };
 
         BuildGlobalUsageMapPage(db, pgSz, format);
@@ -553,6 +553,9 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             TextType => GetTextDeclaredSize(maxLength, format),
             BinaryType => maxLength > 0 ? maxLength : 255,
             AttachmentType or ComplexType => 4,
+            OleType or
+            MemoType or
+            DateTimeExtendedType or
             _ => 0,
         };
 

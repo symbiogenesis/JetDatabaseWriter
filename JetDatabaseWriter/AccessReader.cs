@@ -1989,12 +1989,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Type targetType = JetTypeInfo.ResolveClrType(col);
         if (targetType == typeof(byte[]))
         {
-            switch (col.Type)
+            if (col.Type is BinaryType)
             {
-                case BinaryType:
-                    return row.AsSpan(start, len).ToArray();
-                case OleType:
-                    return await this.longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                return row.AsSpan(start, len).ToArray();
+            }
+            else if (col.Type is OleType)
+            {
+                return await this.longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -3267,9 +3268,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     // since they have no fixed-area size of their own.
                     int required = col.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                     return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
-
-                default:
+                case BooleanType:
+                case NumericType:
+                case DateTimeExtendedType:
                     return string.Empty;
+                default:
+                    throw new InvalidOperationException($"Column '{col.Name}' has unknown type code 0x{(byte)col.Type:X2}.");
             }
         }
         catch (JetLimitationException)
