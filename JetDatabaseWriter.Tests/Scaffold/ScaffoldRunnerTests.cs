@@ -407,7 +407,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return new ValueTask<List<string>>(new List<string>(tables));
+            return new ValueTask<List<string>>([.. tables]);
         }
 
         public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)

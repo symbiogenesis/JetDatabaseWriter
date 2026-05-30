@@ -1753,7 +1753,7 @@ internal static class DaoBaselineProbe
 
         HashSet<long> writerDiff = w is null
             ? []
-            : new HashSet<long>(w.PagesDifferingFromBaseline);
+            : [.. w.PagesDifferingFromBaseline];
 
         var daoOnly = d.PagesDifferingFromBaseline.Where(p => !writerDiff.Contains(p)).ToList();
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- DAO-only pages (in shared range): {daoOnly.Count} → {string.Join(", ", daoOnly.Select(p => p.ToString(CultureInfo.InvariantCulture)))}");
