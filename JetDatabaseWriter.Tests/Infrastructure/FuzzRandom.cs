@@ -20,10 +20,7 @@ internal sealed class FuzzRandom : Random
         this.pos = 0;
     }
 
-    private FuzzRandom(Random fallback)
-    {
-        this.fallback = fallback;
-    }
+    private FuzzRandom(Random fallback) => this.fallback = fallback;
 
     public static FuzzRandom Create(byte[]? fuzzedBytes)
         => fuzzedBytes?.Length > 0
