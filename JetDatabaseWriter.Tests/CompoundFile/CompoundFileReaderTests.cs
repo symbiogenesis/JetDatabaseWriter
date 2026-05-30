@@ -755,7 +755,7 @@ public sealed class CompoundFileReaderTests
         const int streamCount = 3;
 
         const int miniSectorsPerStream = (streamSize + ms - 1) / ms; // 64
-        int totalMiniSectorsActual = miniSectorsPerStream * streamCount; // 192
+        const int totalMiniSectorsActual = miniSectorsPerStream * streamCount; // 192
         int miniStreamBytes = totalMiniSectorsActual * ms; // 12288
 
         // Sector layout:
@@ -866,7 +866,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
 
         // Chain B: mini-sectors 64..127 (entry 127 → EndOfChain)
-        int bStart = miniSectorsPerStream;
+        const int bStart = miniSectorsPerStream;
         for (int i = bStart; i < bStart + miniSectorsPerStream - 1; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), (uint)(i + 1));
@@ -876,7 +876,7 @@ public sealed class CompoundFileReaderTests
 
         // Chain C: mini-sectors 128..191 (entry 191 → EndOfChain)
         // Entries 128+ reside in the SECOND mini-FAT sector.
-        int cStart = miniSectorsPerStream * 2;
+        const int cStart = miniSectorsPerStream * 2;
         for (int i = cStart; i < cStart + miniSectorsPerStream - 1; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), (uint)(i + 1));

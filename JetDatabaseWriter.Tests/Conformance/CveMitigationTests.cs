@@ -48,7 +48,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         // Jet4/ACE TDEF numCols offset = 45 within the page payload.
         // Page 2 starts at file offset 2 * 4096 = 8192.
         const int tdefPage2Start = 2 * 4096;
-        int numColsOffset = tdefPage2Start + 45;
+        const int numColsOffset = tdefPage2Start + 45;
 
         if (numColsOffset + 2 > corrupted.Length)
         {
@@ -94,7 +94,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] corrupted = (byte[])original.Clone();
 
         const int tdefPage2Start = 2 * 4096;
-        int numColsOffset = tdefPage2Start + 45;
+        const int numColsOffset = tdefPage2Start + 45;
 
         if (numColsOffset + 2 > corrupted.Length)
         {
@@ -142,7 +142,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] corrupted = (byte[])original.Clone();
 
         const int tdefPage2Start = 2 * 4096;
-        int numRealIdxOffset = tdefPage2Start + 51;
+        const int numRealIdxOffset = tdefPage2Start + 51;
 
         if (numRealIdxOffset + 4 > corrupted.Length)
         {

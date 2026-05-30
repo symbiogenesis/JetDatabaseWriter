@@ -103,7 +103,7 @@ public sealed class IndexBTreeBuilderTests
 
         // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
         const int entry0KeyLen = 200;
-        int entry0Stride = entry0KeyLen + 4 + 4;
+        const int entry0Stride = entry0KeyLen + 4 + 4;
         int firstChildOffset = layout.FirstEntryOffset + entry0KeyLen + 4;
         Assert.Equal(FirstPage + 0, ReadI32BE(intermediate, firstChildOffset));
 
