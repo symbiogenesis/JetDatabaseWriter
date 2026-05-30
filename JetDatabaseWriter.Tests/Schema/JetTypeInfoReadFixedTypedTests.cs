@@ -76,6 +76,19 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     [Theory]
+    [InlineData(0L)]
+    [InlineData(1L)]
+    [InlineData(-1L)]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void BigInt_RoundTripsThroughParseValue(long value)
+    {
+        byte[] row = new byte[8];
+        BinaryPrimitives.WriteInt64LittleEndian(row, value);
+        AssertParity(row, start: 0, BigIntType, size: 8, expected: value);
+    }
+
+    [Theory]
     [InlineData(0f)]
     [InlineData(1f)]
     [InlineData(-1.5f)]

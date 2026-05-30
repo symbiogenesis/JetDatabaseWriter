@@ -71,6 +71,24 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
+    public void BigInt_Ordering_IsLexicographic_Ascending()
+    {
+        long[] values = [long.MinValue, -1000L, -1L, 0L, 1L, 1000L, long.MaxValue];
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(BigIntType, values[i], ascending: true);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(CompareLex(encoded[i - 1], encoded[i]) < 0, $"Ascending order violated between {values[i - 1]} and {values[i]}.");
+        }
+
+        Assert.All(encoded, e => Assert.Equal(9, e.Length));
+    }
+
+    [Fact]
     public void Int_Ordering_IsLexicographic_Ascending()
     {
         short[] values = [short.MinValue, -1, 0, 1, short.MaxValue];

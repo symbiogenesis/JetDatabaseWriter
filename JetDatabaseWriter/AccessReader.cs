@@ -3253,10 +3253,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case DoubleType:
                 case DateTimeType:
                 case MoneyType:
+                case BigIntType:
                 case GuidType:
                 case ComplexType:
                 case AttachmentType:
-                    // Delegate fixed-width primitive formatting to the shared
+                    // Delegate fixed-width primitive and complex-id formatting to the shared
                     // JetTypeInfo.ReadFixedString helper to avoid duplicating
                     // the per-type Invariant-culture formatting block. The
                     // length guard mirrors the historical behaviour (return

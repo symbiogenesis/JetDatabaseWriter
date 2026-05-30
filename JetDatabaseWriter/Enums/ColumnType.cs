@@ -62,6 +62,9 @@ public enum ColumnType : byte
     /// <summary>Access 2007+ complex parent column (0x12): attachment, multi-value, or version-history with hidden flat-table backing.</summary>
     ComplexType = 0x12,
 
+    /// <summary>Access Large Number / BIGINT (0x13): 8-byte signed integer.</summary>
+    BigIntType = 0x13,
+
     /// <summary>Access 2019+ extended Date/Time (0x14): 42-byte fixed string. No mdbtools symbol — post-dates mdbtools.</summary>
     DateTimeExtendedType = 0x14,
 }

@@ -2244,6 +2244,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 return IntegerType;
             case TypeCode.Int32:
                 return LongIntegerType;
+            case TypeCode.Int64:
+                return BigIntType;
             case TypeCode.Single:
                 return FloatType;
             case TypeCode.Double:
@@ -2318,6 +2320,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case IntegerType:
             case LongIntegerType:
             case MoneyType:
+            case BigIntType:
             case FloatType:
             case DoubleType:
             case DateTimeType:

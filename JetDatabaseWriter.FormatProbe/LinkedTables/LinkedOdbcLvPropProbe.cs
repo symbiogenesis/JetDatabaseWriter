@@ -372,6 +372,7 @@ internal static class LinkedOdbcLvPropProbe
             ColumnType.ByteType when value.Length >= 1 => value[0].ToString(CultureInfo.InvariantCulture),
             ColumnType.IntegerType when value.Length >= sizeof(short) => BinaryPrimitives.ReadInt16LittleEndian(value).ToString(CultureInfo.InvariantCulture),
             ColumnType.LongIntegerType when value.Length >= sizeof(int) => BinaryPrimitives.ReadInt32LittleEndian(value).ToString(CultureInfo.InvariantCulture),
+            ColumnType.BigIntType when value.Length >= sizeof(long) => BinaryPrimitives.ReadInt64LittleEndian(value).ToString(CultureInfo.InvariantCulture),
             ColumnType.FloatType when value.Length >= sizeof(float) => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(value)).ToString("G9", CultureInfo.InvariantCulture),
             ColumnType.DoubleType when value.Length >= sizeof(double) => BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(value)).ToString("G17", CultureInfo.InvariantCulture),
             ColumnType.DateTimeType when value.Length >= sizeof(double) => FormatDateTime(value),

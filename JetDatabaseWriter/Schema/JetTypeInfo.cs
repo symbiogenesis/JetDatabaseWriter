@@ -23,7 +23,7 @@ internal static class JetTypeInfo
 {
     /// <summary>
     /// Returns the on-disk fixed byte size for a fixed-length JET column type
-    /// (<c>BYTE/INT/LONG/MONEY/FLOAT/DOUBLE/DATETIME/GUID/NUMERIC</c>), or
+    /// (<c>BYTE/INT/LONG/MONEY/FLOAT/DOUBLE/DATETIME/GUID/NUMERIC/BIGINT</c>), or
     /// <c>0</c> for variable-length types and unknown codes. Mirrors the
     /// per-type sizes documented in mdbtools <see href="HACKING.md" />.
     /// </summary>
@@ -39,6 +39,7 @@ internal static class JetTypeInfo
         DateTimeType => 8,
         GuidType => 16,
         NumericType => 17,
+        BigIntType => 8,
 
         // Complex/attachment columns store a 4-byte ComplexId in the row's
         // fixed area (the actual payload lives in the hidden child table
@@ -80,7 +81,6 @@ internal static class JetTypeInfo
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the column type is unknown.</exception>
     public static Type? GetClrType(ColumnType type) => type switch
     {
         BooleanType => typeof(bool),
@@ -92,6 +92,7 @@ internal static class JetTypeInfo
         DoubleType => typeof(double),
         DateTimeType => typeof(DateTime),
         NumericType => typeof(decimal),
+        BigIntType => typeof(long),
         GuidType => typeof(Guid),
         TextType => typeof(string),
         MemoType => typeof(string),
@@ -99,8 +100,7 @@ internal static class JetTypeInfo
         OleType => typeof(byte[]),
         AttachmentType => typeof(byte[]),
         ComplexType => typeof(byte[]),
-        DateTimeExtendedType => null,
-        _ => throw new InvalidOperationException($"Column type: '{type}' is unknown."),
+        DateTimeExtendedType or _ => null,
     };
 
     /// <summary>
@@ -157,6 +157,7 @@ internal static class JetTypeInfo
         NumericType => "Decimal",
         AttachmentType => "Attachment",
         ComplexType => "Complex",
+        BigIntType => "Big Integer",
         DateTimeExtendedType => "Date/Time Extended",
         _ => $"0x{(byte)type:X2}",
     };
@@ -175,7 +176,7 @@ internal static class JetTypeInfo
         ByteType => ColumnSize.FromBytes(1),
         IntegerType => ColumnSize.FromBytes(2),
         LongIntegerType or FloatType => ColumnSize.FromBytes(4),
-        MoneyType or DoubleType or DateTimeType => ColumnSize.FromBytes(8),
+        MoneyType or DoubleType or DateTimeType or BigIntType => ColumnSize.FromBytes(8),
         GuidType => ColumnSize.FromBytes(16),
         NumericType => ColumnSize.FromBytes(17),
         TextType => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
@@ -217,6 +218,7 @@ internal static class JetTypeInfo
                 DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)).ToString("G", CultureInfo.InvariantCulture),
                 DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 MoneyType => decimal.FromOACurrency(Ri64(row, start)).ToString("F4", CultureInfo.InvariantCulture),
+                BigIntType => Ri64(row, start).ToString(CultureInfo.InvariantCulture),
                 GuidType => new Guid(row.Slice(start, 16)).ToString("B"),
                 NumericType => ReadNumericString(row, start, scale: 0, strictNumeric),
                 ComplexType or AttachmentType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
@@ -255,7 +257,7 @@ internal static class JetTypeInfo
     /// <c>DateTime → DateTime</c> (un-truncated; <c>ReadFixedString</c>
     /// formats with <c>"yyyy-MM-dd HH:mm:ss"</c> and loses sub-second precision —
     /// the typed path keeps full precision),
-    /// <c>Money → decimal</c>, <c>Guid → Guid</c>,
+    /// <c>Money → decimal</c>, <c>BigInt → long</c>, <c>Guid → Guid</c>,
     /// <c>Numeric → decimal</c>,
     /// <c>Complex</c>/<c>Attachment → <see cref="ComplexIdRef"/></c> typed
     /// sentinel carrying the row's complex_id directly (the legacy
@@ -296,6 +298,7 @@ internal static class JetTypeInfo
                 DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)),
                 DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))),
                 MoneyType => decimal.FromOACurrency(Ri64(row, start)),
+                BigIntType => Ri64(row, start),
                 GuidType => new Guid(row.Slice(start, 16)),
                 NumericType => ReadNumericTyped(row, start, scale: 0, strictNumeric),
                 ComplexType or AttachmentType => size >= 4
@@ -623,6 +626,12 @@ internal static class JetTypeInfo
     /// <param name="start">The start.</param>
     internal static int ReadInt32LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4));
+
+    /// <summary>Reads a little-endian Int64 (BigInt / Large Number) at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
+    internal static long ReadInt64LE(byte[] page, int start) =>
+        BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
 
     /// <summary>Reads a little-endian Single (Float) at <paramref name="start"/>.</summary>
     /// <param name="page">The page bytes.</param>

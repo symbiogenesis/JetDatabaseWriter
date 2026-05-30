@@ -121,6 +121,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                             : tableColumn.Type switch
                             {
                                 LongIntegerType => CatalogValueReader.ParseInt32OrZero(raw),
+                                BigIntType => CatalogValueReader.ParseInt64OrZero(raw),
                                 IntegerType => (short)CatalogValueReader.ParseInt32OrZero(raw),
                                 ByteType => (byte)CatalogValueReader.ParseInt32OrZero(raw),
                                 ColumnType.BooleanType or

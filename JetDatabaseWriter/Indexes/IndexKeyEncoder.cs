@@ -20,7 +20,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <para>
 /// Supported column types: <c>Byte (0x02)</c>, <c>Integer (0x03)</c>,
 /// <c>LongInteger (0x04)</c>, <c>Money (0x05)</c>, <c>Float (0x06)</c>,
-/// <c>Double (0x07)</c>, <c>DateTime (0x08)</c>, <c>Text (0x0A)</c>
+/// <c>Double (0x07)</c>, <c>DateTime (0x08)</c>, <c>BigInt (0x13)</c>, <c>Text (0x0A)</c>
 /// using the "General Legacy" encoding documented in HACKING.md (digits and
 /// ASCII letters only; any character outside <c>0-9 / A-Z / a-z</c> throws
 /// <see cref="NotSupportedException"/>, which the index-maintenance loop
@@ -165,6 +165,14 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
+            case BigIntType:
+            {
+                byte[] r = new byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(r, ToInt64(value));
+                r[0] ^= 0x80;
+                return r;
+            }
+
             case MoneyType:
             {
                 long scaled = decimal.ToOACurrency(ToDecimal(value));
@@ -212,7 +220,7 @@ internal static class IndexKeyEncoder
             case DateTimeExtendedType:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{(byte)columnType:X2} is not supported. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
+                    "Supported types: BYTE, INT, LONG, BIGINT, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
             default:
                 throw new InvalidOperationException($"Index key encoding for column type 0x{(byte)columnType:X2} is unknown.");
         }
@@ -647,6 +655,17 @@ internal static class IndexKeyEncoder
         _ => Convert.ToInt32(value, CultureInfo.InvariantCulture),
     };
 
+    private static long ToInt64(object value) => value switch
+    {
+        long l => l,
+        int i => i,
+        short s => s,
+        byte b => b,
+        sbyte sb => sb,
+        uint u => u,
+        _ => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+    };
+
     private static decimal ToDecimal(object value) => value switch
     {
         decimal d => d,
@@ -702,7 +721,7 @@ internal static class IndexKeyEncoder
     /// <param name="columnType">The column type.</param>
     internal static bool IsColumnTypeSeekable(ColumnType columnType) => columnType switch
     {
-        ByteType or IntegerType or LongIntegerType or MoneyType or FloatType or DoubleType
+        ByteType or IntegerType or LongIntegerType or BigIntType or MoneyType or FloatType or DoubleType
             or DateTimeType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
         BooleanType or OleType or AttachmentType or ComplexType or DateTimeExtendedType or _ => false,
     };

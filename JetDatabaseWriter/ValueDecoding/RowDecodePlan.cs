@@ -104,6 +104,7 @@ internal sealed class RowDecodePlan
                 case DoubleType:
                 case DateTimeType:
                 case MoneyType:
+                case BigIntType:
                 case GuidType:
                 case NumericType:
                     int required = JetTypeInfo.GetFixedSize(column.Type);
@@ -299,6 +300,7 @@ internal sealed class RowDecodePlan
                 case DoubleType:
                 case DateTimeType:
                 case MoneyType:
+                case BigIntType:
                 case GuidType:
                 case ComplexType:
                 case AttachmentType:

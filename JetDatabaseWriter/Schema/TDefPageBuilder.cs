@@ -34,6 +34,13 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             ColumnDefinition definition = columns[i];
             AccessWriter.ValidateCalculatedColumn(definition, format);
             ColumnType type = AccessWriter.TypeCodeFromDefinition(definition);
+
+            if (type == BigIntType && format != DatabaseFormat.AceAccdb)
+            {
+                throw new NotSupportedException(
+                    $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
+            }
+
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
@@ -540,6 +547,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             FloatType => 4,
             DoubleType => 8,
             DateTimeType => 8,
+            BigIntType => 8,
             GuidType => 16,
             NumericType => 17,
             TextType => GetTextDeclaredSize(maxLength, format),

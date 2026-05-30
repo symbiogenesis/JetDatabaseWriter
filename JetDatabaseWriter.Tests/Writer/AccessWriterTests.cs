@@ -769,6 +769,40 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    [Fact]
+    public async Task InsertRow_BigIntAccdb_ValueRoundtripsAsInt64()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        string tableName = $"BigInt_{Guid.NewGuid():N}"[..18];
+        const long expected = 9_223_372_036_854_775_000L;
+
+        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [new("Id", typeof(int)), new("N", typeof(long))],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, expected], TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+            Assert.Equal(typeof(long), metadata[1].ClrType);
+            Assert.Equal("Big Integer", metadata[1].TypeName);
+            Assert.Equal(ColumnSize.FromBytes(8), metadata[1].Size);
+
+            DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(expected, Assert.IsType<long>(rows.Rows[0]["N"]));
+        }
+    }
+
     /// <summary>
     /// Round-trips DateTime values straddling the OADate epoch
     /// (1899-12-30) and the Excel/Lotus 1900 phantom-leap-day window

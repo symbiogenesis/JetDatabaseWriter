@@ -1490,6 +1490,7 @@ public abstract class AccessBase : IAccessBase
                     case DoubleType:
                     case DateTimeType:
                     case MoneyType:
+                    case BigIntType:
                     case GuidType:
                     case ComplexType:
                     case AttachmentType:

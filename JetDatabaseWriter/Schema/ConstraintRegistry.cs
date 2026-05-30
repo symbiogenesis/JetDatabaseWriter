@@ -288,6 +288,7 @@ internal sealed class ConstraintRegistry(
         ByteType => typeof(byte),
         IntegerType => typeof(short),
         LongIntegerType => typeof(int),
+        BigIntType => typeof(long),
         MoneyType => typeof(decimal),
         FloatType => typeof(float),
         DoubleType => typeof(double),

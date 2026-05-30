@@ -116,6 +116,10 @@ internal sealed class RowEncoder(AccessWriter writer)
                     decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture)));
                 return 8;
 
+            case BigIntType:
+                BinaryPrimitives.WriteInt64LittleEndian(dest, Convert.ToInt64(value, CultureInfo.InvariantCulture));
+                return 8;
+
             case NumericType:
                 EncodeNumericValue(column, Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
                 return 17;
@@ -481,6 +485,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             case DoubleType:
             case DateTimeType:
             case MoneyType:
+            case BigIntType:
             case NumericType:
             case GuidType:
             case ComplexType:
