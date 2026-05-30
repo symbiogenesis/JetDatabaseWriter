@@ -1,10 +1,9 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;

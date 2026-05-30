@@ -1,8 +1,7 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Schema;
 using Xunit;

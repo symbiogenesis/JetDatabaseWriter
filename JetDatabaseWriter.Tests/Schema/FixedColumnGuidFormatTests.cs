@@ -1,8 +1,7 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
