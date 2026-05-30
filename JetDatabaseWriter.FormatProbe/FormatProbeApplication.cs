@@ -325,7 +325,7 @@ internal static class FormatProbeApplication
             // every format and Access version we have on disk.
             WriteMdbCatalogAppendixAsync(
             fixtures,
-            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"))
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md")),
         };
 
         await Task.WhenAll(appendices);

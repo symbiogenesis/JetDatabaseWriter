@@ -1054,7 +1054,7 @@ internal static class DaoBaselineProbe
             CheckRealIdxFlags(wt, wHdr, dt, dHdr),
 
             // ── H38: real-idx 4-byte "unknown" gap at offsets 42..45 == 0
-            CheckRealIdxUnknownGap(wt, wHdr, dt, dHdr)
+            CheckRealIdxUnknownGap(wt, wHdr, dt, dHdr),
         };
 
         // ── H41: TDEF[0x1C..0x1F] (next_complex_auto_number on ACCDB) == 0
