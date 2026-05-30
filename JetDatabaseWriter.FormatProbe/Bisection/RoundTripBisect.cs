@@ -40,15 +40,12 @@ internal static class RoundTripBisect
         var steps = new (string Name, Func<AccessWriter, Task> Action)[]
         {
             ("N0_OpenClose",        async _ => await Task.CompletedTask),
-            ("N1_CreateOneTable",   async w =>
-            {
-                await w.CreateTableAsync(
+            ("N1_CreateOneTable",   async w => await w.CreateTableAsync(
                     "RT_Customers",
                     [
                         new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("Name", typeof(string), maxLength: 100) { IsNullable = false },
-                    ]);
-            }),
+                    ])),
             ("N2_CreateTwoTables",  async w =>
             {
                 await w.CreateTableAsync(
