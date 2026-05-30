@@ -18,7 +18,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -68,12 +67,8 @@ internal static class LongRowSuffixProbe
     private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
     private const int AuxInputCandidateIndex = 10;
     private const int CrcDerivedInitSolverMaxSeedBytes = 192;
-    private const uint LcMapSortKey = 0x00000400;
-    private const uint LcMapHash = 0x00040000;
-    private const uint NormIgnoreCase = 0x00000001;
-    private const uint NormIgnoreNonSpace = 0x00000002;
-    private const uint NormIgnoreSymbols = 0x00000004;
-    private const uint SortStringsSort = 0x00001000;
+
+    private static readonly CompareInfo EnUsCompareInfo = CultureInfo.GetCultureInfo("en-US").CompareInfo;
 
     private static readonly Lazy<GeneralLegacyTextIndexEncoder.CharHandler[]> GeneralCodes = new(
         () => GeneralLegacyTextIndexEncoder.LoadCodes(GeneralResource, FirstChar, LastChar));
@@ -117,19 +112,6 @@ internal static class LongRowSuffixProbe
     private static readonly Encoding Cp1252Encoding = Encoding.GetEncoding(1252);
 
     private static readonly Lazy<List<CandidateRule>> SuffixCandidateRules = new(BuildSuffixCandidateRules);
-
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-    private static extern int LCMapStringEx(
-        string lpLocaleName,
-        uint dwMapFlags,
-        string lpSrcStr,
-        int cchSrc,
-        byte[] lpDestStr,
-        int cchDest,
-        IntPtr lpVersionInformation,
-        IntPtr lpReserved,
-        IntPtr sortHandle);
 
     public static async Task<int> RunAnalysisAsync(string fixturesDir, string outFile)
     {
@@ -1487,10 +1469,7 @@ internal static class LongRowSuffixProbe
         AppendAffineBitResult(sb, "trimmed-full[506..511] raw bits", usableRows, targets, table, 40, BuildTrimmedRawWindowFeature506);
         AppendAffineBitResult(sb, "full[508..512] raw bits", usableRows, targets, table, 32, BuildRawTailFeature);
         AppendAffineBitResult(sb, "full[508..513] raw bits", usableRows, targets, table, 40, BuildRawTailFeature);
-        if (OperatingSystem.IsWindows())
-        {
-            AppendAffineBitResult(sb, "text[253..255] LCMapHash ignore-case", usableRows, targets, table, 32, BuildLcMapHashFeature);
-        }
+        AppendAffineBitResult(sb, "text[253..255] en-US CompareHash IgnoreCase", usableRows, targets, table, 32, BuildCompareHashFeature);
 
         AppendTrainedAffineScore(sb, "trained full[508..511] model", table, usableRows, targets, 24, BuildRawTailFeature);
         AppendTrainedAffineScore(sb, "trained trimmed-full[508..511] model", table, usableRows, targets, 24, BuildTrimmedRawTailFeature);
@@ -1710,12 +1689,14 @@ internal static class LongRowSuffixProbe
         return feature;
     }
 
-    private static ulong? BuildLcMapHashFeature(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+    private static ulong? BuildCompareHashFeature(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
     {
         _ = table;
         _ = bitCount;
-        byte[] hash = LcMapHashBytes("en-US", LcMapHash | NormIgnoreCase, TextWindow(row.Text!, 253, 255));
-        return hash.Length == 4 ? BinaryPrimitives.ReadUInt32LittleEndian(hash) : null;
+        int hash = EnUsCompareInfo.GetHashCode(
+            TextWindow(row.Text!, 253, 255),
+            CompareOptions.IgnoreCase);
+        return unchecked((uint)hash);
     }
 
     private static bool TryFitAffineBinaryModel(
@@ -1898,10 +1879,7 @@ internal static class LongRowSuffixProbe
         AppendAuxSignatureSummary(sb, contexts);
         AppendTruncationPhaseSummary(sb, contexts);
         AppendTruncationWindowSweepSummary(sb, contexts);
-        if (OperatingSystem.IsWindows())
-        {
-            AppendLcMapSortKeySweepSummary(sb, contexts);
-        }
+        AppendCompareSortKeySweepSummary(sb, contexts);
     }
 
     private static void AppendAuxSignatureSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
@@ -2150,24 +2128,24 @@ internal static class LongRowSuffixProbe
         };
     }
 
-    private static void AppendLcMapSortKeySweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    private static void AppendCompareSortKeySweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         var hits = new List<CandidateScore>();
         var xorCounts = new CountAccumulator();
         var addCounts = new CountAccumulator();
         foreach ((string inputLabel, Func<SuffixCandidateContext, string>? getText) in BuildTextInputs())
         {
-            foreach ((string label, uint flags) in new[]
+            foreach ((string label, CompareOptions options) in new[]
             {
-                ("en-US none", LcMapSortKey),
-                ("en-US string", LcMapSortKey | SortStringsSort),
-                ("en-US ignore-case", LcMapSortKey | NormIgnoreCase),
-                ("en-US ignore-case-string", LcMapSortKey | NormIgnoreCase | SortStringsSort),
-                ("en-US ignore-case-nonspace", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace),
+                ("en-US none", CompareOptions.None),
+                ("en-US string", CompareOptions.StringSort),
+                ("en-US ignore-case", CompareOptions.IgnoreCase),
+                ("en-US ignore-case-string", CompareOptions.IgnoreCase | CompareOptions.StringSort),
+                ("en-US ignore-case-nonspace", CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace),
             })
             {
                 byte[][] sortKeys = contexts
-                    .Select(context => context.GetLcMapSortKeyBytes("en-US", flags, getText(context)))
+                    .Select(context => context.GetCompareSortKeyBytes("en-US", options, getText(context)))
                     .ToArray();
                 int maxLength = sortKeys.Length == 0 ? 0 : sortKeys.Max(key => key.Length);
                 for (int offset = 0; offset + 1 < maxLength; offset++)
@@ -2188,7 +2166,7 @@ internal static class LongRowSuffixProbe
             .Take(12)
             .ToList();
 
-        sb.AppendLine("LCMap sort-key offset sweep:")
+        sb.AppendLine("CompareInfo sort-key offset sweep:")
             .AppendLine()
             .AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |")
             .AppendLine("|---|---:|---:|:---:|---:|:---:|");
@@ -4058,12 +4036,8 @@ internal static class LongRowSuffixProbe
             AddHash32WordRules(rules, label, "NLS-65599 UTF16", context => Nls65599Utf16(getText(context), ignoreCase: false));
             AddHash32WordRules(rules, label, "NLS-65599 UTF16 upper", context => Nls65599Utf16(getText(context), ignoreCase: true));
             AddCompareInfoRules(rules, label, getText, CultureInfo.InvariantCulture.CompareInfo, "Invariant");
-            AddCompareInfoRules(rules, label, getText, CultureInfo.GetCultureInfo("en-US").CompareInfo, "en-US");
-            if (OperatingSystem.IsWindows())
-            {
-                AddLcMapHashRules(rules, label, getText, "en-US");
-                AddLcMapSortKeyRules(rules, label, getText, "en-US");
-            }
+            AddCompareInfoRules(rules, label, getText, EnUsCompareInfo, "en-US");
+            AddCompareSortKeyRules(rules, label, getText, "en-US");
         }
 
         return rules;
@@ -4331,52 +4305,30 @@ internal static class LongRowSuffixProbe
         }
     }
 
-    private static void AddLcMapHashRules(
+    private static void AddCompareSortKeyRules(
         List<CandidateRule> rules,
         string label,
         Func<SuffixCandidateContext, string> getText,
         string localeName)
     {
-        foreach ((string optionLabel, uint flags) in new[]
+        foreach ((string optionLabel, CompareOptions options) in new[]
         {
-            ("none", LcMapHash),
-            ("ignore-case", LcMapHash | NormIgnoreCase),
-            ("ignore-case-nonspace", LcMapHash | NormIgnoreCase | NormIgnoreNonSpace),
-            ("ignore-case-nonspace-symbols", LcMapHash | NormIgnoreCase | NormIgnoreNonSpace | NormIgnoreSymbols),
+            ("none", CompareOptions.None),
+            ("ignore-case", CompareOptions.IgnoreCase),
+            ("ignore-case-nonspace", CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace),
+            ("ignore-case-nonspace-symbols", CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreSymbols),
         })
         {
-            string name = $"{label} LCMapHash {localeName} {optionLabel}";
-            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
-        }
-    }
-
-    private static void AddLcMapSortKeyRules(
-        List<CandidateRule> rules,
-        string label,
-        Func<SuffixCandidateContext, string> getText,
-        string localeName)
-    {
-        foreach ((string optionLabel, uint flags) in new[]
-        {
-            ("none", LcMapSortKey),
-            ("ignore-case", LcMapSortKey | NormIgnoreCase),
-            ("ignore-case-nonspace", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace),
-            ("ignore-case-nonspace-symbols", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace | NormIgnoreSymbols),
-        })
-        {
-            string name = $"{label} LCMapSortKey {localeName} {optionLabel}";
-            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} last BE", context => ReadLastWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} last LE", context => ReadLastWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} FNV1a16", context => Fnv1A16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
-            rules.Add(new CandidateRule($"{name} Adler16", context => Adler16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
-            rules.Add(new CandidateRule($"{name} Fletcher16", context => Fletcher16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
+            string name = $"{label} CompareSortKey {localeName} {optionLabel}";
+            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), 2, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), 2, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} last BE", context => ReadLastWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} last LE", context => ReadLastWordOrNull(context.GetCompareSortKeyBytes(localeName, options, getText(context)), bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} FNV1a16", context => Fnv1A16(context.GetCompareSortKeyBytes(localeName, options, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Adler16", context => Adler16(context.GetCompareSortKeyBytes(localeName, options, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Fletcher16", context => Fletcher16(context.GetCompareSortKeyBytes(localeName, options, getText(context)))));
         }
     }
 
@@ -5062,25 +5014,8 @@ internal static class LongRowSuffixProbe
 
     private static ushort ByteSwap(ushort value) => unchecked((ushort)((value << 8) | (value >> 8)));
 
-    private static byte[] LcMapHashBytes(string localeName, uint flags, string value)
-    {
-        byte[] buffer = new byte[4];
-        int result = LCMapStringEx(localeName, flags, value, value.Length, buffer, buffer.Length, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-        return result > 0 ? buffer : [];
-    }
-
-    private static byte[] LcMapSortKeyBytes(string localeName, uint flags, string value)
-    {
-        byte[] buffer = new byte[Math.Max(32, (value.Length * 8) + 32)];
-        int result = LCMapStringEx(localeName, flags, value, value.Length, buffer, buffer.Length, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-        if (result <= 0)
-        {
-            return [];
-        }
-
-        int length = Math.Min(result, buffer.Length);
-        return buffer[..length];
-    }
+    private static byte[] CompareSortKeyBytes(string localeName, CompareOptions options, string value) =>
+        CultureInfo.GetCultureInfo(localeName).CompareInfo.GetSortKey(value, options).KeyData;
 
     private static string DescribeSeedExamples(IEnumerable<SuffixPatternRow> rows)
     {
@@ -7034,8 +6969,7 @@ internal static class LongRowSuffixProbe
 
     private sealed class SuffixCandidateContext(LongRowSuffixProbe.SuffixPatternRow row, bool ascending)
     {
-        private readonly Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
-        private readonly Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
+        private readonly Dictionary<CompareSortKeyCacheKey, byte[]> compareSortKeyBytes = [];
         private readonly Dictionary<DigestCacheKey, byte[]> digestBytes = [];
         private byte[][]? inputCandidates;
         private byte[][]? normalizedInputCandidates;
@@ -7074,32 +7008,20 @@ internal static class LongRowSuffixProbe
             return bytes;
         }
 
-        public byte[] GetLcMapHashBytes(string localeName, uint flags, string value)
+        public byte[] GetCompareSortKeyBytes(string localeName, CompareOptions options, string value)
         {
-            var key = new LcMapCacheKey(localeName, flags, value);
-            if (!this.lcMapHashBytes.TryGetValue(key, out byte[]? bytes))
+            var key = new CompareSortKeyCacheKey(localeName, options, value);
+            if (!this.compareSortKeyBytes.TryGetValue(key, out byte[]? bytes))
             {
-                bytes = LcMapHashBytes(localeName, flags, value);
-                this.lcMapHashBytes.Add(key, bytes);
-            }
-
-            return bytes;
-        }
-
-        public byte[] GetLcMapSortKeyBytes(string localeName, uint flags, string value)
-        {
-            var key = new LcMapCacheKey(localeName, flags, value);
-            if (!this.lcMapSortKeyBytes.TryGetValue(key, out byte[]? bytes))
-            {
-                bytes = LcMapSortKeyBytes(localeName, flags, value);
-                this.lcMapSortKeyBytes.Add(key, bytes);
+                bytes = CompareSortKeyBytes(localeName, options, value);
+                this.compareSortKeyBytes.Add(key, bytes);
             }
 
             return bytes;
         }
     }
 
-    private readonly record struct LcMapCacheKey(string LocaleName, uint Flags, string Value);
+    private readonly record struct CompareSortKeyCacheKey(string LocaleName, CompareOptions Options, string Value);
 
     private readonly record struct DigestCacheKey(string HashName, int ByteInputIndex);
 
