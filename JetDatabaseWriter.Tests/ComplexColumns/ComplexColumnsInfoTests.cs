@@ -39,8 +39,8 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         Assert.EndsWith("_Attachments", entry.FlatTableName, StringComparison.OrdinalIgnoreCase);
 
         Assert.Equal("MSysComplexType_Attachment", entry.ComplexTypeName, ignoreCase: true);
-        Assert.True(entry.FlatTableId != 0);
-        Assert.True(entry.ComplexTypeObjectId != 0);
+        Assert.NotEqual(0, entry.FlatTableId);
+        Assert.NotEqual(0, entry.ComplexTypeObjectId);
     }
 
     [Fact]
