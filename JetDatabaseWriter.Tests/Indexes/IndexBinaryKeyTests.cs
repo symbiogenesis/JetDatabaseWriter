@@ -122,7 +122,7 @@ public sealed class IndexBinaryKeyTests
 
             await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x01, 0x02 }], this.ct);
             await writer.InsertRowAsync("BinComposite", ["beta", new byte[] { 0x03, 0x04, 0x05 }], this.ct);
-            await writer.InsertRowAsync("BinComposite", ["alpha", new byte[] { 0x09 }], this.ct);
+            await writer.InsertRowAsync("BinComposite", ["alpha", "\t"u8.ToArray()], this.ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
