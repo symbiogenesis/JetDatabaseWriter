@@ -256,9 +256,9 @@ internal static class SyntheticDatabases
                 _ => ChainedLongValueLength,
             }).ConfigureAwait(false);
 
-        await CreateMemoTableAsync(writer, MemoInlineTable, LongValueSubmodeRows, static rowIndex => InlineLongValueLength).ConfigureAwait(false);
-        await CreateMemoTableAsync(writer, MemoSinglePageTable, LongValueSubmodeRows, static rowIndex => SinglePageLongValueLength).ConfigureAwait(false);
-        await CreateMemoTableAsync(writer, MemoChainedTable, LongValueSubmodeRows, static rowIndex => ChainedLongValueLength).ConfigureAwait(false);
+        await CreateMemoTableAsync(writer, MemoInlineTable, LongValueSubmodeRows, static _ => InlineLongValueLength).ConfigureAwait(false);
+        await CreateMemoTableAsync(writer, MemoSinglePageTable, LongValueSubmodeRows, static _ => SinglePageLongValueLength).ConfigureAwait(false);
+        await CreateMemoTableAsync(writer, MemoChainedTable, LongValueSubmodeRows, static _ => ChainedLongValueLength).ConfigureAwait(false);
         await CreateOleTableAsync(writer, OleInlineTable, LongValueSubmodeRows, InlineLongValueLength).ConfigureAwait(false);
         await CreateOleTableAsync(writer, OleSinglePageTable, LongValueSubmodeRows, SinglePageLongValueLength).ConfigureAwait(false);
         await CreateOleTableAsync(writer, OleChainedTable, LongValueSubmodeRows, ChainedLongValueLength).ConfigureAwait(false);
