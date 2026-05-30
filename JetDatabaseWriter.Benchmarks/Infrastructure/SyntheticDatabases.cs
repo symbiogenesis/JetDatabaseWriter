@@ -144,7 +144,7 @@ internal static class SyntheticDatabases
                 (i % 200) + 1,
                 (short)((i % 50) + 1),
                 (decimal)(1.99 + (i % 100)),
-                (float)(i % 10 * 0.05),
+                (float)((i % 10) * 0.05),
                 (i % 5) + 1,
                 baseDate.AddMinutes(i),
                 baseDate.AddMinutes(i + 30),
