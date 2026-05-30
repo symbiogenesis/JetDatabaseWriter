@@ -106,7 +106,7 @@ public sealed class IndexCodesAggregateTests
                     values.Add(v);
                 }
 
-                var encoded = values
+                List<(string? Value, byte[] Key)> encoded = values
                     .ConvertAll(v => (Value: v, Key: GeneralLegacyTextIndexEncoder.Encode(v, keyCol.IsAscending)))
 ;
                 encoded.Sort((a, b) => CompareBytesUnsigned(a.Key, b.Key));

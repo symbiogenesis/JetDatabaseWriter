@@ -119,7 +119,7 @@ internal static class OfficeCryptoPrimitives
             aes.Key = key;
             aes.IV = iv;
 
-            using var transform = CreateAesTransform(aes, encrypt);
+            using ICryptoTransform transform = CreateAesTransform(aes, encrypt);
 
             byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
             return result ?? throw new CryptographicException("AES transform returned no data.");

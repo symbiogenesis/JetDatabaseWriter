@@ -94,7 +94,7 @@ internal static class TextIndexEncoderFixtureHarness
                     values.Add(v);
                 }
 
-                var encoded = values
+                List<(string? Value, byte[] Key)> encoded = values
                     .ConvertAll(v => (Value: v, Key: encode(v, keyCol.IsAscending)))
 ;
                 encoded.Sort((a, b) => CompareBytesUnsigned(a.Key, b.Key));

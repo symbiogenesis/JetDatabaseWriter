@@ -204,7 +204,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
                 values.Add(v);
             }
 
-            var encoded = values
+            List<(string? Value, byte[] Key)> encoded = values
                 .ConvertAll(v => (Value: v, Key: GeneralTextIndexEncoder.Encode(v, keyCol.IsAscending)))
 ;
             encoded.Sort((a, b) => CompareBytesUnsignedPrefix(a.Key, b.Key));
