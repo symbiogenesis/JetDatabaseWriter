@@ -243,7 +243,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
 
         List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 10, TestContext.Current.CancellationToken);
 
-        Assert.All(items, item => Assert.NotNull(item));
+        Assert.All(items, Assert.NotNull);
     }
 
     [Theory]

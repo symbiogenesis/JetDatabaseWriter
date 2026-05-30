@@ -208,7 +208,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(all);
-        Assert.All(all.Values, dt => Assert.NotNull(dt));
+        Assert.All(all.Values, Assert.NotNull);
     }
 
     // ═══════════════════════════════════════════════════════════════════

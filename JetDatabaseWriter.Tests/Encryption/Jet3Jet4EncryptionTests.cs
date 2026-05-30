@@ -392,7 +392,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
-        Assert.All(all.Values, dt => Assert.NotNull(dt));
+        Assert.All(all.Values, Assert.NotNull);
     }
 
     // ═══════════════════════════════════════════════════════════════════
