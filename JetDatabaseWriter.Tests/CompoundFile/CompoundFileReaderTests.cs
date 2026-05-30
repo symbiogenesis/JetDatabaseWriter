@@ -779,11 +779,11 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 1);
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 4096);
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], (uint)firstMiniFatSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], firstMiniFatSector);
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], miniFatSectors);
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 0xFFFFFFFE);
         BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], (uint)fatSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], fatSector);
         for (int i = 1; i < 109; i++)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
@@ -900,7 +900,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (miniStreamSectors * 4)), 0xFFFFFFFE);
 
         // Mini-FAT chain: sector 25 → sector 26 → EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (firstMiniFatSector * 4)), (uint)(firstMiniFatSector + 1));
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (firstMiniFatSector * 4)), firstMiniFatSector + 1);
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + ((firstMiniFatSector + 1) * 4)), 0xFFFFFFFE);
 
         // FAT sector itself → FatSect
