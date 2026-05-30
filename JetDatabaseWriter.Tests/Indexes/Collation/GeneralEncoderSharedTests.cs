@@ -52,6 +52,7 @@ public sealed class GeneralEncoderSharedTests
 
     [Fact]
     public void General97_AllSpaces_EmitsFlagPlusEndExtraText() =>
+
         // Trailing-space stripping (post-trim empty) — same encoded form as "".
         Assert.Equal(EmptyEncodedAsc, General97TextIndexEncoder.Encode("   ", ascending: true));
 
