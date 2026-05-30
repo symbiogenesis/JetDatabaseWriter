@@ -262,7 +262,7 @@ internal static class IndexHelpers
                 if (column.Type is OleType or AttachmentType or ComplexType)
                 {
                     throw new NotSupportedException(
-                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {column.Type}; "
+                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {GetTypeDisplayName(column.Type)}; "
                         + "Microsoft Access does not permit indexes on this column type.");
                 }
 
