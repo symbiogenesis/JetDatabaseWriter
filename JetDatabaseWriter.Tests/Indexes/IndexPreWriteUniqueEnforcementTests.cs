@@ -121,14 +121,14 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 this.ct);
 
-            object[][] batch = new[]
-            {
-                new object[] { 1 },
+            object[][] batch =
+            [
+                [1],
                 [2],
                 [3],
                 [2], // intra-batch duplicate
                 [4],
-            };
+            ];
 
             InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await writer.InsertRowsAsync("T", batch, this.ct));

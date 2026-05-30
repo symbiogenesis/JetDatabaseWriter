@@ -118,14 +118,14 @@ public sealed class IndexBulkInsertStressTests
             [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
             this.ct);
 
-        object[][] batch = new[]
-        {
-            new object[] { 1 },
+        object[][] batch =
+        [
+            [1],
             [2],
             [3],
             [2], // duplicate
             [4],
-        };
+        ];
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowsAsync("T", batch, this.ct));

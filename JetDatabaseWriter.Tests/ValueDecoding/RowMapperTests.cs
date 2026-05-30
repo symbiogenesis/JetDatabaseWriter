@@ -122,7 +122,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 42, "Widget", 9.99m };
+        object[] row = [42, "Widget", 9.99m];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -136,7 +136,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "UnknownColumn", "Name" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 1, "extra-value", "Gadget" };
+        object[] row = [1, "extra-value", "Gadget"];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -152,7 +152,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 1, null! };
+        object[] row = [1, null!];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -164,7 +164,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 1, DBNull.Value };
+        object[] row = [1, DBNull.Value];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -179,7 +179,7 @@ public class RowMapperTests
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
         RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
         var date = new DateTime(2025, 6, 15);
-        object[] row = new object[] { 7, "Test", date };
+        object[] row = [7, "Test", date];
 
         NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
 
@@ -193,7 +193,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "CreatedDate" };
         RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
-        object[] row = new object[] { 1, DBNull.Value };
+        object[] row = [1, DBNull.Value];
 
         NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
 
@@ -208,7 +208,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Price" };
         RowMapper<TypeMismatchPoco>.Accessor?[] index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
-        object[] row = new object[] { 42, 19.99m };
+        object[] row = [42, 19.99m];
 
         TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Map(row, index);
 
@@ -223,7 +223,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 5 }; // only one value
+        object[] row = [5]; // only one value
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -236,7 +236,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 5, "extra1", "extra2" };
+        object[] row = [5, "extra1", "extra2"];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -251,7 +251,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name" };
         RowMapper<EmptyPoco>.Accessor?[] index = RowMapper<EmptyPoco>.BuildIndex(headers);
-        object[] row = new object[] { 1, "test" };
+        object[] row = [1, "test"];
 
         EmptyPoco result = RowMapper<EmptyPoco>.Map(row, index);
 
@@ -265,8 +265,8 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row1 = new object[] { 1, "Alpha", 10m };
-        object[] row2 = new object[] { 2, "Beta", 20m };
+        object[] row1 = [1, "Alpha", 10m];
+        object[] row2 = [2, "Beta", 20m];
 
         SimpleProduct result1 = RowMapper<SimpleProduct>.Map(row1, index);
         SimpleProduct result2 = RowMapper<SimpleProduct>.Map(row2, index);
@@ -285,7 +285,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { 99, "Direct", 5.5m };
+        object[] row = [99, "Direct", 5.5m];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -478,7 +478,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { DBNull.Value, DBNull.Value, DBNull.Value };
+        object[] row = [DBNull.Value, DBNull.Value, DBNull.Value];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -492,7 +492,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { null!, null!, null! };
+        object[] row = [null!, null!, null!];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -510,7 +510,7 @@ public class RowMapperTests
         RowMapper<TypeMismatchPoco>.Accessor?[] index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
 
         // "not-a-number" cannot be converted to long
-        object[] row = new object[] { "not-a-number", 1.0m };
+        object[] row = ["not-a-number", 1.0m];
 
         Assert.ThrowsAny<Exception>(() => RowMapper<TypeMismatchPoco>.Map(row, index));
     }
@@ -522,7 +522,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = Array.Empty<object>();
+        object[] row = [];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
@@ -553,7 +553,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
         RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-        object[] row = new object[] { "123", "Test", "45.67" };
+        object[] row = ["123", "Test", "45.67"];
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
