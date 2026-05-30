@@ -22,7 +22,8 @@ internal static class RowMapper<T>
     private static readonly Dictionary<string, Accessor> PropertyMap = BuildPropertyMap();
 
     private static readonly MethodInfo CoerceToTargetMethod =
-        typeof(RowMapper<T>).GetMethod(nameof(CoerceToTarget), BindingFlags.NonPublic | BindingFlags.Static);
+        typeof(RowMapper<T>).GetMethod(nameof(CoerceToTarget), BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Failed to get method info for CoerceToTarget.");
 
     /// <summary>
     /// Per-TableDef cache for the compiled write delegate. Keyed by
