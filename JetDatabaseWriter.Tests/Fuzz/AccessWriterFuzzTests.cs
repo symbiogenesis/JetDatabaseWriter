@@ -26,7 +26,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
 
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public async Task FuzzAccessWriter()
+    public void FuzzAccessWriter()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         Fuzzer.Run(async stream =>

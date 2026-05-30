@@ -25,7 +25,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
 {
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public async Task FuzzAccessReader()
+    public void FuzzAccessReader()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         Fuzzer.Run(async stream =>

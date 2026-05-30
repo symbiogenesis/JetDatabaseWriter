@@ -157,7 +157,7 @@ public sealed class CompressedUnicodeFlagTests
     /// checking that the table name appears in UCS-2 form only.
     /// </summary>
     [Fact]
-    public async Task Writer_CatalogRow_RespectsSystemTableExtraFlags()
+    public void Writer_CatalogRow_RespectsSystemTableExtraFlags()
     {
         // Use a fresh in-memory database created by the writer itself.
         // Writer-created MSysObjects columns DO have ExtraFlags=0x01,
