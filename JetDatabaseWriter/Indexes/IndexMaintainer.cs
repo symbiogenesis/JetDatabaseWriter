@@ -370,7 +370,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         for (int i = 2; i < 34; i++)
         {
             char ch = tableName[i];
-            if (ch is not (>= '0' and <= '9' or >= 'A' and <= 'F'))
+            if (ch is not ((>= '0' and <= '9') or (>= 'A' and <= 'F')))
             {
                 return false;
             }
