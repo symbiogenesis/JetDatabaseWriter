@@ -159,19 +159,20 @@ internal sealed class RowEncoder(AccessWriter writer)
     private static int EncodeDateTimeExtendedValue(ColumnInfo column, object value, Span<byte> dest)
     {
         int required = JetTypeInfo.GetFixedSize(DateTimeExtendedType);
-        if (value is not byte[] payload)
+        if (value is byte[] payload)
         {
-            throw new ArgumentException(
-                $"Column '{column.Name}' uses the {JetTypeInfo.GetTypeDisplayName(DateTimeExtendedType)} type; supply a byte[{required}] raw payload.");
+            if (payload.Length != required)
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' Date/Time Extended payload must be exactly {required} bytes but received {payload.Length}.");
+            }
+
+            payload.CopyTo(dest);
+            return required;
         }
 
-        if (payload.Length != required)
-        {
-            throw new ArgumentException(
-                $"Column '{column.Name}' Date/Time Extended payload must be exactly {required} bytes but received {payload.Length}.");
-        }
-
-        payload.CopyTo(dest);
+        DateTime dateTime = Convert.ToDateTime(value, CultureInfo.InvariantCulture);
+        JetTypeInfo.WriteDateTimeExtended(dest, dateTime);
         return required;
     }
 

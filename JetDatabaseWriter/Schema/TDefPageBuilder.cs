@@ -41,6 +41,12 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
             }
 
+            if (type == DateTimeExtendedType && format != DatabaseFormat.AceAccdb)
+            {
+                throw new NotSupportedException(
+                    $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
+            }
+
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);

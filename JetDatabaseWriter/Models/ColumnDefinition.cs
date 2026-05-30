@@ -104,6 +104,20 @@ public sealed record ColumnDefinition
     public bool IsCompressedUnicode { get; init; } = true;
 
     /// <summary>
+    /// Gets a value indicating whether a <see cref="DateTime"/> column should
+    /// be authored as Access 2019+ <c>Date/Time Extended</c> instead of the
+    /// classic 8-byte <c>Date/Time</c> type. The stored value has 100 ns tick
+    /// precision and is read back as a <see cref="DateTime"/> whose
+    /// <see cref="DateTime.Kind"/> is <see cref="DateTimeKind.Unspecified"/>.
+    /// </summary>
+    /// <remarks>
+    /// The default remains classic <c>Date/Time</c> for compatibility with
+    /// existing databases and older Access formats. This option is supported
+    /// only for ACCDB databases.
+    /// </remarks>
+    public bool IsDateTimeExtended { get; init; }
+
+    /// <summary>
     /// Gets an optional client-side validation predicate invoked for every supplied
     /// non-null value before the row is written. Returning <c>false</c> raises an
     /// <see cref="ArgumentException"/>. Not persisted — a CLR delegate cannot be

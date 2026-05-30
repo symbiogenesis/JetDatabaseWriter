@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Tests.Conformance;
 
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -11,15 +13,14 @@ using Xunit;
 
 /// <summary>
 /// Coverage for the Access 2019+ <c>Date/Time Extended</c> column type
-/// (TDEF code <c>0x14</c>, 42-byte fixed string) read from
+/// (TDEF code <c>0x14</c>, 42-byte fixed payload) read from
 /// <c>extDateTestV2019.accdb</c>.
 ///
 /// <para>Jackcess analogue: <c>impl/ExtendedDateTest.java</c>.
 /// </para>
-/// <para>The current reader maps this type to a <see cref="string"/> CLR
-/// representation (no high-precision <c>DateTimeOffset</c> path yet); these
-/// tests pin the contract so that any future migration of the mapping is
-/// caught explicitly.
+/// <para>The reader maps this type to <see cref="DateTime"/> with
+/// <see cref="DateTimeKind.Unspecified"/>, preserving the 100 ns fractional
+/// precision stored by Access.
 /// </para>
 /// </summary>
 /// <param name="db">The database input.</param>
@@ -92,6 +93,46 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             {
                 Assert.NotNull(row);
             }
+        }
+    }
+
+    /// <summary>
+    /// Jackcess pairs each extended-date value with a text rendering in
+    /// <c>DateExtStr</c>. Decode <c>DateExt</c> to <see cref="DateTime"/> and
+    /// verify that formatting the value matches the fixture's own string.
+    /// </summary>
+    [Fact]
+    public async Task ExtDateTestV2019_DateExtRows_DecodeAsDateTime()
+    {
+        if (!File.Exists(TestDatabases.ExtDateTestV2019))
+        {
+            return;
+        }
+
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
+        ColumnMetadata extended = Assert.Single(metadata, column => column.Name == "DateExt");
+        Assert.Equal("Date/Time Extended", extended.TypeName);
+        Assert.Equal(typeof(DateTime), extended.ClrType);
+        ColumnMetadata text = Assert.Single(metadata, column => column.Name == "DateExtStr");
+
+        await foreach (object[] row in reader.Rows("Table1", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            if (row[extended.Ordinal] is DBNull)
+            {
+                Assert.Equal(DBNull.Value, row[text.Ordinal]);
+                continue;
+            }
+
+            DateTime value = Assert.IsType<DateTime>(row[extended.Ordinal]);
+            Assert.Equal(DateTimeKind.Unspecified, value.Kind);
+            string expectedText = Assert.IsType<string>(row[text.Ordinal]);
+            string dateOnly = value.ToString("M/d/yyyy", CultureInfo.InvariantCulture);
+            string dateTime = value.ToString("M/d/yyyy h:mm:ss.fffffff tt", CultureInfo.InvariantCulture);
+            Assert.True(
+                string.Equals(expectedText, dateOnly, StringComparison.Ordinal)
+                || string.Equals(expectedText, dateTime, StringComparison.Ordinal),
+                $"Expected '{expectedText}' to match '{dateOnly}' or '{dateTime}'.");
         }
     }
 }

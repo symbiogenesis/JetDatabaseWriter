@@ -183,6 +183,20 @@ foreach (ColumnMetadata col in meta)
 }
 ```
 
+### Date/Time Extended
+
+Access 2019+ Date/Time Extended columns decode to `DateTime` with `DateTimeKind.Unspecified`, preserving the 100 ns tick precision stored in the 42-byte Access payload. Metadata reports `TypeName == "Date/Time Extended"` and `ClrType == typeof(DateTime)`; `Rows(...)`, `Rows<T>(...)`, and `ReadDataTableAsync` surface row values as `DateTime`.
+
+Classic `Date/Time` remains the default for `new ColumnDefinition("When", typeof(DateTime))`. To author a Date/Time Extended column in an ACCDB database, opt in explicitly:
+
+```csharp
+await writer.CreateTableAsync("Events",
+[
+    new ColumnDefinition("Id", typeof(int)),
+    new ColumnDefinition("ObservedAt", typeof(DateTime)) { IsDateTimeExtended = true },
+]);
+```
+
 ### Index metadata
 
 `ListIndexesAsync` returns the logical indexes declared on a table — primary keys, foreign-key indexes, and ordinary user indexes — parsed directly from the TDEF page chain.
@@ -760,9 +774,6 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### SQL and ODBC
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead.
-
-### Date/Time Extended
-- **Access 2019+ Date/Time Extended columns are recognized but not decoded to a high-precision CLR date/time type.** The reader reports the Access type name (`Date/Time Extended`) and sizes the 42-byte fixed slot correctly, but row values currently project through the fallback `string` path rather than `DateTime`, `DateTimeOffset`, or another dedicated representation. Writer schema creation and schema-rewrite paths do not author this type yet.
 
 ---
 

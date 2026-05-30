@@ -158,6 +158,20 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     /// <summary>
+    /// Date/Time Extended stores seven fractional-second digits, which map
+    /// directly to .NET DateTime ticks.
+    /// </summary>
+    [Fact]
+    public void DateTimeExtended_TickPrecision_RoundTripsThroughParseValue()
+    {
+        DateTime expected = new DateTime(2021, 6, 14, 22, 45, 12, 345, DateTimeKind.Unspecified).AddTicks(6789);
+        byte[] row = new byte[42];
+        JetTypeInfo.WriteDateTimeExtended(row, expected);
+
+        AssertParity(row, start: 0, DateTimeExtendedType, size: 42, expected);
+    }
+
+    /// <summary>
     /// Money is stored as an OACurrency int64 with implicit scale=4. Verify
     /// the typed path returns the same decimal the round-trip parses.
     /// </summary>

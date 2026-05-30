@@ -888,6 +888,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     DefaultValue = src.DefaultValue,
                     IsAutoIncrement = src.IsAutoIncrement,
                     IsHyperlink = src.IsHyperlink,
+                    IsDateTimeExtended = src.IsDateTimeExtended,
                     ValidationRule = src.ValidationRule,
                     DefaultValueExpression = src.DefaultValueExpression,
                     ValidationRuleExpression = src.ValidationRuleExpression,
@@ -2237,6 +2238,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return descriptorType;
         }
 
+        if (column.IsDateTimeExtended)
+        {
+            if (column.ClrType != typeof(DateTime))
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' has IsDateTimeExtended = true but CLR type '{column.ClrType}' is not DateTime.",
+                    nameof(column));
+            }
+
+            return DateTimeExtendedType;
+        }
+
         Type clrType = column.ClrType;
 
         switch (Type.GetTypeCode(clrType))
@@ -2981,8 +2994,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 };
                 break;
             case DateTimeExtendedType:
-                throw new NotSupportedException(
-                    $"Column '{column.Name}' uses the {GetTypeDisplayName(DateTimeExtendedType)} type, which schema evolution cannot rewrite yet.");
+                baseDef = new ColumnDefinition(column.Name, typeof(DateTime))
+                {
+                    IsDateTimeExtended = true,
+                    ColumnTypeOverride = column.Type,
+                };
+                break;
             default:
                 throw new InvalidOperationException($"Column '{column.Name}' has unknown type {GetTypeDisplayName(column.Type)}.");
         }
@@ -3004,6 +3021,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
             IsHyperlink = column.Type == MemoType && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
+            IsDateTimeExtended = column.Type == DateTimeExtendedType,
             IsCompressedUnicode = column.IsCompressedUnicode,
         };
 

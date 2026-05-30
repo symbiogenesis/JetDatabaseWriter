@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
+using System;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -27,7 +28,7 @@ public sealed class DirectRowDecoderBuilderTests
         DirectRowDecoder<DateTimeExtendedRow>? decoder = DirectRowDecoderBuilder.TryBuild<DateTimeExtendedRow>(
             ["ExtendedAt"],
             [new ColumnInfo { Name = "ExtendedAt", Type = DateTimeExtendedType }],
-            [typeof(string)]);
+            [typeof(DateTime)]);
 
         Assert.NotNull(decoder);
     }
@@ -52,7 +53,7 @@ public sealed class DirectRowDecoderBuilderTests
 
     private sealed class DateTimeExtendedRow
     {
-        public string ExtendedAt { get; set; } = string.Empty;
+        public DateTime ExtendedAt { get; set; }
     }
 
     private sealed class MemoRow

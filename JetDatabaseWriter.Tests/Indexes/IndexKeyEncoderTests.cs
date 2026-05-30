@@ -4,6 +4,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Schema;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
@@ -1256,6 +1257,19 @@ public sealed class IndexKeyEncoderTests
     {
         byte[] enc = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, null, ascending: true);
         Assert.Equal(new byte[] { 0x00 }, enc);
+    }
+
+    [Fact]
+    public void DateTimeExt_DateTimeValue_MatchesRawPayloadEncoding()
+    {
+        DateTime value = new DateTime(2021, 6, 14, 22, 45, 12, 345, DateTimeKind.Unspecified).AddTicks(6789);
+        byte[] payload = new byte[42];
+        JetTypeInfo.WriteDateTimeExtended(payload, value);
+
+        byte[] rawEncoded = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, payload, ascending: true);
+        byte[] dateTimeEncoded = IndexKeyEncoder.EncodeEntry(DateTimeExtendedType, value, ascending: true);
+
+        Assert.Equal(rawEncoded, dateTimeEncoded);
     }
 
     [Fact]

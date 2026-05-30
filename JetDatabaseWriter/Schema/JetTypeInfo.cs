@@ -46,9 +46,7 @@ internal static class JetTypeInfo
         ComplexType => 4,
         AttachmentType => 4,
 
-        // Access 365 "Date/Time Extended" — 42-byte fixed slot. Not yet
-        // exercised by the writer, but reported here so the reader's
-        // ResolveColumnSlice path can size the slot correctly.
+        // Access 2019+ "Date/Time Extended" — 42-byte fixed slot.
         DateTimeExtendedType => 42,
 
         BooleanType or
@@ -64,7 +62,7 @@ internal static class JetTypeInfo
     /// (<c>TEXT/BINARY/MEMO/OLE</c>) that are <i>always</i> stored in the
     /// row's variable-length area. Other types may still live in the variable
     /// area when the per-column <c>FLAG_FIXED</c> bit is cleared in the TDEF
-    /// descriptor — see <see cref="Models.ColumnInfo.IsFixed"/>.
+    /// descriptor — see <see cref="ColumnInfo.IsFixed"/>.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     public static bool IsAlwaysVariableLength(ColumnType type)
@@ -99,7 +97,8 @@ internal static class JetTypeInfo
         OleType => typeof(byte[]),
         AttachmentType => typeof(byte[]),
         ComplexType => typeof(byte[]),
-        DateTimeExtendedType or _ => null,
+        DateTimeExtendedType => typeof(DateTime),
+        _ => null,
     };
 
     /// <summary>
@@ -221,12 +220,12 @@ internal static class JetTypeInfo
                 GuidType => new Guid(row.Slice(start, 16)).ToString("B"),
                 NumericType => ReadNumericString(row, start, scale: 0, strictNumeric),
                 ComplexType or AttachmentType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
+                DateTimeExtendedType => ReadDateTimeExtended(row, start, size).ToString("yyyy-MM-dd HH:mm:ss.fffffff", CultureInfo.InvariantCulture),
                 BooleanType or
                 BinaryType or
                 TextType or
                 OleType or
                 MemoType or
-                DateTimeExtendedType or
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }
@@ -306,6 +305,7 @@ internal static class JetTypeInfo
                 BigIntType => Ri64(row, start),
                 GuidType => new Guid(row.Slice(start, 16)),
                 NumericType => ReadNumericTyped(row, start, scale: 0, strictNumeric),
+                DateTimeExtendedType => ReadDateTimeExtended(row, start, size),
                 ComplexType or AttachmentType => size >= 4
                                         ? new ComplexIdRef(Ri32(row, start))
                                         : DBNull.Value,
@@ -314,7 +314,6 @@ internal static class JetTypeInfo
                 TextType or
                 OleType or
                 MemoType or
-                DateTimeExtendedType or
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }
@@ -683,6 +682,113 @@ internal static class JetTypeInfo
     {
         _ = TryReadNumericDecimal(page, start, scale, strict: true, out decimal value);
         return value;
+    }
+
+    /// <summary>Reads an Access Date/Time Extended value at <paramref name="start"/>.</summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The start.</param>
+    internal static DateTime ReadDateTimeExtendedAt(byte[] page, int start) => ReadDateTimeExtended(page, start, GetFixedSize(DateTimeExtendedType));
+
+    /// <summary>
+    /// Decodes the 42-byte Access 2019+ Date/Time Extended payload.
+    /// Layout: 19 ASCII digits for days since 0001-01-01, ':', 12 ASCII
+    /// digits for whole seconds since midnight, 7 ASCII fractional-second
+    /// digits in 100 ns units, ':', '7', NUL.
+    /// </summary>
+    /// <param name="row">The row bytes.</param>
+    /// <param name="start">The start.</param>
+    /// <param name="size">The available fixed slot size.</param>
+    /// <exception cref="ArgumentException">Thrown when the payload is invalid.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the time-of-day is out of range.</exception>
+    internal static DateTime ReadDateTimeExtended(ReadOnlySpan<byte> row, int start, int size)
+    {
+        const int required = 42;
+        if (size < required)
+        {
+            throw new ArgumentException($"Date/Time Extended payload must be {required} bytes but only {size} bytes were available.");
+        }
+
+        ReadOnlySpan<byte> payload = row.Slice(start, required);
+        if (payload[19] != (byte)':'
+            || payload[39] != (byte)':'
+            || payload[40] != (byte)'7'
+            || payload[41] != 0x00)
+        {
+            throw new ArgumentException("Date/Time Extended payload has an invalid trailer.");
+        }
+
+        long days = ReadPaddedAsciiInt64(payload[..19]);
+        long seconds = ReadPaddedAsciiInt64(payload.Slice(20, 12));
+        long fractions = ReadPaddedAsciiInt64(payload.Slice(32, 7));
+        if (seconds >= 24L * 60L * 60L || fractions >= TimeSpan.TicksPerSecond)
+        {
+            throw new ArgumentOutOfRangeException(nameof(row), "Date/Time Extended time-of-day is out of range.");
+        }
+
+        long ticks = checked((days * TimeSpan.TicksPerDay) + (seconds * TimeSpan.TicksPerSecond) + fractions);
+        return new DateTime(ticks, DateTimeKind.Unspecified);
+    }
+
+    /// <summary>Encodes a <see cref="DateTime"/> into the 42-byte Date/Time Extended layout.</summary>
+    /// <param name="destination">The destination span.</param>
+    /// <param name="value">The value.</param>
+    /// <exception cref="ArgumentException">Thrown when the destination span is too small.</exception>
+    internal static void WriteDateTimeExtended(Span<byte> destination, DateTime value)
+    {
+        const int required = 42;
+        if (destination.Length < required)
+        {
+            throw new ArgumentException($"Date/Time Extended destination must be at least {required} bytes.", nameof(destination));
+        }
+
+        long days = value.Ticks / TimeSpan.TicksPerDay;
+        long timeTicks = value.Ticks % TimeSpan.TicksPerDay;
+        long seconds = timeTicks / TimeSpan.TicksPerSecond;
+        long fractions = timeTicks % TimeSpan.TicksPerSecond;
+
+        WritePaddedAsciiInt64(destination[..19], days);
+        destination[19] = (byte)':';
+        WritePaddedAsciiInt64(destination.Slice(20, 12), seconds);
+        WritePaddedAsciiInt64(destination.Slice(32, 7), fractions);
+        destination[39] = (byte)':';
+        destination[40] = (byte)'7';
+        destination[41] = 0x00;
+    }
+
+    private static long ReadPaddedAsciiInt64(ReadOnlySpan<byte> value)
+    {
+        long result = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            byte digit = value[i];
+            if (digit is < (byte)'0' or > (byte)'9')
+            {
+                throw new ArgumentException("Date/Time Extended payload contains a non-digit character.");
+            }
+
+            result = checked((result * 10) + (digit - (byte)'0'));
+        }
+
+        return result;
+    }
+
+    private static void WritePaddedAsciiInt64(Span<byte> destination, long value)
+    {
+        if (value < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "Date/Time Extended fields cannot be negative.");
+        }
+
+        for (int i = destination.Length - 1; i >= 0; i--)
+        {
+            destination[i] = (byte)('0' + (value % 10));
+            value /= 10;
+        }
+
+        if (value != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "Date/Time Extended field does not fit in the destination width.");
+        }
     }
 }
 

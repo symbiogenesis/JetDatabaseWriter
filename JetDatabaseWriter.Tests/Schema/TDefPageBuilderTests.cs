@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
+using System;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -13,7 +14,7 @@ public sealed class TDefPageBuilderTests
     public void BuildTableDefinition_DateTimeExtended_UsesFixedDeclaredSize()
     {
         TableDef tableDef = AccessWriter.BuildTableDefinition(
-            [new ColumnDefinition("ExtendedAt", typeof(string)) { ColumnTypeOverride = DateTimeExtendedType }],
+            [new ColumnDefinition("ExtendedAt", typeof(DateTime)) { IsDateTimeExtended = true }],
             DatabaseFormat.AceAccdb);
 
         ColumnInfo column = Assert.Single(tableDef.Columns);

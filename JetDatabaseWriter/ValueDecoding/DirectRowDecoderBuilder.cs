@@ -22,40 +22,29 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 internal static class DirectRowDecoderBuilder
 {
+    private const BindingFlags InstanceNonPublic = BindingFlags.Instance | BindingFlags.NonPublic;
+    private const BindingFlags StaticNonPublic = BindingFlags.Static | BindingFlags.NonPublic;
+
     private static readonly MethodInfo TryParseRowLayoutMethod =
-        typeof(AccessReader).GetMethod(
-            nameof(AccessReader.TryParseRowLayoutForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.TryParseRowLayoutForDirectDecode), InstanceNonPublic);
 
     private static readonly MethodInfo ResolveColumnSliceMethod =
-        typeof(AccessReader).GetMethod(
-            nameof(AccessReader.ResolveColumnSliceForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.ResolveColumnSliceForDirectDecode), InstanceNonPublic);
 
     private static readonly MethodInfo ReadRawNumColsMethod =
-        typeof(AccessReader).GetMethod(
-            nameof(AccessReader.ReadRawNumCols),
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.ReadRawNumCols), InstanceNonPublic);
 
     private static readonly MethodInfo DecodeTextMethod =
-        typeof(AccessReader).GetMethod(
-            nameof(AccessReader.DecodeTextSliceForDirectDecode),
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.DecodeTextSliceForDirectDecode), InstanceNonPublic);
 
     private static readonly MethodInfo ReadBinarySliceMethod =
-        typeof(DirectRowDecoderBuilder).GetMethod(
-            nameof(ReadBinarySlice),
-            BindingFlags.Static | BindingFlags.NonPublic);
+        GetRequiredMethod(typeof(DirectRowDecoderBuilder), nameof(ReadBinarySlice), StaticNonPublic);
 
-    private static readonly MethodInfo ReadHexPreviewMethod =
-        typeof(DirectRowDecoderBuilder).GetMethod(
-            nameof(ReadHexPreview),
-            BindingFlags.Static | BindingFlags.NonPublic);
+    private static readonly MethodInfo ReadDateTimeExtendedMethod =
+        GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeExtendedAt), StaticNonPublic);
 
     private static readonly PropertyInfo NumColsFieldSizeProp =
-        typeof(AccessReader).GetProperty(
-            nameof(AccessReader.NumColsFieldSize),
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        GetRequiredProperty(typeof(AccessReader), nameof(AccessReader.NumColsFieldSize), InstanceNonPublic);
 
     /// <summary>
     /// Builds a direct decoder for <typeparamref name="T"/> bound against
@@ -119,7 +108,7 @@ internal static class DirectRowDecoderBuilder
             return null;
         }
 
-        return Emit<T>(bound);
+        return Emit(bound);
     }
 
     private static DirectRowDecoder<T> Emit<T>(
@@ -278,19 +267,19 @@ internal static class DirectRowDecoderBuilder
         ParameterExpression readerParam) => column.Type switch
         {
             BooleanType => boolValueExpr,
-            ByteType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadByteAt), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            IntegerType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt16LE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            LongIntegerType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt32LE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            BigIntType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadInt64LE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            MoneyType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadMoneyLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            FloatType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadFloatLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            DoubleType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDoubleLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            DateTimeType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDateTimeLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            GuidType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr),
-            NumericType => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
+            ByteType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadByteAt), StaticNonPublic), pageParam, offsetExpr),
+            IntegerType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadInt16LE), StaticNonPublic), pageParam, offsetExpr),
+            LongIntegerType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadInt32LE), StaticNonPublic), pageParam, offsetExpr),
+            BigIntType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadInt64LE), StaticNonPublic), pageParam, offsetExpr),
+            MoneyType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadMoneyLE), StaticNonPublic), pageParam, offsetExpr),
+            FloatType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadFloatLE), StaticNonPublic), pageParam, offsetExpr),
+            DoubleType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDoubleLE), StaticNonPublic), pageParam, offsetExpr),
+            DateTimeType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeLE), StaticNonPublic), pageParam, offsetExpr),
+            GuidType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadGuidAt), StaticNonPublic), pageParam, offsetExpr),
+            NumericType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDecimalLE), StaticNonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
             TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
             BinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
-            DateTimeExtendedType => Expression.Call(ReadHexPreviewMethod, pageParam, offsetExpr, dataLenExpr),
+            DateTimeExtendedType => Expression.Call(ReadDateTimeExtendedMethod, pageParam, offsetExpr),
             OleType or
             MemoType or
             AttachmentType or
@@ -300,19 +289,17 @@ internal static class DirectRowDecoderBuilder
 
     private static byte[] ReadBinarySlice(byte[] page, int start, int length) => length <= 0 ? [] : page.AsSpan(start, length).ToArray();
 
-    private static string ReadHexPreview(byte[] page, int start, int length)
-        => length <= 0 ? string.Empty : JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, Math.Min(length, 8)));
+    private static MethodInfo GetRequiredMethod(Type declaringType, string name, BindingFlags bindingAttr) =>
+        declaringType.GetMethod(name, bindingAttr) ?? throw new MissingMethodException(declaringType.FullName ?? declaringType.Name, name);
+
+    private static PropertyInfo GetRequiredProperty(Type declaringType, string name, BindingFlags bindingAttr) =>
+        declaringType.GetProperty(name, bindingAttr) ?? throw new MissingMemberException(declaringType.FullName ?? declaringType.Name, name);
 
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)
     {
         if (colType is OleType or MemoType or AttachmentType or ComplexType)
         {
             return false;
-        }
-
-        if (colType == DateTimeExtendedType)
-        {
-            return targetUnderlying == typeof(string);
         }
 
         return JetTypeInfo.GetClrType(colType) == targetUnderlying;

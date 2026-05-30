@@ -325,7 +325,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The ascending.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> is not exactly a 42-byte DateTime Extended payload.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be encoded as DateTime Extended.</exception>
     private static byte[] EncodeDateTimeExtEntry(object value, bool ascending)
     {
         byte[] data = value switch
@@ -334,12 +334,17 @@ internal static class IndexKeyEncoder
             byte[] b => throw new ArgumentException(
                 $"DateTimeExtended expects exactly 42 bytes but received {b.Length}.",
                 nameof(value)),
-            _ => throw new ArgumentException(
-                $"Cannot coerce value of type {value.GetType().Name} to byte[42] for DateTimeExtended index key encoding.",
-                nameof(value)),
+            _ => EncodeDateTimeExtendedPayload(ToDateTime(value)),
         };
 
         return EncodeGeneralBinaryEntry(data, ascending);
+    }
+
+    private static byte[] EncodeDateTimeExtendedPayload(DateTime value)
+    {
+        var data = new byte[42];
+        JetTypeInfo.WriteDateTimeExtended(data, value);
+        return data;
     }
 
     /// <summary>
@@ -722,7 +727,7 @@ internal static class IndexKeyEncoder
     internal static bool IsColumnTypeSeekable(ColumnType columnType) => columnType switch
     {
         ByteType or IntegerType or LongIntegerType or BigIntType or MoneyType or FloatType or DoubleType
-            or DateTimeType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
-        BooleanType or OleType or AttachmentType or ComplexType or DateTimeExtendedType or _ => false,
+            or DateTimeType or DateTimeExtendedType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
+        BooleanType or OleType or AttachmentType or ComplexType or _ => false,
     };
 }
