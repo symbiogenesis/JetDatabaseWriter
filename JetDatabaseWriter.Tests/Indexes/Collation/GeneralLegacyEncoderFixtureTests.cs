@@ -31,14 +31,17 @@ using Xunit;
 /// </summary>
 public sealed class GeneralLegacyEncoderFixtureTests
 {
+    /// <summary>
+    /// Gets the list of fixture databases to be used in the tests.
+    /// Scope:
+    ///  • V1997 covered by General97EncoderFixtureTests (Jet3 default sort
+    ///    order is "General 97", a different state machine).
+    ///  • V2010 covered by GeneralEncoderFixtureTests (Access 2010+ default
+    ///    sort order is "General", which uses different per-codepoint
+    ///    tables — see GeneralIndexCodes in Jackcess).
+    /// </summary>
     public static TheoryData<string> Fixtures =>
     [
-        // Scope:
-        //  • V1997 covered by General97EncoderFixtureTests (Jet3 default sort
-        //    order is "General 97", a different state machine).
-        //  • V2010 covered by GeneralEncoderFixtureTests (Access 2010+ default
-        //    sort order is "General", which uses different per-codepoint
-        //    tables — see GeneralIndexCodes in Jackcess).
         TestDatabases.TestIndexCodesV2000,
         TestDatabases.TestIndexCodesV2003,
         TestDatabases.TestIndexCodesV2007,
