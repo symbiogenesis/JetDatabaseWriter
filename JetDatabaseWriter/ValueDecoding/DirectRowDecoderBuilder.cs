@@ -1,11 +1,10 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;

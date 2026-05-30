@@ -1,7 +1,6 @@
-using JetDatabaseWriter.Enums;
-
 namespace JetDatabaseWriter.Schema.Models;
 
+using JetDatabaseWriter.Enums;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class ColumnInfo
