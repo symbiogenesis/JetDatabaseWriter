@@ -7220,24 +7220,24 @@ internal static class LongRowSuffixProbe
     {
         public static readonly BytePrefixComparer Instance = new();
 
-        public int Compare(byte[]? left, byte[]? right)
+        public int Compare(byte[]? x, byte[]? y)
         {
-            if (ReferenceEquals(left, right))
+            if (ReferenceEquals(x, y))
             {
                 return 0;
             }
 
-            if (left is null)
+            if (x is null)
             {
                 return -1;
             }
 
-            if (right is null)
+            if (y is null)
             {
                 return 1;
             }
 
-            return CompareBytesUnsignedPrefix(left, right);
+            return CompareBytesUnsignedPrefix(x, y);
         }
     }
 
@@ -7245,27 +7245,27 @@ internal static class LongRowSuffixProbe
     {
         public static readonly LongRowPrefixEqualityComparer Instance = new();
 
-        public bool Equals(byte[]? left, byte[]? right)
+        public bool Equals(byte[]? x, byte[]? y)
         {
-            if (ReferenceEquals(left, right))
+            if (ReferenceEquals(x, y))
             {
                 return true;
             }
 
-            if (left is null || right is null || left.Length < PrefixMatchLength || right.Length < PrefixMatchLength)
+            if (x is null || y is null || x.Length < PrefixMatchLength || y.Length < PrefixMatchLength)
             {
                 return false;
             }
 
-            return left.AsSpan(0, PrefixMatchLength).SequenceEqual(right.AsSpan(0, PrefixMatchLength));
+            return x.AsSpan(0, PrefixMatchLength).SequenceEqual(y.AsSpan(0, PrefixMatchLength));
         }
 
-        public int GetHashCode(byte[] bytes)
+        public int GetHashCode(byte[] obj)
         {
             unchecked
             {
                 int hash = 17;
-                ReadOnlySpan<byte> prefix = bytes.AsSpan(0, Math.Min(bytes.Length, PrefixMatchLength));
+                ReadOnlySpan<byte> prefix = obj.AsSpan(0, Math.Min(obj.Length, PrefixMatchLength));
                 for (int index = 0; index < prefix.Length; index++)
                 {
                     hash = (hash * 31) + prefix[index];
