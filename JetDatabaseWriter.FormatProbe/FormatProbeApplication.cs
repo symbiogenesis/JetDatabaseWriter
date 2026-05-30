@@ -705,24 +705,24 @@ internal static class FormatProbeApplication
         int idxColHits = 0;
         int errors = 0;
         int totalCatalogRows = 0;
-        foreach ((string relPath1, string Format, int CatalogRows, bool? HasIndexes, bool? HasIndexColumns, bool? HasRelationships, string? AnyIndexNamed, string? Error) in verdicts)
+        foreach ((string relPath, string format, int catalogRows, bool? hasIndexes, bool? hasIndexColumns, bool? hasRelationships, string? anyIndexNamed, string? error) in verdicts)
         {
-            if (HasIndexes == true)
+            if (hasIndexes == true)
             {
                 idxHits++;
             }
 
-            if (HasIndexColumns == true)
+            if (hasIndexColumns == true)
             {
                 idxColHits++;
             }
 
-            if (Error is not null)
+            if (error is not null)
             {
                 errors++;
             }
 
-            totalCatalogRows += CatalogRows;
+            totalCatalogRows += catalogRows;
         }
 
         _ = sb.AppendLine("## Headline result");
