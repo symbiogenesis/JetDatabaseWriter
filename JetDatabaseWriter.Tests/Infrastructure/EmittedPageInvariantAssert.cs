@@ -69,8 +69,6 @@ internal static class EmittedPageInvariantAssert
                     break;
 
                 case 0x05:
-                    break;
-
                 case 0x09:
                     break;
 
