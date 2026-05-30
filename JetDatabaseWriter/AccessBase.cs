@@ -196,6 +196,8 @@ public abstract class AccessBase : IAccessBase
         }
 #else
         this.UsesRandomAccessPageReads = false;
+
+        _ = this.UsesRandomAccessPageReads;
 #endif
     }
 

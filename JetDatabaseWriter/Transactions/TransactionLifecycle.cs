@@ -269,7 +269,5 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// </summary>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
-    {
-        await writer.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
-    }
+        => await writer.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
 }

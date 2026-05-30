@@ -115,9 +115,7 @@ internal static class CalculatedExpressionNormalizer
         private bool stopAtBetweenAnd;
 
         private AccessExpressionNormalizer(List<Token> tokens)
-        {
-            this.tokens = tokens;
-        }
+            => this.tokens = tokens;
 
         public static string Normalize(string expression)
         {

@@ -23,9 +23,7 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// </summary>
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessReaderOptions(string? plainTextPassword)
-    {
-        this.Password = plainTextPassword.AsMemory();
-    }
+        => this.Password = plainTextPassword.AsMemory();
 
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
