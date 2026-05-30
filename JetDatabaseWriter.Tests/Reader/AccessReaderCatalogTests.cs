@@ -306,7 +306,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         long real = await reader.GetRealRowCountAsync(table, TestContext.Current.CancellationToken);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(dt.Rows.Count, real);
     }

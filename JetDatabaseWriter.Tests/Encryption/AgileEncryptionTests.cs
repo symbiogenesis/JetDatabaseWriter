@@ -282,7 +282,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             // Reopen via AccessReader: must still detect Agile, decrypt,
             // and surface the freshly-inserted row.
             await using AccessReader reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
-            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
+            DataTable dt = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.NotNull(dt);
             Assert.Single(dt.Rows);

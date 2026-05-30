@@ -80,7 +80,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "AES-decrypted table should contain rows.");

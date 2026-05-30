@@ -44,7 +44,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken));
+        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
@@ -130,7 +130,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken));
+        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(rels.AsEnumerable(), r => string.Equals(SafeString(r, "szRelationship"), oldName, StringComparison.Ordinal));
 
@@ -296,7 +296,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         Assert.DoesNotContain(await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
         Assert.DoesNotContain(await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
 
-        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken));
+        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         Assert.DoesNotContain(rels.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), relName, StringComparison.Ordinal));
     }
 

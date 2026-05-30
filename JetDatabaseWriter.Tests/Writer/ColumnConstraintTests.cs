@@ -40,7 +40,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
@@ -211,7 +211,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(250, dt.Rows[1]["Score"]);
     }

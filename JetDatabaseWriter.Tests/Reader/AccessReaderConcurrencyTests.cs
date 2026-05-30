@@ -184,7 +184,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             .Select(_ => Task.Run(
                 async () =>
                 {
-                    DataTable dt = (await reader.ReadDataTableAsync(target, cancellationToken: ct));
+                    DataTable dt = await reader.ReadDataTableAsync(target, cancellationToken: ct);
                     return dt.Rows.Count;
                 },
                 ct))

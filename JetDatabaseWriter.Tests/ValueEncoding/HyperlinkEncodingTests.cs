@@ -253,7 +253,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Hyperlink actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal(display, actual.DisplayText);
@@ -300,7 +300,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Hyperlink actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
         Assert.Equal(link, actual);
         Assert.Equal("https://example.com/path#section/q?x=1#y=2", actual.Address);
@@ -396,7 +396,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken));
+        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, dt.Rows.Count);
 
         Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);
