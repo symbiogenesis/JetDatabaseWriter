@@ -31,7 +31,7 @@ using Xunit;
 /// </summary>
 public sealed class WriterRealIdxFlagsOffsetTests
 {
-    private const int CandidateOffset_Mdbtools = 42;
+    private const int CandidateOffsetMdbtools = 42;
 
     /// <summary>
     /// DAO ground truth: dumps every real-idx slot's bytes at offsets 42 and
@@ -74,7 +74,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
             for (int i = 0; i < physOffsets.Count; i++)
             {
                 int phys = physOffsets[i];
-                byte at42 = fileBytes[phys + CandidateOffset_Mdbtools];
+                byte at42 = fileBytes[phys + CandidateOffsetMdbtools];
                 byte at46 = fileBytes[phys + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset];
                 slotCount++;
                 if ((at42 & Constants.TableDefinition.UnknownIndexFlag) != 0)
@@ -126,7 +126,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
 
         // Record which offset DAO uses so the writer test below can assert
         // the writer agrees with ground truth (not with mdbtools docs).
-        int daoFlagsOffset = offset42IsFlags ? CandidateOffset_Mdbtools : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
+        int daoFlagsOffset = offset42IsFlags ? CandidateOffsetMdbtools : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
         const string fmt = "H23 CONFIRMED: DAO writes the real-idx flags byte at offset {0} (NOT the writer's current offset {1}). The writer must move the flags stamp from Constants.TableDefinition.Jet4.RealIdx.FlagsOffset = 46 to {0}. {2}";
         string h23Message = string.Format(CultureInfo.InvariantCulture, fmt, daoFlagsOffset, Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, summary);
         Assert.True(daoFlagsOffset == Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, h23Message);
@@ -177,7 +177,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
         var sample = new StringBuilder();
         foreach (int phys in physOffsets)
         {
-            byte at42 = fileBytes[phys + CandidateOffset_Mdbtools];
+            byte at42 = fileBytes[phys + CandidateOffsetMdbtools];
             byte at46 = fileBytes[phys + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset];
             sample.AppendFormat(
                 CultureInfo.InvariantCulture,
@@ -191,7 +191,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
         // stamps at 46. If the DAO test above proved 46 is correct, this
         // test passes; if the DAO test proved 42 is correct, this test fails
         // and points at the bytes to move.
-        bool writerOffset42 = physOffsets.All(p => (fileBytes[p + CandidateOffset_Mdbtools] & Constants.TableDefinition.UnknownIndexFlag) != 0);
+        bool writerOffset42 = physOffsets.All(p => (fileBytes[p + CandidateOffsetMdbtools] & Constants.TableDefinition.UnknownIndexFlag) != 0);
         bool writerOffset46 = physOffsets.All(p => (fileBytes[p + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset] & Constants.TableDefinition.UnknownIndexFlag) != 0);
 
         string writerMessage =
@@ -199,7 +199,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
             + "Sample: [" + sample + "]";
         Assert.True(writerOffset42 || writerOffset46, writerMessage);
 
-        int writerFlagsOffset = writerOffset46 ? Constants.TableDefinition.Jet4.RealIdx.FlagsOffset : CandidateOffset_Mdbtools;
+        int writerFlagsOffset = writerOffset46 ? Constants.TableDefinition.Jet4.RealIdx.FlagsOffset : CandidateOffsetMdbtools;
         Assert.Equal(Constants.TableDefinition.Jet4.RealIdx.FlagsOffset, writerFlagsOffset);
     }
 
