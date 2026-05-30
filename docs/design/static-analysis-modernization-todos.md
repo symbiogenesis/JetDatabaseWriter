@@ -24,18 +24,21 @@ or moves to a slower CI/security lane.
   `StyleCop.Analyzers.Unstable` transitively.
 - [stylecop.json](../../stylecop.json) is small and only configures StyleCop
   documentation settings.
-- [.editorconfig](../../.editorconfig) hardens file-scoped namespace
-  declarations and explicitly keeps the SDK security analyzer rules that cover
-  injection, XML/XSLT safety, deserialization, crypto, insecure randomness,
-  certificate validation, and web/security categories relevant to avoiding SCS
-  local-build regressions.
+- [.editorconfig](../../.editorconfig) now carries the StyleCop-oriented
+  formatting and naming baseline from Rehan Saeed's EditorConfig project,
+  repo-specific C# overrides to avoid high-churn style diagnostics in strict
+  builds, explicit SDK security analyzer rules that cover injection, XML/XSLT
+  safety, deserialization, crypto, insecure randomness, certificate validation,
+  and web/security categories relevant to avoiding SCS local-build regressions,
+  plus the local StyleCop/code-analysis suppressions that previously lived in
+  broad MSBuild `NoWarn` lists.
 - [BannedSymbols.txt](../../BannedSymbols.txt) is passed to
   `Microsoft.CodeAnalysis.BannedApiAnalyzers` as an `AdditionalFiles` input from
   [Directory.Build.props](../../Directory.Build.props), so `RS0030` diagnostics
   are active in strict builds.
-- Several StyleCop rules are globally suppressed in
-  [Directory.Build.props](../../Directory.Build.props), so StyleCop is retained
-  as a partial style/documentation layer rather than the central quality gate.
+- Several StyleCop/code-analysis rules are explicitly configured in
+  [.editorconfig](../../.editorconfig), so StyleCop is retained as a partial
+  style/documentation layer rather than the central quality gate.
 - [JetDatabaseWriter.Tests.csproj](../../JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
   disables `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild`, and XML
   documentation generation for non-Release builds. That is the right shape for
@@ -392,9 +395,10 @@ Why:
 - StyleCop costs several seconds per target framework in the measured library
   build and about 2.790s in the measured test build, but that cost is not enough
   on its own to justify removing a style policy the repo still wants.
-- The current `NoWarn` list already disables many StyleCop opinions, including
-  documentation, ordering, naming, and layout rules, so the active policy is
-  already curated rather than one-size-fits-all StyleCop.
+- The current [.editorconfig](../../.editorconfig) suppressions already disable
+  many StyleCop opinions, including documentation, ordering, naming, and layout
+  rules, so the active policy is already curated rather than one-size-fits-all
+  StyleCop.
 - Remaining SA-only diagnostics are mostly style and documentation policy rather
   than correctness checks. That makes them a policy choice, not an urgent local
   analyzer-removal target.
@@ -413,10 +417,25 @@ Deferred path:
       StyleCop diagnostics in a strict Release build without assuming removal.
 - [ ] Decide as part of CI/CD analyzer-lane planning whether StyleCop stays
       local, moves to CI, or gets narrowed by path or rule.
-- [ ] Move only obvious, low-cost style policy to [.editorconfig](../../.editorconfig)
-      when it reduces churn independently of StyleCop.
+- [x] Move only obvious, low-cost style policy to [.editorconfig](../../.editorconfig)
+  when it reduces churn independently of StyleCop.
 - [ ] Remove StyleCop suppressions, [stylecop.json](../../stylecop.json), or the
       package only after a deliberate future decision changes this policy.
+
+Completed on 2026-05-27 and finalized on 2026-05-30: expanded
+[.editorconfig](../../.editorconfig) from the StyleCop-oriented Rehan Saeed
+template, retained its MIT notice at the bottom, added JetDatabaseWriter-specific
+overrides for mixed existing style, moved the global analyzer/style `NoWarn`
+policy into explicit `dotnet_diagnostic` entries, and kept only `NU1605` in
+[Directory.Build.props](../../Directory.Build.props). The 2026-05-30 strict
+editorconfig pass kept the intended "only implicit when apparent" type style,
+cleaned remaining Roslyn style drift, and validated with:
+
+```powershell
+dotnet format style JetDatabaseWriter.slnx --verify-no-changes --no-restore --verbosity minimal
+dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m
+dotnet test --project JetDatabaseWriter.Tests --filter-not-trait Category=Fuzz
+```
 
 ### 4. Tune SDK Code Style and `AnalysisLevel latest-all` Last
 
@@ -619,7 +638,7 @@ Practical model:
       analyzer-removal experiments are complete.
 - [x] Keep `StyleCop.Analyzers` for now and defer StyleCop inventory/removal
       work until broader CI/CD analyzer-lane planning.
-- [ ] Expand [.editorconfig](../../.editorconfig) only for obvious existing
+- [x] Expand [.editorconfig](../../.editorconfig) only for obvious existing
       style policy that can reduce diagnostic churn independently of StyleCop.
 - [ ] Trial `AnalysisLevel latest` or category-specific analyzer modes against
       `latest-all` after the current third-party analyzer decisions settle.
