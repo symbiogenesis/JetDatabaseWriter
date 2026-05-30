@@ -39,6 +39,7 @@ public class DelimitedTextReaderBenchmarks
     public string Scenario { get; set; } = PlainScenario;
 
     /// <summary>Generates the source text for the selected scenario.</summary>
+    /// <exception cref="InvalidOperationException">Thrown when an unknown scenario is specified.</exception>
     [GlobalSetup]
     public void Setup() => this.source = this.Scenario switch
     {
