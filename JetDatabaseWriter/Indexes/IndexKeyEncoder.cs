@@ -1,4 +1,3 @@
-
 namespace JetDatabaseWriter.Indexes;
 
 using System;
