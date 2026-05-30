@@ -16,7 +16,7 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode TextValue(Dictionary<string, string> context, SymbolRange range, string text) => new CalculatedExpressionValueNode(text);
 
-    public CalculatedExpressionNode ErrorValue(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> error) => new CalculatedExpressionUnsupportedNode($"Calculated-column error literal '{error.ToString()}' is not supported.");
+    public CalculatedExpressionNode ErrorValue(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> error) => CreateErrorLiteralNode(error);
 
     public CalculatedExpressionNode ArrayNode(Dictionary<string, string> context, SymbolRange range, int rows, int columns, IReadOnlyList<CalculatedExpressionNode> elements) => new CalculatedExpressionUnsupportedNode("Calculated-column array literals are not supported.");
 
@@ -24,7 +24,7 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
 
     public CalculatedExpressionNode LogicalNode(Dictionary<string, string> context, SymbolRange range, bool value) => new CalculatedExpressionValueNode(value);
 
-    public CalculatedExpressionNode ErrorNode(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> error) => new CalculatedExpressionUnsupportedNode($"Calculated-column error literal '{error.ToString()}' is not supported.");
+    public CalculatedExpressionNode ErrorNode(Dictionary<string, string> context, SymbolRange range, ReadOnlySpan<char> error) => CreateErrorLiteralNode(error);
 
     public CalculatedExpressionNode NumberNode(Dictionary<string, string> context, SymbolRange range, double value) => new CalculatedExpressionValueNode(value);
 
@@ -73,6 +73,10 @@ internal sealed class CalculatedExpressionAstFactory : IAstFactory<CalculatedExp
     public CalculatedExpressionNode Unary(Dictionary<string, string> context, SymbolRange range, UnaryOperation operation, CalculatedExpressionNode node) => new CalculatedExpressionUnaryNode(operation, node);
 
     public CalculatedExpressionNode Nested(Dictionary<string, string> context, SymbolRange range, CalculatedExpressionNode node) => node;
+
+    private static CalculatedExpressionUnsupportedNode CreateErrorLiteralNode(ReadOnlySpan<char> error) => CreateErrorLiteralNode(error.ToString());
+
+    private static CalculatedExpressionUnsupportedNode CreateErrorLiteralNode(string error) => new($"Calculated-column error literal '{error}' is not supported.");
 
     private static CalculatedExpressionFunctionNode CreateFunctionNode(string functionName, IReadOnlyList<CalculatedExpressionNode> arguments)
     {
