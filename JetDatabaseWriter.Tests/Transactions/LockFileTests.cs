@@ -715,7 +715,6 @@ public sealed class LockFileTests : IDisposable
             respectExisting: false);
 #pragma warning restore CA2000
 
-
     private static string ReadAsciiField(byte[] bytes, int offset, int length)
     {
         int end = offset;

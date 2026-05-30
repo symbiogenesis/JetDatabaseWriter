@@ -31,6 +31,7 @@ public class NameCleanerTests
     [InlineData("string", "String")]
     [InlineData("return", "Return")]
     public void ToClassName_PascalCases_Keywords(string input, string expected) =>
+
         // PascalCase capitalizes the first letter, so keywords become non-keywords
         Assert.Equal(expected, NameCleaner.ToClassName(input));
 
@@ -108,6 +109,7 @@ public class NameCleanerTests
 
     [Fact]
     public void SanitizeToPascalCase_Preserves_Existing_Casing_Mid_Word() =>
+
         // Only the first char after a boundary is capitalized; others are left as-is
         Assert.Equal("MyHTTPClient", NameCleaner.SanitizeToPascalCase("my_hTTPClient"));
 }
