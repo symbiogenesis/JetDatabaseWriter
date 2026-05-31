@@ -542,28 +542,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        await writer.InsertCatalogObjectAsync(
-            objectId: -500,
-            parentId: Constants.SystemObjects.TablesParentId,
-            objectName: "LowLevelDuplicate",
-            objectType: Constants.SystemObjects.LinkedTableType,
-            catalogFlags: Constants.SystemObjects.LinkedTableFlags,
-            owner: Constants.SystemObjects.DefaultOwnerBlob,
-            lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
-            ct);
+        await InsertCatalogObjectAsync(writer, -500, "LowLevelDuplicate", ct);
 
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            writer.InsertCatalogObjectAsync(
-                objectId: -501,
-                parentId: Constants.SystemObjects.TablesParentId,
-                objectName: "lowlevelduplicate",
-                objectType: Constants.SystemObjects.LinkedTableType,
-                catalogFlags: Constants.SystemObjects.LinkedTableFlags,
-                owner: Constants.SystemObjects.DefaultOwnerBlob,
-                lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
-                ct).AsTask());
+            InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
 
         Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
@@ -582,15 +566,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         for (int i = 0; i < 180; i++)
         {
             lastName = FormattableString.Invariant($"LinkedSplit_{i:D4}_Padding_For_Index_Split");
-            await writer.InsertCatalogObjectAsync(
-                objectId: -20_000 - i,
-                parentId: Constants.SystemObjects.TablesParentId,
-                objectName: lastName,
-                objectType: Constants.SystemObjects.LinkedTableType,
-                catalogFlags: Constants.SystemObjects.LinkedTableFlags,
-                owner: Constants.SystemObjects.DefaultOwnerBlob,
-                lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
-                ct);
+            await InsertCatalogObjectAsync(writer, -20_000 - i, lastName, ct);
         }
 
         int intermediateRootsAfter = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
@@ -666,6 +642,24 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
         }
     }
+
+    private static ValueTask<long[]> InsertCatalogObjectAsync(
+        AccessWriter writer,
+        int objectId,
+        string objectName,
+        CancellationToken cancellationToken)
+        => writer.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan(
+                [],
+                [new CatalogObjectArtifact(
+                    objectId,
+                    Constants.SystemObjects.TablesParentId,
+                    objectName,
+                    Constants.SystemObjects.LinkedTableType,
+                    Constants.SystemObjects.LinkedTableFlags,
+                    Constants.SystemObjects.DefaultOwnerBlob,
+                    Constants.SystemObjects.DefaultLvPropPlaceholder)]),
+            cancellationToken);
 
     private static string GetLockFilePath(string databasePath) =>
         string.Equals(Path.GetExtension(databasePath), ".accdb", StringComparison.OrdinalIgnoreCase)

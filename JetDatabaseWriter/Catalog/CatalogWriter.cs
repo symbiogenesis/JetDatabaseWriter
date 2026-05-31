@@ -24,16 +24,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes)
 {
     /// <summary>
-    /// Inserts a new row into <c>MSysObjects</c> with default flags.
-    /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="tdefPageNumber">The TDEF page number.</param>
-    /// <param name="lvProp">The LvProp payload.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
-        => this.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
-
-    /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
     /// </summary>
     /// <param name="tableName">The table name.</param>
@@ -64,222 +54,87 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     }
 
     /// <summary>
-    /// Inserts a caller-shaped row into <c>MSysObjects</c> for Access bootstrap
-    /// containers whose <c>Id</c> is not a physical TDEF page number.
+    /// Inserts a caller-shaped row into <c>MSysObjects</c> and applies any
+    /// declarative object-id, linked-field, rollback, or ACE policy carried by
+    /// the artifact.
     /// </summary>
-    /// <param name="objectId">The object id.</param>
-    /// <param name="parentId">The parent id.</param>
-    /// <param name="objectName">The object name.</param>
-    /// <param name="objectType">The object type.</param>
-    /// <param name="catalogFlags">The catalog flags.</param>
-    /// <param name="owner">The owner.</param>
-    /// <param name="lvProp">The LvProp payload.</param>
+    /// <param name="artifact">The catalog object artifact.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask InsertCatalogObjectAsync(
-        int objectId,
-        int parentId,
-        string objectName,
-        short objectType,
-        uint catalogFlags,
-        byte[]? owner,
-        byte[]? lvProp,
-        CancellationToken cancellationToken = default)
+    /// <returns>The inserted <c>MSysObjects.Id</c> value.</returns>
+    internal async ValueTask<int> InsertCatalogObjectAsync(CatalogObjectArtifact artifact, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await this.EnsureCatalogContainerNameAvailableAsync(msys, parentId, objectName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
+
+        int objectId = artifact.ObjectIdPolicy == CatalogObjectIdPolicy.AllocateNonTable
+            ? await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false)
+            : artifact.ObjectId;
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", objectId);
-        msys.SetValueByName(values, "ParentId", parentId);
-        msys.SetValueByName(values, "Name", objectName);
-        msys.SetValueByName(values, "Type", objectType);
+        msys.SetValueByName(values, "ParentId", artifact.ParentId);
+        msys.SetValueByName(values, "Name", artifact.ObjectName);
+        msys.SetValueByName(values, "Type", artifact.ObjectType);
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
+        msys.SetValueByName(values, "Flags", unchecked((int)artifact.CatalogFlags));
 
-        if (owner is not null && msys.FindColumn("Owner") is not null)
+        if (artifact.Owner is not null && msys.FindColumn("Owner") is not null)
         {
-            msys.SetValueByName(values, "Owner", owner);
+            msys.SetValueByName(values, "Owner", artifact.Owner);
         }
 
-        if (lvProp is not null && msys.FindColumn("LvProp") is not null)
+        if (artifact.LvProp is not null && msys.FindColumn("LvProp") is not null)
         {
-            msys.SetValueByName(values, "LvProp", lvProp);
+            msys.SetValueByName(values, "LvProp", artifact.LvProp);
         }
 
-        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, objectName, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Inserts the Type=8 <c>MSysObjects</c> row DAO creates for a relationship.
-    /// </summary>
-    /// <param name="relationshipName">The relationship name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
-    internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
-    {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.RelationshipsParentId, relationshipName, cancellationToken).ConfigureAwait(false);
-
-        int objectId = await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
-
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", objectId);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.RelationshipsParentId);
-        msys.SetValueByName(values, "Name", relationshipName);
-        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.RelationshipType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", 0);
-        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-
-        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, relationshipName, cancellationToken).ConfigureAwait(false);
-
-        return objectId;
-    }
-
-    /// <summary>
-    /// Inserts a Type=4/6 linked-table row into <c>MSysObjects</c> using a
-    /// catalog-only object id and the MSysObjects splice path.
-    /// </summary>
-    /// <param name="linkedTableName">The linked table name.</param>
-    /// <param name="sourceDatabasePath">The source database path.</param>
-    /// <param name="foreignName">The foreign name.</param>
-    /// <param name="connectString">The connect string.</param>
-    /// <param name="objectType">The object type.</param>
-    /// <param name="cachedSchemaLvProp">The cached schema LvProp payload.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
-    internal async ValueTask<int> InsertLinkedTableCatalogEntryAsync(
-        string linkedTableName,
-        string? sourceDatabasePath,
-        string foreignName,
-        string? connectString,
-        short objectType,
-        byte[]? cachedSchemaLvProp = null,
-        CancellationToken cancellationToken = default)
-    {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, linkedTableName, cancellationToken).ConfigureAwait(false);
-
-        int objectId = await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", objectId);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
-        msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", objectType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        bool isTextLinkedTable = IsTextLinkedTable(objectType, connectString);
-        msys.SetValueByName(values, "Flags", GetLinkedTableFlags(objectType, connectString));
-        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-        if (msys.FindColumn("LvProp") is not null)
+        if (artifact.ForeignName is not null)
         {
-            if (cachedSchemaLvProp is not null)
-            {
-                msys.SetValueByName(values, "LvProp", cachedSchemaLvProp);
-            }
-            else if (objectType == Constants.SystemObjects.LinkedOdbcType)
-            {
-                msys.SetValueByName(values, "LvProp", Constants.SystemObjects.DefaultLvPropPlaceholder);
-            }
+            msys.SetValueByName(values, "ForeignName", artifact.EncodeForeignNameForTextLink ? EncodeTextForeignName(artifact.ForeignName) : artifact.ForeignName);
         }
 
-        msys.SetValueByName(values, "ForeignName", isTextLinkedTable ? EncodeTextForeignName(foreignName) : foreignName);
-
-        if (!string.IsNullOrEmpty(sourceDatabasePath))
+        if (!string.IsNullOrEmpty(artifact.Database))
         {
-            object databaseValue = objectType == Constants.SystemObjects.LinkedTableType
-                ? await this.EncodeLinkedMemoFieldAsync(sourceDatabasePath, cancellationToken).ConfigureAwait(false)
-                : sourceDatabasePath;
+            object databaseValue = artifact.EncodeDatabaseAsMemoLval
+                ? await this.EncodeLinkedMemoFieldAsync(artifact.Database, cancellationToken).ConfigureAwait(false)
+                : artifact.Database;
             msys.SetValueByName(values, "Database", databaseValue);
         }
 
-        if (!string.IsNullOrEmpty(connectString))
+        if (!string.IsNullOrEmpty(artifact.Connect))
         {
-            msys.SetValueByName(values, "Connect", connectString);
+            msys.SetValueByName(values, "Connect", artifact.Connect);
         }
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         try
         {
-            await this.RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
+            await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
         }
-        catch (InvalidOperationException ex) when (IsCatalogSpliceFailure(ex))
+        catch (InvalidOperationException ex) when (artifact.RollbackCatalogRowOnIndexFailure && IsCatalogSpliceFailure(ex))
         {
             await this.RemoveUnindexedCatalogRowAsync(loc, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
-        await this.InsertAceRowsForCatalogObjectAsync(
-            objectId,
-            useRestrictedOwnerAcm: true,
-            useRelationshipGroupAcm: false,
-            cancellationToken).ConfigureAwait(false);
-        writer.InvalidateCatalogCache();
+        if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
+        {
+            await this.InsertAceRowsForCatalogObjectAsync(
+                objectId,
+                useRestrictedOwnerAcm: true,
+                useRelationshipGroupAcm: artifact.AcePolicy == CatalogObjectAcePolicy.RelationshipObject,
+                cancellationToken).ConfigureAwait(false);
+            writer.InvalidateCatalogCache();
+        }
 
         return objectId;
     }
 
-    /// <summary>
-    /// Inserts 3 ACE rows into <c>MSysACEs</c> for a newly-created user table.
-    /// </summary>
-    /// <param name="tdefPageNumber">The TDEF page number.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
-    {
-        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (acesTdefPage <= 0)
-        {
-            return;
-        }
-
-        TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        byte[]? adminsSid = await this.HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
-
-        byte[][] sids = adminsSid != null
-            ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
-            : [Constants.Aces.OwnerSid, Constants.Aces.UsersSid];
-
-        foreach (byte[] sid in sids)
-        {
-            object[] row = acesDef.CreateNullValueRow();
-            acesDef.SetValueByName(row, "ObjectId", (int)tdefPageNumber);
-            acesDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
-            acesDef.SetValueByName(row, "FInheritable", false);
-            acesDef.SetValueByName(row, "SID", sid);
-            await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Inserts DAO-shaped ACE rows for a Type=8 relationship object.
-    /// </summary>
-    /// <param name="objectId">The object id.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
-    internal async ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken)
-        => await this.InsertAceRowsForCatalogObjectAsync(
-            objectId,
-            useRestrictedOwnerAcm: true,
-            useRelationshipGroupAcm: true,
-            cancellationToken).ConfigureAwait(false);
-
-    private static int GetLinkedTableFlags(short objectType, string? connectString) =>
-        objectType switch
-        {
-            Constants.SystemObjects.LinkedOdbcType => Constants.SystemObjects.LinkedOdbcFlags,
-            _ when IsTextLinkedTable(objectType, connectString) => Constants.SystemObjects.LinkedTextTableFlags,
-            _ => Constants.SystemObjects.LinkedTableFlags,
-        };
-
-    private static bool IsTextLinkedTable(short objectType, string? connectString) =>
-        objectType == Constants.SystemObjects.LinkedTableType && !string.IsNullOrEmpty(connectString);
+    internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
+        => this.InsertAceRowsForCatalogObjectAsync(checked((int)tdefPageNumber), useRestrictedOwnerAcm: false, useRelationshipGroupAcm: false, cancellationToken);
 
     private static string EncodeTextForeignName(string foreignName) =>
         foreignName.Replace('.', '#');
@@ -428,11 +283,67 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <exception cref="InvalidOperationException">Thrown when no catalog row exists for <paramref name="oldName"/>.</exception>
     internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
+        _ = await this.ReplaceUserTableCatalogEntryAsync(
+            oldName,
+            newName,
+            tdefPage: null,
+            lvProp,
+            includeSystemTables: true,
+            operation: $"renaming catalog row '{oldName}' to '{newName}'",
+            missingMessage: $"Catalog row for '{oldName}' was not found during rename.",
+            cancellationToken).ConfigureAwait(false);
+        writer.Constraints.Rename(oldName, newName);
+        writer.InvalidateCatalogCache();
+    }
+
+    internal async ValueTask<long> ReplaceUserTableCatalogEntryAsync(
+        string existingName,
+        string replacementName,
+        long? tdefPage,
+        byte[]? lvProp,
+        bool includeSystemTables,
+        string operation,
+        string? missingMessage,
+        CancellationToken cancellationToken)
+    {
+        UserTableCatalogDeletionResult deleted = await this.DeleteUserTableCatalogRowsAsync(
+            existingName,
+            tdefPage,
+            includeSystemTables,
+            throwIfNotFound: true,
+            operation,
+            missingMessage,
+            cancellationToken).ConfigureAwait(false);
+
+        long replacementTdefPage = tdefPage ?? deleted.FirstTDefPage
+            ?? throw new InvalidOperationException(missingMessage ?? $"Catalog row for '{existingName}' was not found.");
+
+        await this.InsertCatalogEntryAsync(
+            replacementName,
+            replacementTdefPage,
+            lvProp,
+            deleted.FirstCatalogFlags,
+            cancellationToken).ConfigureAwait(false);
+        writer.InvalidateCatalogCache();
+        return replacementTdefPage;
+    }
+
+    internal async ValueTask<UserTableCatalogDeletionResult> DeleteUserTableCatalogRowsAsync(
+        string tableName,
+        long? tdefPage,
+        bool includeSystemTables,
+        bool throwIfNotFound,
+        string operation,
+        string? missingMessage,
+        CancellationToken cancellationToken)
+    {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        var droppedTdefPages = new List<long>();
+        var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
+        long? firstTdefPage = null;
+        uint firstCatalogFlags = 0;
 
-        long? tdefPage = null;
-        uint catalogFlags = 0;
         foreach (CatalogRow row in rows)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
@@ -440,35 +351,67 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                 continue;
             }
 
-            if (!string.Equals(row.Name, oldName, StringComparison.OrdinalIgnoreCase))
+            if (!includeSystemTables && (unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
             }
 
-            tdefPage = row.TDefPage;
-            catalogFlags = unchecked((uint)row.Flags);
-            object[] deletedIndexRow = msys.CreateNullValueRow();
-            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
-            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
-            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
+            if (tdefPage is long requiredTdefPage && row.TDefPage != requiredTdefPage)
+            {
+                continue;
+            }
+
+            if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (row.TDefPage > 0)
+            {
+                droppedTdefPages.Add(row.TDefPage);
+            }
+
+            firstTdefPage ??= row.TDefPage;
+            if (deletedCatalogRows.Count == 0)
+            {
+                firstCatalogFlags = unchecked((uint)row.Flags);
+            }
+
+            object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
+            deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
+
             await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
-            await writer.RequireMsysObjectsIndexMaintenanceAsync(
-                msys,
-                insertedRows: null,
-                deletedRows: [(new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow)],
-                operation: $"renaming catalog row '{oldName}' to '{newName}'",
-                cancellationToken).ConfigureAwait(false);
-            break;
         }
 
-        if (tdefPage == null)
+        if (deletedCatalogRows.Count == 0)
         {
-            throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
+            if (throwIfNotFound)
+            {
+                throw new InvalidOperationException(missingMessage ?? $"Catalog row for '{tableName}' was not found.");
+            }
+
+            return new UserTableCatalogDeletionResult(0, [], null, 0);
         }
 
-        await this.InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
-        writer.Constraints.Rename(oldName, newName);
+        await writer.AdjustTDefRowCountAsync(2, -deletedCatalogRows.Count, cancellationToken).ConfigureAwait(false);
+        await writer.RequireMsysObjectsIndexMaintenanceAsync(
+            msys,
+            insertedRows: null,
+            deletedRows: deletedCatalogRows,
+            operation,
+            cancellationToken).ConfigureAwait(false);
+
         writer.InvalidateCatalogCache();
+        return new UserTableCatalogDeletionResult(deletedCatalogRows.Count, droppedTdefPages, firstTdefPage, firstCatalogFlags);
+    }
+
+    private static object[] CreateMsysObjectsIndexRow(TableDef msys, CatalogRow row)
+    {
+        object[] indexRow = msys.CreateNullValueRow();
+        msys.SetValueByName(indexRow, "Id", checked((int)row.TDefPage));
+        msys.SetValueByName(indexRow, "ParentId", Constants.SystemObjects.TablesParentId);
+        msys.SetValueByName(indexRow, "Name", row.Name);
+        return indexRow;
     }
 
     /// <summary>

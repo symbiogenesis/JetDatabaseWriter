@@ -638,18 +638,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         for (int artifactIndex = 0; artifactIndex < plan.CatalogObjects.Count; artifactIndex++)
         {
             CatalogObjectArtifact catalogObject = plan.CatalogObjects[artifactIndex];
-            await this.catalogWriter.InsertCatalogObjectAsync(
-                catalogObject.ObjectId,
-                catalogObject.ParentId,
-                catalogObject.ObjectName,
-                catalogObject.ObjectType,
-                catalogObject.CatalogFlags,
-                catalogObject.Owner,
-                catalogObject.LvProp,
+            _ = await this.catalogWriter.InsertCatalogObjectAsync(catalogObject, cancellationToken).ConfigureAwait(false);
+        }
+
+        for (int artifactIndex = 0; artifactIndex < plan.CatalogReplacements.Count; artifactIndex++)
+        {
+            UserTableCatalogReplacementArtifact replacement = plan.CatalogReplacements[artifactIndex];
+            _ = await this.catalogWriter.ReplaceUserTableCatalogEntryAsync(
+                replacement.ExistingName,
+                replacement.ReplacementName,
+                replacement.TDefPage,
+                replacement.LvProp,
+                replacement.IncludeSystemTables,
+                replacement.Operation ?? $"replacing catalog row for '{replacement.ExistingName}'",
+                replacement.MissingMessage,
                 cancellationToken).ConfigureAwait(false);
         }
 
-        if (plan.CatalogObjects.Count > 0)
+        for (int artifactIndex = 0; artifactIndex < plan.CatalogDeletions.Count; artifactIndex++)
+        {
+            UserTableCatalogDeletionArtifact deletion = plan.CatalogDeletions[artifactIndex];
+            _ = await this.catalogWriter.DeleteUserTableCatalogRowsAsync(
+                deletion.TableName,
+                deletion.TDefPage,
+                deletion.IncludeSystemTables,
+                deletion.ThrowIfNotFound,
+                deletion.Operation ?? $"deleting catalog row for '{deletion.TableName}'",
+                deletion.MissingMessage,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (plan.CatalogObjects.Count > 0 || plan.CatalogReplacements.Count > 0 || plan.CatalogDeletions.Count > 0)
         {
             this.InvalidateCatalogCache();
         }
@@ -1565,13 +1584,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await this.catalogWriter.InsertLinkedTableCatalogEntryAsync(
-            linkedTableName,
-            sourceDatabasePath,
-            foreignTableName,
-            connectString: null,
-            objectType: Constants.SystemObjects.LinkedTableType,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan(
+                [],
+                [CatalogObjectArtifact.LinkedTable(
+                    linkedTableName,
+                    sourceDatabasePath,
+                    foreignTableName,
+                    connectString: null,
+                    objectType: Constants.SystemObjects.LinkedTableType)]),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1681,14 +1703,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, this.Format);
 
-        await this.catalogWriter.InsertLinkedTableCatalogEntryAsync(
-            linkedTableName,
-            sourceDatabasePath: null,
-            foreignName: foreignTableName,
-            connectString: normalizedConnect,
-            objectType: Constants.SystemObjects.LinkedOdbcType,
-            cachedSchemaLvProp: lvProp,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan(
+                [],
+                [CatalogObjectArtifact.LinkedTable(
+                    linkedTableName,
+                    sourceDatabasePath: null,
+                    foreignName: foreignTableName,
+                    connectString: normalizedConnect,
+                    objectType: Constants.SystemObjects.LinkedOdbcType,
+                    cachedSchemaLvProp: lvProp)]),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private byte[] CopyValidatedCachedSchemaLvProp(ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
@@ -1744,13 +1769,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(connectString, nameof(connectString));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await this.catalogWriter.InsertLinkedTableCatalogEntryAsync(
-            linkedTableName,
-            sourceDirectoryPath,
-            foreignFileName,
-            connectString,
-            objectType: Constants.SystemObjects.LinkedTableType,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan(
+                [],
+                [CatalogObjectArtifact.LinkedTable(
+                    linkedTableName,
+                    sourceDirectoryPath,
+                    foreignFileName,
+                    connectString,
+                    Constants.SystemObjects.LinkedTableType)]),
+            cancellationToken).ConfigureAwait(false);
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -2535,7 +2563,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Add/Drop/Rename column operations.
     /// </summary>
     /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexMetadataSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         var options = new AccessReaderOptions
@@ -2571,7 +2599,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// has no property blob.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<ColumnPropertyBlock?> ReadLvPropBlockAsync(long tdefPage, CancellationToken cancellationToken)
     {
         var options = new AccessReaderOptions
@@ -2649,32 +2677,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
-
-    internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken);
-
-    internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
-
-    internal ValueTask InsertCatalogObjectAsync(
-        int objectId,
-        int parentId,
-        string objectName,
-        short objectType,
-        uint catalogFlags,
-        byte[]? owner,
-        byte[]? lvProp,
-        CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertCatalogObjectAsync(objectId, parentId, objectName, objectType, catalogFlags, owner, lvProp, cancellationToken);
-
-    internal ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertRelationshipCatalogEntryAsync(relationshipName, cancellationToken);
-
-    internal ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertAceRowsForRelationshipAsync(objectId, cancellationToken);
-
-    internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken = default)
-        => this.catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken);
 
     private async ValueTask RewriteTableAsync(
         string tableName,
@@ -2883,11 +2885,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ReturnPage(tempTdef);
         }
 
-        await this.ReplaceCatalogEntryAsync(tableName, originalTdefPage, lvProp, cancellationToken).ConfigureAwait(false);
-        await this.DeleteCatalogRowsForTDefPageAsync(tempName, tempTdefPage, cancellationToken).ConfigureAwait(false);
+        await this.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan([], [])
+            {
+                CatalogReplacements =
+                [
+                    new UserTableCatalogReplacementArtifact(
+                        tableName,
+                        tableName,
+                        originalTdefPage,
+                        lvProp,
+                        Operation: $"replacing catalog row for '{tableName}'",
+                        MissingMessage: $"Catalog row for '{tableName}' was not found during schema rewrite."),
+                ],
+                CatalogDeletions =
+                [
+                    new UserTableCatalogDeletionArtifact(
+                        tempName,
+                        tempTdefPage,
+                        Operation: $"deleting catalog row for '{tempName}'"),
+                ],
+            },
+            cancellationToken).ConfigureAwait(false);
         await this.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await this.pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
-        this.InvalidateCatalogCache();
     }
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
@@ -2916,88 +2937,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 ReturnPage(page);
             }
         }
-    }
-
-    private async ValueTask ReplaceCatalogEntryAsync(string tableName, long tdefPage, byte[]? lvProp, CancellationToken cancellationToken)
-    {
-        TableDef msys = await this.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        uint catalogFlags = 0;
-        bool replaced = false;
-        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (CatalogRow row in rows)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType
-                || row.TDefPage != tdefPage
-                || !string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            catalogFlags = unchecked((uint)row.Flags);
-            object[] deletedIndexRow = msys.CreateNullValueRow();
-            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
-            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
-            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
-            deletedRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow));
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
-            replaced = true;
-            break;
-        }
-
-        if (!replaced)
-        {
-            throw new InvalidOperationException($"Catalog row for '{tableName}' was not found during schema rewrite.");
-        }
-
-        await this.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
-        if (deletedRows.Count > 0)
-        {
-            await this.RequireMsysObjectsIndexMaintenanceAsync(
-                msys,
-                insertedRows: null,
-                deletedRows: deletedRows,
-                operation: $"replacing catalog row for '{tableName}'",
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        await this.catalogWriter.InsertCatalogEntryAsync(tableName, tdefPage, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async ValueTask DeleteCatalogRowsForTDefPageAsync(string tableName, long tdefPage, CancellationToken cancellationToken)
-    {
-        TableDef msys = await this.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (CatalogRow row in rows)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType
-                || row.TDefPage != tdefPage
-                || !string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            object[] deletedIndexRow = msys.CreateNullValueRow();
-            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
-            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
-            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
-            deletedRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow));
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (deletedRows.Count == 0)
-        {
-            return;
-        }
-
-        await this.AdjustTDefRowCountAsync(2, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-        await this.RequireMsysObjectsIndexMaintenanceAsync(
-            msys,
-            insertedRows: null,
-            deletedRows: deletedRows,
-            operation: $"deleting catalog row for '{tableName}'",
-            cancellationToken).ConfigureAwait(false);
     }
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column, ColumnPropertyBlock? properties = null)
@@ -3316,75 +3255,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="dropComplexChildren">The drop complex children.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
     private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
     {
-        TableDef? msys = await this.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-
-        int deleted = 0;
-        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        var droppedTdefPages = new List<long>();
-        var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
-        foreach (CatalogRow row in rows)
-        {
-            if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if ((unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) != 0)
-            {
-                continue;
-            }
-
-            if (row.TDefPage > 0)
-            {
-                droppedTdefPages.Add(row.TDefPage);
-            }
-
-            object[] indexRow = msys.CreateNullValueRow();
-            msys.SetValueByName(indexRow, "Id", checked((int)row.TDefPage));
-            msys.SetValueByName(indexRow, "ParentId", Constants.SystemObjects.TablesParentId);
-            msys.SetValueByName(indexRow, "Name", row.Name);
-            deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
-
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
-            deleted++;
-        }
-
-        if (deleted == 0)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-        }
-
-        await this.AdjustTDefRowCountAsync(2, -deleted, cancellationToken).ConfigureAwait(false);
+        UserTableCatalogDeletionResult deleted = await this.catalogWriter.DeleteUserTableCatalogRowsAsync(
+            tableName,
+            tdefPage: null,
+            includeSystemTables: false,
+            throwIfNotFound: true,
+            operation: $"dropping table '{tableName}'",
+            missingMessage: $"Table '{tableName}' does not exist.",
+            cancellationToken).ConfigureAwait(false);
 
         if (dropComplexChildren)
         {
-            foreach (long parentTdefPage in droppedTdefPages)
+            foreach (long parentTdefPage in deleted.TDefPages)
             {
                 await this.ComplexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        await this.DeleteAceRowsForObjectIdsAsync(droppedTdefPages, cancellationToken).ConfigureAwait(false);
-        if (deletedCatalogRows.Count > 0)
-        {
-            await this.RequireMsysObjectsIndexMaintenanceAsync(
-                msys,
-                insertedRows: null,
-                deletedRows: deletedCatalogRows,
-                operation: $"dropping table '{tableName}'",
-                cancellationToken).ConfigureAwait(false);
-        }
+        await this.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
 
-        foreach (long tdefPage in droppedTdefPages)
+        foreach (long tdefPage in deleted.TDefPages)
         {
             await this.ReclaimDroppedTablePagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         }
@@ -3532,7 +3426,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    private async ValueTask DeleteAceRowsForObjectIdsAsync(List<long> objectIds, CancellationToken cancellationToken)
+    private async ValueTask DeleteAceRowsForObjectIdsAsync(IReadOnlyList<long> objectIds, CancellationToken cancellationToken)
     {
         if (objectIds.Count == 0)
         {

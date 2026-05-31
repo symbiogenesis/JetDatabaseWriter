@@ -1,11 +1,12 @@
 # High-Impact Simplification TODOs
 
-Status: candidate backlog
-Date: 2026-05-26
+Status: active backlog with completed outcomes retained
+Date: 2026-05-30
 
-This note captures only the remaining large simplification opportunities that
-look likely to delete or consolidate meaningful code while retaining features
-and performance. It intentionally excludes completed refactors, formatting,
+This note tracks the remaining large simplification opportunities that look
+likely to delete or consolidate meaningful code while retaining features and
+performance. Completed outcomes stay here as waypoints so future work does not
+reopen settled architecture threads. The note intentionally excludes formatting,
 comments, small helper extractions, and local tidy-ups.
 
 Each item should be treated as architecture work: start with characterization
@@ -127,8 +128,8 @@ projection masks, typed fixed/variable decode decisions, calculated-column
 payload decode, async LVAL sentinels, pooled object-buffer fills, and the
 writer's partial key-column reader. `AccessReader` still owns async LVAL
 resolution and post-processing for complex columns/hyperlinks. `RowsAsStrings()`
-and the direct POCO expression-tree decoder remain separate sinks for future
-slices.
+and the direct POCO expression-tree decoder were still separate sinks at this
+checkpoint; the 2026-05-30 completion note below supersedes that interim state.
 
 Completion 2026-05-30: `RowDecodePlan` now also owns `RowsAsStrings()` row
 materialization, feeds `DirectRowDecoderBuilder` with plan-owned row-layout
@@ -228,6 +229,8 @@ index-maintenance refresh now route through the shared codec.
 
 ## 4. Make System Catalog and Hidden Artifact Creation Declarative
 
+Status: completed 2026-05-30
+
 Primary files:
 
 - [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
@@ -247,19 +250,22 @@ Target shape:
 - [x] Define a `CatalogArtifactPlan` or similar object that describes table
       TDEF pages, catalog rows, ACE rows, LvProp blobs, indexes, owned maps,
       and post-create maintenance requirements.
-- [ ] Express core ACCDB system tables, `MSysComplexColumns`,
-      `MSysComplexType_*`, hidden complex flat tables, relationship catalog
-      objects, and linked-table catalog rows as artifact plans.
-- [ ] Use one executor for plan steps: reserve pages, write TDEF pages, emit
-      usage maps, insert catalog rows, insert ACE rows, maintain system-table
-      indexes, and invalidate caches.
+- [x] Express core ACCDB system tables, `MSysComplexColumns`,
+      `MSysComplexType_*`, and hidden complex flat tables as artifact plans.
+- [x] Express relationship catalog objects and linked-table catalog rows as
+      artifact plans.
+- [x] Use one executor for table/system/complex-table plan steps: reserve
+      pages, write TDEF pages, emit usage maps, insert catalog rows, insert ACE
+      rows, register constraints, and invalidate caches.
+- [x] Extend the same executor surface to remaining catalog-only artifacts and
+      shared replacement/deletion primitives.
 - [x] Keep `CreateTableInternalAsync` as a thin public/internal facade over the
       plan executor.
-- [ ] Make schema rewrite transplant/copy-swap paths use the same catalog-row
+- [x] Make schema rewrite transplant/copy-swap paths use the same catalog-row
       replacement/deletion primitives.
 
 Progress 2026-05-30: first planner slice landed in
-`Catalog/Models/CatalogArtifactPlan.cs` and related artifact/result models.
+`Catalog/Models/CatalogArtifactPlan.cs` and related artifact models.
 `CreateTableInternalAsync` is now a thin facade over a shared artifact executor
 that reserves/writes TDEF pages, emits index leaves and usage-map rows, inserts
 catalog rows, applies declarative ACE-row policy, registers constraints, and
@@ -267,17 +273,27 @@ invalidates caches. Fresh ACCDB core system tables plus their fixed container
 catalog rows are expressed as one plan, complex type-template tables use the
 same executor with usage maps disabled to preserve their prior TDEF shape, and
 hidden complex flat tables declare their forced ACE-row emission through the
-table artifact instead of a separate follow-up call. Remaining slices should
-pull relationship catalog objects, linked-table catalog rows, and schema-rewrite
-catalog replacement/deletion primitives into the same model.
+table artifact instead of a separate follow-up call. As of this snapshot,
+relationship catalog objects and linked-table catalog rows also flow through
+catalog-object artifacts with declarative non-table object-id, ACE, linked-field,
+and rollback policy. `CatalogArtifactPlan` now carries catalog-row replacement
+and deletion artifacts, and the schema-rewrite transplant path uses them through
+the plan executor. Copy/swap table rewrites, table drops, and catalog renames
+share the same lower-level replacement/deletion primitives. No parallel
+catalog-row mutation path remains for this item.
+
+Evidence 2026-05-30: the Debug library build passed, focused catalog,
+linked-table, relationship, complex schema-evolution, general schema-evolution,
+and relationship-mutation tests passed (71/71), and the full non-fuzz suite
+passed (3,561 succeeded, 2 environment skips).
 
 Guardrails:
 
-- [ ] Preserve bootstrap ordering for fresh full-catalog ACCDB files.
-- [ ] Preserve MSysObjects incremental-only requirements for catalog indexes.
-- [ ] Preserve complex-column parent identity rules described in
+- [x] Preserve bootstrap ordering for fresh full-catalog ACCDB files.
+- [x] Preserve MSysObjects incremental-only requirements for catalog indexes.
+- [x] Preserve complex-column parent identity rules described in
       [complex-columns-format-notes.md](complex-columns-format-notes.md).
-- [ ] Run DAO compact/open-recordset validation for complex columns,
+- [x] Run DAO compact/open-recordset validation for complex columns,
       relationships, linked tables, and fresh database creation.
 
 Likely payoff: medium to high deletion upside, especially in writer
@@ -326,8 +342,7 @@ package acceptability. If no dependency qualifies, leave this mostly alone.
 1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26.
 2. IndexBTreeEditor mutation planner: completed 2026-05-26.
 3. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
-4. Declarative catalog artifact planning, after index/system-table maintenance
-   surfaces are cleaner.
+4. Declarative catalog artifact planning: completed 2026-05-30.
 5. CFB dependency decision, when dependency policy is worth revisiting.
 
 ## Non-goals

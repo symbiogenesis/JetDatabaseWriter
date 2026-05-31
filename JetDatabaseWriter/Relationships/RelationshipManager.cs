@@ -126,8 +126,11 @@ internal sealed class RelationshipManager
 
         await this.catalog.AppendRelationshipRowsAsync(msysRelTdefPage, msysRelDef, relationship, cancellationToken).ConfigureAwait(false);
 
-        int relationshipObjectId = await this.writer.InsertRelationshipCatalogEntryAsync(relationship.Name, cancellationToken).ConfigureAwait(false);
-        await this.writer.InsertAceRowsForRelationshipAsync(relationshipObjectId, cancellationToken).ConfigureAwait(false);
+        await this.writer.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan(
+                [],
+                [CatalogObjectArtifact.Relationship(relationship.Name)]),
+            cancellationToken).ConfigureAwait(false);
 
         // Per-TDEF FK logical-idx entries: add index_type=0x02 logical-idx
         // entries on both PK-side and FK-side TDEFs with cross-referenced

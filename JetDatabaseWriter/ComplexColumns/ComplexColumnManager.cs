@@ -374,8 +374,6 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     MarkSystemTableTdef: false)],
                 []),
             cancellationToken).ConfigureAwait(false);
-
-        this.writer.InvalidateCatalogCache();
     }
 
     /// <summary>
