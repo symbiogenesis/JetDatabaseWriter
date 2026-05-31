@@ -167,7 +167,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.pageAllocator = new PageAllocator(this);
         this.indexMaintainer = new IndexMaintainer(this, this.pageAllocator);
         this.Relationships = new RelationshipManager(this, this.indexMaintainer, this.pageAllocator);
-        this.ComplexColumns = new ComplexColumnManager(this, this.indexMaintainer, this.pageAllocator);
+        this.ComplexColumns = new ComplexColumnManager(this, this.indexMaintainer);
         this.tdefPageBuilder = new TDefPageBuilder(this);
         this.longValueEncoder = new LongValueEncoder(this, this.pageAllocator);
         this.uniqueIndexChecker = new UniqueIndexChecker(this);
@@ -592,6 +592,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="reservedTdefPageNumber">The reserved TDEF page number.</param>
     /// <param name="emitLvProp">A value indicating whether LvProp metadata is emitted.</param>
     /// <param name="markSystemTableTdef">The mark system table TDEF.</param>
+    /// <param name="emitAceRows">The ACE-row emission override.</param>
     /// <exception cref="InvalidDataException">Thrown when a reserved TDEF page is requested for a multi-page table definition.</exception>
     internal async ValueTask<long> CreateTableInternalAsync(
         string tableName,
@@ -601,17 +602,72 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken,
         long reservedTdefPageNumber = 0,
         bool emitLvProp = true,
-        bool markSystemTableTdef = true)
+        bool markSystemTableTdef = true,
+        bool? emitAceRows = null)
     {
-        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, this.Format);
-        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
+        var tableArtifact = new CatalogTableArtifact(
+            tableName,
+            columns,
+            indexes,
+            catalogFlags,
+            ReservedTdefPageNumber: reservedTdefPageNumber,
+            EmitLvProp: emitLvProp,
+            MarkSystemTableTdef: markSystemTableTdef,
+            EmitAceRows: emitAceRows);
+
+        long[] tablePages = await this.ExecuteCatalogArtifactPlanAsync(
+            new CatalogArtifactPlan([tableArtifact], []),
+            cancellationToken).ConfigureAwait(false);
+
+        return tablePages[0];
+    }
+
+    internal async ValueTask<long[]> ExecuteCatalogArtifactPlanAsync(
+        CatalogArtifactPlan plan,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(plan, nameof(plan));
+
+        long[] tablePages = new long[plan.TableArtifacts.Count];
+        for (int artifactIndex = 0; artifactIndex < plan.TableArtifacts.Count; artifactIndex++)
+        {
+            CatalogTableArtifact tableArtifact = plan.TableArtifacts[artifactIndex];
+            tablePages[artifactIndex] = await this.CreateCatalogTableArtifactAsync(tableArtifact, cancellationToken).ConfigureAwait(false);
+        }
+
+        for (int artifactIndex = 0; artifactIndex < plan.CatalogObjects.Count; artifactIndex++)
+        {
+            CatalogObjectArtifact catalogObject = plan.CatalogObjects[artifactIndex];
+            await this.catalogWriter.InsertCatalogObjectAsync(
+                catalogObject.ObjectId,
+                catalogObject.ParentId,
+                catalogObject.ObjectName,
+                catalogObject.ObjectType,
+                catalogObject.CatalogFlags,
+                catalogObject.Owner,
+                catalogObject.LvProp,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (plan.CatalogObjects.Count > 0)
+        {
+            this.InvalidateCatalogCache();
+        }
+
+        return tablePages;
+    }
+
+    private async ValueTask<long> CreateCatalogTableArtifactAsync(CatalogTableArtifact tableArtifact, CancellationToken cancellationToken)
+    {
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(tableArtifact.Columns, this.Format);
+        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(tableArtifact.Indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = this.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
-        if (reservedTdefPageNumber > 0 && tdefPages.Length != 1)
+        if (tableArtifact.ReservedTdefPageNumber > 0 && tdefPages.Length != 1)
         {
             throw new InvalidDataException("Reserved fresh system-table TDEF slots support only single-page TDEFs.");
         }
 
-        if (markSystemTableTdef && (catalogFlags & Constants.SystemObjects.SystemTableMask) != 0)
+        if (tableArtifact.MarkSystemTableTdef && IsSystemCatalogFlags(tableArtifact.CatalogFlags))
         {
             tdefPages[0][this.TDef.NumCols - 5] = 0x53;
         }
@@ -622,19 +678,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // page. Leaf pages and the usage-map page are allocated AFTER, so
         // they don't interleave with the TDEF chain and the page numbers
         // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
-        long tdefPageNumber = reservedTdefPageNumber > 0
-            ? reservedTdefPageNumber
+        long tdefPageNumber = tableArtifact.ReservedTdefPageNumber > 0
+            ? tableArtifact.ReservedTdefPageNumber
             : await this.pageAllocator.ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
 
         // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
-        for (int p = 0; p < tdefPages.Length - 1; p++)
+        for (int pageIndex = 0; pageIndex < tdefPages.Length - 1; pageIndex++)
         {
-            Wi32(tdefPages[p], 4, checked((int)(tdefPageNumber + p + 1)));
+            Wi32(tdefPages[pageIndex], 4, checked((int)(tdefPageNumber + pageIndex + 1)));
         }
 
-        for (int p = 0; p < tdefPages.Length; p++)
+        for (int pageIndex = 0; pageIndex < tdefPages.Length; pageIndex++)
         {
-            await this.WritePageAsync(tdefPageNumber + p, tdefPages[p], cancellationToken).ConfigureAwait(false);
+            await this.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
         }
 
         bool tdefDirty = false;
@@ -652,7 +708,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(this.Format);
             leafPageNumbers = new long[resolvedIndexes.Count];
 
-            for (int i = 0; i < resolvedIndexes.Count; i++)
+            for (int indexIndex = 0; indexIndex < resolvedIndexes.Count; indexIndex++)
             {
                 byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
                     layout,
@@ -664,8 +720,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     tailPage: 0,
                     enablePrefixCompression: false);
                 long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
-                leafPageNumbers[i] = leafPageNumber;
-                this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
+                leafPageNumbers[indexIndex] = leafPageNumber;
+                this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[indexIndex], checked((int)leafPageNumber));
             }
 
             tdefDirty = true;
@@ -682,7 +738,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // including ones without an autonumber column). See
         // docs/design/round-trip-test-failures.md and
         // docs/design/round-trip-openrecordset-hypothesis.md (H25).
-        if (this.Format != DatabaseFormat.Jet3Mdb)
+        if (tableArtifact.EmitUsageMap && this.Format != DatabaseFormat.Jet3Mdb)
         {
             long usageMapPageNumber = await this.dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
 
@@ -693,10 +749,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     ToSinglePageGroups(leafPageNumbers),
                     cancellationToken).ConfigureAwait(false);
 
-                for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
+                for (int usedPagesIndex = 0; usedPagesIndex < usedPagesLogicalOffsets.Length; usedPagesIndex++)
                 {
-                    int usedPagesOffset = usedPagesLogicalOffsets[i];
-                    tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(i + 2));
+                    int usedPagesOffset = usedPagesLogicalOffsets[usedPagesIndex];
+                    tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(usedPagesIndex + 2));
                     this.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
                 }
             }
@@ -714,27 +770,42 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             // Re-flush every TDEF page with the patched first_dp / usage-map /
             // autonum bytes and (for multi-page chains) the next-page pointers.
-            for (int p = 0; p < tdefPages.Length; p++)
+            for (int pageIndex = 0; pageIndex < tdefPages.Length; pageIndex++)
             {
-                await this.WritePageAsync(tdefPageNumber + p, tdefPages[p], cancellationToken).ConfigureAwait(false);
+                await this.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
             }
         }
 
-        byte[]? lvProp = emitLvProp ? JetExpressionConverter.BuildLvPropBlob(columns, this.Format) : null;
-        await this.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
+        byte[]? lvProp = tableArtifact.EmitLvProp ? JetExpressionConverter.BuildLvPropBlob(tableArtifact.Columns, this.Format) : null;
+        await this.catalogWriter.InsertCatalogEntryAsync(
+            tableArtifact.TableName,
+            tdefPageNumber,
+            lvProp,
+            tableArtifact.CatalogFlags,
+            cancellationToken).ConfigureAwait(false);
 
         // DAO Compact & Repair requires every user table to have ACE
         // (Access Control Entry) rows in MSysACEs. Without them DAO's
         // security-descriptor pass aborts with err 3011 "MSysDb".
-        if ((catalogFlags & Constants.SystemObjects.SystemTableMask) == 0)
+        if (ShouldEmitAceRows(tableArtifact))
         {
             await this.catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
-        this.Constraints.Register(tableName, columns);
+        if (tableArtifact.RegisterConstraints)
+        {
+            this.Constraints.Register(tableArtifact.TableName, tableArtifact.Columns);
+        }
+
         this.InvalidateCatalogCache();
         return tdefPageNumber;
     }
+
+    private static bool ShouldEmitAceRows(CatalogTableArtifact tableArtifact)
+        => tableArtifact.EmitAceRows ?? !IsSystemCatalogFlags(tableArtifact.CatalogFlags);
+
+    private static bool IsSystemCatalogFlags(uint catalogFlags)
+        => (catalogFlags & Constants.SystemObjects.SystemTableMask) != 0;
 
     /// <inheritdoc/>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)

@@ -244,7 +244,7 @@ making hidden dependencies explicit.
 
 Target shape:
 
-- [ ] Define a `CatalogArtifactPlan` or similar object that describes table
+- [x] Define a `CatalogArtifactPlan` or similar object that describes table
       TDEF pages, catalog rows, ACE rows, LvProp blobs, indexes, owned maps,
       and post-create maintenance requirements.
 - [ ] Express core ACCDB system tables, `MSysComplexColumns`,
@@ -253,10 +253,23 @@ Target shape:
 - [ ] Use one executor for plan steps: reserve pages, write TDEF pages, emit
       usage maps, insert catalog rows, insert ACE rows, maintain system-table
       indexes, and invalidate caches.
-- [ ] Keep `CreateTableInternalAsync` as a thin public/internal facade over the
+- [x] Keep `CreateTableInternalAsync` as a thin public/internal facade over the
       plan executor.
 - [ ] Make schema rewrite transplant/copy-swap paths use the same catalog-row
       replacement/deletion primitives.
+
+Progress 2026-05-30: first planner slice landed in
+`Catalog/Models/CatalogArtifactPlan.cs` and related artifact/result models.
+`CreateTableInternalAsync` is now a thin facade over a shared artifact executor
+that reserves/writes TDEF pages, emits index leaves and usage-map rows, inserts
+catalog rows, applies declarative ACE-row policy, registers constraints, and
+invalidates caches. Fresh ACCDB core system tables plus their fixed container
+catalog rows are expressed as one plan, complex type-template tables use the
+same executor with usage maps disabled to preserve their prior TDEF shape, and
+hidden complex flat tables declare their forced ACE-row emission through the
+table artifact instead of a separate follow-up call. Remaining slices should
+pull relationship catalog objects, linked-table catalog rows, and schema-rewrite
+catalog replacement/deletion primitives into the same model.
 
 Guardrails:
 
