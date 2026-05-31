@@ -1,16 +1,28 @@
 # Read performance
 
-Status: current-state summary; implementation and focused measurement complete
+Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
-Last updated: 2026-05-30
+Closed: 2026-05-31
+Last updated: 2026-05-31
 
-This note records the current read-performance state for `AccessReader`, the
-caller guidance that falls out of the measurements, and the candidate API work
-that would need fresh workload evidence. The previous implementation phases are
-complete, and there are no open action items tracked here. Future
-read-performance work should start from fresh profiling or release-quality
-BenchmarkDotNet results, not from reopening already-settled optimization
-threads.
+This note is closed. It records the read-performance baseline for
+`AccessReader`, the caller guidance that falls out of the measurements, and the
+future API ideas that would need fresh workload evidence before becoming active
+work. The previous implementation phases are complete, and there are no open
+action items or active implementation candidates tracked here. Future
+read-performance work should start from fresh profiling, release-quality
+BenchmarkDotNet results, or a concrete workload report, not from reopening
+already-settled optimization threads. The evidence-gated ideas near the end are
+not a backlog.
+
+## Closeout state
+
+Closed on 2026-05-31 after implementation, focused measurement, and the
+`RowDecodePlan` consolidation closeout recorded in
+[architecture-simplification.md](architecture-simplification.md). Keep this file
+as the durable evidence record for the completed read-performance pass. If a
+future workload feels slow, use the measurement commands and workload-shape
+guidance below to produce new evidence before changing the core reader.
 
 ## Evidence sources
 
@@ -304,40 +316,44 @@ caller wants to force the less conservative path after previously disabling it.
 The path requires page caching and no MEMO/OLE/complex/attachment columns. It
 is most useful for warm full-scan throughput, not cold first-row latency.
 
-## Candidate library work
+## Evidence-gated future ideas
+
+These are not active work items. They are possible API or benchmark directions
+only if a future workload provides evidence that the existing caller guidance is
+insufficient.
 
 ### Public object-array projection API
 
-Add an object-array projection API such as `Rows(tableName, columns)` or a
-similar column-selection surface. Internally, `RowDecodePlan` already supports a
-projection mask; today the public projection benefit is mainly exposed through
-`Rows<T>()`. A public projection API would help callers that cannot or do not
-want to define DTOs but still want to avoid decoding every column in wide rows.
+A public object-array projection API such as `Rows(tableName, columns)` or a
+similar column-selection surface could expose projection benefits to callers
+that cannot or do not want to define DTOs. Internally, `RowDecodePlan` already
+supports a projection mask; today the public projection benefit is mainly
+exposed through `Rows<T>()`.
 
-This is likely the best next library feature if wide untyped scans are the
-remaining pain point.
+This would likely be the best next library feature if wide untyped scans become
+the remaining measured pain point.
 
 ### Projected or typed index seek
 
-Add `SeekRowsAsync<T>` or a projected seek API so exact indexed lookups can
-avoid materializing full `object[]` rows. The current `SeekRowsAsync` narrows
-page discovery through the index but then decodes complete rows for each hit.
+A `SeekRowsAsync<T>` or projected seek API could let exact indexed lookups avoid
+materializing full `object[]` rows. The current `SeekRowsAsync` narrows page
+discovery through the index but then decodes complete rows for each hit.
 
-This is likely worthwhile when workloads perform many indexed point lookups and
-only consume a few columns from each match.
+This may be worthwhile if measured workloads perform many indexed point lookups
+and only consume a few columns from each match.
 
 ### Lazy long-value access
 
-Consider a new opt-in API that exposes MEMO/OLE payloads through a lazy reader or
-handle instead of immediately returning `string` / `byte[]`. This would require
-a careful lifetime and page-buffer ownership model. It should not be mixed into
-the existing row APIs because those APIs currently return stable values
-independent of the reader's internal page buffers.
+A new opt-in API could expose MEMO/OLE payloads through a lazy reader or handle
+instead of immediately returning `string` / `byte[]`. This would require a
+careful lifetime and page-buffer ownership model. It should not be mixed into the
+existing row APIs because those APIs currently return stable values independent
+of the reader's internal page buffers.
 
 ### Workload-specific benchmarks
 
-Before changing the core decoder again, add a benchmark that matches the slow
-real workload. Useful comparisons:
+Future read-performance work should begin with a benchmark that matches the slow
+real workload before changing the core decoder again. Useful comparisons:
 
 - Full `Rows(...)` versus narrow `Rows<T>()`.
 - `Rows(...).Where(...)` versus `SeekRowsAsync` for exact indexed predicates.
