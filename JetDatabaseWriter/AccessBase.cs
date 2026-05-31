@@ -1585,7 +1585,7 @@ public abstract class AccessBase : IAccessBase
     /// bytes, no var-offset table, no EOD marker) — which is how Jet lays out
     /// rows for tables with zero variable-length columns.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
-    private protected bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
+    internal bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
     {
         layout = default;
         if (rowSize < this.RowFields.NumCols)
@@ -1649,7 +1649,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="rowSize">The row size.</param>
     /// <param name="layout">The layout.</param>
     /// <param name="col">The column descriptor.</param>
-    private protected ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
+    internal ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
     {
         bool nullBit = false;
         if (col.ColNum < layout.NumCols)
@@ -1717,12 +1717,6 @@ public abstract class AccessBase : IAccessBase
 
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
-
-    internal bool TryParseRowLayoutForDecodePlan(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
-        => this.TryParseRowLayout(page, rowStart, rowSize, hasVarColumns, out layout);
-
-    internal ColumnSlice ResolveColumnSliceForDecodePlan(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo column)
-        => this.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
 
     /// <summary>
     /// Yields <see cref="RowLocation"/>s (row index + start/size) for every live, non-overflow

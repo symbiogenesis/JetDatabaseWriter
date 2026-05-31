@@ -235,12 +235,11 @@ are worth picking up when touching the same ownership boundary.
   make the dependency explicit. Completed 2026-05-31:
   `RelationshipKeyBuilder` now owns canonical snapshot/fallback key
   normalization directly, and `IndexHelpers` keeps only encoded seek-key work.
-- [ ] Normalize the `AccessBase` row decode-plan adapters.
-  `TryParseRowLayoutForDecodePlan` and `ResolveColumnSliceForDecodePlan` exist
-  only to expose private row-layout primitives to `RowDecodePlan`. Either make
-  the underlying row-layout operations the shared internal API or move enough
-  row-layout ownership into the decode-plan path to remove the suffix-specific
-  forwarding methods.
+- [x] Normalize the `AccessBase` row decode-plan adapters. Completed
+  2026-05-31: `TryParseRowLayout` and `ResolveColumnSlice` are now the
+  shared internal row-layout API for `RowDecodePlan` and writer-side row
+  helpers, so the decode-plan-only `TryParseRowLayoutForDecodePlan` and
+  `ResolveColumnSliceForDecodePlan` forwarders were deleted.
 - [ ] Inline pure long-value one-liners when nearby code is already changing.
   `LongValueEncoder.WrapInlineLongValue` is a pass-through to
   `LongValueStore.WrapInlineLongValue`; `AccessWriter.ForceEncodeMemoAsLvalAsync`

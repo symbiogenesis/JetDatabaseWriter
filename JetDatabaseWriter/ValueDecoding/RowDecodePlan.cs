@@ -54,7 +54,7 @@ internal sealed class RowDecodePlan
         int rowSize,
         AccessBase.RowLayout layout,
         ColumnInfo column)
-        => source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+        => source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
 
     internal bool TryDecodeDirect<T>(
         AccessReader source,
@@ -189,7 +189,7 @@ internal sealed class RowDecodePlan
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo column = this.columns[columnIndex];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             result[columnIndex] = await this.DecodeStringValueAsync(
                 source,
                 page,
@@ -227,7 +227,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnIndex];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             buffer[columnIndex] = this.DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -255,7 +255,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnOrdinal];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             switch (slice.Kind)
             {
                 case AccessBase.ColumnSliceKind.Bool:
@@ -314,7 +314,7 @@ internal sealed class RowDecodePlan
         }
 
         bool effectiveHasVarColumns = this.hasVarColumns || (this.hasDeletedColumns && rawNumCols > this.columns.Count);
-        return source.TryParseRowLayoutForDecodePlan(page, rowStart, rowSize, effectiveHasVarColumns, out layout);
+        return source.TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarColumns, out layout);
     }
 
     private async ValueTask<string> DecodeStringValueAsync(
