@@ -1,21 +1,22 @@
 # Architecture Simplification
 
-Status: active scouting note plus completed decision record
-Date: 2026-05-30
+Status: complete; retained as a historical decision record
+Opened: 2026-05-30
+Closed: 2026-05-31
 
-This note keeps the simplification roadmap in one place. The active candidates
-below are opportunities that still look large enough to matter. The completed
-outcomes record the high-impact backlog that already closed, so future work does
-not reopen settled architecture threads or mistake historical implementation
-notes for active backlog.
+This note is closed. It records the completed simplification sweep, the outcomes
+that should be preserved, and the evaluated ideas that should not be reopened
+without new evidence. There are no active high-payoff or lower-payoff
+simplification candidates in this document.
 
 The goal is not formatting, file splitting, or abstraction for its own sake. A
 candidate belongs here only if it can plausibly delete or consolidate meaningful
 code while preserving performance, readability, Access/DAO compatibility, and
 the current public API shape.
 
-For similar future work, treat each item as architecture work: start with
-characterization tests and benchmarks, then refactor behind existing public APIs.
+For any future simplification work, start a new note or decision record. Treat
+each item as architecture work: start with characterization tests and benchmarks,
+then refactor behind existing public APIs.
 
 ## Selection criteria
 
@@ -28,18 +29,30 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 - Prefer helpers that clarify ownership boundaries already present in the
   codebase.
 
-## Active candidates
+## Closeout state
 
 The numeric payload encoding, LVAL row-location, and text linked-table
-enumeration candidates are now recorded under completed outcomes. No high-payoff
-or lower-payoff active simplification candidate is currently open.
+enumeration candidates are now recorded under completed outcomes. The earlier
+facade / adapter cleanup queue is also closed. No active simplification backlog
+remains here.
 
-### Not recommended as pure wins right now
+### Not Recommended As Pure Wins
 
-- **Text index encoder strategy rewrite:** collation encoding is byte-level
-  compatibility work with a history of fixture-driven edge cases. A strategy
-  simplification may exist, but it should begin with byte-for-byte
-  characterization over Access-authored fixtures and DAO-generated samples.
+- **Text index encoder strategy rewrite:** evaluated 2026-05-31 and not
+  recommended. The General and General-Legacy encoders already share
+  `EncodeWithTables` in
+  [../../JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs](../../JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs),
+  so the obvious strategy collapse has already shipped. The remaining variation
+  is intentional: General 97 in
+  [../../JetDatabaseWriter/Indexes/Collation/General97TextIndexEncoder.cs](../../JetDatabaseWriter/Indexes/Collation/General97TextIndexEncoder.cs)
+  is a structurally different state machine (no END_TEXT framing, nibble-packed
+  extras, sparse extended-char remap), the `CharHandler` subclass hierarchy
+  maps 1:1 to Jackcess code-table prefixes (`X`/`S`/`I`/`U`/`P`/`Z`/`G`) and
+  preserves upstream-port traceability for fixture-driven bug fixes, and the
+  V2010 long-row suffix file
+  [../../JetDatabaseWriter/Indexes/Collation/GeneralTextIndexEncoder.V2010LongRowSuffix.cs](../../JetDatabaseWriter/Indexes/Collation/GeneralTextIndexEncoder.V2010LongRowSuffix.cs)
+  is reverse-engineered data tables, not code that simplifies. Reopen only with
+  fixture-driven byte-exact evidence that a specific collapse pays off.
 - **Generic page builder abstraction:** TDEF pages, data pages, index leaves,
   index intermediates, LVAL pages, and CFB sectors have different headers,
   trailers, ownership rules, and validation contracts. A generic builder would
@@ -52,8 +65,8 @@ or lower-payoff active simplification candidate is currently open.
   Further changes should be motivated by specific performance data or bug fixes,
   not another broad pass over row decoding.
 
-Suggested order: treat any future lower-payoff candidates as opportunistic
-follow-ups when related work is already in progress.
+Treat any future lower-payoff ideas as new, opportunistic work when related code
+is already changing, not as carry-over from this closed roadmap.
 
 ## Completed outcomes
 
