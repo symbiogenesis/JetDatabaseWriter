@@ -26,13 +26,10 @@ internal static class DirectRowDecoderBuilder
     private const BindingFlags StaticNonPublic = BindingFlags.Static | BindingFlags.NonPublic;
 
     private static readonly MethodInfo TryParseRowLayoutMethod =
-        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.TryParseRowLayoutForDirectDecode), InstanceNonPublic);
+        GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.TryParseLayoutForDirectDecode), InstanceNonPublic);
 
     private static readonly MethodInfo ResolveColumnSliceMethod =
-        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.ResolveColumnSliceForDirectDecode), InstanceNonPublic);
-
-    private static readonly MethodInfo ReadRawNumColsMethod =
-        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.ReadRawNumCols), InstanceNonPublic);
+        GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ResolveColumnSliceForDirectDecode), StaticNonPublic);
 
     private static readonly MethodInfo DecodeTextMethod =
         GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.DecodeTextSliceForDirectDecode), InstanceNonPublic);
@@ -42,9 +39,6 @@ internal static class DirectRowDecoderBuilder
 
     private static readonly MethodInfo ReadDateTimeExtendedMethod =
         GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeExtendedAt), StaticNonPublic);
-
-    private static readonly PropertyInfo NumColsFieldSizeProp =
-        GetRequiredProperty(typeof(AccessReader), nameof(AccessReader.NumColsFieldSize), InstanceNonPublic);
 
     /// <summary>
     /// Builds a direct decoder for <typeparamref name="T"/> bound against
@@ -116,10 +110,10 @@ internal static class DirectRowDecoderBuilder
         where T : class, new()
     {
         ParameterExpression readerParam = Expression.Parameter(typeof(AccessReader), "reader");
+        ParameterExpression decodePlanParam = Expression.Parameter(typeof(RowDecodePlan), "decodePlan");
         ParameterExpression pageParam = Expression.Parameter(typeof(byte[]), "page");
         ParameterExpression rowStartParam = Expression.Parameter(typeof(int), "rowStart");
         ParameterExpression rowSizeParam = Expression.Parameter(typeof(int), "rowSize");
-        ParameterExpression hasVarParam = Expression.Parameter(typeof(bool), "hasVarColumns");
         ParameterExpression targetParam = Expression.Parameter(typeof(T), "target");
 
         ParameterExpression layoutLocal = Expression.Variable(typeof(AccessBase.RowLayout), "layout");
@@ -128,30 +122,16 @@ internal static class DirectRowDecoderBuilder
 
         var statements = new List<Expression>(8 + (bound.Count * 3))
         {
-            // if (rowSize < reader.NumColsFieldSize) return false;
-            Expression.IfThen(
-            Expression.LessThan(
-                rowSizeParam,
-                Expression.Property(readerParam, NumColsFieldSizeProp)),
-            Expression.Return(returnLabel, Expression.Constant(false))),
-
-            // if (reader.ReadRawNumCols(page, rowStart) == 0) return false;
-            Expression.IfThen(
-            Expression.Equal(
-                Expression.Call(readerParam, ReadRawNumColsMethod, pageParam, rowStartParam),
-                Expression.Constant(0)),
-            Expression.Return(returnLabel, Expression.Constant(false))),
-
-            // if (!reader.TryParseRowLayoutForDirectDecode(page, rowStart, rowSize, hasVarColumns, out layout))
+            // if (!decodePlan.TryParseLayoutForDirectDecode(reader, page, rowStart, rowSize, out layout))
             //     return false;
             Expression.IfThen(
             Expression.Not(Expression.Call(
-                readerParam,
+                decodePlanParam,
                 TryParseRowLayoutMethod,
+                readerParam,
                 pageParam,
                 rowStartParam,
                 rowSizeParam,
-                hasVarParam,
                 layoutLocal)),
             Expression.Return(returnLabel, Expression.Constant(false))),
         };
@@ -166,12 +146,12 @@ internal static class DirectRowDecoderBuilder
             ColumnInfo col = entry.Col;
             ConstantExpression colExpr = Expression.Constant(col, typeof(ColumnInfo));
 
-            // slice = reader.ResolveColumnSliceForDirectDecode(page, rowStart, rowSize, layout, col);
+            // slice = decodePlan.ResolveColumnSliceForDirectDecode(reader, page, rowStart, rowSize, layout, col);
             statements.Add(Expression.Assign(
                 sliceLocal,
                 Expression.Call(
-                    readerParam,
                     ResolveColumnSliceMethod,
+                    readerParam,
                     pageParam,
                     rowStartParam,
                     rowSizeParam,
@@ -226,10 +206,10 @@ internal static class DirectRowDecoderBuilder
         return Expression.Lambda<DirectRowDecoder<T>>(
             body,
             readerParam,
+            decodePlanParam,
             pageParam,
             rowStartParam,
             rowSizeParam,
-            hasVarParam,
             targetParam).Compile();
     }
 
@@ -292,9 +272,6 @@ internal static class DirectRowDecoderBuilder
     private static MethodInfo GetRequiredMethod(Type declaringType, string name, BindingFlags bindingAttr) =>
         declaringType.GetMethod(name, bindingAttr) ?? throw new MissingMethodException(declaringType.FullName ?? declaringType.Name, name);
 
-    private static PropertyInfo GetRequiredProperty(Type declaringType, string name, BindingFlags bindingAttr) =>
-        declaringType.GetProperty(name, bindingAttr) ?? throw new MissingMemberException(declaringType.FullName ?? declaringType.Name, name);
-
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)
     {
         if (colType is OleType or MemoType or AttachmentType or ComplexType)
@@ -314,10 +291,10 @@ internal static class DirectRowDecoderBuilder
 /// </summary>
 /// <typeparam name="T">The target row type decoded into by the delegate.</typeparam>
 /// <param name="reader">The reader.</param>
+/// <param name="decodePlan">The decode plan.</param>
 /// <param name="page">The page bytes.</param>
 /// <param name="rowStart">The row start.</param>
 /// <param name="rowSize">The row size.</param>
-/// <param name="hasVarColumns">A value indicating whether has var columns.</param>
 /// <param name="target">The target.</param>
 /// <returns>
 /// <see langword="true"/> when the row was decoded; <see langword="false"/>
@@ -325,8 +302,8 @@ internal static class DirectRowDecoderBuilder
 /// </returns>
 internal delegate bool DirectRowDecoder<T>(
     AccessReader reader,
+    RowDecodePlan decodePlan,
     byte[] page,
     int rowStart,
     int rowSize,
-    bool hasVarColumns,
     T target);

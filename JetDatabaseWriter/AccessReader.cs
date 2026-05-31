@@ -16,7 +16,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
@@ -343,12 +342,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
 
             await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await foreach (string[] row in this.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in this.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
@@ -773,8 +773,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         long rowCount = 0;
-        bool hasVarColumns = td.HasVarColumns;
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, this.strictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
@@ -788,7 +788,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 T target = new();
-                if (!directDecoder(this, scanPage.Page, rb.RowStart, rb.RowSize, hasVarColumns, target))
+                if (!decodePlan.TryDecodeDirect(this, scanPage.Page, rb.RowStart, rb.RowSize, directDecoder, target))
                 {
                     continue;
                 }
@@ -906,12 +906,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         (CatalogEntry? entry, TableDef? td) = resolved.Value;
         long rowCount = 0;
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            await foreach (string[] row in this.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in this.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
                 rowCount++;
@@ -1773,17 +1774,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         var items = new List<T>();
-        bool hasVarCols = false;
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            if (!td.Columns[i].IsFixed)
-            {
-                hasVarCols = true;
-                break;
-            }
-        }
-
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, this.strictParsing);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns;
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1792,16 +1785,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                object[]? row = await this.CrackMappedRowAsync(
-                    scanPage.Page,
-                    rb.RowStart,
-                    rb.RowSize,
-                    td,
-                    hasVarCols,
-                    cancellationToken).ConfigureAwait(false);
+                object?[]? row = await this.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
                     continue;
+                }
+
+                if (needsHyperlinkPass)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
                 }
 
                 items.Add(factory(row));
@@ -1833,17 +1825,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         Func<object?[], T> factory = RowMapper<T>.Build(headers, projectedSourceTypes);
         var items = new List<T>();
-        bool hasVarCols = false;
-        for (int i = 0; i < td.Columns.Count; i++)
+        bool[] wantedColumns = new bool[td.Columns.Count];
+        int[] projectedOrdinals = new int[projectedColumns.Count];
+        for (int i = 0; i < projectedColumns.Count; i++)
         {
-            if (!td.Columns[i].IsFixed)
+            int ordinal = td.Columns.IndexOf(projectedColumns[i].Column);
+            if (ordinal < 0)
             {
-                hasVarCols = true;
-                break;
+                return items;
             }
+
+            projectedOrdinals[i] = ordinal;
+            wantedColumns[ordinal] = true;
         }
 
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, this.strictParsing);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns && HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns);
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1852,17 +1850,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                object[]? projectedRow = await this.CrackProjectedRowAsync(
-                    scanPage.Page,
-                    rb.RowStart,
-                    rb.RowSize,
-                    td,
-                    projectedColumns,
-                    hasVarCols,
-                    cancellationToken).ConfigureAwait(false);
-                if (projectedRow == null)
+                object?[]? row = await this.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row == null)
                 {
                     continue;
+                }
+
+                if (needsHyperlinkPass)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
+                }
+
+                object?[] projectedRow = new object?[projectedOrdinals.Length];
+                for (int i = 0; i < projectedOrdinals.Length; i++)
+                {
+                    projectedRow[i] = row[projectedOrdinals[i]];
                 }
 
                 items.Add(factory(projectedRow));
@@ -1874,198 +1876,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return items;
-    }
-
-    private async ValueTask<object[]?> CrackMappedRowAsync(
-        byte[] page,
-        int rowStart,
-        int rowSize,
-        TableDef td,
-        bool hasVarCols,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (rowSize < this.RowFields.NumCols)
-        {
-            return null;
-        }
-
-        int rawNumCols = this.ReadRowColumnCount(page, rowStart);
-        if (rawNumCols == 0)
-        {
-            return null;
-        }
-
-        // Stale rows from before a column deletion carry a higher rawNumCols
-        // than the current schema. The surviving columns' absolute offsets
-        // (ColNum, FixedOff, VarIdx) are stable across deletions, so
-        // ResolveColumnSlice can decode them correctly. Force var-area parsing
-        // because we don't know whether a deleted column was variable-length.
-        bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
-
-        if (!this.TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
-        {
-            return null;
-        }
-
-        object[] values = new object[td.Columns.Count];
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ColumnInfo col = td.Columns[i];
-            ColumnSlice slice = this.ResolveColumnSlice(page, rowStart, rowSize, layout, col);
-            values[i] = await this.ReadColumnValueAsync(page, rowStart, slice, col, cancellationToken).ConfigureAwait(false);
-        }
-
-        return values;
-    }
-
-    private async ValueTask<object[]?> CrackProjectedRowAsync(
-        byte[] page,
-        int rowStart,
-        int rowSize,
-        TableDef td,
-        List<(string Name, ColumnInfo Column)> projectedColumns,
-        bool hasVarCols,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (rowSize < this.RowFields.NumCols)
-        {
-            return null;
-        }
-
-        int rawNumCols = this.ReadRowColumnCount(page, rowStart);
-        if (rawNumCols == 0)
-        {
-            return null;
-        }
-
-        // Stale rows: force var-area parsing when deleted-column gaps exist.
-        bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
-
-        if (!this.TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
-        {
-            return null;
-        }
-
-        object[] values = new object[projectedColumns.Count];
-        for (int i = 0; i < projectedColumns.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ColumnInfo col = projectedColumns[i].Column;
-            ColumnSlice slice = this.ResolveColumnSlice(page, rowStart, rowSize, layout, col);
-            string rawValue = slice.Kind switch
-            {
-                ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
-                ColumnSliceKind.Null => string.Empty,
-                ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
-                ColumnSliceKind.Var => await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
-                _ => string.Empty,
-            };
-
-            values[i] = TypedValueParser.ParseValue(rawValue, ResolveClrType(col), this.strictParsing);
-        }
-
-        return values;
-    }
-
-    private async ValueTask<object> ReadColumnValueAsync(
-        byte[] page,
-        int rowStart,
-        ColumnSlice slice,
-        ColumnInfo col,
-        CancellationToken cancellationToken) => slice.Kind switch
-        {
-            ColumnSliceKind.Bool => slice.BoolValue,
-            ColumnSliceKind.Null => DBNull.Value,
-            ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed => this.ParseColumnValue(ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true), col),
-            ColumnSliceKind.Var => await this.ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
-            _ => DBNull.Value,
-        };
-
-    private object ParseColumnValue(string rawValue, ColumnInfo col) =>
-        TypedValueParser.ParseValue(rawValue, ResolveClrType(col), this.strictParsing);
-
-    private async ValueTask<object> ReadVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
-    {
-        if (len <= 0)
-        {
-            return DBNull.Value;
-        }
-
-        if (col.IsCalculated)
-        {
-            return await this.ReadCalculatedVarValueAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
-        }
-
-        Type targetType = ResolveClrType(col);
-        if (targetType == typeof(byte[]))
-        {
-            if (col.Type is BinaryType)
-            {
-                return row.AsSpan(start, len).ToArray();
-            }
-            else if (col.Type is OleType)
-            {
-                return await this.longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        string rawValue = await this.ReadVarAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
-        return TypedValueParser.ParseValue(rawValue, targetType, this.strictParsing);
-    }
-
-    private async ValueTask<object> ReadCalculatedVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
-    {
-        switch (col.Type)
-        {
-            case TextType:
-                return this.DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-            case BinaryType:
-                return CalculatedColumnUtil.Unwrap(row.AsSpan(start, len));
-            case MemoType:
-            {
-                byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                return this.longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-            }
-
-            case OleType:
-            {
-                byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                return DecodeOleValueBytes(payload, 0, payload.Length);
-            }
-
-            case BooleanType:
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case MoneyType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case GuidType:
-            case NumericType:
-            case AttachmentType:
-            case ComplexType:
-            case BigIntType:
-            case DateTimeExtendedType:
-                return CalculatedColumnUtil.ReadPayloadTyped(
-                    CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                    ResolveValueType(col),
-                    this.strictParsing);
-
-            default:
-                throw new InvalidOperationException($"Calculated column of type {GetTypeDisplayName(col.Type)} is unknown.");
-        }
     }
 
     /// <summary>
@@ -2107,6 +1917,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
 
             foreach (long pageNumber in pageNumbers)
             {
@@ -2114,7 +1925,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await this.ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
@@ -3191,7 +3002,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="page">The data page to enumerate rows from.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    private async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, CancellationToken cancellationToken)
+    {
+        var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
+        return this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken);
+    }
+
+    private async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         foreach (RowBound rb in this.GetLiveRowBoundsCached(pageNumber, page))
         {
@@ -3202,197 +3019,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            string[]? values = await this.CrackRowAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+            string[]? values = await decodePlan.TryDecodeStringRowAsync(this, page, rb.RowStart, rb.RowSize, this.longValueDecoder, cancellationToken).ConfigureAwait(false);
             if (values != null)
             {
                 yield return values;
             }
         }
     }
-
-    private async ValueTask<string[]?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (rowSize < this.RowFields.NumCols)
-        {
-            return null;
-        }
-
-        // Pre-parse numCols just for the schema-evolution sanity check; the full
-        // layout parse repeats this read but the cost is negligible.
-        int rawNumCols = this.ReadRowColumnCount(page, rowStart);
-        if (rawNumCols == 0)
-        {
-            return null;
-        }
-
-        // Tables with zero variable-length columns omit the var-length
-        // metadata entirely (no varLen byte, no jump bytes, no var-offset
-        // table, no EOD marker). Detect that and let the layout parser skip
-        // the var-area read. When deleted-column gaps exist, force var-area
-        // parsing because we don't know if a deleted column was var-length.
-        bool hasVarCols = td.HasVarColumns || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
-
-        if (!this.TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
-        {
-            return null;
-        }
-
-        string[] result = new string[td.Columns.Count];
-
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ColumnInfo col = td.Columns[i];
-            ColumnSlice slice = this.ResolveColumnSlice(page, rowStart, rowSize, layout, col);
-
-            result[i] = slice.Kind switch
-            {
-                ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
-                ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
-                ColumnSliceKind.Var => await this.ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
-                _ => string.Empty,
-            };
-        }
-
-        return result;
-    }
-
-    private async ValueTask<string> ReadVarAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
-    {
-        if (len <= 0)
-        {
-            return string.Empty;
-        }
-
-        if (col.IsCalculated)
-        {
-            return await this.ReadCalculatedVarAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
-        }
-
-        try
-        {
-            switch (col.Type)
-            {
-                case TextType:
-                    return this.DecodeTextForFormat(row, start, len);
-
-                case BinaryType:
-                    return ToHexStringNoSeparator(row.AsSpan(start, len));
-
-                case MemoType:
-                case OleType:
-                    return await this.longValueDecoder.ReadLongValueAsync(row, start, len, col.Type == OleType, cancellationToken).ConfigureAwait(false);
-
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case MoneyType:
-                case BigIntType:
-                case NumericType:
-                case GuidType:
-                case DateTimeExtendedType:
-                case ComplexType:
-                case AttachmentType:
-                    // Delegate fixed-width primitive and complex-id formatting to the shared
-                    // JetTypeInfo.ReadFixedString helper to avoid duplicating
-                    // the per-type Invariant-culture formatting block. The
-                    // length guard mirrors the historical behaviour (return
-                    // empty when the variable-length slice is too short to
-                    // contain the type's fixed payload) — JetTypeInfo gives
-                    // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
-                    // since they have no fixed-area size of their own.
-                    int required = col.Type is ComplexType or AttachmentType ? 4 : GetFixedSize(col.Type);
-                    return len >= required ? ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
-                case BooleanType:
-                    return string.Empty;
-                default:
-                    throw new InvalidOperationException($"Column '{col.Name}' has unknown type {GetTypeDisplayName(col.Type)}.");
-            }
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-    }
-
-    private async ValueTask<string> ReadCalculatedVarAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
-    {
-        try
-        {
-            switch (col.Type)
-            {
-                case TextType:
-                    return this.DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-                case BinaryType:
-                    return ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
-                case MemoType:
-                {
-                    byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return this.longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-                }
-
-                case OleType:
-                {
-                    byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return this.longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
-                }
-
-                case BooleanType:
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case MoneyType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case GuidType:
-                case NumericType:
-                case AttachmentType:
-                case ComplexType:
-                case BigIntType:
-                case DateTimeExtendedType:
-                    return CalculatedColumnUtil.ReadPayloadString(
-                        CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                        ResolveValueType(col),
-                        this.strictParsing);
-
-                default:
-                    throw new InvalidOperationException($"Calculated column of type {GetTypeDisplayName(col.Type)} is unknown.");
-            }
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-    }
-
-    private string DecodeCalculatedTextPayload(byte[] payload)
-        => this.DecodeTextForFormat(payload, 0, payload.Length);
 
     // ── Typed row cracker ────────────────────────────────────
     //
@@ -3576,46 +3209,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // ── Direct page → T decoder support ───────────────────────────────
     //
     // The "direct decoder" eliminates the per-row object?[] buffer and
-    // the box/unbox round-trip on every primitive column. RowMapper<T>
-    // compiles a delegate that reads typed values straight out of the
-    // page bytes and assigns them to T's properties; only the columns
-    // the mapper actually binds are decoded (the projection mask is
-    // baked in). Callers gate the fast path with
-    // DirectRowDecoderBuilder.TryBuild which inspects each bound
-    // column and returns null when any column requires the slow path
-    // (Memo/Ole LVAL chain, Complex/Attachment, Hyperlink-typed
-    // properties).
-    //
-    // The compiled delegate calls back into a small set of internal
-    // helpers below for the reader's per-instance state (format,
-    // ANSI encoding) and the row-trailer parse.
-
-    /// <summary>
-    /// Internal accessor for <see cref="AccessBase.TryParseRowLayout"/>
-    /// callable from <see cref="RowMapper{T}"/>'s
-    /// compiled direct-decoder delegate.
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    /// <param name="rowSize">The row size.</param>
-    /// <param name="hasVarColumns">A value indicating whether has var columns.</param>
-    /// <param name="layout">The layout.</param>
-    internal bool TryParseRowLayoutForDirectDecode(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
-        => this.TryParseRowLayout(page, rowStart, rowSize, hasVarColumns, out layout);
-
-    /// <summary>
-    /// Internal accessor for <see cref="AccessBase.ResolveColumnSlice"/>
-    /// callable from the compiled direct-decoder delegate. Takes
-    /// <paramref name="layout"/> by value (not <c>in</c>) so expression
-    /// trees can pass a <c>ParameterExpression</c> directly.
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    /// <param name="rowSize">The row size.</param>
-    /// <param name="layout">The layout.</param>
-    /// <param name="col">The column descriptor.</param>
-    internal ColumnSlice ResolveColumnSliceForDirectDecode(byte[] page, int rowStart, int rowSize, RowLayout layout, ColumnInfo col)
-        => this.ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+    // the box/unbox round-trip on every primitive column. RowDecodePlan
+    // still owns row-layout parsing and column-slice resolution; the
+    // compiled delegate only assigns directly decodable slices to T's
+    // properties.
 
     /// <summary>
     /// Internal text decoder used by the compiled direct-decoder delegate.
@@ -3627,22 +3224,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="len">The length in bytes.</param>
     internal string DecodeTextSliceForDirectDecode(byte[] page, int start, int len)
         => this.DecodeTextForFormat(page, start, len);
-
-    /// <summary>
-    /// Gets the minimum row size below which the row trailer parser will
-    /// reject the row outright. Used by the compiled direct-decoder
-    /// delegate's preflight check (mirrors <c>TryCrackRowSync</c>).
-    /// </summary>
-    internal int NumColsFieldSize => this.RowFields.NumCols;
-
-    /// <summary>
-    /// Internal helper for the compiled direct decoder's first-row-bytes
-    /// peek (matches the rawNumCols extraction in <c>TryCrackRowSync</c>).
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    internal int ReadRawNumCols(byte[] page, int rowStart)
-        => this.ReadRowColumnCount(page, rowStart);
 
     private readonly record struct TableScanPage(long PageNumber, byte[] Page);
 
@@ -3659,13 +3240,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await this.ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }

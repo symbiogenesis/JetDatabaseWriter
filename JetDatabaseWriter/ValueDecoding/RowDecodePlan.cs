@@ -2,6 +2,8 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
@@ -35,12 +37,34 @@ internal sealed class RowDecodePlan
     internal static RowDecodePlan CreateTyped(TableDef tableDef, bool[]? wantedColumns, bool strictParsing)
         => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing);
 
+    internal static RowDecodePlan CreateStrings(TableDef tableDef, bool strictParsing)
+        => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing);
+
     internal static RowDecodePlan CreatePartial(TableDef tableDef, int[] columnOrdinals)
     {
         Guard.NotNull(columnOrdinals, nameof(columnOrdinals));
 
         return new RowDecodePlan(tableDef, wantedColumns: null, columnOrdinals, strictParsing: true);
     }
+
+    internal static AccessBase.ColumnSlice ResolveColumnSliceForDirectDecode(
+        AccessBase source,
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        AccessBase.RowLayout layout,
+        ColumnInfo column)
+        => source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+
+    internal bool TryDecodeDirect<T>(
+        AccessReader source,
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        DirectRowDecoder<T> directDecoder,
+        T target)
+        where T : class, new()
+        => directDecoder(source, this, page, rowStart, rowSize, target);
 
     private static object DecodeLongVariableValue(
         byte[] page,
@@ -144,6 +168,41 @@ internal sealed class RowDecodePlan
         }
     }
 
+    internal async ValueTask<string[]?> TryDecodeStringRowAsync(
+        AccessBase source,
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        LongValueDecoder longValueDecoder,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!this.TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
+        {
+            return null;
+        }
+
+        string[] result = new string[this.columns.Count];
+        for (int columnIndex = 0; columnIndex < this.columns.Count; columnIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo column = this.columns[columnIndex];
+            AccessBase.ColumnSlice slice = source.ResolveColumnSliceForDecodePlan(page, rowStart, rowSize, layout, column);
+            result[columnIndex] = await this.DecodeStringValueAsync(
+                source,
+                page,
+                rowStart,
+                slice,
+                column,
+                longValueDecoder,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
     internal bool TryDecodeTypedIntoBuffer(
         AccessBase source,
         byte[] page,
@@ -227,6 +286,14 @@ internal sealed class RowDecodePlan
         return true;
     }
 
+    internal bool TryParseLayoutForDirectDecode(
+        AccessBase source,
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        out AccessBase.RowLayout layout)
+        => this.TryParseLayout(source, page, rowStart, rowSize, out layout);
+
     private bool TryParseLayout(
         AccessBase source,
         byte[] page,
@@ -248,6 +315,177 @@ internal sealed class RowDecodePlan
 
         bool effectiveHasVarColumns = this.hasVarColumns || (this.hasDeletedColumns && rawNumCols > this.columns.Count);
         return source.TryParseRowLayoutForDecodePlan(page, rowStart, rowSize, effectiveHasVarColumns, out layout);
+    }
+
+    private async ValueTask<string> DecodeStringValueAsync(
+        AccessBase source,
+        byte[] page,
+        int rowStart,
+        AccessBase.ColumnSlice slice,
+        ColumnInfo column,
+        LongValueDecoder longValueDecoder,
+        CancellationToken cancellationToken) => slice.Kind switch
+        {
+            AccessBase.ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+            AccessBase.ColumnSliceKind.Null or AccessBase.ColumnSliceKind.Empty => string.Empty,
+            AccessBase.ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, strictNumeric: true),
+            AccessBase.ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
+                source,
+                page,
+                rowStart + slice.DataStart,
+                slice.DataLen,
+                column,
+                longValueDecoder,
+                cancellationToken).ConfigureAwait(false),
+            _ => string.Empty,
+        };
+
+    private async ValueTask<string> DecodeStringVariableValueAsync(
+        AccessBase source,
+        byte[] page,
+        int start,
+        int length,
+        ColumnInfo column,
+        LongValueDecoder longValueDecoder,
+        CancellationToken cancellationToken)
+    {
+        if (length <= 0)
+        {
+            return string.Empty;
+        }
+
+        if (column.IsCalculated)
+        {
+            return await this.DecodeCalculatedStringVariableValueAsync(
+                source,
+                page,
+                start,
+                length,
+                column,
+                longValueDecoder,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            switch (column.Type)
+            {
+                case TextType:
+                    return source.DecodeTextForFormat(page, start, length);
+
+                case BinaryType:
+                    return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, length));
+
+                case MemoType:
+                case OleType:
+                    return await longValueDecoder.ReadLongValueAsync(page, start, length, column.Type == OleType, cancellationToken).ConfigureAwait(false);
+
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case MoneyType:
+                case BigIntType:
+                case NumericType:
+                case GuidType:
+                case DateTimeExtendedType:
+                case ComplexType:
+                case AttachmentType:
+                    int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                    return length >= required
+                        ? JetTypeInfo.ReadFixedString(page, start, column, required, strictNumeric: true)
+                        : string.Empty;
+
+                case BooleanType:
+                    return string.Empty;
+
+                default:
+                    throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private async ValueTask<string> DecodeCalculatedStringVariableValueAsync(
+        AccessBase source,
+        byte[] page,
+        int start,
+        int length,
+        ColumnInfo column,
+        LongValueDecoder longValueDecoder,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            switch (column.Type)
+            {
+                case TextType:
+                    byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                    return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
+                case BinaryType:
+                    return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)));
+                case MemoType:
+                {
+                    byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+                }
+
+                case OleType:
+                {
+                    byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
+                }
+
+                case BooleanType:
+                case ByteType:
+                case IntegerType:
+                case LongIntegerType:
+                case MoneyType:
+                case FloatType:
+                case DoubleType:
+                case DateTimeType:
+                case GuidType:
+                case NumericType:
+                case AttachmentType:
+                case ComplexType:
+                case BigIntType:
+                case DateTimeExtendedType:
+                    return CalculatedColumnUtil.ReadPayloadString(
+                        CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
+                        JetTypeInfo.ResolveValueType(column),
+                        this.strictParsing);
+
+                default:
+                    throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return string.Empty;
+        }
     }
 
     private object? DecodeTypedValue(

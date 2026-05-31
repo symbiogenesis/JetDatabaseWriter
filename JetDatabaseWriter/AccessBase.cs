@@ -1266,7 +1266,7 @@ public abstract class AccessBase : IAccessBase
         return result;
     }
 
-    // ── Row layout decoding (shared by AccessReader.CrackRowAsync and AccessWriter.ReadColumnValue) ────
+    // ── Row layout decoding (shared by RowDecodePlan and writer column reads) ────
 
     /// <summary>
     /// Parses the row-trailer metadata (numCols, null-mask position, var-table

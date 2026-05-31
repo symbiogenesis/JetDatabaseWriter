@@ -79,6 +79,8 @@ compatibility risk. This is the top candidate.
 
 ## 2. Replace Parallel Row Readers with a Row Decode Plan
 
+Status: completed 2026-05-30
+
 Primary files:
 
 - [../../JetDatabaseWriter/AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
@@ -97,7 +99,7 @@ Target shape:
 
 - [x] Introduce a `RowDecodePlan` built from `TableDef`, projected columns,
       strictness, and caller requirements.
-- [ ] Let the plan parse row layout once and feed specialized sinks:
+- [x] Let the plan parse row layout once and feed specialized sinks:
       string row sink, object-buffer sink, pooled object-buffer sink, direct
       POCO sink, and partial key-column sink.
 - [x] Move variable-slice typed decode decisions out of `AccessReader` and
@@ -118,6 +120,13 @@ resolution and post-processing for complex columns/hyperlinks. `RowsAsStrings()`
 and the direct POCO expression-tree decoder remain separate sinks for future
 slices.
 
+Completion 2026-05-30: `RowDecodePlan` now also owns `RowsAsStrings()` row
+materialization, feeds `DirectRowDecoderBuilder` with plan-owned row-layout
+preflight and column-slice resolution, and backs the materialized
+`ReadTable<T>` full/projection paths. `AccessReader` remains responsible for
+async LVAL sentinel resolution plus complex-column and Hyperlink
+post-processing at scan boundaries.
+
 Evidence 2026-05-27: full test suite passed (`dotnet test --project
 JetDatabaseWriter.Tests`: 3,537 passed, 3 expected skips). BenchmarkDotNet
 ShortRun was run against a clean `HEAD` worktree and then against the current
@@ -131,19 +140,33 @@ text as strings 26.75 ms vs 26.73 ms, and wide narrow projection 11.01 ms vs
 23.10 ms. MEMO/OLE submode results were faster in that ShortRun but noisy, so
 treat them as non-regression evidence rather than a claimed optimization.
 
+Evidence 2026-05-30: `dotnet build --no-restore` passed. The non-fuzz test
+task passed (`dotnet test --project JetDatabaseWriter.Tests --filter-not-trait
+Category=Fuzz --stop-on-fail on`: 3,558 passed, 2 environment skips).
+BenchmarkDotNet ShortRun was rerun with
+`dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-restore --
+--filter *AccessReaderRowDecodeBenchmarks* --job short`; affected hot-path
+means stayed neutral or better in the short run: numeric untyped 7.56 ms,
+numeric typed/direct 9.33 ms, numeric as strings 12.01 ms, text untyped
+19.63 ms, text typed/direct 21.08 ms, text as strings 20.52 ms, and wide narrow
+projection 11.39 ms. MEMO/OLE long-value submodes remain noisy in ShortRun and
+are not claimed as optimized.
+
 Guardrails:
 
-- [ ] Treat [read-performance-bottlenecks.md](read-performance-bottlenecks.md)
+- [x] Treat [read-performance-bottlenecks.md](read-performance-bottlenecks.md)
       as the current performance baseline.
-- [ ] Benchmark numeric, text-heavy, wide projection, memo, DataTable, and
+- [x] Benchmark numeric, text-heavy, wide projection, memo, DataTable, and
       direct POCO paths before and after.
-- [ ] Preserve malformed-row fallback behavior, calculated-column handling,
+- [x] Preserve malformed-row fallback behavior, calculated-column handling,
       hyperlink wrapping, complex-column post-processing, and `RowsAsStrings()`
       empty-string semantics.
 
-Likely payoff: high deletion upside if the direct decoder can become a plan
-sink instead of a separate expression-tree implementation. Medium to high
-performance risk.
+Outcome: row-layout parsing and column-slice resolution for string rows,
+typed rows, pooled buffers, direct POCO decoding, materialized POCO reads, and
+writer partial key reads now flow through `RowDecodePlan`. The remaining reader
+logic handles asynchronous long-value resolution and scan-level post-processing
+where those concerns belong.
 
 ## 3. Centralize Usage Map and Page Ownership Logic
 
@@ -279,7 +302,7 @@ package acceptability. If no dependency qualifies, leave this mostly alone.
 
 1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26.
 2. IndexBTreeEditor mutation planner: completed 2026-05-26.
-3. RowDecodePlan, gated by BenchmarkDotNet evidence.
+3. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
 4. Declarative catalog artifact planning, after index/system-table maintenance
    surfaces are cleaner.
 5. CFB dependency decision, when dependency policy is worth revisiting.
