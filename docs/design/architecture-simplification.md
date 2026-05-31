@@ -30,77 +30,12 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The strongest remaining candidates are now the insert mutation pipeline, logical
-TDEF chains, and Numeric payload encoding. The shared row walker and stale index
-leaf facade work is recorded under completed outcomes so future scouting does
+The strongest remaining candidates are now logical TDEF chains and Numeric
+payload encoding. The shared row walker, stale index leaf facade, and insert
+mutation flow work is recorded under completed outcomes so future scouting does
 not reopen those threads.
 
-### 1. Unify insert batch mutation flow
-
-Primary files:
-
-- [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
-- [../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
-- [../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs](../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs)
-- [../../JetDatabaseWriter/Schema/ConstraintRegistry.cs](../../JetDatabaseWriter/Schema/ConstraintRegistry.cs)
-- [../../JetDatabaseWriter/ValueDecoding/RowMapper.cs](../../JetDatabaseWriter/ValueDecoding/RowMapper.cs)
-
-Why this is interesting: the public row insertion paths differ mostly in how
-they convert caller input into `object[]` rows. After mapping, they run the same
-pipeline:
-
-- Apply column constraints and collect AutoNumber checkpoints.
-- Materialize pending rows so unique checks can see the whole batch.
-- Pre-check unique indexes.
-- Enforce foreign keys.
-- Insert row bytes and record row locations.
-- Augment in-memory relationship sets.
-- Maintain indexes incrementally or fall back to rebuild.
-- Update AutoNumber high-water values.
-- Roll back inserted rows and restore AutoNumber counters on failure.
-
-Both `InsertRowsAsync(string, IEnumerable<object?[]>)` and
-`InsertRowsAsync<T>(string, IEnumerable<T>)` carry this structure separately,
-and the single-row path contains a smaller version of the same mutation and
-rollback protocol.
-
-Target shape:
-
-- Introduce an internal prepared-insert-batch helper that accepts a row mapper or
-  already-normalized `object[]` rows.
-- Keep public overload validation at the overload boundary, but share the
-  mutation pipeline after rows are normalized.
-- Keep rollback behavior explicit and testable: inserted row rollback, TDEF
-  row-count adjustment, and AutoNumber restoration should remain one cohesive
-  unit.
-- Avoid hiding the ordering of constraint, FK, unique-index, row-write, and
-  index-maintenance phases behind overly generic callbacks.
-
-Likely payoff:
-
-- Moderate to high deletion in `AccessWriter`.
-- Better reliability: one rollback path to audit for duplicate-key, FK, and
-  index-maintenance failures.
-- Easier future work on bulk insert performance because there is one main insert
-  pipeline.
-
-Risks and guardrails:
-
-- Preserve AutoNumber assignment timing before unique checks.
-- Preserve FK parent-set augmentation after each successful insert.
-- Preserve current exception behavior and best-effort rollback behavior.
-- Do not allocate extra row copies in hot insert paths.
-
-Proof plan:
-
-- Run writer insert, bulk insert, unique-index, AutoNumber, FK, transaction, and
-  index-maintenance tests.
-- Add focused tests that make each phase fail and assert rows/counters/indexes
-  are left in the expected state.
-- Benchmark bulk insert with and without indexes to verify allocation and
-  throughput stay neutral or better.
-
-### 2. Make logical TDEF chains a small shared data structure
+### 1. Make logical TDEF chains a small shared data structure
 
 Primary files:
 
@@ -148,7 +83,7 @@ Proof plan:
 - Add focused tests for growing and shrinking a multi-page TDEF chain.
 - Run DAO CompactDatabase validation for relationship create, rename, and drop.
 
-### 3. Promote Numeric fixed-point payload encoding into `NumericEncoder`
+### 2. Promote Numeric fixed-point payload encoding into `NumericEncoder`
 
 Primary files:
 
@@ -209,11 +144,81 @@ current large meaningful simplification bar on their own.
   Some common source opening and row normalization is already shared. Further
   consolidation might be useful, but the likely deletion is modest.
 
-### Facade / adapter cleanup todo
+### Not recommended as pure wins right now
 
-These are lower-risk follow-ups from the 2026-05-31 facade scan. They are not
-currently large enough to displace the main active candidates above, but they
-are worth picking up when touching the same ownership boundary.
+- **Text index encoder strategy rewrite:** collation encoding is byte-level
+  compatibility work with a history of fixture-driven edge cases. A strategy
+  simplification may exist, but it should begin with byte-for-byte
+  characterization over Access-authored fixtures and DAO-generated samples.
+- **Generic page builder abstraction:** TDEF pages, data pages, index leaves,
+  index intermediates, LVAL pages, and CFB sectors have different headers,
+  trailers, ownership rules, and validation contracts. A generic builder would
+  likely add indirection without deleting much real code.
+- **Compound File dependency replacement:** the local CFB layer was already
+  reassessed and kept. Its runtime surface is narrow, internal, and tailored to
+  Office Crypto streams. Adding a dependency would trade local code for
+  supply-chain, package-size, and attack-surface risk.
+- **Row decode plan redux:** the major row-reader consolidation already landed.
+  Further changes should be motivated by specific performance data or bug fixes,
+  not another broad pass over row decoding.
+
+Suggested order:
+
+1. Extract logical TDEF chain read/write helpers.
+2. Promote Numeric fixed-point rescaling and magnitude shaping into
+   `NumericEncoder`.
+
+## Completed outcomes
+
+### Completed insert batch mutation flow
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
+- [../../JetDatabaseWriter/Schema/ConstraintRegistry.cs](../../JetDatabaseWriter/Schema/ConstraintRegistry.cs)
+- [../../JetDatabaseWriter.Tests/Indexes/IndexPreWriteUniqueEnforcementTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexPreWriteUniqueEnforcementTests.cs)
+
+Object-array single inserts, object-array bulk inserts, typed single inserts,
+and typed bulk inserts now share one mapped-row preparation path and one
+prepared-batch mutation path. `AccessWriter` keeps overload validation at the
+public boundary, maps caller input to `object[]` rows through
+`InsertMappedRowsAfterValidationAsync`, applies constraints and AutoNumber
+assignment in `PrepareInsertBatchAsync`, then runs the single mutation protocol
+in `InsertPreparedBatchAsync`: pre-write unique-index checks, FK checks,
+data-row writes, FK parent-set augmentation, incremental index maintenance with
+rebuild fallback, AutoNumber TDEF high-water updates, inserted-row rollback,
+TDEF row-count adjustment, and AutoNumber checkpoint restoration.
+
+The refactor also fixed batch AutoNumber restoration. `ConstraintRegistry` now
+restores checkpoints in reverse order so a rejected multi-row batch that
+advanced the same AutoNumber counter several times returns to the earliest
+checkpoint. A focused typed-batch duplicate-key test covers that path.
+
+Evidence at closeout: the focused
+`JetDatabaseWriter.Tests.Indexes.IndexPreWriteUniqueEnforcementTests` class
+passed with 10 succeeded, the insert-adjacent writer/constraint/AutoNumber/FK/
+transaction/index-maintenance slice passed with 375 succeeded, and the full
+non-fuzz suite passed with 3,562 succeeded and 2 environment skips. A focused
+BenchmarkDotNet ShortRun for indexed `AccessWriterBenchmarks.InsertRows_Batch`
+reported 338.7 ms / 45.69 MB allocated for 10 rows and 319.0 ms / 46.33 MB
+allocated for 100 rows.
+
+Preserve these guardrails: keep AutoNumber assignment before unique-index
+checks, keep FK parent-set augmentation after each successful row write, keep
+single and bulk overloads on the shared prepared-batch mutation path, restore
+AutoNumber checkpoints in reverse order, and avoid adding extra row copies in
+the hot insert paths.
+
+
+### Completed facade / adapter cleanup
+
+Status: completed 2026-05-31.
+
+The lower-risk follow-ups from the 2026-05-31 facade scan are closed. Future
+work touching the same ownership boundaries should preserve the outcomes below
+rather than treating this as an active cleanup queue.
 
 - [x] Delete the stale index leaf facade. `IndexLeafIncremental` is gone; page
   reads now route to `IndexPageCodec`, null-on-overflow leaf rebuilds live on
@@ -254,33 +259,6 @@ are worth picking up when touching the same ownership boundary.
   `RelationshipManager`, `ComplexColumnManager`, transaction lifecycle, and
   encryption services rather than exposing those collaborators or deleting the
   public API surface.
-
-### Not recommended as pure wins right now
-
-- **Text index encoder strategy rewrite:** collation encoding is byte-level
-  compatibility work with a history of fixture-driven edge cases. A strategy
-  simplification may exist, but it should begin with byte-for-byte
-  characterization over Access-authored fixtures and DAO-generated samples.
-- **Generic page builder abstraction:** TDEF pages, data pages, index leaves,
-  index intermediates, LVAL pages, and CFB sectors have different headers,
-  trailers, ownership rules, and validation contracts. A generic builder would
-  likely add indirection without deleting much real code.
-- **Compound File dependency replacement:** the local CFB layer was already
-  reassessed and kept. Its runtime surface is narrow, internal, and tailored to
-  Office Crypto streams. Adding a dependency would trade local code for
-  supply-chain, package-size, and attack-surface risk.
-- **Row decode plan redux:** the major row-reader consolidation already landed.
-  Further changes should be motivated by specific performance data or bug fixes,
-  not another broad pass over row decoding.
-
-Suggested order:
-
-1. Unify insert batch mutation flow.
-2. Extract logical TDEF chain read/write helpers.
-3. Promote Numeric fixed-point rescaling and magnitude shaping into
-   `NumericEncoder`.
-
-## Completed outcomes
 
 ### 1. Shared index cursor and B-tree editor
 
@@ -523,6 +501,7 @@ framework, package size, and license review if this decision is reopened.
 7. Shared table row walker and owned-page locator: completed 2026-05-30.
 8. Stale index leaf facade deletion: completed 2026-05-31.
 9. Index leaf builder reassessment and deletion: completed 2026-05-31.
+10. Insert batch mutation flow: completed 2026-05-31.
 
 ## Non-goals
 

@@ -176,6 +176,40 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     }
 
     [Fact]
+    public async Task GenericBatchInsert_IntraBatchDuplicate_DoesNotConsumeAutoIncrement()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "T",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
+                new ColumnDefinition("Tag", typeof(int)),
+            ],
+            [new IndexDefinition("UQ_Tag", "Tag") { IsUnique = true }],
+            this.ct);
+
+        UniqueTagRow[] duplicateBatch =
+        [
+            new() { Tag = 100 },
+            new() { Tag = 200 },
+            new() { Tag = 100 },
+        ];
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowsAsync("T", duplicateBatch, this.ct));
+
+        await writer.InsertRowAsync("T", new UniqueTagRow { Tag = 300 }, this.ct);
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(1, row["Id"]);
+        Assert.Equal(300, row["Tag"]);
+    }
+
+    [Fact]
     public async Task UpdateRows_CreatesDuplicate_ThrowsAndLeavesTableUnchanged()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
@@ -292,6 +326,11 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     }
 
     // ── helpers (mirrors IndexBulkInsertStressTests / IndexWriterAdvancedTests) ───
+
+    private sealed class UniqueTagRow
+    {
+        public int Tag { get; set; }
+    }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {

@@ -1078,12 +1078,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(values, nameof(values));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
-
-        await this.InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(values),
+            static (_, row) => row,
+            nameof(values),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -1096,88 +1096,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(rows, nameof(rows));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
-
-        // Track every row written so far + every auto-counter advance so we can
-        // roll the entire batch back if index maintenance rejects the final
-        // change set after the data rows have been written.
-        var batchLocations = new List<RowLocation>();
-        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
-        List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
-        int inserted = 0;
-
-        // Materialize the batch so the pre-write unique-index check sees
-        // every pending row at once (it must catch intra-batch duplicates).
-        // ApplyConstraintsAsync is run up front for the same reason —
-        // auto-increment values must be assigned before the unique check.
-        var pendingRows = new List<object[]>();
-        try
-        {
-            foreach (object?[] row in rows)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                Guard.NotNull(row, nameof(rows));
-                object[] normalizedRow = NormalizePublicRow(row, nameof(rows));
-                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
-                    await this.Constraints.ApplyAsync(tableName, tableDef, normalizedRow, cancellationToken).ConfigureAwait(false);
-                if (rowCp != null)
-                {
-                    (batchAutoCheckpoints ??= []).AddRange(rowCp);
-                }
-
-                pendingRows.Add(normalizedRow);
-            }
-
-            // Pre-write unique-index enforcement.
-            await this.uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
-
-            foreach (object[] row in pendingRows)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (fkCtx != null)
-                {
-                    await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
-                }
-
-                RowLocation loc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
-                batchLocations.Add(loc);
-                batchHintRows.Add((loc, row));
-                if (fkCtx != null)
-                {
-                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkCtx);
-                }
-
-                inserted++;
-            }
-
-            if (inserted > 0)
-            {
-                bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
-                    entry.TDefPage,
-                    tableDef,
-                    batchHintRows,
-                    deletedRows: null,
-                    cancellationToken).ConfigureAwait(false);
-                if (!incremental)
-                {
-                    await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-                }
-
-                await this.UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch
-        {
-            await this.RollbackInsertedRowsAsync(entry.TDefPage, batchLocations, cancellationToken).ConfigureAwait(false);
-            ConstraintRegistry.RestoreAutoCounters(batchAutoCheckpoints);
-            throw;
-        }
-
-        return inserted;
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            rows,
+            static (_, row) => NormalizePublicRow(row, nameof(rows)),
+            nameof(rows),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -1192,14 +1116,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(item, nameof(item));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
-
-        IReadOnlyList<FkRelationship> relsT = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
-
-        await this.InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, mappedRow, fkCtxT, cancellationToken).ConfigureAwait(false);
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(item),
+            static (tableDef, row) => RowMapper<T>.ToRow(tableDef, row),
+            nameof(item),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -1214,83 +1136,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(items, nameof(items));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
-
-        var batchLocations = new List<RowLocation>();
-        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
-        List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
-        int inserted = 0;
-
-        // Materialize the batch (see InsertRowsAsync(object[]) above) so the
-        // pre-write unique check sees every pending row at once.
-        var pendingRows = new List<object[]>();
-        try
-        {
-            foreach (T item in items)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                Guard.NotNull(item, nameof(items));
-                object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
-                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
-                    await this.Constraints.ApplyAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
-                if (rowCp != null)
-                {
-                    (batchAutoCheckpoints ??= []).AddRange(rowCp);
-                }
-
-                pendingRows.Add(mappedRow);
-            }
-
-            // Pre-write unique-index enforcement.
-            await this.uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
-
-            foreach (object[] mappedRow in pendingRows)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (fkCtx != null)
-                {
-                    await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
-                }
-
-                RowLocation loc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
-                batchLocations.Add(loc);
-                batchHintRows.Add((loc, mappedRow));
-                if (fkCtx != null)
-                {
-                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtx);
-                }
-
-                inserted++;
-            }
-
-            if (inserted > 0)
-            {
-                bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
-                    entry.TDefPage,
-                    tableDef,
-                    batchHintRows,
-                    deletedRows: null,
-                    cancellationToken).ConfigureAwait(false);
-                if (!incremental)
-                {
-                    await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-                }
-
-                await this.UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch
-        {
-            await this.RollbackInsertedRowsAsync(entry.TDefPage, batchLocations, cancellationToken).ConfigureAwait(false);
-            ConstraintRegistry.RestoreAutoCounters(batchAutoCheckpoints);
-            throw;
-        }
-
-        return inserted;
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            items,
+            static (tableDef, item) => RowMapper<T>.ToRow(tableDef, item),
+            nameof(items),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -2109,98 +1960,152 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return normalized;
     }
 
-    /// <summary>
-    /// Single-row insert with full constraint + data-page + index-maintenance
-    /// rollback on failure. Used by both <see cref="InsertRowAsync(string, object[], CancellationToken)"/>
-    /// and the typed <see cref="InsertRowAsync{T}"/> overload.
-    /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="values">The values.</param>
-    /// <param name="fkCtx">The foreign key ctx.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask InsertRowCoreAsync(
+    private static IEnumerable<TItem> SingleItem<TItem>(TItem item)
+        where TItem : class
+    {
+        yield return item;
+    }
+
+    private async ValueTask<int> InsertMappedRowsAfterValidationAsync<TItem>(
+        string tableName,
+        IEnumerable<TItem> items,
+        Func<TableDef, TItem, object[]> mapRow,
+        string itemParamName,
+        CancellationToken cancellationToken)
+        where TItem : class
+    {
+        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> relationships = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
+
+        (List<object[]> pendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints) =
+            await this.PrepareInsertBatchAsync(
+                tableName,
+                tableDef,
+                items,
+                mapRow,
+                itemParamName,
+                cancellationToken).ConfigureAwait(false);
+
+        return await this.InsertPreparedBatchAsync(
+            tableName,
+            entry.TDefPage,
+            tableDef,
+            pendingRows,
+            autoCheckpoints,
+            fkContext,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<(List<object[]> PendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? AutoCheckpoints)> PrepareInsertBatchAsync<TItem>(
+        string tableName,
+        TableDef tableDef,
+        IEnumerable<TItem> items,
+        Func<TableDef, TItem, object[]> mapRow,
+        string itemParamName,
+        CancellationToken cancellationToken)
+        where TItem : class
+    {
+        var pendingRows = new List<object[]>();
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints = null;
+
+        try
+        {
+            foreach (TItem item in items)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Guard.NotNull(item, itemParamName);
+
+                object[] row = mapRow(tableDef, item);
+                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCheckpoints =
+                    await this.Constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+                if (rowCheckpoints != null)
+                {
+                    (autoCheckpoints ??= []).AddRange(rowCheckpoints);
+                }
+
+                pendingRows.Add(row);
+            }
+        }
+        catch
+        {
+            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
+            throw;
+        }
+
+        return (pendingRows, autoCheckpoints);
+    }
+
+    private async ValueTask<int> InsertPreparedBatchAsync(
         string tableName,
         long tdefPage,
         TableDef tableDef,
-        object[] values,
-        FkContext? fkCtx,
+        List<object[]> pendingRows,
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints,
+        FkContext? fkContext,
         CancellationToken cancellationToken)
     {
-        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints =
-            await this.Constraints.ApplyAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
-
-        if (fkCtx != null)
-        {
-            try
-            {
-                await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
-                throw;
-            }
-        }
-
-        // Pre-write unique-index enforcement: reject duplicate keys before
-        // any disk page is mutated. The post-write check inside
-        // MaintainIndexesAsync still runs as defense-in-depth.
-        try
-        {
-            await this.uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, [values], cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
-            throw;
-        }
-
-        RowLocation loc;
-        try
-        {
-            loc = await this.InsertRowDataLocAsync(tdefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
-            throw;
-        }
+        var batchLocations = new List<RowLocation>();
+        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
+        int inserted = 0;
 
         try
         {
-            if (fkCtx != null)
-            {
-                RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
-            }
-
-            // fast path: try in-place leaf splice for the inserted
-            // row before falling back to a full snapshot+rebuild.
-            List<(RowLocation Loc, object[] Row)> hintInserts = [(loc, values)];
-            bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            // AutoNumber values are already assigned, so the unique check sees
+            // the exact keys the row writer and index maintainer will encode.
+            await this.uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(
                 tdefPage,
                 tableDef,
-                hintInserts,
-                deletedRows: null,
+                tableName,
+                pendingRows,
                 cancellationToken).ConfigureAwait(false);
-            if (!incremental)
+
+            foreach (object[] row in pendingRows)
             {
-                await this.indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (fkContext != null)
+                {
+                    await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
+                }
+
+                RowLocation location = await this.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+                batchLocations.Add(location);
+                batchHintRows.Add((location, row));
+
+                if (fkContext != null)
+                {
+                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkContext);
+                }
+
+                inserted++;
             }
 
-            await this.UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, [values], cancellationToken).ConfigureAwait(false);
+            if (inserted > 0)
+            {
+                bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
+                    tdefPage,
+                    tableDef,
+                    batchHintRows,
+                    deletedRows: null,
+                    cancellationToken).ConfigureAwait(false);
+                if (!incremental)
+                {
+                    await this.indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                }
+
+                await this.UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
-            // The row hit disk but a deferred constraint (the post-write
-            // unique-index check in MaintainIndexesAsync) rejected
-            // it. Mark the row deleted and rewind the row count + auto-number
-            // counters so the table is left exactly as it was before the call.
-            await this.RollbackInsertedRowsAsync(tdefPage, [loc], cancellationToken).ConfigureAwait(false);
+            await this.RollbackInsertedRowsAsync(tdefPage, batchLocations, cancellationToken).ConfigureAwait(false);
             ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
             throw;
         }
+
+        return inserted;
     }
 
     private async ValueTask UpdateTDefAutoNumberHighWaterAsync(long tdefPage, TableDef tableDef, List<object[]> rows, CancellationToken cancellationToken)

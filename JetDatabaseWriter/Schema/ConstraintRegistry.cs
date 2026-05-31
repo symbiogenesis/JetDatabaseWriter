@@ -39,9 +39,8 @@ internal sealed class ConstraintRegistry(
     /// <summary>
     /// Rewinds each auto-increment counter listed in <paramref name="checkpoints"/>
     /// back to the value it held before <see cref="ApplyAsync"/>
-    /// advanced it. Used by the insert paths to undo counter advances when a
-    /// deferred constraint (the post-write unique-index check) rejects the row
-    /// after it has already consumed an auto-number value.
+    /// advanced it. Restore runs in reverse so a multi-row batch that advances
+    /// the same counter several times returns to the earliest checkpoint.
     /// </summary>
     /// <param name="checkpoints">The checkpoints.</param>
     public static void RestoreAutoCounters(List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints)
@@ -51,9 +50,10 @@ internal sealed class ConstraintRegistry(
             return;
         }
 
-        foreach ((ColumnConstraint? c, long? prev) in checkpoints)
+        for (int index = checkpoints.Count - 1; index >= 0; index--)
         {
-            c.NextAutoValue = prev;
+            (ColumnConstraint? constraint, long? previousValue) = checkpoints[index];
+            constraint.NextAutoValue = previousValue;
         }
     }
 
