@@ -23,7 +23,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 - Best fit for .NET applications and tools that need direct file-level access to Access databases.
 - Not a fit if you need a SQL engine, an ODBC driver, or full Access application features like forms, reports, macros, or VBA.
-- Access compatibility: writer-created tables, relationships, encrypted ACCDB output, complex columns, LVAL payloads, and Compact & Repair round-trips are covered by DAO validation tests on Access-equipped Windows hosts.
+- Access compatibility is ensured by extensive automated coverage, including DAO validation.
 
 ## Features
 
