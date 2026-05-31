@@ -302,6 +302,8 @@ performance.
 
 ## 5. Reassess the Hand-Rolled Compound File Layer
 
+Status: completed 2026-05-30 (closed by dependency decision)
+
 Primary files:
 
 - [../../JetDatabaseWriter/CompoundFile/CompoundFileReader.cs](../../JetDatabaseWriter/CompoundFile/CompoundFileReader.cs)
@@ -309,33 +311,52 @@ Primary files:
 - [../../JetDatabaseWriter/Encryption/EncryptionConverter.cs](../../JetDatabaseWriter/Encryption/EncryptionConverter.cs)
 - [../../JetDatabaseWriter/Encryption/EncryptionManager.cs](../../JetDatabaseWriter/Encryption/EncryptionManager.cs)
 
-Why this is exciting: the CFB reader/writer is an entire self-contained file
-format implementation used for Office Crypto wrappers. If an acceptable,
-well-tested dependency can cover the exact needs, a whole subsystem could go
-away.
+Why this was considered: the CFB reader/writer is a self-contained file-format
+implementation used for Office Crypto wrappers. In theory, an acceptable,
+well-tested dependency could have deleted the subsystem.
 
 Target shape:
 
-- [ ] Survey candidate CFB libraries for .NET target support, licensing,
-      maintenance, stream extraction, stream writing, v3/v4 sectors, FAT,
-      DIFAT, mini-FAT, and malicious-file bounds.
-- [ ] Verify Office Crypto compatibility for `EncryptionInfo` and
+- [x] Reassess the dependency route against supply-chain, attack-surface,
+      package-size, and performance policy; decision: do not add a CFB runtime
+      dependency for this narrow use case.
+- [x] Verify the local CFB surface is already constrained to top-level stream
+      extraction and Office Crypto wrapper output behind internal APIs.
+- [x] Verify Office Crypto compatibility for `EncryptionInfo` and
       `EncryptedPackage` streams, including regular-FAT output requirements.
-- [ ] If a dependency is acceptable, replace the local reader/writer behind a
-      small adapter and delete the local implementation.
-- [ ] If no dependency is acceptable, narrow the local implementation's public
-      surface to exactly the Office Crypto use case and remove any unsupported
-      generality.
+- [x] Keep the local implementation rather than replacing it with a dependency.
+- [x] Leave the implementation mostly alone: the reader/writer are internal,
+      small, fixture-backed, and already shaped around the Office Crypto use
+      case rather than a general-purpose public CFB API.
+
+Decision 2026-05-30: no CFB package will be introduced. The current package
+has no CFB runtime dependency; adding one would increase supply-chain review,
+attack surface, target-framework/package-size constraints, and hot-path risk
+for code that is currently limited to `EncryptionInfo` / `EncryptedPackage`
+stream extraction and emission. OpenMcdf remains a test-fixture source only,
+not a runtime dependency.
+
+Evidence 2026-05-30: `CompoundFileReader` handles v3/v4 sector sizes, FAT,
+DIFAT extensions, mini-FAT streams, exact logical stream sizing, contiguous-run
+read coalescing, and crafted-file bounds/cycle checks. `CompoundFileWriter`
+emits the Office Crypto CFB shape with v4 sectors and regular-FAT streams, and
+rejects sub-cutoff Office Crypto streams that would otherwise require mini-FAT
+output. CFB tests cover OpenMcdf fixture boundaries, real Office/LibreOffice
+compound samples, corrupt headers, FAT/DIFAT loops, oversized FAT/DIFAT counts,
+v3/v4 writer output, and Office Crypto v4 shape. Encryption tests cover Agile,
+Agile CFB, Standard, legacy AES CFB-wrapped, and encryption mutation round
+trips over the same CFB layer.
 
 Guardrails:
 
-- [ ] Preserve Agile, Agile CFB, Standard, and legacy AES CFB-wrapped behavior.
-- [ ] Preserve current defensive bounds against crafted CFB inputs.
-- [ ] Keep dependency policy, target frameworks, package size, and license
+- [x] Preserve Agile, Agile CFB, Standard, and legacy AES CFB-wrapped behavior.
+- [x] Preserve current defensive bounds against crafted CFB inputs.
+- [x] Keep dependency policy, target frameworks, package size, and license
       compatibility explicit in the decision record.
 
-Likely payoff: potentially high deletion upside, but dependent on external
-package acceptability. If no dependency qualifies, leave this mostly alone.
+Outcome: closed. The deletion upside is outweighed by dependency risk, and the
+local layer is already narrow enough that further simplification is unlikely to
+pay for itself without weakening coverage or compatibility.
 
 ## Suggested Order
 
@@ -343,7 +364,7 @@ package acceptability. If no dependency qualifies, leave this mostly alone.
 2. IndexBTreeEditor mutation planner: completed 2026-05-26.
 3. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
 4. Declarative catalog artifact planning: completed 2026-05-30.
-5. CFB dependency decision, when dependency policy is worth revisiting.
+5. CFB dependency decision: completed 2026-05-30; no dependency introduced.
 
 ## Non-goals
 
