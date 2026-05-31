@@ -110,7 +110,7 @@ Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexB
 1. **Resolve root page**: read the catalog TDEF, walk to the real-idx slot for `I.RealIndexNumber`, and read the format-specific `first_dp` offset from the per-slot physical descriptor — see [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §3.1.
 2. **Encode the sort key** for the new row's index columns via `IndexKeyEncoder` (`Int32` / `Int16` ascending: big-endian, high-bit flipped; `Text` ascending: `GeneralLegacyTextIndexEncoder`; concatenated for composites).
 3. **Build the entry payload**: `entry_start_bitmask + sort_key_bytes + 4-byte row pointer`. The bitmask carries one bit per leading column; for a single-row insert it is uniformly `0xFF...` (per [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.2).
-4. **Descend the B-tree** to the target leaf via `IndexCursor` descent logic. Big-endian intermediate child pointers (see top-of-doc "do not regress" list in [`round-trip-test-failures.md`](round-trip-test-failures.md)).
+4. **Descend the B-tree** to the target leaf via `IndexCursor` descent logic. Big-endian intermediate child pointers are preserved as part of the historical root-cause rollup in [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md#7-historical-root-cause-rollup).
 5. **Splice into the leaf**:
    - Binary-search for the sorted insertion point.
    - Account for **page-shared prefix compression** (`pref_len` header field): the new entry's prefix-stripped form depends on the entry immediately before it; recompute the page's `pref_len` to the longest common prefix of the new entry set and re-emit every entry's stripped form.

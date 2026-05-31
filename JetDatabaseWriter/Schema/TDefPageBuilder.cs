@@ -223,7 +223,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             {
                 // Jet4/ACE text columns require two extra fields that DAO populates
                 // unconditionally; without them DAO refuses to OpenRecordset on the
-                // table ("Unrecognized database format"). See docs/design/round-trip-test-failures.md.
+                // table ("Unrecognized database format"). See docs/design/round-trip-openrecordset-hypothesis.md.
                 //   col_desc + 11..12 (misc / sort_order, 2 bytes): collation LCID
                 //                     low word. 0x0409 = "General" sort order,
                 //                     en-US (LCID 1033). The 4-byte write below also

@@ -94,12 +94,12 @@ https://www.mozilla.org/MPL/2.0/.
 
 ## Microsoft Extensible Storage Engine (reference only)
 
-The design note `docs/design/ese-coverage-gap-analysis.md` uses Microsoft's
-Extensible Storage Engine repository as a coverage guide for analogous storage
-engine risk categories such as page mutation invariants, delete/replace
-scrubbing behavior, transaction durability, cache behavior, and long-value
-cleanup. JetDatabaseWriter does not incorporate ESE source code, binaries, or
-fixtures, and ESE is not used as an Access MDB/ACCDB file-format oracle.
+The validation matrix uses Microsoft's Extensible Storage Engine repository as
+a reference checklist for analogous storage engine risk categories such as page
+mutation invariants, delete/replace scrubbing behavior, transaction durability,
+cache behavior, and long-value cleanup. JetDatabaseWriter does not incorporate
+ESE source code, binaries, or fixtures, and ESE is not used as an Access
+MDB/ACCDB file-format oracle.
 
 Source: https://github.com/microsoft/Extensible-Storage-Engine
 

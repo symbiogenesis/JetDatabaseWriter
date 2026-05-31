@@ -4,7 +4,7 @@
 // output is only the comparison target; never promote a writer-created fresh
 // database to the source-of-truth side of the diff.
 //
-// Step 1 of docs/design/round-trip-test-failures.md "Recommended next steps":
+// Historical root-cause rollup in docs/design/round-trip-openrecordset-hypothesis.md:
 // build an Access-engine-authored ground-truth copy of NorthwindTraders.accdb
 // + a single empty `RT_Customers` table to diff byte-for-byte against the
 // writer's N1 output.
@@ -821,7 +821,7 @@ internal static class DaoBaselineProbe
     {
         _ = sb.AppendLine("## §5 New MSysObjects row bytes");
         _ = sb.AppendLine();
-        _ = sb.AppendLine("Locates the data page that hosts the RT_Customers catalog row in each copy (the MSysObjects data page that differs from baseline), extracts the row body via the on-page row-offset table, and dumps it as hex. The `LvProp` (varIdx 8) and `LvExtra` (varIdx 10) payloads are the empirical answer to docs/design/round-trip-test-failures.md hypothesis #6.");
+        _ = sb.AppendLine("Locates the data page that hosts the RT_Customers catalog row in each copy (the MSysObjects data page that differs from baseline), extracts the row body via the on-page row-offset table, and dumps it as hex. The `LvProp` (varIdx 8) and `LvExtra` (varIdx 10) payloads are covered by the historical root-cause rollup in docs/design/round-trip-openrecordset-hypothesis.md.");
         _ = sb.AppendLine();
 
         if (w is not null)

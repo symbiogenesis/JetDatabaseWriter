@@ -755,8 +755,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // to 0x01: per Jackcess and verified empirically against
         // NorthwindTraders.accdb (every user table has byte 0x18 == 0x01,
         // including ones without an autonumber column). See
-        // docs/design/round-trip-test-failures.md and
-        // docs/design/round-trip-openrecordset-hypothesis.md (H25).
+        // docs/design/round-trip-openrecordset-hypothesis.md.
         if (tableArtifact.EmitUsageMap && this.Format != DatabaseFormat.Jet3Mdb)
         {
             long usageMapPageNumber = await this.dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
@@ -3726,7 +3725,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // num_idx_rows against the leaf-level row count when walking
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
-            // docs/design/round-trip-test-failures.md.
+            // docs/design/round-trip-openrecordset-hypothesis.md.
             int numRealIdx = Ri32(page, this.TDef.NumRealIdx);
             if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {

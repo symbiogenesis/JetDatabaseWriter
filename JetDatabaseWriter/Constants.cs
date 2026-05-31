@@ -271,7 +271,7 @@ internal static class Constants
         /// suggesting uninitialized memory). We stamp 12 zero bytes so the
         /// null-mask bit is set and the row's variable-offset table mirrors
         /// the layout DAO produces. See
-        /// docs/design/round-trip-test-failures.md.
+        /// docs/design/round-trip-openrecordset-hypothesis.md.
         /// <para>
         /// <b>Disconfirmed hypothesis (2026-05-10):</b> setting the inline
         /// bitmask byte (index 3) to <c>0x80</c> -- which makes the 12 bytes

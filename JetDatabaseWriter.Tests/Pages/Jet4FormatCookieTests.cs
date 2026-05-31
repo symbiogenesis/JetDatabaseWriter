@@ -24,7 +24,7 @@ using Xunit;
 /// <para>
 /// These invariants are required for DAO Compact &amp; Repair — omitting
 /// any one of them causes err 3011 "could not find the object 'MSysDb'".
-/// See <see href="docs/design/round-trip-test-failures.md" />.
+/// See <see href="docs/design/round-trip-openrecordset-hypothesis.md#7-historical-root-cause-rollup" />.
 /// </para>
 /// </summary>
 /// <param name="db">The database input.</param>

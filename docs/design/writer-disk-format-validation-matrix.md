@@ -2,7 +2,7 @@
 
 **Status:** Active cross-feature coverage matrix, reconciled on 2026-05-25 with the earlier matrix shape and the completed validation backlog. No broad unresolved validation item is currently open.
 
-This document is the compact map of writer-emitted Access disk-format surfaces, their base fixture or oracle, their strongest automated validation signal, and the residual trigger that would justify more coverage. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md). Detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md), [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md), and [ese-coverage-gap-analysis.md](ese-coverage-gap-analysis.md).
+This document is the compact map of writer-emitted Access disk-format surfaces, their base fixture or oracle, their strongest automated validation signal, and the residual trigger that would justify more coverage. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md). Detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 
 ## Validation Levels
 
@@ -49,6 +49,15 @@ When the matrix says "writer-created", read that as the output under validation.
 ## Current Scope Decisions
 
 - There is no standing cross-feature validation backlog in this document.
+- The former ESE-inspired coverage review is closed. ESE remains useful only as
+	a reference checklist for analogous storage-engine risk categories: page
+	mutation invariants, structural validation, delete/replace scrubbing,
+	transaction durability, cache behavior, and long-value cleanup. Local
+	coverage for those themes now lives in the matrix rows above, especially
+	storage maintenance/remanence, complex columns/LVAL, public index seek,
+	CompactDatabase automation, transaction tests, emitted-page invariant tests,
+	and cache eviction tests. Future ESE-derived concerns should become matrix
+	rows or feature-specific DAO/regression tests, not a separate backlog.
 - Full Access-style live-page compaction/renumbering stays out of scope unless the project grows an explicit Compact and Repair feature.
 - Byte-for-byte DAO/Access comparisons stay diagnostic unless exact byte parity becomes a release requirement for the specific area.
 - ODBC OpenRecordset remains source- and DSN-dependent; current automated coverage validates metadata generation, cached-schema preservation, and CompactDatabase compatibility.

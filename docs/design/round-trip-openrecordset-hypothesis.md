@@ -1,6 +1,10 @@
 # DAO OpenRecordset / Compact Compatibility Log
 
-Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
+This is the canonical compatibility history for the original DAO
+OpenRecordset, CompactDatabase, FK, encrypted-output, catalog-maintenance, and
+linked-table investigations. The older `round-trip-test-failures.md` notebook
+was consolidated here on 2026-05-30 and removed after source/documentation links
+were updated to point at this canonical log.
 
 ## 1. Current Status
 
@@ -78,7 +82,7 @@ Do not re-test these for the original `OpenRecordset` failure unless a new fixtu
 | H46 | Writer-emitted `LvProp` content caused DAO `OpenRecordset` failure. | Disconfirmed. Suppressing `BuildLvPropBlob` did not fix DAO. The catalog row `LvProp` column is not the cursor-materialization blocker. |
 | H47 | TEXT/MEMO `ExtraFlags` byte 16 must be `0x00` instead of compressed Unicode `0x01`. | Disconfirmed. DAO accepts both states. |
 | H21, H23, H24, H26-H28, H32-H45 | Real-idx pointers/flags, logical-index sentinels, selected column descriptor bytes, empty PK leaf header, and usage-map pointer presence. | Disconfirmed for the `RT_Customers` indexed-table fixture; writer matched DAO or the difference was benign. |
-| Earlier compact/OpenRecordset hypotheses | LvProp chained-LVAL shape, writer-private NOT NULL flag, TDEF magic in established create paths, DB-header modify counter, page 1 GPM updates, `MSysACEs`, catalog-name encoding, and index-leaf entry mechanics. | Disconfirmed in [round-trip-test-failures.md](round-trip-test-failures.md). |
+| Earlier compact/OpenRecordset hypotheses | LvProp chained-LVAL shape, writer-private NOT NULL flag, TDEF magic in established create paths, DB-header modify counter, page 1 GPM updates, `MSysACEs`, catalog-name encoding, and index-leaf entry mechanics. | Disconfirmed during the historical root-cause work summarized in §7. |
 | FK compact partial fixes | DAO-shaped `MSysRelationships` rows, FK logical cross-references, non-zero real-index `used_pages`, DAO-shaped ACE inheritance flags, and DAO-shaped text-column LvProp blobs. | Each is either necessary or DAO-observed, but they were insufficient until system-table page placement, Type=8 relationship catalog rows, relationship ACE rows, and table/index usage-map row placement were fixed. |
 | CFB Agile wrapper for Access-native password databases | Hypothesis: modern Access/DAO encrypted `.accdb` output is a CFB Office Crypto package. | Disconfirmed for DAO compact compatibility. DAO-created password-protected ACCDBs use flat Access-native Agile encryption, not a CFB wrapper. The library still understands and can emit Office Crypto CFB containers via `AccessEncryptionFormat.AccdbAgileCfb`, while `AccessEncryptionFormat.AccdbAgile` writes the flat Access-native layout. |
 
@@ -94,7 +98,95 @@ Do not re-test these for the original `OpenRecordset` failure unless a new fixtu
 | Jet4/ACE catalog-splice false return | Resolved by failing and rolling back catalog inserts when `MSysObjects` splicing cannot maintain every required index. |
 | Linked-table catalog row routing | Resolved for catalog-shape regression coverage by allocating catalog-only negative object ids without low-24 collisions, routing Type 4/6 rows through `MSysObjects` index splicing, and stamping fixture-aligned flags plus linked-object ACE rows. Access-file and text Type 6 links now pass DAO CompactDatabase plus compacted OpenRecordset; ODBC Type 4 links pass DAO CompactDatabase when created with a caller-supplied cached-schema `LvProp`. Public generated ODBC links now write parseable table-level `LvProp`, and the source-column overload adds generated schema-cache targets. |
 
-## 7. Verification Commands
+## 7. Historical Root-Cause Rollup
+
+The detailed page-by-page notebook that originally lived in the former
+`round-trip-test-failures.md` file is retired; keep this section as the durable
+map of what was learned and what should not be re-tried without new evidence.
+
+### Original `MSysDb` / OpenRecordset blocker
+
+The first DAO rejection showed up as `MSysDb (3011)` or `Unrecognized database
+format ''` when DAO materialized a writer-created user table. The smallest N1
+reproducer was one `CreateTableAsync` call against a Northwind copy.
+
+Durable fixes and facts from that phase:
+
+- MSysObjects catalog index leaves had to be maintained when inserting the new
+	table row. Binary bisection identified the affected leaves as pages 8 and
+	2790 in the Northwind fixture.
+- Jet4/ACE index leaf pages need the entry-start bitmask sentinel one position
+	past the final entry. Test helper popcounts must subtract that sentinel.
+- Catalog leaf prefix compression must respect the existing leaf's `pref_len`.
+	The N2 two-table failure was a split-path bug: `TryBuildSplitLeafPages` was
+	recomputing unconstrained prefixes, producing `pref_len` 4/16 where the
+	original tree expected 1. Passing the original `maxPrefixLength` fixed N2+.
+- Real-index `num_idx_rows` counters track the table `row_count`; they are not
+	independent sparse counts.
+- Jet4/ACE indexed TDEFs count 8 trailing zero bytes after the `0xFFFF`
+	no-usage-map sentinel inside `tdef_len`.
+- Jet4/ACE leaf pages carry an extra `unknown(0)` word at offset 8 compared with
+	Jet3, and intermediate index pages use 4-byte big-endian child pointers.
+
+### User-table OpenRecordset and CompactDatabase blockers
+
+Later DAO OpenRecordset and CompactDatabase failures were distinct from the
+catalog-splice N1/N2 failures. The fixes that closed them are the same H48/H49
+and compact fixes listed above, but the practical preservation rules are:
+
+- Use DAO's Jet4 real-idx physical descriptor magic `0x00000783` for FK-backed
+	real indexes.
+- Mark appended user-table data pages in both table owned and free usage-map
+	rows; DAO recordsets trust those maps.
+- Persist AutoNumber high-water at TDEF offset `0x14` as the last issued value.
+- Insert new system rows on mapped system-table data pages when possible;
+	CompactDatabase can prune otherwise valid rows that live outside system-table
+	owned maps.
+- Relationship creation needs canonical `MSysRelationships` rows, Type 8
+	relationship `MSysObjects` rows, relationship ACE rows, and DAO-shaped FK
+	logical cross-references.
+- Relationship rename/drop should rewrite `MSysRelationships` live-only and let
+	CompactDatabase normalize Type 8 relationship `MSysObjects` rows.
+- Access-native Agile `.accdb` output is a flat page-layout encryption format,
+	not a CFB Office Crypto wrapper. DAO encrypted-source compaction needs the
+	five-argument `CompactDatabase(src, dst, dstLocaleWithPwd, 0, srcPwd)` form.
+
+### Disconfirmed causes
+
+Do not re-test these for the original issue unless a new fixture changes the
+table shape in a relevant way:
+
+- `LvProp` chained-LVAL placeholder shape was not the OpenRecordset trigger.
+- TEXT/MEMO compressed-unicode `ExtraFlags` did not explain the failure; DAO
+	accepts both relevant states.
+- DB-header modify counters, append-only page-1 global-map bits, raw catalog
+	name encoding, and the original `MSysACEs` suspicion were not the root cause.
+- DAO-shaped FK `MSysRelationships`, FK logical cross-references, non-zero
+	real-index usage-map pointers, relationship ACE inheritance flags, and
+	text-column LvProp details were either necessary or DAO-observed, but
+	individually insufficient until system-table page placement, Type 8
+	relationship objects, relationship ACE rows, shared usage-map placement, and
+	single-leaf reuse were fixed.
+
+### Probes to use if a similar failure returns
+
+`JetDatabaseWriter.FormatProbe` keeps the diagnostic modes that produced the
+historical evidence:
+
+```pwsh
+dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
+dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline
+dotnet run --project JetDatabaseWriter.FormatProbe -- fk-dao-baseline
+dotnet run --project JetDatabaseWriter.FormatProbe -- linked-odbc-lvprop
+```
+
+`rt-bisect` finds the smallest write step that breaks DAO compact/open behavior.
+`rt-dao-baseline` compares writer-authored output with a DAO-authored copy of
+the same table operation and emits page-level diffs. Promote any new root-cause
+invariant into an ordinary regression test rather than leaving it only in probe
+output.
+
+## 8. Verification Commands
 
 ```pwsh
 dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.RoundTrip.DaoValidationTests"
@@ -118,7 +210,7 @@ Useful probes remain available for future regressions:
 | Compare writer-vs-DAO FK metadata | `dotnet run --project JetDatabaseWriter.FormatProbe -- fk-dao-baseline` |
 | Inspect linked ODBC `LvProp` schema-cache shape | `dotnet run --project JetDatabaseWriter.FormatProbe -- linked-odbc-lvprop` |
 
-## 8. Reference Sources
+## 9. Reference Sources
 
 Use empirical DAO-authored baselines first. Use these sources only when a baseline diff is insufficient.
 
