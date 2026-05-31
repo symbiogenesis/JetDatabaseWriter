@@ -479,7 +479,7 @@ int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
 
-> By default, update and delete are logical row mutations, not secure erase operations. Old row payload bytes and external LVAL payload pages can remain in the file; see [Data remanence](#data-remanence).
+> By default, update and delete are logical row mutations, not secure erase operations. Old row payload bytes and external LVAL payload pages can remain in the file unless secure erase is enabled.
 
 ### Storage maintenance and secure erase
 
@@ -765,9 +765,8 @@ The items below are either **not yet implemented** or are important behavioral c
 ### Transaction durability
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
 
-### Data remanence
-- **Delete/update scrub old payload bytes only when secure erase is enabled.** The default `SecureEraseMode.None` preserves normal JET behavior: `DeleteRowsAsync` marks matching user-row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. Old row bodies and old MEMO/OLE LVAL pages can remain on disk; the writer does not return old LVAL pages to the free list on the default path. Set `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` to overwrite deleted row bodies and old LVAL pages before those LVAL pages are returned to the free list. Storage hardware, filesystem journaling, snapshots, backups, and prior copies can still retain data outside the database file.
-- **`ShrinkDatabaseAsync` is a tail shrinker, not full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.
+### Compact & Repair
+- **`ShrinkDatabaseAsync` is a tail shrinker, not a full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
