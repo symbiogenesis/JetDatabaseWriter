@@ -65,9 +65,8 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         // instead of scanning every page in the file. The previous O(N)
         // scan read + decrypted every page to find one with free space,
         // which dominated insert time for large databases. Appending is
-        // O(1) and the marginal file-size cost is negligible — Access
-        // itself uses usage-map bitmaps for the same purpose, but we don't
-        // yet maintain writable usage maps for existing tables.
+        // O(1), and the owned-map update below keeps DAO sequential scans
+        // aware of the new page for tables whose maps this writer owns.
         long newPageNumber = await pageAllocator.AllocatePageAsync(this.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         writer.SetCachedInsertPageNumber(tdefPage, newPageNumber);
 

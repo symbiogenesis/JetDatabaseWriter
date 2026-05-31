@@ -408,7 +408,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            // Parent declares an explicit PK on Id — the per-TDEF FK emission emitter should
+            // Parent declares an explicit PK on Id — per-TDEF FK emission should
             // share that real-idx slot for the PK-side FK logical-idx entry
             // instead of allocating a fresh one.
             await writer.CreateTableAsync(

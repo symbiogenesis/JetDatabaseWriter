@@ -122,8 +122,8 @@ internal static class DirectRowDecoderBuilder
 
         var statements = new List<Expression>(8 + (bound.Count * 3))
         {
-            // if (!decodePlan.TryParseLayoutForDirectDecode(reader, page, rowStart, rowSize, out layout))
-            //     return false;
+            // Emit the row-layout preflight; malformed rows return false so
+            // the caller can skip them without constructing an object?[] row.
             Expression.IfThen(
             Expression.Not(Expression.Call(
                 decodePlanParam,
@@ -146,7 +146,8 @@ internal static class DirectRowDecoderBuilder
             ColumnInfo col = entry.Col;
             ConstantExpression colExpr = Expression.Constant(col, typeof(ColumnInfo));
 
-            // slice = decodePlan.ResolveColumnSliceForDirectDecode(reader, page, rowStart, rowSize, layout, col);
+            // Emit one plan-owned slice lookup per bound column; the kind
+            // gate below leaves null/empty/malformed slices at defaults.
             statements.Add(Expression.Assign(
                 sliceLocal,
                 Expression.Call(

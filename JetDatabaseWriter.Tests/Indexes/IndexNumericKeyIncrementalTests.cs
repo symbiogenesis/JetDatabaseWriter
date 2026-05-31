@@ -107,7 +107,7 @@ public sealed class IndexNumericKeyIncrementalTests
         // The splice must be cheap: one extra leaf page (4096 bytes for
         // ACE) plus possibly a few small page-allocation bookkeeping
         // pages — definitely under one full page-table extent (8 pages
-        // = 32 KB). A regression to the bulk bulk rebuild rebuild on every
+        // = 32 KB). A regression to bulk rebuild on every
         // mutation would re-emit the entire tree from a fresh
         // page-number range.
         Assert.True(

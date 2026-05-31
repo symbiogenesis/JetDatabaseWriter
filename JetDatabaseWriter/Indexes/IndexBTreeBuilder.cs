@@ -26,7 +26,7 @@ using JetDatabaseWriter.Infrastructure;
 ///   <item>Shared-prefix compression on leaves and intermediates. §4.4.</item>
 ///   <item>Tail-page recorded on every intermediate page: the
 ///   <c>tail_page</c> header field on each <c>0x03</c> page points at the
-///   absolute page number of the rightmost leaf so a reader / seeker can short-circuit
+///   absolute page number of the rightmost leaf so a reader / cursor can short-circuit
 ///   to it without descending. Single-leaf trees keep <c>tail_page = 0</c> (the leaf
 ///   itself is the tail). §4.5.</item>
 ///   <item>No incremental updates: this builds a fresh tree from a sorted
@@ -208,8 +208,8 @@ internal static class IndexBTreeBuilder
 
         // tail-leaf is the rightmost split page the builder just emitted
         // (firstPageNumber + splitPageCount - 1). Stamp it into every
-        // intermediate-page tail_page header so the seeker can jump directly
-        // to the tail without descending the tree, and so the append-only
+        // intermediate-page tail_page header so the cursor can jump directly
+        // to the tail on overshoot, and so the append-only
         // incremental fast path can locate it from the root in one read.
         long tailLeafPage = firstPageNumber + splitPageCount - 1;
 

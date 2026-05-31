@@ -28,9 +28,10 @@ using Xunit;
 /// leaf pages (<c>page_type = 0x04</c>) and counting their entry-start
 /// bitmask bits (one implicit first entry plus one bit per subsequent entry,
 /// see <see href="docs/design/index-and-relationship-format-notes.md" /> §4.2).
-/// Old leaf pages are orphaned by maintenance, so we check the highest-page
-/// leaf (always the most recent rebuild) when the row count is expected to
-/// shrink, and the highest entry count across all leafs otherwise.
+/// Some maintenance paths leave older index pages unreferenced, so these
+/// byte-level assertions use either the highest entry count across
+/// table-owned leaves or, in scenarios that intentionally append a
+/// replacement tree, the highest-page matching leaf.
 /// </para>
 /// </summary>
 public sealed class IndexMaintenanceTests
@@ -62,9 +63,8 @@ public sealed class IndexMaintenanceTests
                 this.ct);
         }
 
-        // The most-recent rebuild produced a leaf with 3 entries; orphaned
-        // earlier leafs still show 1 (implicit empty), so MAX is the right
-        // signal for the post-grow state.
+        // The maintained index has a leaf with 3 entries; MAX avoids being
+        // confused by any older unreferenced leaf pages in the file.
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
@@ -161,8 +161,8 @@ public sealed class IndexMaintenanceTests
             Assert.Equal(1, deleted);
         }
 
-        // The latest leaf (highest page number) is the post-delete rebuild
-        // and must report the reduced row count of 3.
+        // In this rebuild scenario, the highest-page matching leaf carries
+        // the reduced row count of 3.
         Assert.Equal(3, await GetLatestLeafEntryCountAsync(stream, format, "T"));
     }
 
@@ -286,8 +286,8 @@ public sealed class IndexMaintenanceTests
     {
         // The full Jackcess General Legacy port supports the entire BMP
         // (spaces, punctuation, accented characters). Strings that previously
-        // fell through to the stale-leaf path now participate in the index maintenance
-        // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
+        // skipped index maintenance now produce encoded keys, so the emitted
+        // leaf reflects all inserted rows.
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -318,7 +318,7 @@ public sealed class IndexMaintenanceTests
     {
         // MEMO columns route through the same General Legacy encoder as TEXT
         // (Text = 0x0A, Memo = 0x0C both supported by IndexKeyEncoder).
-        // Round-trip a memo-keyed index and confirm the bulk rebuild populated
+        // Round-trip a memo-keyed index and confirm maintenance populated
         // the leaf instead of leaving the leaf-page emission placeholder in place.
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
@@ -459,7 +459,7 @@ public sealed class IndexMaintenanceTests
     {
         // Build a multi-level tree, then add a single row. The incremental
         // path must descend into the tree, walk the leaf chain, splice in
-        // the new entry, and emit a fresh root. The reader's row count must
+        // the new entry, and keep a valid root. The reader's row count must
         // include the late insert.
         const int initialRows = 700;
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
@@ -622,10 +622,9 @@ public sealed class IndexMaintenanceTests
     /// <summary>
     /// Returns the page type byte (<c>0x03</c> for intermediate,
     /// <c>0x04</c> for leaf) of the highest-page-numbered index page in the
-    /// file. The most recently maintained index always patches
-    /// <c>first_dp</c> to a freshly-allocated page at the end of the file,
-    /// so the highest-numbered index page is the current root. Returns -1
-    /// when no index page is found.
+    /// file. Bulk tree builds append their root near the end of the file;
+    /// tests use this helper only after setup paths that intentionally emit
+    /// such a tree. Returns -1 when no index page is found.
     /// </summary>
     /// <param name="fileBytes">The file bytes.</param>
     /// <param name="format">The format.</param>
@@ -704,8 +703,8 @@ public sealed class IndexMaintenanceTests
 
     private static int GetLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format, long parentTdefPage)
     {
-        // The most-recently-written leaf is the one with the highest page number
-        // — maintenance always appends new index pages to the end of the file.
+        // Highest-page matching leaf. In rebuild scenarios this is the latest
+        // replacement leaf; for single-leaf in-place rewrites it is the same leaf.
         int pageSize = PageSizeOf(format);
         int latest = -1;
         for (int p = 0; p < fileBytes.Length / pageSize; p++)

@@ -5,7 +5,7 @@ using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Resolved child-side (FK-side) seek index for a single relationship.
-/// The seeker uses <see cref="RootPage"/> as the entry point and encodes
+/// The index cursor uses <see cref="RootPage"/> as the entry point and encodes
 /// the parent's PK tuple (in relationship-PK declaration order) using
 /// <see cref="KeyColumns"/>. Used by cascade-update / cascade-delete to
 /// locate dependent child rows in O(log N + K) page reads instead of an

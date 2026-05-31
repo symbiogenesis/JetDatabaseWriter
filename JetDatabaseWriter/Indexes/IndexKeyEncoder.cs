@@ -408,8 +408,8 @@ internal static class IndexKeyEncoder
     /// are multiplied by <c>10^(targetScale - naturalScale)</c> via
     /// <see cref="BigInteger"/> arithmetic; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
-    /// <see cref="NotSupportedException"/>, which the index maintenance loop
-    /// catches to fall through to the stale-leaf path.
+    /// <see cref="NotSupportedException"/>, which lets index maintenance use
+    /// the conservative rebuild or snapshot fallback path.
     /// </para>
     /// <para>
     /// Twiddling rules (per Jackcess <c>handleNegationAndOrder</c>) — the

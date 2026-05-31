@@ -65,7 +65,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
             // intermediates need rewriting AND the rewrite happens to
             // overflow (rare for deletes but possible if max-key
             // propagation widens entries), intermediate split fires; otherwise cross-leaf surgical
-            // handles it in-place or bulk rebuild rebuilds.
+            // handles it in-place or the bulk rebuild path handles it.
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, this.ct);
             Assert.Equal(80, deleted);
         }

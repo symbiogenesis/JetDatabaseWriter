@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 
 /// <summary>
-/// Resolved parent-side seek index for a single relationship. The seeker
+/// Resolved parent-side seek index for a single relationship. The index cursor
 /// uses <see cref="RootPage"/> as the entry point and encodes the FK-side
 /// row values using <see cref="KeyColumns"/> (one entry per relationship
 /// PK column, in declaration order) plus the foreign-table column index

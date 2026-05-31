@@ -339,7 +339,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     {
         // Build a tiny multi-leaf tree, then delete every row that lives on
         // one specific leaf → surgical path bails (empty-leaf underflow is
-        // territory); bulk rebuild rebuilds and the read-back stays correct.
+        // territory); the bulk rebuild path handles it and read-back stays correct.
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))

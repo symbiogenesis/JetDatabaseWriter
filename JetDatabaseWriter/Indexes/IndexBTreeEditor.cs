@@ -274,7 +274,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// No sibling-chain or intermediate-summary updates are performed. The
     /// rightmost intermediate's summary entry consequently becomes stale
     /// (its key is the OLD tail max, not the new one); the §4.5 design
-    /// expects readers / seekers to compensate by following the
+    /// expects readers / cursors to compensate by following the
     /// intermediate's <c>tail_page</c> header on overshoot, which
     /// <see cref="IndexCursor"/> does.
     /// </para>
@@ -653,7 +653,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 if (!allowTailOvershoot)
                 {
                     // Search key sorts strictly above every summary on this
-                    // intermediate. The seeker would follow tail_page here,
+                    // intermediate. The cursor would follow tail_page here,
                     // but the surgical path needs a clean (page, taken-index)
                     // pair at every level for an in-place ancestor rewrite — bail.
                     return 0;

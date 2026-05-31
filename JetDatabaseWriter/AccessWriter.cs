@@ -1103,8 +1103,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         // Track every row written so far + every auto-counter advance so we can
-        // roll the entire batch back if the bulk MaintainIndexesAsync at the end
-        // rejects it (e.g. duplicate key inside the batch).
+        // roll the entire batch back if index maintenance rejects the final
+        // change set after the data rows have been written.
         var batchLocations = new List<RowLocation>();
         var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;

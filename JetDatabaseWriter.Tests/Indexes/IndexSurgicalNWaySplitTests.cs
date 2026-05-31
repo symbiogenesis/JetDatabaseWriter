@@ -15,7 +15,7 @@ using Xunit;
 /// Before N-way split, both <c>TryGreedySplitInTwo</c> (leaf) and
 /// <c>TryGreedySplitIntermediateInTwo</c> bailed when a single-leaf splice
 /// or single-intermediate update needed three or more pages, falling back
-/// to the bulk rebuild bulk-rebuild path. N-way split generalises both helpers to N-way
+/// to the bulk rebuild path. N-way split generalises both helpers to N-way
 /// (greedy left-fill, allocate the next page on overflow, repeat) and emits
 /// one Replace + N-1 InsertAfter ops on the parent intermediate so the
 /// surgical path engages instead. These tests force splices that span 3,

@@ -248,11 +248,10 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
             entries.Sort(static (a, b) => IndexHelpers.CompareKeyBytes(a.Key, b.Key));
 
-            // unique-violation detection. Note this is a post-write check —
-            // the offending row has already been persisted by the time we get
-            // here, so throwing leaves the table in a state where the row exists
-            // but the index is stale. The caller is expected to delete the
-            // duplicate row (or restore from a backup) before continuing.
+            // Unique-violation detection. This is a post-write defense-in-depth
+            // check; public mutations normally run pre-write uniqueness checks
+            // before reaching this bulk rebuild path. Callers that own a pending
+            // mutation must roll it back before surfacing this failure.
             if (rie.IsUnique)
             {
                 for (int e = 1; e < entries.Count; e++)
@@ -871,7 +870,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 // new entries into the tail leaf and rewrite that one page.
                 // No descend-walk-rebuild, no sibling-chain updates, no
                 // intermediate writes — the rightmost intermediate summary
-                // becomes (one entry) stale, which the seeker compensates
+                // becomes (one entry) stale, which the cursor compensates
                 // for by following the intermediate's tail_page header on
                 // overshoot. Falls through to the bulk rebuild on overflow,
                 // deletes, out-of-order inserts, missing tail_page, or any

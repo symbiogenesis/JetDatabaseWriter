@@ -15,10 +15,10 @@ using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Round-trip tests for the single-leaf incremental B-tree maintenance
-/// fast path. The fast path is engaged on insert/update/delete when the
-/// index B-tree fits on a single leaf page; otherwise the writer falls back
-/// to the bulk <c>MaintainIndexesAsync</c> rebuild. Tests cover:
+/// Round-trip tests for the single-leaf cases of incremental B-tree
+/// maintenance. These tests focus on one-leaf insert/update/delete splices;
+/// multi-leaf, split, merge, and tail-page behavior are covered by the
+/// surgical index suites. Tests cover:
 /// <list type="bullet">
 ///   <item>Insert hits fast path → the single leaf page is rewritten in place.</item>
 ///   <item>Delete hits fast path → the single leaf is rewritten without the deleted row pointer.</item>
@@ -279,7 +279,7 @@ public sealed class IndexIncrementalMaintenanceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task FastPath_UniqueIndex_PreCheckStillFires(DatabaseFormat format)
     {
-        // The pre-write unique check pre-write unique-index check must still reject duplicates
+        // The pre-write unique-index check must still reject duplicates
         // even when the post-mutation index maintenance is incremental.
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 

@@ -531,9 +531,9 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     public async Task Insert_TextKeyFk_SeekPathHonoursGeneralLegacyEncoding()
     {
         // Text key relationships exercise the General Legacy encoder on
-        // both the writer's index leaf emission and the seeker's lookup
+        // both the writer's index leaf emission and the cursor lookup
         // path. The earlier HashSet path used case-insensitive ToUpperInvariant
-        // string equality (BuildCompositeKey/AppendNormalized); the seeker
+        // string equality (BuildCompositeKey/AppendNormalized); the cursor
         // path now relies on the byte-identical encoding round-trip that
         // the writer uses when building the leaf.
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);

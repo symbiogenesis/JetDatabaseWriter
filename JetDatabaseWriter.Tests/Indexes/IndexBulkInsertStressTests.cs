@@ -20,7 +20,7 @@ using Xunit;
 /// reach:
 /// <list type="bullet">
 ///   <item><description>A bulk insert large enough to force a multi-level B-tree (intermediate index pages, not just a single leaf).</description></item>
-///   <item><description>The bulk-rebuild uniqueness check on a duplicate key inside an <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/> batch.</description></item>
+///   <item><description>The pre-write uniqueness check on a duplicate key inside an <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/> batch.</description></item>
 ///   <item><description>The auto-increment counter must <b>not</b> skip a value when a prior row was rejected by a unique-index violation.</description></item>
 /// </list>
 /// </summary>
@@ -97,10 +97,8 @@ public sealed class IndexBulkInsertStressTests
     /// <summary>
     /// Mirror of Jackcess <c>IndexTest.testConstraintViolation</c>: feeding
     /// a duplicate key into <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
-    /// must surface a uniqueness failure. Our implementation defers the
-    /// check until the bulk B-tree rebuild that runs after every row has
-    /// been written (see <c>AccessWriter.MaintainIndexesAsync</c>), so the
-    /// throw appears at the end of the call rather than mid-iteration.
+    /// must surface a uniqueness failure before any batch row is written;
+    /// the bulk rebuild's uniqueness check remains a defense-in-depth guard.
     /// </summary>
     /// <param name="format">The format.</param>
     /// <returns>A task representing the asynchronous test operation.</returns>
@@ -138,12 +136,10 @@ public sealed class IndexBulkInsertStressTests
     /// </summary>
     /// <param name="format">The format.</param>
     /// <remarks>
-    /// The Jackcess test rejects via a unique-index violation, but our
-    /// uniqueness check is a post-write check (the offending row is already
-    /// committed by the time the index rebuild detects the duplicate, see
-    /// <c>AccessWriter.MaintainIndexesAsync</c>'s <c>IsUnique</c> branch).
-    /// To exercise the autonumber-recovery semantic on its own, this test
-    /// uses <see cref="ColumnDefinition.ValidationRule"/> instead, which
+    /// The Jackcess test rejects via a unique-index violation. To exercise
+    /// the autonumber-recovery semantic without coupling it to the separate
+    /// unique-index preflight, this test uses
+    /// <see cref="ColumnDefinition.ValidationRule"/> instead, which
     /// fires <i>before</i> any row data is written and therefore leaves the
     /// counter in a consistent state.
     /// </remarks>
@@ -232,8 +228,8 @@ public sealed class IndexBulkInsertStressTests
 
             await writer.InsertRowsAsync("Big", rows, this.ct);
 
-            // Delete two specific rows (mid-range and near the tail). Each
-            // delete triggers a full bulk rebuild via MaintainIndexesAsync.
+            // Delete two specific rows (mid-range and near the tail) to
+            // exercise maintenance after a large unique-index build.
             int d1 = await writer.DeleteRowsAsync("Big", "Id", 400, this.ct);
             int d2 = await writer.DeleteRowsAsync("Big", "Id", 799, this.ct);
 

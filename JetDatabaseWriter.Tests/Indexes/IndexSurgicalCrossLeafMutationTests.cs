@@ -11,8 +11,8 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
-/// Round-trip tests for the cross-leaf surgical (cross-leaf surgical multi-level mutation)
-/// path in <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The in-place leaf rewrite /
+/// Round-trip tests for the cross-leaf surgical multi-level mutation path in
+/// <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The in-place leaf rewrite /
 /// single-leaf surgical path bails the moment two change-set keys
 /// descend to different leaves; cross-leaf surgical picks up that case by grouping the
 /// change-set per target leaf and aggregating per-parent-intermediate
@@ -95,8 +95,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // leaf (no parent change). The cross-leaf path must rewrite both
         // leaves AND the shared parent intermediate exactly once. The tail
         // leaf's max is intentionally NOT touched (changing the tree's
-        // overall max would trigger the tail-page append tail-page descent overshoot
-        // and bail to bulk rebuild,-C-3 / leaf split design).
+        // overall max would trigger tail-page append overshoot handling and
+        // fall back to bulk rebuild under the C-3 / leaf-split design).
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))

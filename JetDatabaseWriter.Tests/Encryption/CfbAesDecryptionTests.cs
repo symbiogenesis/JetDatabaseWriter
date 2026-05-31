@@ -288,9 +288,9 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     }
 
     /// <summary>
-    /// Derives a 128-bit AES key from a password using SHA-256 (truncated).
-    /// This is a simplified stand-in; the real implementation should follow
-    /// the MS-OFFCRYPTO key derivation (CryptoAPI or ECMA-376 Agile).
+    /// Derives the synthetic fixture's 128-bit AES key from a password using
+    /// SHA-256 (truncated). Real Office Crypto coverage lives in the Standard
+    /// and Agile encryption tests.
     /// </summary>
     /// <param name="password">The password.</param>
     private static byte[] DeriveSimpleAesKey(string password)

@@ -10,7 +10,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Layout-aware read codec for JET index pages. Owns the common header,
 /// bitmask, prefix-compression, and entry-decoding rules shared by leaf,
-/// intermediate, seeker, and mutation code.
+/// intermediate, cursor, and mutation code.
 /// </summary>
 internal static class IndexPageCodec
 {

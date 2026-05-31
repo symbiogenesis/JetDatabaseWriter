@@ -96,7 +96,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // can't strictly assert "page count unchanged" here (when the
         // delete change-set straddles two leaves and the descent picks
         // one of them, splice rejects the unresolved removes and falls
-        // through to bulk rebuild bulk — a correctness path, just not the leaf-merge
+        // through to bulk rebuild — a correctness path, just not the leaf-merge
         // surgical path). What we DO assert is that, regardless of which
         // path runs, the post-state is correct: 800 surviving rows, no
         // Tag=1 entries left, and a navigable tree.
@@ -342,7 +342,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // its rightmost child entry, leaving a single-entry root pointing
         // at the surviving (former leftmost) leaf, with tail_page
         // recomputed to that leaf's page number. Single-entry intermediates
-        // are valid — the seeker descends through their lone child pointer.
+        // are valid — the cursor descends through their lone child pointer.
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int total = 800;

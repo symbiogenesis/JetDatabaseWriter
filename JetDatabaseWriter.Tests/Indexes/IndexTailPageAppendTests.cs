@@ -23,7 +23,7 @@ using Xunit;
 ///   Access UI and engine reject the same indexes.</item>
 ///   <item><b>B — <c>tail_page</c> append optimisation.</b> The bulk
 ///   builder stamps the rightmost-leaf page number into every intermediate
-///   page's <c>tail_page</c> header field; the seeker honours it on
+///   page's <c>tail_page</c> header field; the cursor honours it on
 ///   intermediate-summary overshoot; an append-only fast path in the
 ///   incremental maintenance loop rewrites the tail leaf in place when
 ///   every new key sorts strictly after the current tail max — skipping
