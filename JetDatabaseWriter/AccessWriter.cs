@@ -29,7 +29,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
-using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -173,7 +172,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.longValueEncoder = new LongValueEncoder(this, this.pageAllocator);
         this.uniqueIndexChecker = new UniqueIndexChecker(this);
         this.transactionLifecycle = new TransactionLifecycle(this);
-        this.catalogWriter = new CatalogWriter(this, this.indexMaintainer);
+        this.catalogWriter = new CatalogWriter(this, this.indexMaintainer, this.longValueEncoder);
         this.rowEncoder = new RowEncoder(this);
         this.dataPageInserter = new DataPageInserter(this, this.pageAllocator);
         this.Constraints = new ConstraintRegistry(
@@ -3635,9 +3634,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         return new RowLocation(target.PageNumber, rowIndex, rowStart, rowBytes.Length);
     }
-
-    internal ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, CancellationToken cancellationToken = default)
-        => this.longValueEncoder.ForceEncodeMemoAsLvalAsync(text, compress, cancellationToken);
 
     internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
     {

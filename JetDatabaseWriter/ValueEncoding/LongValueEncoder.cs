@@ -25,14 +25,6 @@ using static JetDatabaseWriter.Enums.ColumnType;
 internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAllocator)
 {
     /// <summary>
-    /// Wraps short data (≤ inline cap) into the 12-byte inline LVAL header form
-    /// (bitmask <c>0x80</c>): header + raw payload contiguous in the row body.
-    /// </summary>
-    /// <param name="data">The data bytes or values.</param>
-    internal static byte[]? WrapInlineLongValue(byte[]? data)
-        => LongValueStore.WrapInlineLongValue(data);
-
-    /// <summary>
     /// Pre-encode pass for row insert: any MEMO / OLE value whose payload
     /// exceeds the inline cap is written to one or more freshly-appended LVAL
     /// data pages here, and the in-row value is replaced with a

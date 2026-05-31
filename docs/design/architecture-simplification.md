@@ -240,15 +240,20 @@ are worth picking up when touching the same ownership boundary.
   shared internal row-layout API for `RowDecodePlan` and writer-side row
   helpers, so the decode-plan-only `TryParseRowLayoutForDecodePlan` and
   `ResolveColumnSliceForDecodePlan` forwarders were deleted.
-- [ ] Inline pure long-value one-liners when nearby code is already changing.
-  `LongValueEncoder.WrapInlineLongValue` is a pass-through to
-  `LongValueStore.WrapInlineLongValue`; `AccessWriter.ForceEncodeMemoAsLvalAsync`
-  is a writer-owned bridge used by `CatalogWriter`. Neither is architecture-sized
-  alone, but both preserve older call shapes after the LVAL store/encoder split.
-- [ ] Leave intentional public facades in place. `AccessWriter` public methods
-  that forward to `RelationshipManager`, `ComplexColumnManager`, transaction,
-  or encryption services are the public API orchestration surface, not obsolete
-  internal calling conventions.
+- [x] Inline pure long-value one-liners. Completed 2026-05-31:
+  `RowEncoder` now calls `LongValueStore.WrapInlineLongValue` directly, and
+  `CatalogWriter` receives the writer-owned `LongValueEncoder` collaborator for
+  linked-table memo LVAL encoding. The obsolete
+  `LongValueEncoder.WrapInlineLongValue` and
+  `AccessWriter.ForceEncodeMemoAsLvalAsync` bridges were removed.
+- [x] Leave intentional public facades in place. Completed 2026-05-31: the
+  remaining `AccessWriter` relationship, complex-column row API, transaction,
+  and encryption/password forwarders were checked against the public interfaces,
+  README examples, and focused test usage. They are externally documented writer
+  orchestration entry points, so the implementation should stay delegated to
+  `RelationshipManager`, `ComplexColumnManager`, transaction lifecycle, and
+  encryption services rather than exposing those collaborators or deleting the
+  public API surface.
 
 ### Not recommended as pure wins right now
 

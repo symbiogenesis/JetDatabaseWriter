@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
@@ -20,7 +21,8 @@ using JetDatabaseWriter.Schema.Models;
 /// </summary>
 /// <param name="writer">The writer.</param>
 /// <param name="indexes">The indexes.</param>
-internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes)
+/// <param name="longValueEncoder">The long value encoder.</param>
+internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes, LongValueEncoder longValueEncoder)
 {
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
@@ -158,7 +160,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
     private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)
     {
-        object? encoded = await writer.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
+        object? encoded = await longValueEncoder.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
         return encoded ?? value;
     }
 

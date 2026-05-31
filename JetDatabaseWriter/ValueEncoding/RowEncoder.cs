@@ -9,6 +9,7 @@ using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
@@ -46,7 +47,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
         }
 
-        return LongValueEncoder.WrapInlineLongValue(data);
+        return LongValueStore.WrapInlineLongValue(data);
     }
 
     internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
@@ -287,7 +288,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
         }
 
-        return LongValueEncoder.WrapInlineLongValue(wrapped);
+        return LongValueStore.WrapInlineLongValue(wrapped);
     }
 
     private static byte[] EncodeCalculatedNumericValue(decimal value)
@@ -599,7 +600,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
         }
 
-        return LongValueEncoder.WrapInlineLongValue(wrapped);
+        return LongValueStore.WrapInlineLongValue(wrapped);
     }
 
     private byte[]? EncodeTextValue(string? value, int maxSize, bool compress)
@@ -654,6 +655,6 @@ internal sealed class RowEncoder(AccessWriter writer)
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
         }
 
-        return LongValueEncoder.WrapInlineLongValue(data);
+        return LongValueStore.WrapInlineLongValue(data);
     }
 }
