@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -60,6 +61,30 @@ public sealed class LongValueStoreTests
 
         Assert.NotNull(result.Data);
         Assert.Equal([0x41, 0x42, 0x43, 0x44, 0x45, 0x46], result.Data);
+    }
+
+    [Fact]
+    public void LocateRow_UsesProvidedLiveRowBounds()
+    {
+        const int pageSize = 128;
+        var dataPage = new DataPageLayout(TDefOff: 4, NumRows: 12, RowsStart: 14);
+        byte[] page = new byte[pageSize];
+        page[0] = Constants.PageTypes.Data;
+        Wu16(page, dataPage.NumRows, 2);
+        AccessBase.RowBound[] liveRows = [new(RowIndex: 1, RowStart: 48, RowSize: 11)];
+
+        LongValueStore.LvalRowLocation location = LongValueStore.LocateRow(
+            lvalPage: 7,
+            lvalRow: 1,
+            page,
+            dataPage,
+            pageSize,
+            liveRows);
+
+        Assert.False(location.Failed);
+        Assert.Same(page, location.Page);
+        Assert.Equal(48, location.Start);
+        Assert.Equal(11, location.Size);
     }
 
     [Fact]

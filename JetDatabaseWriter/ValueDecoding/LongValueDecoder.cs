@@ -16,47 +16,31 @@ internal sealed class LongValueDecoder(AccessReader reader)
 {
     internal ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
-        if (this.TryLocateLvalRowSync(lvalDp, out LongValueStore.LvalRowLocation cached))
-        {
-            return new ValueTask<LongValueStore.LvalRowLocation>(cached);
-        }
-
-        return this.LocateLvalRowSlowAsync(lvalDp, cancellationToken);
-    }
-
-    private async ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowSlowAsync(uint lvalDp, CancellationToken cancellationToken)
-    {
         int lvalPage = LongValueStore.PageNumber(lvalDp);
         if (lvalPage <= 0)
         {
-            return new LongValueStore.LvalRowLocation([], 0, 0, $"invalid page {lvalPage}");
+            return new ValueTask<LongValueStore.LvalRowLocation>(new LongValueStore.LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
         }
 
+        if (reader.TryGetCachedPage(lvalPage, out byte[] page))
+        {
+            return new ValueTask<LongValueStore.LvalRowLocation>(this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), page));
+        }
+
+        return this.LocateLvalRowSlowAsync(lvalPage, LongValueStore.RowIndex(lvalDp), cancellationToken);
+    }
+
+    private async ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
+    {
         byte[] page = await reader.ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
-        return this.ParseLvalRowLocation(lvalDp, page);
+        return this.LocateLvalRow(lvalPage, lvalRow, page);
     }
 
-    private bool TryLocateLvalRowSync(uint lvalDp, out LongValueStore.LvalRowLocation location)
+    private LongValueStore.LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
-        int lvalPage = LongValueStore.PageNumber(lvalDp);
-        if (lvalPage <= 0)
-        {
-            location = new LongValueStore.LvalRowLocation([], 0, 0, $"invalid page {lvalPage}");
-            return true;
-        }
-
-        if (!reader.TryGetCachedPage(lvalPage, out byte[] page))
-        {
-            location = default;
-            return false;
-        }
-
-        location = this.ParseLvalRowLocation(lvalDp, page);
-        return true;
+        AccessBase.RowBound[] liveRows = reader.GetLiveRowBoundsCached(lvalPage, page);
+        return LongValueStore.LocateRow(lvalPage, lvalRow, page, reader.DataPage, reader.PageSizeBytes, liveRows);
     }
-
-    private LongValueStore.LvalRowLocation ParseLvalRowLocation(uint lvalDp, byte[] page)
-        => LongValueStore.LocateRow(lvalDp, page, reader.DataPage, reader.PageSizeBytes, reader.GetLiveRowBoundsCached(LongValueStore.PageNumber(lvalDp), page));
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
         => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader.PageSizeBytes, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);

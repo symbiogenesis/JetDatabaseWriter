@@ -91,14 +91,13 @@ internal static class LongValueStore
     }
 
     internal static LvalRowLocation LocateRow(
-        uint lvalDp,
+        int lvalPage,
+        int lvalRow,
         byte[] page,
         DataPageLayout dataPage,
         int pageSize,
         ReadOnlySpan<AccessBase.RowBound> liveRows)
     {
-        int lvalPage = PageNumber(lvalDp);
-        int lvalRow = RowIndex(lvalDp);
         if (lvalPage <= 0)
         {
             return new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}");

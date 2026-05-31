@@ -30,20 +30,16 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The numeric payload encoding candidate is now recorded under completed
-outcomes. No high-payoff active simplification candidate is currently open; the
-lower-payoff candidates below remain useful only when adjacent work is already
-touching those code paths.
+The numeric payload encoding and LVAL row-location candidates are now recorded
+under completed outcomes. No high-payoff active simplification candidate is
+currently open; the lower-payoff candidate below remains useful only when
+adjacent work is already touching that code path.
 
 ### Lower-payoff candidates
 
-These may still be worth doing opportunistically, but they do not meet the
-current large meaningful simplification bar on their own.
+This may still be worth doing opportunistically, but it does not meet the
+current large meaningful simplification bar on its own.
 
-- **LVAL row location wrapper:** `LongValueDecoder` mostly delegates
-  row-location math to `LongValueStore`. There may be a small cleanup around
-  passing cached row bounds directly, but this is not large enough to treat as
-  architecture work unless another LVAL refactor is already underway.
 - **Text linked-table enumeration:** `LinkedTableManager` has separate surfaces
   for counting rows, streaming rows, metadata, and materializing a `DataTable`.
   Some common source opening and row normalization is already shared. Further
@@ -71,6 +67,35 @@ Suggested order: treat lower-payoff candidates as opportunistic follow-ups when
 related work is already in progress.
 
 ## Completed outcomes
+
+### Completed LVAL row-location handoff cleanup
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs)
+- [../../JetDatabaseWriter/LongValues/LongValueStore.cs](../../JetDatabaseWriter/LongValues/LongValueStore.cs)
+- [../../JetDatabaseWriter.Tests/ValueEncoding/LongValueStoreTests.cs](../../JetDatabaseWriter.Tests/ValueEncoding/LongValueStoreTests.cs)
+
+`LongValueDecoder` now resolves the LVAL page and row index once, obtains the
+reader-owned cached row bounds when the target page is available, and passes the
+page/row indexes plus those cached bounds directly to `LongValueStore`.
+`LongValueStore.LocateRow` keeps the data-page validation, row-count check,
+live-row matching, and row-bound error reporting without recomputing row-pointer
+pieces from the packed `lvalDp` value.
+
+Evidence at closeout: focused `LongValueStoreTests` passed with 7 succeeded; the
+LVAL-adjacent `LongValueStoreTests`, `CompressedMemoLvalTests`,
+`OverflowMemoReadTests`, and `DirectRowDecoderBuilderTests` slice passed with 21
+succeeded; and `dotnet build JetDatabaseWriter.slnx --no-restore
+--configuration Debug` passed across all projects and target frameworks.
+
+Preserve these guardrails: keep `AccessReader.GetLiveRowBoundsCached` as the
+row-directory source for reader-side LVAL page lookup, keep `LongValueStore`
+responsible for row-location validation against caller-provided live-row bounds,
+and keep chained LVAL reads resolving each chunk through the decoder-provided
+page/cache lookup.
 
 ### Completed binary slice and data-URI helpers
 
