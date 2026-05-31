@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -31,6 +32,287 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     public static bool IsIntermediate(byte[] page)
         => page?.Length > 0 && page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
+
+    /// <summary>
+    /// Builds a leaf index page using the supplied per-format layout.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The previous sibling page.</param>
+    /// <param name="nextPage">The next sibling page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="enablePrefixCompression">A value indicating whether prefix compression is enabled.</param>
+    /// <param name="maxPrefixLength">The maximum prefix length.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
+    public static byte[] BuildLeafPage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        bool enablePrefixCompression,
+        int? maxPrefixLength = null)
+    {
+        if (pageSize <= layout.FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
+        }
+
+        Guard.NotNull(entries, nameof(entries));
+
+        byte[] page = new byte[pageSize];
+        WriteIndexPageHeader(
+            page,
+            Constants.IndexLeafPage.PageTypeLeaf,
+            layout,
+            parentTdefPage,
+            prevPage,
+            nextPage,
+            tailPage);
+
+        int prefLen = enablePrefixCompression ? ComputeSharedPrefixLength(entries) : 0;
+        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
+        {
+            prefLen = maxPrefixLength.Value;
+        }
+
+        Wu16(page, layout.PrefLenOffset, prefLen);
+
+        int payloadCursor = layout.FirstEntryOffset;
+        int payloadLimit = pageSize;
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            IndexEntry entry = entries[i];
+            int keyOffset = i == 0 ? 0 : prefLen;
+            int keyLen = entry.Key.Length - keyOffset;
+            int entryLen = keyLen + LeafTrailerSize;
+            int entryStart = payloadCursor;
+
+            if (entryStart + entryLen > payloadLimit)
+            {
+                string message = $"Index entries do not fit on a single leaf page (need {entryStart + entryLen} bytes, have {payloadLimit}). B-tree splitting is required for tables this large.";
+                throw new ArgumentOutOfRangeException(nameof(entries), message);
+            }
+
+            Buffer.BlockCopy(entry.Key, keyOffset, page, entryStart, keyLen);
+
+            long dataPage = entry.DataPage;
+            if (dataPage is < 0 or > 0xFFFFFF)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dataPage} exceeds the 24-bit range.");
+            }
+
+            int rowPointerOffset = entryStart + keyLen;
+            WriteUInt24Be(page, rowPointerOffset, (int)dataPage);
+            page[rowPointerOffset + 3] = entry.DataRow;
+
+            SetEntryStartBit(
+                layout,
+                page,
+                entryStart,
+                isFirstEntry: i == 0,
+                parameterName: nameof(entries),
+                overflowMessage: "Bitmask overflow: too many entries for a single leaf page.");
+            payloadCursor += entryLen;
+        }
+
+        SetSentinelBit(layout, page, payloadCursor, entries.Count > 0);
+        Wu16(page, 2, payloadLimit - payloadCursor);
+        return page;
+    }
+
+    /// <summary>
+    /// Builds an intermediate index page using the supplied per-format layout.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The decoded intermediate entries to emit.</param>
+    /// <param name="prevPage">The previous sibling page.</param>
+    /// <param name="nextPage">The next sibling page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="maxPrefixLength">The maximum prefix length.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
+    public static byte[] BuildIntermediatePage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<DecodedIntermediateEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        int? maxPrefixLength = null)
+    {
+        if (pageSize <= layout.FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
+        }
+
+        Guard.NotNull(entries, nameof(entries));
+        if (entries.Count == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate pages require at least one entry.");
+        }
+
+        byte[] page = new byte[pageSize];
+        WriteIndexPageHeader(
+            page,
+            Constants.IndexLeafPage.PageTypeIntermediate,
+            layout,
+            parentTdefPage,
+            prevPage,
+            nextPage,
+            tailPage);
+
+        int prefLen = ComputeIntermediatePrefixLength(entries);
+        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
+        {
+            prefLen = maxPrefixLength.Value;
+        }
+
+        Wu16(page, layout.PrefLenOffset, prefLen);
+
+        int payloadCursor = layout.FirstEntryOffset;
+        int payloadLimit = pageSize;
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            DecodedIntermediateEntry decoded = entries[i];
+            IndexEntry summary = decoded.Entry;
+            byte[] key = summary.Key;
+            int keyOffset = i == 0 ? 0 : prefLen;
+            int keyLen = key.Length - keyOffset;
+            int entryLen = keyLen + IntermediateTrailerSize;
+            int entryStart = payloadCursor;
+
+            if (entryStart + entryLen > payloadLimit)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate page overflow (internal error).");
+            }
+
+            Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
+
+            long dataPage = summary.DataPage;
+            if (dataPage is < 0 or > 0xFFFFFF)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dataPage} exceeds the 24-bit range.");
+            }
+
+            int rowPointerOffset = entryStart + keyLen;
+            WriteUInt24Be(page, rowPointerOffset, (int)dataPage);
+            page[rowPointerOffset + 3] = summary.DataRow;
+
+            long childPage = decoded.ChildPage;
+            if (childPage is < 0 or > 0xFFFFFFFFL)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entries), "Child page exceeds 32-bit range.");
+            }
+
+            BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(rowPointerOffset + LeafTrailerSize, 4), (uint)childPage);
+
+            SetEntryStartBit(
+                layout,
+                page,
+                entryStart,
+                isFirstEntry: i == 0,
+                parameterName: nameof(entries),
+                overflowMessage: "Bitmask overflow on intermediate page.");
+            payloadCursor += entryLen;
+        }
+
+        SetSentinelBit(layout, page, payloadCursor, hasEntries: true);
+        Wu16(page, 2, payloadLimit - payloadCursor);
+        return page;
+    }
+
+    /// <summary>
+    /// Attempts to build an intermediate index page, returning <see langword="null"/> on overflow.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The previous sibling page.</param>
+    /// <param name="nextPage">The next sibling page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="maxPrefixLength">The maximum prefix length.</param>
+    public static byte[]? TryBuildIntermediatePage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<DecodedIntermediateEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        int? maxPrefixLength = null)
+    {
+        Guard.NotNull(entries, nameof(entries));
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Writes all sibling pointer fields in an index page header.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="prevPage">The previous sibling page.</param>
+    /// <param name="nextPage">The next sibling page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    public static void WriteSiblingPointers(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+    {
+        WritePrevPage(layout, page, prevPage);
+        WriteNextPage(layout, page, nextPage);
+        WriteTailPage(layout, page, tailPage);
+    }
+
+    /// <summary>
+    /// Writes the previous-page sibling pointer in an index page header.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="prevPage">The previous sibling page.</param>
+    public static void WritePrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long prevPage)
+        => WritePageNumber32(page, layout.PrevPageOffset, prevPage, nameof(prevPage));
+
+    /// <summary>
+    /// Writes the next-page sibling pointer in an index page header.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="nextPage">The next sibling page.</param>
+    public static void WriteNextPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long nextPage)
+        => WritePageNumber32(page, layout.NextPageOffset, nextPage, nameof(nextPage));
+
+    /// <summary>
+    /// Writes the tail-page pointer in an index page header.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="tailPage">The tail page.</param>
+    public static void WriteTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long tailPage)
+        => WritePageNumber32(page, layout.TailPageOffset, tailPage, nameof(tailPage));
 
     /// <summary>
     /// Returns the page number recorded in the <c>next_page</c> sibling field.
@@ -446,6 +728,136 @@ internal static class IndexPageCodec
         }
 
         return left.Length - right.Length;
+    }
+
+    private static void WriteIndexPageHeader(
+        byte[] page,
+        byte pageType,
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long parentTdefPage,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+    {
+        page[0] = pageType;
+        page[1] = 0x01;
+        WritePageNumber32(page, 4, parentTdefPage, nameof(parentTdefPage));
+        WriteSiblingPointers(layout, page, prevPage, nextPage, tailPage);
+    }
+
+    private static void WritePageNumber32(byte[] page, int offset, long pageNumber, string parameterName)
+    {
+        Guard.NotNull(page, nameof(page));
+        if (offset < 0 || offset + 4 > page.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), "Page number offset is outside the page buffer.");
+        }
+
+        if (pageNumber is < 0 or > 0xFFFFFFFFL)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Index page number exceeds the 32-bit range.");
+        }
+
+        Wu32(page, offset, (uint)pageNumber);
+    }
+
+    private static void SetEntryStartBit(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int entryStart,
+        bool isFirstEntry,
+        string parameterName,
+        string overflowMessage)
+    {
+        if (isFirstEntry)
+        {
+            return;
+        }
+
+        int bitIndex = entryStart - layout.FirstEntryOffset;
+        int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
+        if (byteOffset >= layout.FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, overflowMessage);
+        }
+
+        page[byteOffset] |= (byte)(1 << (bitIndex % 8));
+    }
+
+    private static void SetSentinelBit(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int payloadCursor,
+        bool hasEntries)
+    {
+        if (!hasEntries)
+        {
+            return;
+        }
+
+        int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
+        int sentinelByteOffset = layout.BitmaskOffset + (sentinelBitIndex / 8);
+        if (sentinelByteOffset < layout.FirstEntryOffset)
+        {
+            page[sentinelByteOffset] |= (byte)(1 << (sentinelBitIndex % 8));
+        }
+    }
+
+    private static int ComputeSharedPrefixLength(IReadOnlyList<IndexEntry> entries)
+    {
+        if (entries.Count < 2)
+        {
+            return 0;
+        }
+
+        byte[] first = entries[0].Key;
+        int prefixLength = first.Length;
+        for (int i = 1; i < entries.Count && prefixLength > 0; i++)
+        {
+            byte[] other = entries[i].Key;
+            int max = Math.Min(prefixLength, other.Length);
+            int j = 0;
+            while (j < max && first[j] == other[j])
+            {
+                j++;
+            }
+
+            prefixLength = j;
+        }
+
+        return Math.Min(prefixLength, 0xFFFF);
+    }
+
+    private static int ComputeIntermediatePrefixLength(IReadOnlyList<DecodedIntermediateEntry> entries)
+    {
+        if (entries.Count < 2)
+        {
+            return 0;
+        }
+
+        byte[] first = entries[0].Entry.Key;
+        int prefixLength = first.Length;
+        for (int i = 1; i < entries.Count && prefixLength > 0; i++)
+        {
+            byte[] other = entries[i].Entry.Key;
+            int max = Math.Min(prefixLength, other.Length);
+            int j = 0;
+            while (j < max && first[j] == other[j])
+            {
+                j++;
+            }
+
+            prefixLength = j;
+        }
+
+        return Math.Min(prefixLength, 0xFFFF);
+    }
+
+    private static void WriteUInt24Be(byte[] page, int offset, int value)
+    {
+        page[offset] = (byte)((value >> 16) & 0xFF);
+        page[offset + 1] = (byte)((value >> 8) & 0xFF);
+        page[offset + 2] = (byte)(value & 0xFF);
     }
 
     private static bool TryGetPayloadEnd(

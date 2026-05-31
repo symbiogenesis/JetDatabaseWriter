@@ -37,7 +37,7 @@ Target shape:
 - [x] Extract an `IndexPageCodec` that owns read-side bitmask scanning, prefix
       handling, entry decoding, sibling pointer reads, child selection, and
       encoded-key comparison.
-- [ ] Move sibling pointer writes and leaf/intermediate page emission behind
+- [x] Move sibling pointer writes and leaf/intermediate page emission behind
       the codec or a successor descriptor.
 - [x] Extract an `IndexCursor` that performs layout-aware descent, leaf-chain
       walks, tail-page fall-through, and exact-key row-location collection.
@@ -47,7 +47,7 @@ Target shape:
 - [x] Remove `IndexBTreeSeeker` and route exact-key seeks through the cursor.
 - [x] Route `RelationshipChildRowLocator` and parent/child FK seek logic
       through the cursor rather than direct seeker calls.
-- [ ] Route unique-index fast checks through the same encoded-key and cursor
+- [x] Route unique-index fast checks through the same encoded-key and cursor
       infrastructure where possible.
 - [x] Collapse duplicated `NextEntryStart`, canonical-key compare, prefix
       reconstruction, and child-selection logic.
@@ -58,6 +58,16 @@ Progress 2026-05-26: read-only index seeking now flows through
 enforcement, and child-row location call the cursor directly. Mutation editing
 now flows through `Indexes/IndexBTreeEditor.cs`, leaving `IndexMaintainer` as
 the TDEF/catalog orchestration surface.
+
+Progress 2026-05-30: write-side index page emission now routes through
+`Indexes/IndexPageCodec.cs`: leaf and intermediate builders delegate page-byte
+construction to the codec, and sibling-pointer patches use codec write helpers.
+The unique-index pre-insert fast path now encodes pending keys with the same
+index-key encoder and probes existing B-trees through `IndexCursor`, while
+keeping the snapshot fallback for Numeric/Memo cases. Evidence: focused
+pre-write/cursor tests passed (17/17), the full index namespace passed
+(446/446), `dotnet build --no-restore` passed, and the non-fuzz suite passed
+(3,559 succeeded, 2 environment skips).
 
 Guardrails:
 

@@ -4,8 +4,6 @@ using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Infrastructure;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
@@ -200,119 +198,16 @@ internal static class IndexLeafPageBuilder
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
-    {
-        if (pageSize <= layout.FirstEntryOffset)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
-        }
-
-        Guard.NotNull(entries, nameof(entries));
-
-        byte[] page = new byte[pageSize];
-
-        // ── Header (§4.1) ────────────────────────────────────────────────
-        page[0] = Constants.IndexLeafPage.PageTypeLeaf; // page_type
-        page[1] = 0x01;         // unknown (always 0x01)
-
-        // free_space (offset 2, u16) is patched after we know the entry size.
-        Wi32(page, 4, checked((int)parentTdefPage)); // parent_page (TDEF)
-        Wi32(page, layout.PrevPageOffset, checked((int)prevPage));   // prev_page
-        Wi32(page, layout.NextPageOffset, checked((int)nextPage));   // next_page
-        Wi32(page, layout.TailPageOffset, checked((int)tailPage));   // tail_page (childTail)
-
-        // §4.4: pref_len is the number of leading bytes that every entry
-        // shares with the first entry. Stripped from every entry beyond the
-        // first; the first entry is always written whole because it supplies
-        // the canonical prefix bytes.
-        // When splicing into an existing leaf page, the caller passes
-        // maxPrefixLength (the page's original pref_len) so we never
-        // increase the prefix beyond what was already on disk — DAO
-        // rejects pages whose pref_len grows beyond its original value.
-        int prefLen = enablePrefixCompression ? ComputeSharedPrefixLength(entries) : 0;
-        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
-        {
-            prefLen = maxPrefixLength.Value;
-        }
-
-        Wu16(page, layout.PrefLenOffset, prefLen);
-
-        // Bytes 22..(layout.BitmaskOffset-1) are reserved; left zeroed.
-        // Bitmask spans [layout.BitmaskOffset .. layout.FirstEntryOffset-1].
-        // Entry payload starts at layout.FirstEntryOffset.
-
-        int payloadCursor = layout.FirstEntryOffset;
-        int payloadLimit = pageSize;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            IndexEntry e = entries[i];
-
-            // §4.3 + §4.4: first entry includes the shared-prefix bytes; later
-            // entries strip the leading prefLen bytes (the reader logically
-            // re-prepends them on read).
-            int keyOffset = i == 0 ? 0 : prefLen;
-            int keyLen = e.Key.Length - keyOffset;
-            int entryLen = keyLen + 3 + 1;
-            int entryStart = payloadCursor;
-
-            if (entryStart + entryLen > payloadLimit)
-            {
-                string message = $"Index entries do not fit on a single leaf page (need {entryStart + entryLen} bytes, have {payloadLimit}). B-tree splitting is required for tables this large.";
-                throw new ArgumentOutOfRangeException(nameof(entries), message);
-            }
-
-            Buffer.BlockCopy(e.Key, keyOffset, page, entryStart, keyLen);
-
-            // Data page: 24-bit big-endian.
-            long dp = e.DataPage;
-            if (dp is < 0 or > 0xFFFFFF)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dp} exceeds the 24-bit range.");
-            }
-
-            int dpOff = entryStart + keyLen;
-            WriteUInt24Be(page, dpOff, (int)dp);
-            page[dpOff + 3] = e.DataRow;
-
-            // §4.3 + §4.2: every entry except the first sets a bit in the bitmask
-            // at the entry's start offset (relative to first_entry_offset, LSB-first).
-            if (i > 0)
-            {
-                int bitIndex = entryStart - layout.FirstEntryOffset;
-                int byteOff = layout.BitmaskOffset + (bitIndex / 8);
-                int bit = bitIndex % 8;
-                if (byteOff >= layout.FirstEntryOffset)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(entries), "Bitmask overflow: too many entries for a single leaf page.");
-                }
-
-                page[byteOff] |= (byte)(1 << bit);
-            }
-
-            payloadCursor += entryLen;
-        }
-
-        // §4.2 sentinel: Access/DAO writes a "one-past-the-end" bit in the
-        // entry-start bitmask at the first byte of free space (the position
-        // immediately after the last entry). DAO validates this sentinel
-        // during Compact & Repair and rejects pages that omit it.
-        if (entries.Count > 0)
-        {
-            int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
-            int sentinelByteOff = layout.BitmaskOffset + (sentinelBitIndex / 8);
-            if (sentinelByteOff < layout.FirstEntryOffset)
-            {
-                page[sentinelByteOff] |= (byte)(1 << (sentinelBitIndex % 8));
-            }
-        }
-
-        // free_space is the count of unused bytes between the last written byte
-        // and the page end. Write at offset 2 as u16.
-        int freeSpace = payloadLimit - payloadCursor;
-        Wu16(page, 2, freeSpace);
-
-        return page;
-    }
+        => IndexPageCodec.BuildLeafPage(
+            layout,
+            pageSize,
+            parentTdefPage,
+            entries,
+            prevPage,
+            nextPage,
+            tailPage,
+            enablePrefixCompression,
+            maxPrefixLength);
 
     /// <summary>
     /// Builds an empty Jet3 (<c>.mdb</c> Access 97) index leaf page.
@@ -327,43 +222,4 @@ internal static class IndexLeafPageBuilder
     /// <param name="parentTdefPage">Page number of the table's TDEF page.</param>
     public static byte[] BuildJet3EmptyLeafPage(int pageSize, long parentTdefPage)
         => BuildLeafPage(LeafPageLayout.Jet3, pageSize, parentTdefPage, [], prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: false);
-
-    private static void WriteUInt24Be(byte[] b, int o, int value)
-    {
-        b[o] = (byte)((value >> 16) & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)(value & 0xFF);
-    }
-
-    private static int ComputeSharedPrefixLength(IReadOnlyList<IndexEntry> entries)
-    {
-        if (entries.Count < 2)
-        {
-            return 0;
-        }
-
-        byte[] first = entries[0].Key;
-        int prefixLen = first.Length;
-        for (int i = 1; i < entries.Count && prefixLen > 0; i++)
-        {
-            byte[] other = entries[i].Key;
-            int max = Math.Min(prefixLen, other.Length);
-            int j = 0;
-            while (j < max && first[j] == other[j])
-            {
-                j++;
-            }
-
-            prefixLen = j;
-        }
-
-        // pref_len is a u16 on disk; the cap is well below 65535 in practice
-        // because encoded keys never exceed the 3616-byte payload area.
-        if (prefixLen > 0xFFFF)
-        {
-            prefixLen = 0xFFFF;
-        }
-
-        return prefixLen;
-    }
 }

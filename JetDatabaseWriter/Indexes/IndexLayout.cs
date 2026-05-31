@@ -500,10 +500,12 @@ internal readonly struct IndexLayout
     /// <param name="RealIdxNum">The real index number of.</param>
     /// <param name="Name">The name.</param>
     /// <param name="KeyColumns">The key columns.</param>
+    /// <param name="RootPage">The root index B-tree page.</param>
     public readonly record struct UniqueIndexDescriptor(
         int RealIdxNum,
         string Name,
-        IReadOnlyList<KeyColumnInfo> KeyColumns);
+        IReadOnlyList<KeyColumnInfo> KeyColumns,
+        long RootPage);
 
     /// <summary>
     /// Resolves an index's <see cref="KeyColumn"/> list against a table's

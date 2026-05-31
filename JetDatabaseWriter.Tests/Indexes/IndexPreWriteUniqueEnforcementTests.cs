@@ -52,6 +52,39 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     }
 
     [Fact]
+    public async Task SingleInsert_DuplicateAgainstExistingMultiLevelIndex_ThrowsBeforeWrite()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        const int rowCount = 1500;
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "T",
+            [new ColumnDefinition("Id", typeof(int))],
+            [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
+            this.ct);
+
+        object[][] rows = new object[rowCount][];
+        for (int i = 0; i < rowCount; i++)
+        {
+            rows[i] = [i + 1];
+        }
+
+        await writer.InsertRowsAsync("T", rows, this.ct);
+
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync("T", [rowCount], this.ct));
+
+        Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        Assert.NotNull(dt);
+        Assert.Equal(rowCount, dt.Rows.Count);
+    }
+
+    [Fact]
     public async Task SingleInsert_MemoDuplicateAgainstExisting_ThrowsBeforeWrite()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();

@@ -1,11 +1,9 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds a complete JET index B-tree from a sorted list of leaf
@@ -217,7 +215,7 @@ internal static class IndexBTreeBuilder
 
         while (childPageCount > 1)
         {
-            (List<List<IntermediateEntry>>? groups, List<IndexEntry>? nextLevelLast) =
+            (List<List<DecodedIntermediateEntry>>? groups, List<IndexEntry>? nextLevelLast) =
                 PackIntermediate(childPageBase, childPageCount, childLastEntries, entryAreaSize);
 
             int levelCount = groups.Count;
@@ -230,7 +228,7 @@ internal static class IndexBTreeBuilder
             {
                 long prev = i == 0 ? 0 : nextFreePage + i - 1;
                 long next = i == levelCount - 1 ? 0 : nextFreePage + i + 1;
-                byte[] page = BuildIntermediatePage(
+                byte[] page = IndexPageCodec.BuildIntermediatePage(
                     layout,
                     pageSize,
                     parentTdefPage,
@@ -285,35 +283,18 @@ internal static class IndexBTreeBuilder
             return null;
         }
 
-        var packed = new List<IntermediateEntry>(entries.Count);
-        foreach (DecodedIntermediateEntry e in entries)
-        {
-            packed.Add(new IntermediateEntry(e.Entry, e.ChildPage));
-        }
-
-        try
-        {
-            return BuildIntermediatePage(layout, pageSize, parentTdefPage, packed, prevPage, nextPage, tailPage, maxPrefixLength);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return null;
-        }
+        return IndexPageCodec.TryBuildIntermediatePage(
+            layout,
+            pageSize,
+            parentTdefPage,
+            entries,
+            prevPage,
+            nextPage,
+            tailPage,
+            maxPrefixLength);
     }
 
-    private readonly struct IntermediateEntry(IndexEntry summary, long childPage)
-    {
-        public IndexEntry Summary { get; } = summary;
-
-        public long ChildPage { get; } = childPage;
-
-        /// <summary>
-        /// Gets key + (3B page + 1B row) + 4B child.
-        /// </summary>
-        public int OnDiskSize => this.Summary.Key.Length + 4 + 4;
-    }
-
-    private static (List<List<IntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
+    private static (List<List<DecodedIntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
         long childPageBase,
         int childPageCount,
         IReadOnlyList<IndexEntry> childLastEntries,
@@ -322,15 +303,15 @@ internal static class IndexBTreeBuilder
         // Rough capacity hint: assume ~64-byte average summary key ⇒ each
         // intermediate page holds entryAreaSize / (64 + 8) entries. Errs high.
         int estPagesAtThisLevel = Math.Max(1, ((childPageCount * 72) + entryAreaSize - 1) / entryAreaSize);
-        var groups = new List<List<IntermediateEntry>>(estPagesAtThisLevel);
+        var groups = new List<List<DecodedIntermediateEntry>>(estPagesAtThisLevel);
         var lastPerGroup = new List<IndexEntry>(estPagesAtThisLevel);
 
-        var current = new List<IntermediateEntry>();
+        var current = new List<DecodedIntermediateEntry>();
         int currentSize = 0;
         for (int i = 0; i < childPageCount; i++)
         {
-            var entry = new IntermediateEntry(childLastEntries[i], childPageBase + i);
-            int len = entry.OnDiskSize;
+            var entry = new DecodedIntermediateEntry(childLastEntries[i], childPageBase + i);
+            int len = entry.Entry.Key.Length + 4 + 4;
             if (len > entryAreaSize)
             {
                 throw new ArgumentOutOfRangeException(nameof(childLastEntries), "Intermediate entry exceeds page payload area.");
@@ -339,7 +320,7 @@ internal static class IndexBTreeBuilder
             if (currentSize + len > entryAreaSize)
             {
                 groups.Add(current);
-                lastPerGroup.Add(current[^1].Summary);
+                lastPerGroup.Add(current[^1].Entry);
                 current = [];
                 currentSize = 0;
             }
@@ -349,152 +330,7 @@ internal static class IndexBTreeBuilder
         }
 
         groups.Add(current);
-        lastPerGroup.Add(current[^1].Summary);
+        lastPerGroup.Add(current[^1].Entry);
         return (groups, lastPerGroup);
-    }
-
-    private static byte[] BuildIntermediatePage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
-        int pageSize,
-        long parentTdefPage,
-        IReadOnlyList<IntermediateEntry> entries,
-        long prevPage,
-        long nextPage,
-        long tailPage,
-        int? maxPrefixLength = null)
-    {
-        byte[] page = new byte[pageSize];
-
-        page[0] = Constants.IndexLeafPage.PageTypeIntermediate; // page_type = 0x03
-        page[1] = 0x01;                 // unknown
-
-        // free_space patched at end.
-        Wi32(page, 4, checked((int)parentTdefPage));
-        Wi32(page, layout.PrevPageOffset, checked((int)prevPage));
-        Wi32(page, layout.NextPageOffset, checked((int)nextPage));
-        Wi32(page, layout.TailPageOffset, checked((int)tailPage));   // tail_page (rightmost leaf in the tree)
-
-        // §4.4 prefix compression on intermediate pages: hoist the longest
-        // shared encoded-key prefix into the header and strip it from every
-        // entry beyond the first.
-        int prefLen = ComputeIntermediatePrefixLength(entries);
-        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
-        {
-            prefLen = maxPrefixLength.Value;
-        }
-
-        Wu16(page, layout.PrefLenOffset, prefLen);
-
-        int payloadCursor = layout.FirstEntryOffset;
-        int payloadLimit = pageSize;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            IntermediateEntry e = entries[i];
-            byte[] key = e.Summary.Key;
-            int keyOffset = i == 0 ? 0 : prefLen;
-            int keyLen = key.Length - keyOffset;
-            int entryLen = keyLen + 4 + 4;
-            int entryStart = payloadCursor;
-
-            if (entryStart + entryLen > payloadLimit)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate page overflow (internal error).");
-            }
-
-            Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
-
-            // 3-byte BE data page + 1-byte data row (summary of last child entry).
-            long dp = e.Summary.DataPage;
-            int rpOff = entryStart + keyLen;
-            WriteUInt24Be(page, rpOff, (int)dp);
-            page[rpOff + 3] = e.Summary.DataRow;
-
-            // 4-byte child page pointer. Written big-endian to match the
-            // on-disk format used by Microsoft Access-authored intermediate
-            // pages (the 3-byte data-page summary preceding it is also
-            // big-endian, despite every other 32-bit page-number field on
-            // index pages being little-endian). The reader (IndexLeafIncremental.
-            // DecodeIntermediateChildPointer) accepts both endiannesses for
-            // back-compat with previously-written test fixtures.
-            long cp = e.ChildPage;
-            if (cp is < 0 or > 0xFFFFFFFFL)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), "Child page exceeds 32-bit range.");
-            }
-
-            int cpOff = rpOff + 4;
-            BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(cpOff, 4), (uint)cp);
-
-            // §4.2 bitmask: every entry except the first sets a bit at its start
-            // offset relative to the first-entry offset, LSB-first.
-            if (i > 0)
-            {
-                int bitIndex = entryStart - layout.FirstEntryOffset;
-                int byteOff = layout.BitmaskOffset + (bitIndex / 8);
-                int bit = bitIndex % 8;
-                if (byteOff >= layout.FirstEntryOffset)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(entries), "Bitmask overflow on intermediate page.");
-                }
-
-                page[byteOff] |= (byte)(1 << bit);
-            }
-
-            payloadCursor += entryLen;
-        }
-
-        // Sentinel bit: one-past-the-end marker at the position immediately
-        // after the last entry (same convention as leaf pages — see
-        // IndexLeafPageBuilder.BuildLeafPage). Access/DAO validates this
-        // sentinel during Compact & Repair on intermediate pages too.
-        {
-            int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
-            int sentinelByteOff = layout.BitmaskOffset + (sentinelBitIndex / 8);
-            if (sentinelByteOff < layout.FirstEntryOffset)
-            {
-                page[sentinelByteOff] |= (byte)(1 << (sentinelBitIndex % 8));
-            }
-        }
-
-        Wu16(page, 2, payloadLimit - payloadCursor); // free_space
-        return page;
-    }
-
-    private static int ComputeIntermediatePrefixLength(IReadOnlyList<IntermediateEntry> entries)
-    {
-        if (entries.Count < 2)
-        {
-            return 0;
-        }
-
-        byte[] first = entries[0].Summary.Key;
-        int prefixLen = first.Length;
-        for (int i = 1; i < entries.Count && prefixLen > 0; i++)
-        {
-            byte[] other = entries[i].Summary.Key;
-            int max = Math.Min(prefixLen, other.Length);
-            int j = 0;
-            while (j < max && first[j] == other[j])
-            {
-                j++;
-            }
-
-            prefixLen = j;
-        }
-
-        if (prefixLen > 0xFFFF)
-        {
-            prefixLen = 0xFFFF;
-        }
-
-        return prefixLen;
-    }
-
-    private static void WriteUInt24Be(byte[] b, int o, int value)
-    {
-        b[o] = (byte)((value >> 16) & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)(value & 0xFF);
     }
 }

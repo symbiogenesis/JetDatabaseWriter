@@ -578,8 +578,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             byte[] nextLeaf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
 
-            // prev_page is per layout (§4.1).
-            Wi32(nextLeaf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
+            IndexPageCodec.WritePrevPage(layout, nextLeaf, pageNumbers[splitCount - 1]);
             await writer.WritePageAsync(leafNext, nextLeaf, cancellationToken).ConfigureAwait(false);
         }
 
@@ -1318,8 +1317,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             byte[] neighbour = await this.ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
-            // §4.1 prev_page (per layout).
-            Wi32(neighbour, layout.PrevPageOffset, checked((int)newPrevValue));
+            IndexPageCodec.WritePrevPage(layout, neighbour, newPrevValue);
             await writer.WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 
@@ -1327,8 +1325,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             byte[] neighbour = await this.ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
-            // §4.1 next_page (per layout).
-            Wi32(neighbour, layout.NextPageOffset, checked((int)newNextValue));
+            IndexPageCodec.WriteNextPage(layout, neighbour, newNextValue);
             await writer.WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 

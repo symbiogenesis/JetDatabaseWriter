@@ -1457,7 +1457,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (leafNext > 0)
                 {
                     byte[] nextLeafBuf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
-                    Wi32(nextLeafBuf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
+                    IndexPageCodec.WritePrevPage(layout, nextLeafBuf, pageNumbers[splitCount - 1]);
                     await writer.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
                 }
 

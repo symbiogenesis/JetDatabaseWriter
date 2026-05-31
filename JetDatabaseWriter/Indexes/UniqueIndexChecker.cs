@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -83,7 +82,8 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
                 continue;
             }
 
-            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos));
+            long rootPage = (uint)Ri32(tdefBuffer, slot.FirstDpOffset);
+            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos, rootPage));
         }
 
         return result;
@@ -168,111 +168,79 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        // Fast path: read only the key columns directly from data pages via
-        // TryReadColumnValuesTypedAsync. Keep Numeric and Memo indexes on the
-        // full-table snapshot path: Numeric needs descriptor-scale validation,
-        // and Memo/Hyperlink values may require LVAL traversal outside the
-        // partial inline reader.
-        if (RequiresSnapshotForPreInsert(descriptors))
+        // Cursor fast path: encode pending keys exactly as index maintenance
+        // writes them, then probe the existing B-tree through IndexCursor.
+        // Keep Numeric and Memo indexes on the full-table snapshot path:
+        // Numeric needs descriptor-scale validation, and Memo/Hyperlink
+        // values may require LVAL traversal outside the fast path.
+        if (RequiresSnapshotForPreInsert(descriptors) || !CanUseCursorFastPath(descriptors))
         {
             using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
             this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
             return;
         }
 
-        // Gather existing key-column values directly from data pages.
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        await this.CheckUniqueIndexesFastPathAsync(tableName, descriptors, tableDef, locations, pendingRows, cancellationToken).ConfigureAwait(false);
+        await this.CheckUniqueIndexesFastPathAsync(tableName, descriptors, pendingRows, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Fast-path uniqueness check: reads only the key columns from existing
-    /// rows (no DataTable materialization) and validates the pending batch.
+    /// Fast-path uniqueness check: probes existing encoded keys through the
+    /// index cursor and validates pending-row collisions in memory.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="descriptors">The descriptors.</param>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="locations">The locations.</param>
     /// <param name="pendingRows">The pending rows.</param>
     /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
     /// <exception cref="InvalidOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
-        TableDef tableDef,
-        List<RowLocation> locations,
         List<object[]> pendingRows,
         CancellationToken cancellationToken)
     {
-        // Build ordered column indices for each descriptor.
-        int[][] descriptorOrdinals = new int[descriptors.Count][];
-        for (int d = 0; d < descriptors.Count; d++)
-        {
-            descriptorOrdinals[d] = new int[descriptors[d].KeyColumns.Count];
-            for (int k = 0; k < descriptors[d].KeyColumns.Count; k++)
-            {
-                descriptorOrdinals[d][k] = descriptors[d].KeyColumns[k].SnapIdx;
-            }
-        }
+        var cursor = new IndexCursor(
+            IndexLeafPageBuilder.GetLayout(writer.Format),
+            this.ReadIndexPageOwnedAsync,
+            writer.PageSizeBytes);
 
-        // Collect unique set of all key column ordinals to read.
-        HashSet<int> allOrdinals = [];
-        foreach (int[] ords in descriptorOrdinals)
-        {
-            foreach (int ord in ords)
-            {
-                allOrdinals.Add(ord);
-            }
-        }
-
-        int[] columnOrdinalsArray = [.. allOrdinals];
-
-        // Per-descriptor seen sets.
+        int[][] numericScales = new int[descriptors.Count][];
         var seenSets = new HashSet<byte[]>[descriptors.Count];
         for (int d = 0; d < descriptors.Count; d++)
         {
+            numericScales[d] = BuildNumericScales(descriptors[d]);
             seenSets[d] = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
         }
 
-        // Read existing rows (key columns only).
-        foreach (RowLocation loc in locations)
+        for (int p = 0; p < pendingRows.Count; p++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, tableDef, columnOrdinalsArray, cancellationToken).ConfigureAwait(false);
-            if (values == null)
-            {
-                continue;
-            }
-
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = BuildNumericScales(descriptor);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericScales[d]);
 
-                // Map from the columnOrdinalsArray position back to the full row object[].
-                object[] fullRow = BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
-                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
-                _ = seenSets[d].Add(key);
-            }
-        }
-
-        // Check pending rows.
-        for (int p = 0; p < pendingRows.Count; p++)
-        {
-            for (int d = 0; d < descriptors.Count; d++)
-            {
-                UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = BuildNumericScales(descriptor);
-                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
-
-                if (!seenSets[d].Add(key))
+                if (!seenSets[d].Add(key)
+                    || await cursor.ContainsKeyAsync(descriptor.RootPage, key, cancellationToken).ConfigureAwait(false))
                 {
                     throw new InvalidOperationException(
                         $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
                         "The conflict was detected before any row was written; the table is unchanged.");
                 }
             }
+        }
+    }
+
+    private async ValueTask<byte[]> ReadIndexPageOwnedAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (byte[])page.Clone();
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
         }
     }
 
@@ -329,6 +297,19 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         return false;
     }
 
+    private static bool CanUseCursorFastPath(IReadOnlyList<UniqueIndexDescriptor> descriptors)
+    {
+        foreach (UniqueIndexDescriptor descriptor in descriptors)
+        {
+            if (descriptor.RootPage <= 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
     {
         int[] scales = new int[descriptor.KeyColumns.Count];
@@ -339,37 +320,6 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         return scales;
-    }
-
-    private static object[] BuildRowFromPartialValues(UniqueIndexDescriptor descriptor, object?[] partialValues, int[] columnOrdinalsArray)
-    {
-        // Build a row array sized to cover all key column snap indices.
-        int maxIdx = 0;
-        foreach ((_, int snapIdx, _) in descriptor.KeyColumns)
-        {
-            if (snapIdx > maxIdx)
-            {
-                maxIdx = snapIdx;
-            }
-        }
-
-        object[] row = new object[maxIdx + 1];
-        for (int i = 0; i < row.Length; i++)
-        {
-            row[i] = DBNull.Value;
-        }
-
-        // Map: columnOrdinalsArray[i] → partialValues[i]
-        for (int i = 0; i < columnOrdinalsArray.Length; i++)
-        {
-            int ord = columnOrdinalsArray[i];
-            if (ord < row.Length)
-            {
-                row[ord] = partialValues[i] ?? DBNull.Value;
-            }
-        }
-
-        return row;
     }
 
     /// <summary>
