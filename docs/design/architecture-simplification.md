@@ -30,60 +30,12 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The strongest remaining candidates are now logical TDEF chains and Numeric
-payload encoding. The shared row walker, stale index leaf facade, and insert
-mutation flow work is recorded under completed outcomes so future scouting does
-not reopen those threads.
+The strongest remaining candidate is now Numeric payload encoding. The shared
+row walker, stale index leaf facade, insert mutation flow, and logical TDEF
+chain work are recorded under completed outcomes so future scouting does not
+reopen those threads.
 
-### 1. Make logical TDEF chains a small shared data structure
-
-Primary files:
-
-- [../../JetDatabaseWriter/AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs)
-- [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
-- [../../JetDatabaseWriter/Relationships/RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs)
-- [../../JetDatabaseWriter/Schema/TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs)
-
-Why this is interesting: `AccessBase.ReadTDefBytesAsync` already stitches a TDEF
-page chain into a logical byte buffer for readers. Relationship mutation needs
-the same logical buffer plus the physical page numbers so it can write changes
-back, so `RelationshipManager` carries a parallel `LogicalTDefChain`,
-logical-capacity math, page materialization, and write-back helpers.
-
-Target shape:
-
-- Introduce a schema-level `LogicalTDefChain` helper that can read and stitch a
-  TDEF chain, retain physical page numbers when requested, compute logical
-  capacity/page counts, ensure logical buffer capacity, materialize logical bytes
-  back into physical TDEF pages, and write the chain while allocating or
-  deallocating continuation pages as needed.
-- Route `AccessBase.ReadTDefBytesAsync` through the read-only side of that
-  helper.
-- Route relationship TDEF mutation write-back through the mutable side.
-
-Likely payoff:
-
-- Moderate deletion in `RelationshipManager` and `AccessBase`.
-- Fewer independent copies of page-chain math.
-- More obvious ownership for future schema mutations that need multi-page TDEF
-  write-back.
-
-Risks and guardrails:
-
-- Preserve the logical layout exactly: first page contributes the full page;
-  continuation pages contribute bytes after offset 8 only.
-- Preserve next-page pointers and first-page free-space/tdef-length fields.
-- Preserve deallocation behavior for no-longer-needed continuation pages.
-- Keep malformed-chain handling compatible with current `ReadTableDefAsync` and
-  relationship mutation behavior.
-
-Proof plan:
-
-- Run schema, relationship, index, and catalog tests covering multi-page TDEFs.
-- Add focused tests for growing and shrinking a multi-page TDEF chain.
-- Run DAO CompactDatabase validation for relationship create, rename, and drop.
-
-### 2. Promote Numeric fixed-point payload encoding into `NumericEncoder`
+### 1. Promote Numeric fixed-point payload encoding into `NumericEncoder`
 
 Primary files:
 
@@ -164,11 +116,52 @@ current large meaningful simplification bar on their own.
 
 Suggested order:
 
-1. Extract logical TDEF chain read/write helpers.
-2. Promote Numeric fixed-point rescaling and magnitude shaping into
-   `NumericEncoder`.
+1. Promote Numeric fixed-point rescaling and magnitude shaping into
+  `NumericEncoder`.
 
 ## Completed outcomes
+
+### Completed logical TDEF chain helper
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs)
+- [../../JetDatabaseWriter/Relationships/RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs)
+- [../../JetDatabaseWriter/Schema/LogicalTDefChain.cs](../../JetDatabaseWriter/Schema/LogicalTDefChain.cs)
+- [../../JetDatabaseWriter/Schema/TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs)
+- [../../JetDatabaseWriter.Tests/Schema/LogicalTDefChainTests.cs](../../JetDatabaseWriter.Tests/Schema/LogicalTDefChainTests.cs)
+
+`LogicalTDefChain` now owns logical TDEF chain reads, optional physical page
+retention, page-count/capacity math, logical-offset mapping, physical page
+materialization, and mutable write-back with continuation-page allocation and
+deallocation. `AccessBase.ReadTDefBytesAsync` uses the read-only path,
+`TDefPageBuilder` uses the shared logical-to-physical and materialization
+helpers, and `RelationshipManager` keeps only FK-specific layout mutation plus
+thin read/write wrappers over the shared chain.
+
+The refactor preserves the existing logical layout: the first physical page
+contributes the full page, each continuation contributes bytes after offset 8,
+write-back stamps next-page pointers from the retained or newly allocated page
+numbers, and shrinking a logical TDEF deallocates continuation pages that are no
+longer needed.
+
+Evidence at closeout: focused `LogicalTDefChainTests` passed with 2 succeeded;
+`JetDatabaseWriter.Tests.Relationships` passed with 163 succeeded and 1
+environment skip; `JetDatabaseWriter.Tests.Schema` passed with 223 succeeded;
+`JetDatabaseWriter.Tests.Indexes` passed with 447 succeeded;
+`JetDatabaseWriter.Tests.Catalog` passed with 111 succeeded; targeted DAO
+CompactDatabase validation for relationship create/rename/drop passed with 2
+succeeded; and `dotnet build JetDatabaseWriter.slnx --no-restore
+--configuration Debug` passed.
+
+Preserve these guardrails: keep first-page versus continuation logical layout
+byte-for-byte compatible, keep next-page pointer stamping tied to physical page
+numbers, keep first-page free-space and `tdef_len` updates centralized, keep
+shrink deallocation for unused continuation pages, and route future schema
+mutations that need multi-page TDEF write-back through `LogicalTDefChain` rather
+than rebuilding page-chain math locally.
 
 ### Completed insert batch mutation flow
 

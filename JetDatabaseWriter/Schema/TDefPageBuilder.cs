@@ -428,18 +428,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     }
 
     public (int PageIndex, int PageOffset) LogicalToPhysicalTDefOffset(int logicalOffset)
-    {
-        if (logicalOffset < writer.PageSizeBytes)
-        {
-            return (0, logicalOffset);
-        }
-
-        int bodyPerCont = writer.PageSizeBytes - 8;
-        int rest = logicalOffset - writer.PageSizeBytes;
-        int contIdx = rest / bodyPerCont;
-        int contOff = rest % bodyPerCont;
-        return (1 + contIdx, 8 + contOff);
-    }
+        => LogicalTDefChain.LogicalToPhysicalOffset(writer.PageSizeBytes, logicalOffset);
 
     /// <summary>
     /// Builds a minimal, empty JET database as a byte array.
@@ -691,37 +680,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     }
 
     private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
-    {
-        if (usedLength <= writer.PageSizeBytes)
-        {
-            byte[] only = new byte[writer.PageSizeBytes];
-            Buffer.BlockCopy(logical, 0, only, 0, writer.PageSizeBytes);
-            return ([only], firstDpLogicalOffsets);
-        }
-
-        int bodyPerCont = writer.PageSizeBytes - 8;
-        int continuationBodyBytes = usedLength - writer.PageSizeBytes;
-        int continuationCount = (continuationBodyBytes + bodyPerCont - 1) / bodyPerCont;
-        int totalPages = 1 + continuationCount;
-        byte[][] pages = new byte[totalPages][];
-
-        pages[0] = new byte[writer.PageSizeBytes];
-        Buffer.BlockCopy(logical, 0, pages[0], 0, writer.PageSizeBytes);
-
-        for (int p = 1; p < totalPages; p++)
-        {
-            byte[] cont = new byte[writer.PageSizeBytes];
-            cont[0] = Constants.PageTypes.TableDefinition;
-            cont[1] = 0x01;
-
-            int srcOffset = writer.PageSizeBytes + ((p - 1) * bodyPerCont);
-            int copyLen = Math.Min(bodyPerCont, usedLength - srcOffset);
-            Buffer.BlockCopy(logical, srcOffset, cont, 8, copyLen);
-            pages[p] = cont;
-        }
-
-        return (pages, firstDpLogicalOffsets);
-    }
+        => (LogicalTDefChain.MaterializePages(logical, usedLength, writer.PageSizeBytes), firstDpLogicalOffsets);
 
     private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
     [

@@ -14,6 +14,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202, SA1204
@@ -481,7 +482,7 @@ internal sealed class RelationshipManager
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         // Build the rewritten page.
-        byte[] newTd = new byte[this.GetLogicalTDefCapacity(currentEnd + totalGrowth)];
+        byte[] newTd = new byte[LogicalTDefChain.GetLogicalCapacity(this.writer.PageSizeBytes, currentEnd + totalGrowth)];
         Buffer.BlockCopy(td, 0, newTd, 0, this.writer.TDef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
@@ -601,7 +602,7 @@ internal sealed class RelationshipManager
         Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
 
         await this.WriteLogicalTDefChainAsync(
-            chain.PageNumbers,
+            chain,
             newTd,
             newTrailingStart + trailingLen,
             cancellationToken).ConfigureAwait(false);
@@ -1073,7 +1074,7 @@ internal sealed class RelationshipManager
         Wi32(td, this.writer.TDef.NumCols + 2, layout.NumIdx - 1);
         Wi32(td, 8, finalEnd - 8);
 
-        await this.WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
+        await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return releasedRealIdxNum;
     }
 
@@ -1173,7 +1174,7 @@ internal sealed class RelationshipManager
         Wi32(td, this.writer.TDef.NumRealIdx, layout.NumRealIdx - reclaim);
         Wi32(td, 8, finalEnd - 8);
 
-        await this.WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
+        await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1232,7 +1233,7 @@ internal sealed class RelationshipManager
             return false;
         }
 
-        this.EnsureLogicalTDefCapacity(ref td, finalEnd);
+        td = chain.EnsureCapacity(finalEnd);
 
         // Shift the bytes between (oldNameStart + oldNameLen) and currentEnd
         // by delta. This covers the rest of the names section + the variable
@@ -1259,169 +1260,33 @@ internal sealed class RelationshipManager
         // Update tdef_len.
         Wi32(td, 8, finalEnd - 8);
 
-        await this.WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
+        await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
-    /// <summary>
-    /// Stitched TDEF bytes plus the physical page numbers that currently
-    /// back the chain. The first page contributes all <c>_pgSz</c> bytes;
-    /// continuation pages contribute only their body bytes after offset 8.
-    /// </summary>
-    /// <param name="Bytes">The bytes.</param>
-    /// <param name="PageNumbers">The page numbers.</param>
-    private sealed record LogicalTDefChain(byte[] Bytes, List<long> PageNumbers);
-
-    /// <summary>
-    /// Reads and stitches a TDEF chain using the same logical layout as
-    /// <c>AccessBase.ReadTDefBytesAsync</c>, while retaining the physical
-    /// page numbers so mutations can be materialised back to disk.
-    /// </summary>
-    /// <param name="startPage">The start page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="NotSupportedException">Thrown when no readable TDEF chain starts at <paramref name="startPage"/>.</exception>
-    private async ValueTask<LogicalTDefChain> ReadRequiredLogicalTDefChainAsync(
+    private ValueTask<LogicalTDefChain> ReadRequiredLogicalTDefChainAsync(
         long startPage,
         CancellationToken cancellationToken)
-    {
-        var parts = new List<byte[]>();
-        var pageNumbers = new List<long>();
-        var seen = new HashSet<long>();
-        long pageNumber = startPage;
+        => LogicalTDefChain.ReadRequiredAsync(
+            startPage,
+            this.writer.PageSizeBytes,
+            this.writer.ReadPageAsync,
+            AccessBase.ReturnPage,
+            retainPageNumbers: true,
+            cancellationToken);
 
-        while (pageNumber != 0 && seen.Add(pageNumber))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != Constants.PageTypes.TableDefinition)
-            {
-                AccessBase.ReturnPage(page);
-                break;
-            }
-
-            parts.Add(page);
-            pageNumbers.Add(pageNumber);
-            pageNumber = Ru32(page, 4);
-        }
-
-        if (parts.Count == 0)
-        {
-            throw new NotSupportedException($"TDEF at page {startPage} could not be read.");
-        }
-
-        int total = this.writer.PageSizeBytes + ((parts.Count - 1) * (this.writer.PageSizeBytes - 8));
-        byte[] logical = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, logical, 0, this.writer.PageSizeBytes);
-
-        int logicalOffset = this.writer.PageSizeBytes;
-        for (int partIndex = 1; partIndex < parts.Count; partIndex++)
-        {
-            Buffer.BlockCopy(parts[partIndex], 8, logical, logicalOffset, this.writer.PageSizeBytes - 8);
-            logicalOffset += this.writer.PageSizeBytes - 8;
-        }
-
-        for (int partIndex = 0; partIndex < parts.Count; partIndex++)
-        {
-            AccessBase.ReturnPage(parts[partIndex]);
-        }
-
-        return new LogicalTDefChain(logical, pageNumbers);
-    }
-
-    private int GetLogicalTDefPageCount(int usedLength)
-    {
-        if (usedLength <= this.writer.PageSizeBytes)
-        {
-            return 1;
-        }
-
-        int bodyPerContinuation = this.writer.PageSizeBytes - 8;
-        int continuationBytes = usedLength - this.writer.PageSizeBytes;
-        return 1 + ((continuationBytes + bodyPerContinuation - 1) / bodyPerContinuation);
-    }
-
-    private int GetLogicalTDefCapacity(int usedLength)
-    {
-        int pageCount = this.GetLogicalTDefPageCount(usedLength);
-        return this.writer.PageSizeBytes + ((pageCount - 1) * (this.writer.PageSizeBytes - 8));
-    }
-
-    private void EnsureLogicalTDefCapacity(ref byte[] logicalBytes, int usedLength)
-    {
-        int capacity = this.GetLogicalTDefCapacity(usedLength);
-        if (logicalBytes.Length < capacity)
-        {
-            Array.Resize(ref logicalBytes, capacity);
-        }
-    }
-
-    private async ValueTask WriteLogicalTDefChainAsync(
-        List<long> existingPageNumbers,
+    private ValueTask WriteLogicalTDefChainAsync(
+        LogicalTDefChain chain,
         byte[] logicalBytes,
         int usedLength,
         CancellationToken cancellationToken)
-    {
-        this.EnsureLogicalTDefCapacity(ref logicalBytes, usedLength);
-        int pageCount = this.GetLogicalTDefPageCount(usedLength);
-        long[] pageNumbers = new long[pageCount];
-        int retainedCount = Math.Min(existingPageNumbers.Count, pageCount);
-        for (int pageIndex = 0; pageIndex < retainedCount; pageIndex++)
-        {
-            pageNumbers[pageIndex] = existingPageNumbers[pageIndex];
-        }
-
-        for (int pageIndex = retainedCount; pageIndex < pageCount; pageIndex++)
-        {
-            pageNumbers[pageIndex] = await this.pageAllocator.AllocatePageAsync(new byte[this.writer.PageSizeBytes], cancellationToken).ConfigureAwait(false);
-        }
-
-        logicalBytes[0] = Constants.PageTypes.TableDefinition;
-        logicalBytes[1] = 0x01;
-        int tdefLen = Math.Max(0, usedLength - 8);
-        Wi32(logicalBytes, 8, tdefLen);
-        Wu16(logicalBytes, 2, Math.Max(0, this.writer.PageSizeBytes - tdefLen - 8));
-
-        byte[][] pages = this.MaterializeLogicalTDefPages(logicalBytes, usedLength, pageNumbers);
-        for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
-        {
-            await this.writer.WritePageAsync(pageNumbers[pageIndex], pages[pageIndex], cancellationToken).ConfigureAwait(false);
-        }
-
-        for (int pageIndex = pageCount; pageIndex < existingPageNumbers.Count; pageIndex++)
-        {
-            await this.pageAllocator.DeallocatePageAsync(existingPageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private byte[][] MaterializeLogicalTDefPages(byte[] logicalBytes, int usedLength, long[] pageNumbers)
-    {
-        byte[][] pages = new byte[pageNumbers.Length][];
-
-        pages[0] = new byte[this.writer.PageSizeBytes];
-        Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(this.writer.PageSizeBytes, logicalBytes.Length));
-        Wi32(pages[0], 4, pageNumbers.Length > 1 ? checked((int)pageNumbers[1]) : 0);
-
-        int bodyPerContinuation = this.writer.PageSizeBytes - 8;
-        for (int pageIndex = 1; pageIndex < pageNumbers.Length; pageIndex++)
-        {
-            byte[] page = new byte[this.writer.PageSizeBytes];
-            page[0] = Constants.PageTypes.TableDefinition;
-            page[1] = 0x01;
-            Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
-
-            int sourceOffset = this.writer.PageSizeBytes + ((pageIndex - 1) * bodyPerContinuation);
-            int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, usedLength - sourceOffset));
-            if (copyLength > 0)
-            {
-                Buffer.BlockCopy(logicalBytes, sourceOffset, page, 8, copyLength);
-            }
-
-            pages[pageIndex] = page;
-        }
-
-        return pages;
-    }
+        => chain.WriteAsync(
+            logicalBytes,
+            usedLength,
+            this.pageAllocator.AllocatePageAsync,
+            this.writer.WritePageAsync,
+            this.pageAllocator.DeallocatePageAsync,
+            cancellationToken);
 
     /// <summary>
     /// Parsed layout of a stitched Jet4/ACE TDEF, used by the FK

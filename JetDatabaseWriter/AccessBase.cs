@@ -18,6 +18,7 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -740,62 +741,15 @@ public abstract class AccessBase : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private protected async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            startPage,
+            this.PageSizeBytes,
+            this.ReadPageAsync,
+            ReturnPage,
+            retainPageNumbers: false,
+            cancellationToken).ConfigureAwait(false);
 
-        var parts = new List<byte[]>();
-        var seen = new HashSet<long>();
-        long pg = startPage;
-
-        while (pg != 0 && !seen.Contains(pg))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            _ = seen.Add(pg);
-            byte[] p = await this.ReadPageAsync(pg, cancellationToken).ConfigureAwait(false);
-            if (p[0] != Constants.PageTypes.TableDefinition)
-            {
-                ReturnPage(p);
-                break;
-            }
-
-            parts.Add(p);
-            pg = Ru32(p, 4);
-        }
-
-        if (parts.Count == 0)
-        {
-            return null;
-        }
-
-        if (parts.Count == 1)
-        {
-            byte[] single = new byte[this.PageSizeBytes];
-            Buffer.BlockCopy(parts[0], 0, single, 0, this.PageSizeBytes);
-            ReturnPage(parts[0]);
-            return single;
-        }
-
-        int total = this.PageSizeBytes;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            total += this.PageSizeBytes - 8;
-        }
-
-        byte[] result = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, result, 0, this.PageSizeBytes);
-        int pos = this.PageSizeBytes;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            int len = this.PageSizeBytes - 8;
-            Buffer.BlockCopy(parts[i], 8, result, pos, len);
-            pos += len;
-        }
-
-        for (int i = 0; i < parts.Count; i++)
-        {
-            ReturnPage(parts[i]);
-        }
-
-        return result;
+        return chain?.Bytes;
     }
 
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
