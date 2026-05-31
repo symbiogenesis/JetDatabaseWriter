@@ -513,11 +513,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         tdefPages[0][this.TDef.NumCols - 5] = 0x53;
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(this.Format);
+        var layout = IndexPageLayout.ForFormat(this.Format);
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
         {
-            byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
+            byte[] leafPage = IndexPageCodec.BuildLeafPage(
                 layout,
                 this.PageSizeBytes,
                 parentTdefPage: 2,
@@ -725,12 +725,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
-            IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(this.Format);
+            var layout = IndexPageLayout.ForFormat(this.Format);
             leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int indexIndex = 0; indexIndex < resolvedIndexes.Count; indexIndex++)
             {
-                byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
+                byte[] leafPage = IndexPageCodec.BuildLeafPage(
                     layout,
                     this.PageSizeBytes,
                     tdefPageNumber,

@@ -82,7 +82,7 @@ internal static class LongRowBisect
         await using AccessReader reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
         int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();

@@ -102,7 +102,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         // The compIndex fixtures all have a "Table1" with a non-FK index
@@ -148,7 +148,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         int btreesChecked = 0;
@@ -228,7 +228,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         long fileLength = new FileInfo(fixturePath).Length;
@@ -344,8 +344,8 @@ public sealed class IndexBTreeStructuralFixtureTests
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
 
-            IndexLeafPageBuilder.LeafPageLayout layout =
-                IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+            IndexPageLayout layout =
+                IndexPageLayout.ForFormat(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
             DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
@@ -390,7 +390,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
     private static async Task<int> CountLeafEntriesAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
@@ -401,7 +401,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
@@ -412,7 +412,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

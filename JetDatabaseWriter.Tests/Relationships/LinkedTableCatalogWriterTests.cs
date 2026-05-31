@@ -930,7 +930,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, cancellationToken);
         int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         int count = 0;
         for (int pageNumber = 0; pageNumber < fileBytes.Length / pageSize; pageNumber++)
         {
@@ -945,7 +945,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         return count;
     }
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, IndexLeafPageBuilder.LeafPageLayout layout)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, IndexPageLayout layout)
     {
         int count = 1;
         for (int i = layout.BitmaskOffset; i < layout.FirstEntryOffset; i++)

@@ -159,7 +159,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // supported. The 39-byte real-idx + 20-byte logical-idx layouts
         // (§3.1 / §3.2) and the 0x16-bitmask / 0xF8-first-entry leaf layout
         // (§4.2) are pinned by the format probe and emitted by the same code
-        // path Jet4/ACE uses, parameterised on `IndexLeafPageBuilder.LeafPageLayout`.
+        // path Jet4/ACE uses, parameterised on `IndexPageLayout`.
 
         // Read the TDEF page bytes. CreateTableAsync may now emit multi-page
         // TDEF chains for wide schemas (>32 col / >16 idx on Jet3, ≫50 col on
@@ -182,7 +182,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         int numRealIdx = preamble.NumRealIdx;
         int realIdxDescStart = preamble.RealIdxDescStart;
 
-        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer.Format);
+        var leafLayout = IndexPageLayout.ForFormat(writer.Format);
 
         // Decode the index catalog: every populated real-idx slot (with
         // IsUnique already promoted for any slot backing a PK logical-idx),
@@ -530,7 +530,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     private async ValueTask<bool> RefreshIncrementalIndexUsageMapsAsync(
         long tdefPage,
         byte[] tdefBuffer,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         List<(int RealIdxNum, RealIdxEntry Entry)> slots,
         int numRealIdx,
         CancellationToken cancellationToken)
@@ -587,7 +587,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     }
 
     private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         long tdefPage,
         long rootPage,
         CancellationToken cancellationToken)
@@ -709,7 +709,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         this.LastIncrementalBail = null;
 
         // Jet3 (.mdb Access 97) participates in the
-        // incremental fast paths via the per-format LeafPageLayout descriptor
+        // incremental fast paths via the per-format IndexPageLayout descriptor
         // (page size 2048, bitmask at 0x16, first entry at 0xF8) and the §3.1
         // 39-byte real-idx physical descriptor (first_dp at phys+34 instead
         // of phys+38). The change-set encode + splice + rebuild logic is
@@ -718,7 +718,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
         IndexLayout idxLayout = writer.IndexLayoutInfo;
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.Format);
+        var layout = IndexPageLayout.ForFormat(writer.Format);
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -1009,7 +1009,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return false;
             }
 
-            byte[]? newLeaf = IndexLeafPageBuilder.TryBuildLeafPage(layout, writer.PageSizeBytes, tdefPage, spliced);
+            byte[]? newLeaf = IndexPageCodec.TryBuildLeafPage(layout, writer.PageSizeBytes, tdefPage, spliced);
             if (newLeaf is null)
             {
                 this.LastIncrementalBail = $"C13 spliced={spliced.Count}";
@@ -1207,7 +1207,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer.Format);
+        var layout = IndexPageLayout.ForFormat(writer.Format);
 
         this.LastIncrementalBail = null;
 
@@ -1363,7 +1363,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             byte[] rewritten;
             try
             {
-                rewritten = IndexLeafPageBuilder.BuildLeafPage(
+                rewritten = IndexPageCodec.BuildLeafPage(
                     layout,
                     writer.PageSizeBytes,
                     tdefPage,

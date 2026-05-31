@@ -306,7 +306,7 @@ internal static class EmittedPageInvariantAssert
     private static void AssertIndexPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
     {
         byte[] page = PageCopy(fileBytes, pageNumber, pageSize);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         byte pageType = page[0];
 
         Assert.Equal(0x01, page[1]);
@@ -356,7 +356,7 @@ internal static class EmittedPageInvariantAssert
         byte[] page,
         int pageNumber,
         int pageSize,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte pageType)
     {
         int freeSpace = ReadUInt16(page, 2);
@@ -400,7 +400,7 @@ internal static class EmittedPageInvariantAssert
     private static void AssertIndexBitRangeClear(
         byte[] page,
         int pageNumber,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int startBitInclusive,
         int endBitExclusive)
     {
@@ -412,7 +412,7 @@ internal static class EmittedPageInvariantAssert
         }
     }
 
-    private static bool IsIndexBitSet(byte[] page, IndexLeafPageBuilder.LeafPageLayout layout, int bitIndex)
+    private static bool IsIndexBitSet(byte[] page, IndexPageLayout layout, int bitIndex)
     {
         int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
         int bitInByte = bitIndex % 8;

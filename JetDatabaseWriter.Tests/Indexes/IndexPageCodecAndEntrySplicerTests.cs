@@ -21,7 +21,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void DecodeEntries_RoundTripsThreeIntKeys(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, ascending: true), 100, 0),
@@ -29,7 +29,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, ascending: true), 100, 2),
         };
 
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+        byte[] page = IndexPageCodec.BuildLeafPage(
             layout, pageSize, ParentTdef, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: true);
 
         List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
@@ -49,8 +49,8 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void DecodeEntries_EmptyLeaf_ReturnsEmptyList(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
+        var layout = IndexPageLayout.ForFormat(format);
+        byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
         List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
         Assert.Empty(decoded);
     }
@@ -61,8 +61,8 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void IsSingleRootLeaf_TrueForFreshLeaf(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
+        var layout = IndexPageLayout.ForFormat(format);
+        byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
         Assert.True(IndexPageCodec.IsSingleRootLeaf(layout, page));
     }
 
@@ -72,8 +72,8 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void IsSingleRootLeaf_FalseWhenSiblingPointersSet(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+        var layout = IndexPageLayout.ForFormat(format);
+        byte[] page = IndexPageCodec.BuildLeafPage(
             layout, pageSize, ParentTdef, [], prevPage: 0, nextPage: 99, tailPage: 0, enablePrefixCompression: false);
         Assert.False(IndexPageCodec.IsSingleRootLeaf(layout, page));
     }
@@ -83,7 +83,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public void IsSingleRootLeaf_FalseForIntermediatePage(DatabaseFormat format)
     {
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         byte[] page = new byte[PageSizeOf(format)];
         page[0] = 0x03; // intermediate
         page[1] = 0x01;
@@ -184,14 +184,14 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void TryBuildLeafPage_RoundTripsThroughSeekableEncoding(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 200, 0),
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 200, 1),
         };
 
-        byte[]? page = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
+        byte[]? page = IndexPageCodec.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
         Assert.NotNull(page);
         Assert.Equal(0x04, page[0]);
         Assert.True(IndexPageCodec.IsSingleRootLeaf(layout, page));
@@ -209,7 +209,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
         // either format. Each int entry is ~9 bytes; 1000 entries blow past the
         // ~3616-byte (Jet4) or ~1800-byte (Jet3) payload areas.
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>(1000);
         for (int i = 0; i < 1000; i++)
         {
@@ -217,7 +217,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
                 IndexKeyEncoder.EncodeEntry(LongIntegerType, i, true), 100, 0));
         }
 
-        byte[]? page = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
+        byte[]? page = IndexPageCodec.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
         Assert.Null(page);
     }
 
@@ -230,7 +230,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
         // kicks in, then splice-add a new entry and verify the canonical
         // bytes survive the compress→decompress round trip.
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1000, true), 100, 0),
@@ -238,7 +238,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1002, true), 100, 2),
         };
 
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+        byte[] page = IndexPageCodec.BuildLeafPage(
             layout, pageSize, ParentTdef, entries, 0, 0, 0, enablePrefixCompression: true);
 
         List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
@@ -252,7 +252,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
         List<IndexEntry>? spliced = IndexEntrySplicer.Splice(decoded, adds, []);
         Assert.NotNull(spliced);
 
-        byte[]? newPage = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, spliced);
+        byte[]? newPage = IndexPageCodec.TryBuildLeafPage(layout, pageSize, ParentTdef, spliced);
         Assert.NotNull(newPage);
 
         List<IndexEntry> reDecoded = IndexPageCodec.DecodeLeafEntries(layout, newPage, pageSize);
@@ -269,12 +269,12 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void IsIntermediate_TrueOnly_For_PageType_03(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         byte[] inter = new byte[pageSize];
         inter[0] = 0x03;
         Assert.True(IndexPageCodec.IsIntermediate(inter));
 
-        byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
+        byte[] leaf = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
         Assert.False(IndexPageCodec.IsIntermediate(leaf));
     }
 
@@ -284,8 +284,8 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void ReadNextPage_ReturnsHeaderField(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+        var layout = IndexPageLayout.ForFormat(format);
+        byte[] page = IndexPageCodec.BuildLeafPage(
             layout, pageSize, ParentTdef, [], prevPage: 0, nextPage: 12345, tailPage: 0, enablePrefixCompression: false);
         Assert.Equal(12345, IndexPageCodec.ReadNextPage(layout, page));
     }
@@ -301,7 +301,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
         // first leaf's allocated page number (sequential allocation by the
         // builder starting at FirstPageNumber).
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>(800);
         for (int i = 0; i < 800; i++)
         {
@@ -329,8 +329,8 @@ public sealed class IndexPageCodecAndEntrySplicerTests
     public void ReadFirstChildPointer_ReturnsZero_OnNonIntermediatePage(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
-        byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
+        var layout = IndexPageLayout.ForFormat(format);
+        byte[] leaf = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
         Assert.Equal(0, IndexPageCodec.ReadFirstChildPointer(layout, leaf, pageSize));
     }
 

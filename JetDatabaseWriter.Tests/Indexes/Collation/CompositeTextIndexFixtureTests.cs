@@ -50,7 +50,7 @@ public sealed class CompositeTextIndexFixtureTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         var failures = new StringBuilder();
@@ -186,7 +186,7 @@ public sealed class CompositeTextIndexFixtureTests
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

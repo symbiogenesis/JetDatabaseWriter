@@ -25,7 +25,7 @@ public sealed class IndexBTreeBuilderTests
     public void Empty_ProducesSingleEmptyLeaf_RootIsThatLeaf(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, [], FirstPage);
 
@@ -40,7 +40,7 @@ public sealed class IndexBTreeBuilderTests
     public void SmallEntrySet_FitsInOneLeaf_NoIntermediate(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         var entries = new List<IndexEntry>();
         for (int i = 0; i < 10; i++)
         {
@@ -65,7 +65,7 @@ public sealed class IndexBTreeBuilderTests
     public void OverflowsOneLeaf_SplitsAndAddsIntermediateRoot(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
 
         // Keys are 200 bytes; big[0]=i>>8 (always 0 for i<256), big[1]=i.
         // All keys share big[0]=0 → 1-byte within-leaf prefix.
@@ -125,7 +125,7 @@ public sealed class IndexBTreeBuilderTests
     public void IntermediateRoot_EntriesPointToChildPagesInOrder(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
 
         var entries = new List<IndexEntry>();
         for (int i = 0; i < 40; i++)
@@ -169,7 +169,7 @@ public sealed class IndexBTreeBuilderTests
         // high bytes (values 1..3 → bytes [0x7F 0x80 0x00 0x00 0x01..0x03]).
         // Common byte prefix is 4 bytes.
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
 
         var entries = new List<IndexEntry>();
         for (int i = 1; i <= 3; i++)
@@ -202,7 +202,7 @@ public sealed class IndexBTreeBuilderTests
     public void Build_NoSharedPrefix_LeavesPrefLenAtZero(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
 
         // Two entries that diverge at byte 0 → no shared prefix.
         byte[] k1 = [0x10, 0x20];
@@ -227,7 +227,7 @@ public sealed class IndexBTreeBuilderTests
         // 200-byte leaf entries with keys big=[0, (i>>8)&0xFF, i&0xFF, 0...].
         // 3600 entries guarantee a multi-level tree on any supported page size.
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         const int totalEntries = 3600;
 
         var entries = new List<IndexEntry>(totalEntries);

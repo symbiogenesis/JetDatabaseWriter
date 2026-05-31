@@ -26,10 +26,10 @@ public sealed class IndexCursorTests
     public void PageCodec_DecodeLeafEntries_RoundTripsBuilderOutput(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         List<IndexEntry> entries = BuildIntEntries(8);
 
-        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+        byte[] page = IndexPageCodec.BuildLeafPage(
             layout,
             pageSize,
             ParentTdefPage,
@@ -100,7 +100,7 @@ public sealed class IndexCursorTests
         tailEntries.Add(appendedEntry);
 
         (long previousPage, long nextPage, long tailHeaderPage) = IndexPageCodec.ReadSiblingPointers(tree.Layout, tailPage);
-        tree.Pages[tailPageNumber] = IndexLeafPageBuilder.BuildLeafPage(
+        tree.Pages[tailPageNumber] = IndexPageCodec.BuildLeafPage(
             tree.Layout,
             tree.PageSize,
             ParentTdefPage,
@@ -138,7 +138,7 @@ public sealed class IndexCursorTests
     private static TreeFixture BuildTree(DatabaseFormat format, IReadOnlyList<IndexEntry> entries)
     {
         int pageSize = PageSizeOf(format);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        var layout = IndexPageLayout.ForFormat(format);
         IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(
             layout,
             pageSize,
@@ -218,7 +218,7 @@ public sealed class IndexCursorTests
         => format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
     private sealed record TreeFixture(
-        IndexLeafPageBuilder.LeafPageLayout Layout,
+        IndexPageLayout Layout,
         int PageSize,
         long RootPageNumber,
         Dictionary<long, byte[]> Pages);

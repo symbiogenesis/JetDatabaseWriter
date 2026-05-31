@@ -44,7 +44,7 @@ internal static class TextIndexEncoderFixtureHarness
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         int totalIndexesValidated = 0;
@@ -129,7 +129,7 @@ internal static class TextIndexEncoderFixtureHarness
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

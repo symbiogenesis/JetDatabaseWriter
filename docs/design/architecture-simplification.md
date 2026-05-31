@@ -217,7 +217,7 @@ are worth picking up when touching the same ownership boundary.
 
 - [x] Delete the stale index leaf facade. `IndexLeafIncremental` is gone; page
   reads now route to `IndexPageCodec`, null-on-overflow leaf rebuilds live on
-  `IndexLeafPageBuilder.TryBuildLeafPage`, and stable entry-list edits live in
+  `IndexPageCodec.TryBuildLeafPage`, and stable entry-list edits live in
   `IndexEntrySplicer.Splice`.
 - [x] Collapse `AccessWriter` TDEF-builder compatibility forwarders where call
   sites can depend on `TDefPageBuilder` directly. Completed 2026-05-31: the
@@ -226,11 +226,11 @@ are worth picking up when touching the same ownership boundary.
   were removed; production and test callers now use `TDefPageBuilder` directly
   for pure TDEF construction while writer-owned page-number and usage-map
   patching remains in `AccessWriter`.
-- [ ] Reassess `IndexLeafPageBuilder` after the codec split. It still has useful
-  ownership over `LeafPageLayout`, layout selection, Jet3 / Jet4 naming, and
-  `TryBuildLeafPage` overflow semantics, but much of the actual page-format
-  work now belongs to `IndexPageCodec.BuildLeafPage`. Avoid deleting the builder
-  unless those remaining semantics get a better owner.
+- [x] Reassess `IndexLeafPageBuilder` after the codec split. Completed
+  2026-05-31: the builder had become a facade, so its remaining ownership moved
+  to clearer homes. `IndexPageLayout` now owns Jet3 / Jet4 page-layout selection,
+  `IndexPageCodec` owns leaf page build / try-build semantics next to the
+  intermediate page codec, and `IndexLeafPageBuilder` was deleted.
 - [ ] Move relationship fallback string-key ownership out of `IndexHelpers` or
   make the dependency explicit. `RelationshipKeyBuilder.Build` currently just
   calls `IndexHelpers.BuildCompositeKey`; the cleaner target is for
@@ -320,29 +320,31 @@ Status: completed 2026-05-31.
 Primary files:
 
 - [../../JetDatabaseWriter/Indexes/IndexPageCodec.cs](../../JetDatabaseWriter/Indexes/IndexPageCodec.cs)
-- [../../JetDatabaseWriter/Indexes/IndexLeafPageBuilder.cs](../../JetDatabaseWriter/Indexes/IndexLeafPageBuilder.cs)
+- [../../JetDatabaseWriter/Indexes/IndexPageLayout.cs](../../JetDatabaseWriter/Indexes/IndexPageLayout.cs)
 - [../../JetDatabaseWriter/Indexes/IndexEntrySplicer.cs](../../JetDatabaseWriter/Indexes/IndexEntrySplicer.cs)
 - [../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs)
 - [../../JetDatabaseWriter/Indexes/IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
 - [../../JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs)
+- [../../JetDatabaseWriter.Tests/Indexes/IndexPageCodecLeafPageTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexPageCodecLeafPageTests.cs)
 
 `IndexLeafIncremental` was deleted. Its page-header reads, leaf and
 intermediate entry decoding, child-pointer reads, single-root-leaf detection,
-and intermediate-page checks now call `IndexPageCodec` directly. Its
-null-on-overflow leaf rebuild wrappers now live on `IndexLeafPageBuilder` as
-`TryBuildLeafPage` overloads, preserving the previous surgical maintenance
-contract while keeping page construction with the leaf-page builder.
+and intermediate-page checks now call `IndexPageCodec` directly.
+Null-on-overflow leaf rebuild wrappers live on `IndexPageCodec` as
+`TryBuildLeafPage` overloads, beside the intermediate-page try-build API. The
+per-format Jet3 / Jet4 index page offsets live in `IndexPageLayout`.
 
 The one non-pass-through algorithm, stable entry-list splicing for incremental
 adds/removes, moved into `IndexEntrySplicer.Splice`. Production callers in
 `IndexBTreeEditor`, `IndexMaintainer`, and FormatProbe now use the codec,
-builder, and splicer owners directly. The facade test suite was renamed and
-retargeted to codec/splicer/leaf-builder behavior instead of keeping tests for
-a deleted concept.
+layout, and splicer owners directly. The facade test suite was renamed and
+retargeted to codec/splicer/leaf-page behavior instead of keeping tests for a
+deleted concept.
 
-Closeout shape: the historical facade file was removed, one focused splicer
-helper was added, and the leaf builder gained small null-on-overflow overloads
-for existing surgical rewrite call sites.
+Closeout shape: the historical facade file and the follow-up leaf builder were
+removed, one focused splicer helper was added, `IndexPageLayout` was extracted,
+and `IndexPageCodec` gained small null-on-overflow leaf overloads for existing
+surgical rewrite call sites.
 
 Evidence at closeout: `dotnet build JetDatabaseWriter.slnx --no-restore
 --configuration Debug` passed, the retargeted codec/splicer test file passed
@@ -350,10 +352,16 @@ with 26 succeeded, the full `JetDatabaseWriter.Tests.Indexes` namespace passed
 with 446 succeeded, and the non-fuzz suite passed with 3,561 succeeded and 2
 environment skips.
 
-Preserve these guardrails: keep Jet3 and Jet4/ACE layout selection explicit,
-keep the splicer duplicate-key tie ordering stable, keep leaf rebuild overflow
-reported as `null` for surgical paths, and keep page-format reads in
-`IndexPageCodec` rather than recreating facade methods.
+Follow-up evidence after deleting `IndexLeafPageBuilder`: the full
+`JetDatabaseWriter.Tests.Indexes` namespace passed with 446 succeeded,
+`JetDatabaseWriter.Tests.Relationships` passed with 163 succeeded and 1
+environment skip, and `dotnet build JetDatabaseWriter.slnx --no-restore
+--configuration Debug` passed.
+
+Preserve these guardrails: keep Jet3 and Jet4/ACE layout selection explicit in
+`IndexPageLayout`, keep the splicer duplicate-key tie ordering stable, keep leaf
+rebuild overflow reported as `null` for surgical paths, and keep page-format
+reads and writes in `IndexPageCodec` rather than recreating facade methods.
 
 ### 3. Row decode plan
 
@@ -511,6 +519,7 @@ framework, package size, and license review if this decision is reopened.
 6. CFB dependency decision: completed 2026-05-30; no dependency introduced.
 7. Shared table row walker and owned-page locator: completed 2026-05-30.
 8. Stale index leaf facade deletion: completed 2026-05-31.
+9. Index leaf builder reassessment and deletion: completed 2026-05-31.
 
 ## Non-goals
 

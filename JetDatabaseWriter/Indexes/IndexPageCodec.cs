@@ -8,8 +8,8 @@ using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Layout-aware read codec for JET index pages. Owns the common header,
-/// bitmask, prefix-compression, and entry-decoding rules shared by leaf,
+/// Layout-aware codec for JET index pages. Owns the common header, bitmask,
+/// prefix-compression, page-build, and entry-decoding rules shared by leaf,
 /// intermediate, cursor, and mutation code.
 /// </summary>
 internal static class IndexPageCodec
@@ -47,7 +47,7 @@ internal static class IndexPageCodec
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
     public static byte[] BuildLeafPage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<IndexEntry> entries,
@@ -127,6 +127,76 @@ internal static class IndexPageCodec
     }
 
     /// <summary>
+    /// Attempts to build an index leaf page, returning <see langword="null"/>
+    /// when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    public static byte[]? TryBuildLeafPage(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries)
+        => TryBuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: true);
+
+    /// <summary>
+    /// Attempts to build an index leaf page while preserving sibling pointers,
+    /// returning <see langword="null"/> when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    public static byte[]? TryBuildLeafPage(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+        => TryBuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression: true);
+
+    /// <summary>
+    /// Attempts to build an index leaf page, returning <see langword="null"/>
+    /// when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="enablePrefixCompression">Whether to emit shared-prefix compression metadata.</param>
+    /// <param name="maxPrefixLength">Maximum number of leading bytes that may be shared through prefix compression.</param>
+    public static byte[]? TryBuildLeafPage(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        bool enablePrefixCompression,
+        int? maxPrefixLength = null)
+    {
+        try
+        {
+            return BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Builds an intermediate index page using the supplied per-format layout.
     /// </summary>
     /// <param name="layout">The layout.</param>
@@ -139,7 +209,7 @@ internal static class IndexPageCodec
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
     public static byte[] BuildIntermediatePage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<DecodedIntermediateEntry> entries,
@@ -242,7 +312,7 @@ internal static class IndexPageCodec
     /// <param name="tailPage">The tail page.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     public static byte[]? TryBuildIntermediatePage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<DecodedIntermediateEntry> entries,
@@ -276,7 +346,7 @@ internal static class IndexPageCodec
     /// <param name="nextPage">The next sibling page.</param>
     /// <param name="tailPage">The tail page.</param>
     public static void WriteSiblingPointers(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         long prevPage,
         long nextPage,
@@ -293,7 +363,7 @@ internal static class IndexPageCodec
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
     /// <param name="prevPage">The previous sibling page.</param>
-    public static void WritePrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long prevPage)
+    public static void WritePrevPage(IndexPageLayout layout, byte[] page, long prevPage)
         => WritePageNumber32(page, layout.PrevPageOffset, prevPage, nameof(prevPage));
 
     /// <summary>
@@ -302,7 +372,7 @@ internal static class IndexPageCodec
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
     /// <param name="nextPage">The next sibling page.</param>
-    public static void WriteNextPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long nextPage)
+    public static void WriteNextPage(IndexPageLayout layout, byte[] page, long nextPage)
         => WritePageNumber32(page, layout.NextPageOffset, nextPage, nameof(nextPage));
 
     /// <summary>
@@ -311,7 +381,7 @@ internal static class IndexPageCodec
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
     /// <param name="tailPage">The tail page.</param>
-    public static void WriteTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, long tailPage)
+    public static void WriteTailPage(IndexPageLayout layout, byte[] page, long tailPage)
         => WritePageNumber32(page, layout.TailPageOffset, tailPage, nameof(tailPage));
 
     /// <summary>
@@ -319,7 +389,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
-    public static long ReadNextPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
+    public static long ReadNextPage(IndexPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.NextPageOffset + 4)
         {
@@ -334,7 +404,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
-    public static long ReadTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
+    public static long ReadTailPage(IndexPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.TailPageOffset + 4)
         {
@@ -349,7 +419,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
-    public static long ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
+    public static long ReadPrevPage(IndexPageLayout layout, byte[] page)
     {
         if (page == null || page.Length < layout.PrevPageOffset + 4)
         {
@@ -365,7 +435,7 @@ internal static class IndexPageCodec
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
     public static (long Prev, long Next, long Tail) ReadSiblingPointers(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page)
     {
         if (page == null || page.Length < layout.TailPageOffset + 4)
@@ -385,7 +455,7 @@ internal static class IndexPageCodec
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
-    public static bool IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
+    public static bool IsSingleRootLeaf(IndexPageLayout layout, byte[] page)
     {
         if (!IsLeaf(page) || page.Length < layout.TailPageOffset + 4)
         {
@@ -404,7 +474,7 @@ internal static class IndexPageCodec
     /// <param name="intermediatePage">The intermediate page.</param>
     /// <param name="pageSize">The page size.</param>
     public static long ReadFirstChildPointer(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] intermediatePage,
         int pageSize)
     {
@@ -449,7 +519,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     /// <param name="pageSize">The page size.</param>
     public static List<IndexEntry> DecodeLeafEntries(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize)
     {
@@ -506,7 +576,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     /// <param name="pageSize">The page size.</param>
     public static List<DecodedIntermediateEntry> DecodeIntermediateEntries(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize)
     {
@@ -567,7 +637,7 @@ internal static class IndexPageCodec
     /// <param name="pageSize">The page size.</param>
     /// <param name="searchKey">The search key.</param>
     public static long? SelectChildPage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         byte[] searchKey)
@@ -632,7 +702,7 @@ internal static class IndexPageCodec
     /// <param name="pageSize">The page size.</param>
     /// <param name="searchKey">The search key.</param>
     public static (bool Found, bool ContinueToNext) ContainsKeyInLeafPage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         byte[] searchKey)
@@ -657,7 +727,7 @@ internal static class IndexPageCodec
     /// <param name="searchKey">The search key.</param>
     /// <param name="matches">The matches.</param>
     public static bool CollectMatchingLeafEntries(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         byte[] searchKey,
@@ -680,7 +750,7 @@ internal static class IndexPageCodec
     /// <param name="payloadEnd">The payload end.</param>
     /// <param name="currentStart">The current start.</param>
     public static int NextEntryStart(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int payloadEnd,
         int currentStart)
@@ -733,7 +803,7 @@ internal static class IndexPageCodec
     private static void WriteIndexPageHeader(
         byte[] page,
         byte pageType,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         long parentTdefPage,
         long prevPage,
         long nextPage,
@@ -762,7 +832,7 @@ internal static class IndexPageCodec
     }
 
     private static void SetEntryStartBit(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int entryStart,
         bool isFirstEntry,
@@ -785,7 +855,7 @@ internal static class IndexPageCodec
     }
 
     private static void SetSentinelBit(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int payloadCursor,
         bool hasEntries)
@@ -861,7 +931,7 @@ internal static class IndexPageCodec
     }
 
     private static bool TryGetPayloadEnd(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         out int payloadEnd)
@@ -878,7 +948,7 @@ internal static class IndexPageCodec
     }
 
     private static bool TryScanLeafPage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         byte[] searchKey,

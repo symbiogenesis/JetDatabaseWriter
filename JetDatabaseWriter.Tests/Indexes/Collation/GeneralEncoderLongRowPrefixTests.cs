@@ -100,8 +100,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout =
-            IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexPageLayout layout =
+            IndexPageLayout.ForFormat(reader.DatabaseFormat);
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
         IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
@@ -160,8 +160,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout =
-            IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        IndexPageLayout layout =
+            IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
@@ -335,7 +335,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

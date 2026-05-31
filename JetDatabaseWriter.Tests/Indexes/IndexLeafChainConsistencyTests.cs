@@ -57,7 +57,7 @@ public sealed class IndexLeafChainConsistencyTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         int chainsChecked = 0;
@@ -130,7 +130,7 @@ public sealed class IndexLeafChainConsistencyTests
 
     private static async Task<long> FindFirstLeafPageAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

@@ -252,14 +252,30 @@ internal sealed class RelationshipManager
         // numbers are stable for the cross-referenced first_dp values.
         if (pkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(this.writer.PageSizeBytes, primaryTdefPage, []);
+            byte[] leaf = IndexPageCodec.BuildLeafPage(
+                IndexPageLayout.Jet4,
+                this.writer.PageSizeBytes,
+                primaryTdefPage,
+                [],
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: false);
             long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
         }
 
         if (fkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(this.writer.PageSizeBytes, foreignTdefPage, []);
+            byte[] leaf = IndexPageCodec.BuildLeafPage(
+                IndexPageLayout.Jet4,
+                this.writer.PageSizeBytes,
+                foreignTdefPage,
+                [],
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: false);
             long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);
         }

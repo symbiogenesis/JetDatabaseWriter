@@ -64,7 +64,7 @@ public sealed class IndexCodesAggregateTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         var report = new List<IndexReport>();
@@ -210,7 +210,7 @@ public sealed class IndexCodesAggregateTests
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

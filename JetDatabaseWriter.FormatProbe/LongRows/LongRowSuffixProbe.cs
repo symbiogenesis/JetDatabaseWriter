@@ -550,7 +550,7 @@ internal static class LongRowSuffixProbe
         int seedBase,
         CancellationToken ct)
     {
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
@@ -5031,7 +5031,7 @@ internal static class LongRowSuffixProbe
         StringBuilder sb,
         string tableName,
         IndexMetadata index,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         IReadOnlyList<RawLeafPageSummary> pages)
     {
@@ -5071,7 +5071,7 @@ internal static class LongRowSuffixProbe
                 fixturePath,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
-            IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+            var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
             List<string> tables = await reader.ListTablesAsync(ct);
@@ -5763,7 +5763,7 @@ internal static class LongRowSuffixProbe
             new AccessReaderOptions { UseLockFile = false },
             ct);
         DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        IndexLeafPageBuilder.LeafPageLayout ascLayout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var ascLayout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, ascLayout, reader.PageSize, firstPage: 112, ct);
 
         GeneralLegacyTextIndexEncoder.CharHandler[] codes = GeneralCodes.Value;
@@ -5886,7 +5886,7 @@ internal static class LongRowSuffixProbe
             new AccessReaderOptions { UseLockFile = false },
             ct);
         DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
 
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
         List<IndexEntry> descKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 119, ct);
@@ -6347,7 +6347,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task<List<IndexEntry>> CollectAllLeafKeysAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long firstPage,
         CancellationToken ct)
@@ -6369,7 +6369,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesFromRootAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
@@ -6427,7 +6427,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task<List<LeafEntryDetail>> CollectDetailedLeafEntriesFromRootAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
@@ -6485,7 +6485,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static List<LeafEntryDetail> DecodeLeafEntryDetails(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         long leafPage,
@@ -6631,7 +6631,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task<List<RawLeafPageSummary>> CollectRawLeafPageSummariesAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
@@ -6688,7 +6688,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static RawLeafPageSummary SummarizeRawLeafPage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int pageSize,
         long pageNumber)
@@ -6759,7 +6759,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static int NextEntryStartForProbe(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         byte[] page,
         int payloadEnd,
         int currentStart)
@@ -6864,7 +6864,7 @@ internal static class LongRowSuffixProbe
         int SeedBase,
         IndexMetadata Index,
         bool Ascending,
-        IndexLeafPageBuilder.LeafPageLayout Layout,
+        IndexPageLayout Layout,
         int ReaderPageSize,
         IReadOnlyList<SuffixPatternRow> Rows,
         IReadOnlyList<RawLeafPageSummary> RawLeafPages);

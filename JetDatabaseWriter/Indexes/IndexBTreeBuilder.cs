@@ -15,7 +15,7 @@ using JetDatabaseWriter.Infrastructure;
 /// §4.5 (tail-page chain).
 /// <para>
 /// Both Jet4 / ACE and Jet3 layouts are emitted via the
-/// <see cref="IndexLeafPageBuilder.LeafPageLayout"/> descriptor passed to
+/// <see cref="IndexPageLayout"/> descriptor passed to
 /// the layout-aware <c>Build</c> overload. Jet3 live-leaf lifted the
 /// previous Jet4-only restriction.
 /// </para>
@@ -76,7 +76,7 @@ internal static class IndexBTreeBuilder
         long parentTdefPage,
         IReadOnlyList<IndexEntry> entries,
         long firstPageNumber)
-        => Build(IndexLeafPageBuilder.LeafPageLayout.Jet4, pageSize, parentTdefPage, entries, firstPageNumber);
+        => Build(IndexPageLayout.Jet4, pageSize, parentTdefPage, entries, firstPageNumber);
 
     /// <summary>
     /// Builds a complete index B-tree using the supplied per-format
@@ -90,7 +90,7 @@ internal static class IndexBTreeBuilder
     /// <param name="firstPageNumber">The first page number.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry size, or allocated page range cannot fit the B-tree format.</exception>
     public static BuildResult Build(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<IndexEntry> entries,
@@ -178,7 +178,7 @@ internal static class IndexBTreeBuilder
         {
             long prev = i == 0 ? 0 : firstPageNumber + i - 1;
             long next = i == splitPageCount - 1 ? 0 : firstPageNumber + i + 1;
-            byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(
+            byte[] leaf = IndexPageCodec.BuildLeafPage(
                 layout,
                 pageSize,
                 parentTdefPage,
@@ -254,7 +254,7 @@ internal static class IndexBTreeBuilder
     /// childPage)</code> tuples (sorted by summary key), preserving the supplied
     /// <c>prev_page</c> / <c>next_page</c> / <c>tail_page</c> headers. Returns
     /// <see langword="null"/> when the entry list overflows the per-page
-    /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>
+    /// payload area; callers fall back to <see cref="Build(IndexPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>
     /// (full-tree rebuild) on overflow.
     /// </summary>
     /// <param name="layout">The layout.</param>
@@ -266,7 +266,7 @@ internal static class IndexBTreeBuilder
     /// <param name="tailPage">The tail page.</param>
     /// <param name="maxPrefixLength">The max prefix length.</param>
     public static byte[]? TryBuildIntermediatePage(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<DecodedIntermediateEntry> entries,

@@ -654,7 +654,7 @@ internal static class IndexHelpers
     /// <param name="pageSize">The page size.</param>
     /// <param name="entries">The entries.</param>
     public static SplitPages? TryGreedySplitLeafInN(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         List<IndexEntry> entries)
     {
@@ -717,7 +717,7 @@ internal static class IndexHelpers
     /// <param name="parentTdefPage">The parent TDEF page.</param>
     /// <param name="entries">The entries.</param>
     public static List<List<DecodedIntermediateEntry>>? TryGreedySplitIntermediateInN(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
         List<DecodedIntermediateEntry> entries)

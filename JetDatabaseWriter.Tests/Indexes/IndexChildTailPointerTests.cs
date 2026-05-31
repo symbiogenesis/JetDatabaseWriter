@@ -52,7 +52,7 @@ public sealed class IndexChildTailPointerTests
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
         long fileLength = new FileInfo(fixturePath).Length;
         long maxPageNumber = fileLength / pageSize;

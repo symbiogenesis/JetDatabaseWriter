@@ -65,7 +65,7 @@ internal static class LongRowProbe
         await using AccessReader reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, ct);
 
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
         List<string> tables = await reader.ListTablesAsync(ct);
 
@@ -128,7 +128,7 @@ internal static class LongRowProbe
 
     private static async Task<List<byte[]>> CollectLeavesAsync(
         AccessReader reader,
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)

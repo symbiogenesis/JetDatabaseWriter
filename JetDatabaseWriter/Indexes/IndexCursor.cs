@@ -15,7 +15,7 @@ internal sealed class IndexCursor
 {
     private const int MaxDepth = 32;
 
-    private readonly IndexLeafPageBuilder.LeafPageLayout layout;
+    private readonly IndexPageLayout layout;
     private readonly Func<long, CancellationToken, ValueTask<byte[]>> readPage;
     private readonly int pageSize;
 
@@ -25,7 +25,7 @@ internal sealed class IndexCursor
     /// <param name="readPage">The read page.</param>
     /// <param name="pageSize">The page size.</param>
     public IndexCursor(Func<long, CancellationToken, ValueTask<byte[]>> readPage, int pageSize)
-        : this(IndexLeafPageBuilder.LeafPageLayout.Jet4, readPage, pageSize)
+        : this(IndexPageLayout.Jet4, readPage, pageSize)
     {
     }
 
@@ -36,7 +36,7 @@ internal sealed class IndexCursor
     /// <param name="readPage">The read page.</param>
     /// <param name="pageSize">The page size.</param>
     public IndexCursor(
-        IndexLeafPageBuilder.LeafPageLayout layout,
+        IndexPageLayout layout,
         Func<long, CancellationToken, ValueTask<byte[]>> readPage,
         int pageSize)
     {

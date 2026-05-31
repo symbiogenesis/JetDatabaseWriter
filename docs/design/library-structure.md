@@ -114,10 +114,10 @@ JetDatabaseWriter/
 │   ├── IndexBTreeBuilder.cs               (constructs index B-tree pages)
 │   ├── IndexBTreeEditor.cs                (plans/applies in-place B-tree mutations)
 │   ├── IndexCursor.cs                     (read-only B-tree descent and exact-key lookups)
-│   ├── IndexPageCodec.cs                  (index page decoding, pointers, entry bitmasks)
+│   ├── IndexPageCodec.cs                  (index page build/decode, pointers, entry bitmasks)
+│   ├── IndexPageLayout.cs                 (Jet3 / Jet4 index page layout selection)
 │   ├── IndexCatalogReader.cs              (reads index definitions from system tables)
 │   ├── IndexEntrySplicer.cs               (stable in-memory index entry add/remove splicing)
-│   ├── IndexLeafPageBuilder.cs            (constructs leaf pages)
 │   ├── IndexMaintainer.cs                 (TDEF/catalog orchestration for index maintenance)
 │   ├── IndexLayout.cs                     (index page byte-offset structs)
 │   ├── UniqueIndexChecker.cs              (validates uniqueness constraints)
@@ -332,9 +332,9 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Facade** (GoF) | `AccessReader`, `AccessWriter` | Thin orchestrators that delegate to domain modules; keeps public API surface small |
 | **Symmetric Codec** | `ValueEncoding/` ↔ `ValueDecoding/`, `LongValueEncoder` ↔ `LongValueDecoder` | Matched encode/decode pairs (same pattern as protobuf's `CodedOutputStream`/`CodedInputStream`) |
 | **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-erase page reclamation |
-| **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
+| **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps read-only B-tree descent and in-place mutation planning separate from TDEF/catalog orchestration |
-| **Strategy via layout structs** | `DataPageLayout`, `IndexLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
+| **Strategy via layout structs** | `DataPageLayout`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
 | **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |

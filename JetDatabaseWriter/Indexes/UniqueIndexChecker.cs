@@ -199,7 +199,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         var cursor = new IndexCursor(
-            IndexLeafPageBuilder.GetLayout(writer.Format),
+            IndexPageLayout.ForFormat(writer.Format),
             this.ReadIndexPageOwnedAsync,
             writer.PageSizeBytes);
 
