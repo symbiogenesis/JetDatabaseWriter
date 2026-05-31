@@ -219,11 +219,13 @@ are worth picking up when touching the same ownership boundary.
   reads now route to `IndexPageCodec`, null-on-overflow leaf rebuilds live on
   `IndexLeafPageBuilder.TryBuildLeafPage`, and stable entry-list edits live in
   `IndexEntrySplicer.Splice`.
-- [ ] Collapse `AccessWriter` TDEF-builder compatibility forwarders where call
-  sites can depend on `TDefPageBuilder` directly. Candidate methods:
-  `AccessWriter.BuildTableDefinition`, `BuildTDefPageWithIndexOffsets`, and
-  `BuildTDefPagesWithIndexOffsets`. Keep any writer-context method only when it
-  coordinates writer state rather than preserving an old call shape.
+- [x] Collapse `AccessWriter` TDEF-builder compatibility forwarders where call
+  sites can depend on `TDefPageBuilder` directly. Completed 2026-05-31: the
+  static `AccessWriter.BuildTableDefinition` helper and the writer-owned
+  `BuildTDefPageWithIndexOffsets` / `BuildTDefPagesWithIndexOffsets` wrappers
+  were removed; production and test callers now use `TDefPageBuilder` directly
+  for pure TDEF construction while writer-owned page-number and usage-map
+  patching remains in `AccessWriter`.
 - [ ] Reassess `IndexLeafPageBuilder` after the codec split. It still has useful
   ownership over `LeafPageLayout`, layout selection, Jet3 / Jet4 naming, and
   `TryBuildLeafPage` overflow semantics, but much of the actual page-format

@@ -17,8 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds table-definition (TDEF) pages and the bootstrap bytes for a new,
-/// empty database file. Owned by <see cref="AccessWriter"/>, which keeps thin
-/// compatibility forwarders for existing call sites.
+/// empty database file.
 /// </summary>
 /// <param name="writer">The writer.</param>
 internal sealed class TDefPageBuilder(AccessWriter writer)

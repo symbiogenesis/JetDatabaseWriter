@@ -79,8 +79,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private readonly IndexMaintainer indexMaintainer;
     private readonly HashSet<long> ownedMapWritableTdefs = [];
 
-    /// <summary>Coordinates TDEF emission and empty-database bootstrap builders.
-    /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
+    /// <summary>Builds table-definition pages for writer-created schemas.</summary>
     private readonly TDefPageBuilder tdefPageBuilder;
 
     /// <summary>Pre-encodes oversized MEMO/OLE/Attachment payloads into LVAL chains.</summary>
@@ -507,7 +506,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         };
 
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
-        (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = this.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
+        (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = this.tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tdefPages.Length != 1)
         {
             throw new InvalidDataException("Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
@@ -682,7 +681,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         TableDef tableDef = TDefPageBuilder.BuildTableDefinition(tableArtifact.Columns, this.Format);
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(tableArtifact.Indexes, tableDef);
-        (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = this.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
+        (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = this.tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tableArtifact.ReservedTdefPageNumber > 0 && tdefPages.Length != 1)
         {
             throw new InvalidDataException("Reserved fresh system-table TDEF slots support only single-page TDEFs.");
@@ -2382,7 +2381,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (clrType == typeof(Hyperlink))
                 {
-                    // typeof(Hyperlink) is shorthand for a MEMO column; BuildTableDefinition
+                    // typeof(Hyperlink) is shorthand for a MEMO column; TDefPageBuilder.BuildTableDefinition
                     // adds HYPERLINK_FLAG_MASK (0x80) unless DescriptorFlagsOverride replaces
                     // the computed TDEF column-flag byte.
                     return MemoType;
@@ -2500,9 +2499,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.InRange(s, 0, p, $"Column '{definition.Name}' NumericScale (NumericPrecision={p})");
         return s;
     }
-
-    internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
-        => TDefPageBuilder.BuildTableDefinition(columns, format);
 
     private static FileStream CreateStream(string path) =>
         OpenDatabaseFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
@@ -3066,43 +3062,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         return def;
     }
-
-    /// <summary>
-    /// Single-page convenience wrapper for callers (system-table emission,
-    /// complex-type templates) that emit small fixed schemas which always
-    /// fit in one TDEF page. Throws if the table definition would actually
-    /// require a multi-page chain — those callers don't use this method.
-    /// User-facing <see cref="CreateTableInternalAsync"/> goes through
-    /// <see cref="BuildTDefPagesWithIndexOffsets"/> instead, which fully
-    /// supports the multi-page TDEF chain that the reader's
-    /// <c>ReadTDefBytesAsync</c> already stitches.
-    /// </summary>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="indexes">The indexes.</param>
-    internal (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
-        => this.tdefPageBuilder.BuildTDefPageWithIndexOffsets(tableDef, indexes);
-
-    /// <summary>
-    /// Builds a (possibly multi-page) TDEF chain and also returns, for each
-    /// logical index in <paramref name="indexes"/>, the LOGICAL byte offset
-    /// of that real-index physical descriptor's <c>first_dp</c> field (§3.1).
-    /// Logical offsets address the stitched buffer the reader produces in
-    /// <see cref="AccessBase.ReadTDefBytesAsync"/>: the first physical page
-    /// (full <c>_pgSz</c> bytes) followed by every continuation page's body
-    /// from offset 8 onward. Use <see cref="TDefPageBuilder.LogicalToPhysicalTDefOffset"/>
-    /// to translate to a (page-index, page-offset) pair before patching.
-    /// <para>
-    /// Continuation pages each carry an 8-byte page-chain header
-    /// (<c>0x02 0x01 00 00</c> + 4-byte next-page pointer) which is NOT part
-    /// of the logical TDEF body. The caller is responsible for writing the
-    /// next-page pointer at offset 4 of each non-last page after appending,
-    /// since page numbers are not known until then.
-    /// </para>
-    /// </summary>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="indexes">The indexes.</param>
-    internal (byte[][] Pages, int[] FirstDpLogicalOffsets, int[] UsedPagesLogicalOffsets) BuildTDefPagesWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
-        => this.tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, indexes);
 
     /// <summary>
     /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF

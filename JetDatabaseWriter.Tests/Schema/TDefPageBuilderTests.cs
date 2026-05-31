@@ -4,6 +4,7 @@ using System;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -13,7 +14,7 @@ public sealed class TDefPageBuilderTests
     [Fact]
     public void BuildTableDefinition_DateTimeExtended_UsesFixedDeclaredSize()
     {
-        TableDef tableDef = AccessWriter.BuildTableDefinition(
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(
             [new ColumnDefinition("ExtendedAt", typeof(DateTime)) { IsDateTimeExtended = true }],
             DatabaseFormat.AceAccdb);
 
