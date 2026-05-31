@@ -35,7 +35,7 @@ internal static class DirectRowDecoderBuilder
         GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.DecodeTextSliceForDirectDecode), InstanceNonPublic);
 
     private static readonly MethodInfo ReadBinarySliceMethod =
-        GetRequiredMethod(typeof(DirectRowDecoderBuilder), nameof(ReadBinarySlice), StaticNonPublic);
+        GetRequiredMethod(typeof(BinaryBuffer), nameof(BinaryBuffer.CopySlice), StaticNonPublic);
 
     private static readonly MethodInfo ReadDateTimeExtendedMethod =
         GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeExtendedAt), StaticNonPublic);
@@ -267,8 +267,6 @@ internal static class DirectRowDecoderBuilder
             ComplexType or
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
         };
-
-    private static byte[] ReadBinarySlice(byte[] page, int start, int length) => length <= 0 ? [] : page.AsSpan(start, length).ToArray();
 
     private static MethodInfo GetRequiredMethod(Type declaringType, string name, BindingFlags bindingAttr) =>
         declaringType.GetMethod(name, bindingAttr) ?? throw new MissingMethodException(declaringType.FullName ?? declaringType.Name, name);

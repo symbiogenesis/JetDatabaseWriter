@@ -118,7 +118,7 @@ internal sealed class RowDecodePlan
                     return true;
 
                 case BinaryType:
-                    value = page.AsSpan(start, length).ToArray();
+                    value = BinaryBuffer.CopySlice(page, start, length);
                     return true;
 
                 case ByteType:
@@ -531,7 +531,7 @@ internal sealed class RowDecodePlan
                     return source.DecodeTextForFormat(page, start, length);
 
                 case BinaryType:
-                    return page.AsSpan(start, length).ToArray();
+                    return BinaryBuffer.CopySlice(page, start, length);
 
                 case MemoType:
                 case OleType:

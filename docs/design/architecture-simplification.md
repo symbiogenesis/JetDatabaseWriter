@@ -40,10 +40,6 @@ touching those code paths.
 These may still be worth doing opportunistically, but they do not meet the
 current large meaningful simplification bar on their own.
 
-- **Binary slice helpers:** `DirectRowDecoderBuilder`, `RowDecodePlan`,
-  complex-column attachment decoding, and some tests all contain tiny byte-slice
-  or data-URI parsing helpers. A shared helper could remove a few lines and
-  standardize edge behavior, but the payoff is small.
 - **LVAL row location wrapper:** `LongValueDecoder` mostly delegates
   row-location math to `LongValueStore`. There may be a small cleanup around
   passing cached row bounds directly, but this is not large enough to treat as
@@ -75,6 +71,41 @@ Suggested order: treat lower-payoff candidates as opportunistic follow-ups when
 related work is already in progress.
 
 ## Completed outcomes
+
+### Completed binary slice and data-URI helpers
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/Infrastructure/BinaryBuffer.cs](../../JetDatabaseWriter/Infrastructure/BinaryBuffer.cs)
+- [../../JetDatabaseWriter/Infrastructure/BinaryStringParser.cs](../../JetDatabaseWriter/Infrastructure/BinaryStringParser.cs)
+- [../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs](../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs)
+- [../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs)
+- [../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs)
+- [../../JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs](../../JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs)
+- [../../JetDatabaseWriter.Tests/Infrastructure/BinaryStringParserTests.cs](../../JetDatabaseWriter.Tests/Infrastructure/BinaryStringParserTests.cs)
+- [../../JetDatabaseWriter.Tests/Infrastructure/BinaryBufferTests.cs](../../JetDatabaseWriter.Tests/Infrastructure/BinaryBufferTests.cs)
+
+`BinaryBuffer` now owns the tiny byte-slice copy convention used by direct row
+decode, planned row decode, raw long-value extraction, OLE payload extraction,
+and complex-column attachment fallback paths. `BinaryStringParser` now owns
+base64 data-URI payload discovery, optional MIME-type filtering, and decode
+dispatch, so typed value parsing, complex-column OLE/attachment normalization,
+catalog `LvProp` parsing, and related tests no longer carry local comma/prefix/
+base64 parsing.
+
+Evidence at closeout: focused helper/parser classes passed with 44 succeeded;
+the complex-column OLE object class passed with 6 succeeded; the writer OLE LVAL
+round-trip method passed with 1 succeeded; direct-row-decoder and LVAL-focused
+classes passed with 13 succeeded; and `dotnet build JetDatabaseWriter.slnx
+--no-restore --configuration Debug` passed across all projects and target
+frameworks.
+
+Preserve these guardrails: keep `BinaryBuffer.CopySlice` exact about requested
+byte ranges while normalizing non-positive lengths to an empty array; keep
+base64 data-URI detection ordinal and explicitly gated on `;base64`; and keep
+catalog `LvProp` decoding restricted to `application/octet-stream` data URIs.
 
 ### Completed Numeric fixed-point payload helper
 

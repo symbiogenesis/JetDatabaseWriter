@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -1363,8 +1364,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             byte[] roundTripped = cell switch
             {
                 byte[] raw => raw,
-                string s when s.StartsWith("data:application/octet-stream;base64,", StringComparison.Ordinal)
-                    => Convert.FromBase64String(s["data:application/octet-stream;base64,".Length..]),
+                string s => BinaryStringParser.TryDecodeBase64DataUri(s, "application/octet-stream", out byte[] decoded)
+                    ? decoded
+                    : throw new InvalidOperationException($"Unexpected OLE data URI shape: {s}"),
                 _ => throw new InvalidOperationException($"Unexpected OLE cell shape: {cell.GetType().FullName}"),
             };
             Assert.Equal(oversized, roundTripped);

@@ -182,14 +182,13 @@ internal static class TypedValueParser
         // image/png, application/octet-stream); round-trip them back to raw bytes.
         if (value.StartsWith("data:", StringComparison.Ordinal))
         {
-            int comma = value.IndexOf(',', StringComparison.Ordinal);
-            if (comma <= 0 || value.AsSpan(0, comma).IndexOf(";base64".AsSpan(), StringComparison.Ordinal) < 0)
+            if (!BinaryStringParser.TryGetBase64DataUriPayload(value.AsSpan(), out ReadOnlySpan<char> payload))
             {
                 failure = "expected a base64 data URI payload";
                 return false;
             }
 
-            if (BinaryStringParser.TryDecodeBase64(value.AsSpan(comma + 1), out bytes))
+            if (BinaryStringParser.TryDecodeBase64(payload, out bytes))
             {
                 return true;
             }

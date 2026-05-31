@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 
@@ -112,7 +113,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                     return [];
                 }
 
-                return row.AsSpan(memoStart, inlineLen).ToArray();
+                return BinaryBuffer.CopySlice(row, memoStart, inlineLen);
 
             case Constants.LongValue.SinglePageStorageMode:
                 LongValueStore.LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
@@ -122,7 +123,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                     return [];
                 }
 
-                return memoLoc.Page.AsSpan(memoLoc.Start, memoSize).ToArray();
+                return BinaryBuffer.CopySlice(memoLoc.Page, memoLoc.Start, memoSize);
 
             default:
                 LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);

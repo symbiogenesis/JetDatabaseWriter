@@ -214,6 +214,7 @@ JetDatabaseWriter/
 └── Infrastructure/                        (generic utilities — not JET-specific)
     ├── LruCache.cs                        (256-page least-recently-used eviction cache)
     ├── ByteArrayEqualityComparer.cs       (byte[] equality for dictionary keys)
+    ├── BinaryBuffer.cs                    (byte-slice copy helpers)
     ├── BinaryStringParser.cs              (hex/base64 parsing helpers)
     ├── DaoPowerShellHostResolver.cs       (test/probe DAO PowerShell host discovery)
     ├── FileStreamFactory.cs               (central FileStream construction helpers)

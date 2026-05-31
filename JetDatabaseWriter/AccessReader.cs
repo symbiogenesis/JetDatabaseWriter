@@ -2477,9 +2477,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return boundedLength <= 0 ? [] : CreateOlePayloadBytes(buffer, offset, boundedLength, allowInputReuse);
     }
 
-    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse) => allowInputReuse && offset == 0 && length == buffer.Length
+    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse) =>
+        allowInputReuse && offset == 0 && length == buffer.Length
             ? buffer
-            : buffer.AsSpan(offset, length).ToArray();
+            : BinaryBuffer.CopySlice(buffer, offset, length);
 
     private async ValueTask DisposeReaderResourcesAsync()
     {
@@ -3105,27 +3106,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            byte[]? blob = TryDecodeBase64DataUrl(CatalogValueReader.GetStringOrEmpty(row, idxLvProp));
+            byte[]? blob = BinaryStringParser.TryDecodeBase64DataUri(
+                CatalogValueReader.GetStringOrEmpty(row, idxLvProp),
+                "application/octet-stream",
+                out byte[] bytes)
+                ? bytes
+                : null;
             return ColumnPropertyBlock.Parse(blob, this.Format);
         }
 
         return null;
-
-        static byte[]? TryDecodeBase64DataUrl(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-            {
-                return null;
-            }
-
-            const string prefix = "data:application/octet-stream;base64,";
-            if (!value.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            return BinaryStringParser.TryDecodeBase64(value.AsSpan(prefix.Length), out byte[] bytes) ? bytes : null;
-        }
     }
 
     /// <summary>

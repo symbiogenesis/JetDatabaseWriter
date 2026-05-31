@@ -362,13 +362,9 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return b;
         }
 
-        if (cell is string s && s.StartsWith("data:", StringComparison.Ordinal))
+        if (cell is string s)
         {
-            int comma = s.IndexOf(',', StringComparison.Ordinal);
-            if (comma >= 0 && comma + 1 < s.Length)
-            {
-                return BinaryStringParser.TryDecodeBase64(s.AsSpan(comma + 1), out byte[] bytes) ? bytes : [];
-            }
+            return BinaryStringParser.TryDecodeBase64DataUri(s, out byte[] bytes) ? bytes : [];
         }
 
         return [];
@@ -399,7 +395,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     private static byte[] DecodeAttachmentFileData(byte[] raw) => raw.Length <= 1 ? raw : raw[0] switch
     {
         0x01 => DecompressAttachmentData(raw, 1),
-        0x00 => raw.AsSpan(1).ToArray(),
+        0x00 => BinaryBuffer.CopyTail(raw, 1),
         _ => raw,
     };
 
@@ -410,14 +406,14 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             int zlibPos = FindZlibHeader(data, offset);
             if (zlibPos < 0 || zlibPos + 2 >= data.Length)
             {
-                return data.AsSpan(offset).ToArray();
+                return BinaryBuffer.CopyTail(data, offset);
             }
 
             return InflateZlibPayload(data, zlibPos);
         }
         catch (InvalidDataException)
         {
-            return data.AsSpan(offset).ToArray();
+            return BinaryBuffer.CopyTail(data, offset);
         }
     }
 
@@ -464,13 +460,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         if (value.StartsWith("data:", StringComparison.Ordinal))
         {
-            int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
-            if (commaIdx >= 0)
-            {
-                return BinaryStringParser.TryDecodeBase64(value.AsSpan(commaIdx + 1), out byte[] bytes) ? bytes : [];
-            }
-
-            return [];
+            return BinaryStringParser.TryDecodeBase64DataUri(value, out byte[] bytes) ? bytes : [];
         }
 
         if (colType == BinaryType && value.AsSpan().IndexOf('-') >= 0)

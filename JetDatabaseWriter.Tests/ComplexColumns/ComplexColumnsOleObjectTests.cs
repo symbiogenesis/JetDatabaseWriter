@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -324,20 +325,9 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             return bytes;
         }
 
-        if (cell is string value && value.StartsWith("data:", StringComparison.Ordinal))
+        if (cell is string value)
         {
-            int comma = value.IndexOf(',', StringComparison.Ordinal);
-            if (comma >= 0 && comma + 1 < value.Length)
-            {
-                try
-                {
-                    return Convert.FromBase64String(value[(comma + 1)..]);
-                }
-                catch (FormatException)
-                {
-                    return [];
-                }
-            }
+            return BinaryStringParser.TryDecodeBase64DataUri(value, out byte[] decoded) ? decoded : [];
         }
 
         return [];
