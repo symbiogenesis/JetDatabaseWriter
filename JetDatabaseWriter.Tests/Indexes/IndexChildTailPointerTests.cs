@@ -98,7 +98,7 @@ public sealed class IndexChildTailPointerTests
                     }
 
                     intermediatesChecked++;
-                    (long _, long _, long tail) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+                    (long _, long _, long tail) = IndexPageCodec.ReadSiblingPointers(layout, page);
 
                     if (tail != 0)
                     {
@@ -109,7 +109,7 @@ public sealed class IndexChildTailPointerTests
 
                     // Descend to first child.
                     List<DecodedIntermediateEntry> entries =
-                        IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                        IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
                     if (entries.Count == 0)
                     {
                         break;

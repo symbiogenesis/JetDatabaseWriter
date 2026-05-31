@@ -102,12 +102,12 @@ public sealed class IndexLeafChainConsistencyTests
                     }
 
                     byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-                    (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+                    (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
 
                     if (next != 0)
                     {
                         byte[] nextPage = await reader.GetRawPageBytesAsync(next, ct);
-                        (long prevOfNext, long _, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, nextPage);
+                        (long prevOfNext, long _, long _) = IndexPageCodec.ReadSiblingPointers(layout, nextPage);
 
                         string msg = $"Broken doubly-linked chain in {tableName}.{index.Name}: page {current} -> next {next}, but next's prev = {prevOfNext} (expected {current}). Fixture: '{fixturePath}'";
                         Assert.True(prevOfNext == current, msg);
@@ -151,7 +151,7 @@ public sealed class IndexLeafChainConsistencyTests
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
                 return 0;

@@ -116,7 +116,7 @@ JetDatabaseWriter/
 │   ├── IndexCursor.cs                     (read-only B-tree descent and exact-key lookups)
 │   ├── IndexPageCodec.cs                  (index page decoding, pointers, entry bitmasks)
 │   ├── IndexCatalogReader.cs              (reads index definitions from system tables)
-│   ├── IndexLeafIncremental.cs            (incremental leaf-page writes)
+│   ├── IndexEntrySplicer.cs               (stable in-memory index entry add/remove splicing)
 │   ├── IndexLeafPageBuilder.cs            (constructs leaf pages)
 │   ├── IndexMaintainer.cs                 (TDEF/catalog orchestration for index maintenance)
 │   ├── IndexLayout.cs                     (index page byte-offset structs)

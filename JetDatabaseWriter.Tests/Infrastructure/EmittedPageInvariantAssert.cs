@@ -318,7 +318,7 @@ internal static class EmittedPageInvariantAssert
         int payloadEnd = pageSize - freeSpace;
         Assert.InRange(payloadEnd, layout.FirstEntryOffset, pageSize);
 
-        (long prevPage, long nextPage, long tailPage) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+        (long prevPage, long nextPage, long tailPage) = IndexPageCodec.ReadSiblingPointers(layout, page);
         byte expectedSiblingType = pageType;
         AssertOptionalPageType(fileBytes, pageSize, pageNumber, prevPage, [expectedSiblingType], "previous index sibling");
         AssertOptionalPageType(fileBytes, pageSize, pageNumber, nextPage, [expectedSiblingType], "next index sibling");
@@ -327,7 +327,7 @@ internal static class EmittedPageInvariantAssert
         List<int> entryStarts = AssertIndexEntryDirectory(page, pageNumber, pageSize, layout, pageType);
         if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
         {
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            List<IndexEntry> entries = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
             Assert.Equal(entryStarts.Count, entries.Count);
             foreach (IndexEntry entry in entries)
             {
@@ -336,7 +336,7 @@ internal static class EmittedPageInvariantAssert
         }
         else
         {
-            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             Assert.Equal(entryStarts.Count, entries.Count);
             foreach (DecodedIntermediateEntry entry in entries)
             {

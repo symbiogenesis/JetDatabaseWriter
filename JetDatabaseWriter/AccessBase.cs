@@ -296,7 +296,7 @@ public abstract class AccessBase : IAccessBase
 
     // Little-endian primitives (Ru16/Ri32/Ru32/Ri64/Wu16/Wu32/Wi32/Wi64) and
     // float/24-bit/hex helpers live in JetTypeInfo so non-Core callers
-    // (Encryption layer, IndexLeafIncremental, …) can use them without
+    // (Encryption layer, index codecs, …) can use them without
     // taking an upward dependency on AccessBase. They are surfaced here
     // through the file-level `using static JetDatabaseWriter.Schema.JetTypeInfo;`.
 

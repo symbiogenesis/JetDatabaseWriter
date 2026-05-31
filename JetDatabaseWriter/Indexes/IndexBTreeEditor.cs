@@ -245,7 +245,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return 0;
             }
 
-            long firstChild = IndexLeafIncremental.ReadFirstChildPointer(layout, page, writer.PageSizeBytes);
+            long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, page, writer.PageSizeBytes);
             if (firstChild <= 0)
             {
                 return 0;
@@ -291,7 +291,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         List<IndexEntry> addEntries,
         CancellationToken cancellationToken)
     {
-        long tailLeafPage = IndexLeafIncremental.ReadTailPage(layout, rootPage);
+        long tailLeafPage = IndexPageCodec.ReadTailPage(layout, rootPage);
         if (tailLeafPage <= 0)
         {
             return false;
@@ -304,8 +304,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        long tailPrev = IndexLeafIncremental.ReadPrevPage(layout, tailLeaf);
-        long tailNext = IndexLeafIncremental.ReadNextLeafPage(layout, tailLeaf);
+        long tailPrev = IndexPageCodec.ReadPrevPage(layout, tailLeaf);
+        long tailNext = IndexPageCodec.ReadNextPage(layout, tailLeaf);
         if (tailNext != 0)
         {
             // The tail leaf must be the rightmost leaf (next_page == 0). If
@@ -317,7 +317,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         int originalTailPrefLen = Ru16(tailLeaf, layout.PrefLenOffset);
 
-        List<IndexEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, writer.PageSizeBytes);
+        List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, writer.PageSizeBytes);
 
         // Every new key must sort strictly after the current tail max.
         // Empty tail leaf trivially satisfies the predicate.
@@ -337,7 +337,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // Splice() handles the (no-removes, sorted-merge) case efficiently;
         // since adds already sort > existing max, the stable merge produces
         // existing-then-new in the right order.
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
             existingTail,
             addEntries,
             []);
@@ -450,7 +450,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        List<IndexEntry> existingLeafEntries = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
+        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
         if (existingLeafEntries.Count == 0)
         {
             // Empty leaf — descent shouldn't normally land here. Bail.
@@ -464,7 +464,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             removePtrs.Add((dp, dr));
         }
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existingLeafEntries, addEntries, removePtrs);
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existingLeafEntries, addEntries, removePtrs);
         if (spliced is null)
         {
             return false;
@@ -476,15 +476,15 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
-        long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
-        long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+        long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
+        long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
+        long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
         int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
         byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
         // 5. Try to fit the spliced entries on the original leaf page.
-        byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
+        byte[]? rebuilt = IndexLeafPageBuilder.TryBuildLeafPage(
             layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
@@ -641,7 +641,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
             if (entries.Count == 0)
             {
                 return 0;
@@ -659,7 +659,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     return 0;
                 }
 
-                long tail = IndexLeafIncremental.ReadTailPage(layout, page);
+                long tail = IndexPageCodec.ReadTailPage(layout, page);
                 long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, writer.PageSizeBytes, layout);
                 if (nextChild <= 0)
                 {
@@ -723,7 +723,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             byte[] pageBytes = step.PageBytes;
-            (long prev, long next, long tail) = IndexLeafIncremental.ReadSiblingPointers(layout, pageBytes);
+            (long prev, long next, long tail) = IndexPageCodec.ReadSiblingPointers(layout, pageBytes);
             int originalPrefLen = Ru16(pageBytes, layout.PrefLenOffset);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
@@ -805,7 +805,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         byte[] parentBytes = step.PageBytes;
-        (long parentPrev, long parentNext, long parentTail) = IndexLeafIncremental.ReadSiblingPointers(layout, parentBytes);
+        (long parentPrev, long parentNext, long parentTail) = IndexPageCodec.ReadSiblingPointers(layout, parentBytes);
         int originalPrefLen = Ru16(parentBytes, layout.PrefLenOffset);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
@@ -999,13 +999,13 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     continue;
                 }
 
-                List<IndexEntry> preExisting = IndexLeafIncremental.DecodeEntries(layout, preBytes, writer.PageSizeBytes);
+                List<IndexEntry> preExisting = IndexPageCodec.DecodeLeafEntries(layout, preBytes, writer.PageSizeBytes);
                 if (preExisting.Count == 0)
                 {
                     continue;
                 }
 
-                List<IndexEntry>? preSpliced = IndexLeafIncremental.Splice(preExisting, pre.Adds, pre.RemovePtrs);
+                List<IndexEntry>? preSpliced = IndexEntrySplicer.Splice(preExisting, pre.Adds, pre.RemovePtrs);
                 if (preSpliced is { Count: 0 })
                 {
                     emptyingLeaves.Add(pre.LeafPage);
@@ -1028,21 +1028,21 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return false;
             }
 
-            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
             if (existing.Count == 0)
             {
                 return false;
             }
 
-            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, group.Adds, group.RemovePtrs);
+            List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, group.Adds, group.RemovePtrs);
             if (spliced is null)
             {
                 return false;
             }
 
-            long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
-            long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
-            long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+            long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
+            long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
+            long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
             int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
             if (spliced.Count == 0)
@@ -1123,7 +1123,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             DescentStep parentStep = group.Path[^1];
 
             // ── Try in-place rewrite first ──
-            byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
+            byte[]? rebuilt = IndexLeafPageBuilder.TryBuildLeafPage(
                 layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
             if (rebuilt != null)
             {
@@ -1487,13 +1487,13 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         if (rewrites.TryGetValue(intermediatePage, out byte[]? rewriteBytes))
         {
-            return IndexLeafIncremental.ReadTailPage(layout, rewriteBytes);
+            return IndexPageCodec.ReadTailPage(layout, rewriteBytes);
         }
 
         byte[] raw = await writer.ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
         try
         {
-            return IndexLeafIncremental.ReadTailPage(layout, raw);
+            return IndexPageCodec.ReadTailPage(layout, raw);
         }
         finally
         {
@@ -1691,7 +1691,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             byte[] origBytes = refStep.PageBytes;
-            (long origPrev, long origNext, long origTail) = IndexLeafIncremental.ReadSiblingPointers(layout, origBytes);
+            (long origPrev, long origNext, long origTail) = IndexPageCodec.ReadSiblingPointers(layout, origBytes);
 
             // Recompute tail_page based on the post-mutation
             // entry list. For parent-of-leaf intermediates the rightmost
@@ -1955,7 +1955,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return 0;
         }
 
-        return IndexLeafIncremental.DecodeIntermediateChildPointer(page, payloadEnd - 4);
+        return IndexPageCodec.DecodeIntermediateChildPointer(page, payloadEnd - 4);
     }
 
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
@@ -1989,11 +1989,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return false;
             }
 
-            allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes));
-            walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+            allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes));
+            walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
         }
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(allExisting, addEntries, []);
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(allExisting, addEntries, []);
         if (spliced is null)
         {
             return false;

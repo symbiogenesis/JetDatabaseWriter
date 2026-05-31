@@ -208,7 +208,7 @@ public sealed class CompositeTextIndexFixtureTests
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
                 throw new InvalidOperationException($"Intermediate page {current} has no entries.");
@@ -233,12 +233,12 @@ public sealed class CompositeTextIndexFixtureTests
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            foreach (IndexEntry e in IndexLeafIncremental.DecodeEntries(layout, page, pageSize))
+            foreach (IndexEntry e in IndexPageCodec.DecodeLeafEntries(layout, page, pageSize))
             {
                 result.Add(e.Key);
             }
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 

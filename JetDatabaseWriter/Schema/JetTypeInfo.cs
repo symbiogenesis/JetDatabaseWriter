@@ -467,7 +467,7 @@ internal static class JetTypeInfo
     // ── Pure byte-decoding helpers ────────────────────────────────
     // Live here (rather than AccessBase) so JetTypeInfo's per-type byte→value
     // switches don't take an upward dependency on Core, and so non-Core
-    // callers (IndexLeafIncremental, etc.) can use them without going through
+    // callers (index codecs, etc.) can use them without going through
     // the AccessBase inheritance chain.
 
     // Terse little-endian primitives — workhorses called from row/page/index

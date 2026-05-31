@@ -210,6 +210,76 @@ internal static class IndexLeafPageBuilder
             maxPrefixLength);
 
     /// <summary>
+    /// Attempts to build an index leaf page, returning <see langword="null"/>
+    /// when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    public static byte[]? TryBuildLeafPage(
+        LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries)
+        => TryBuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: true);
+
+    /// <summary>
+    /// Attempts to build an index leaf page while preserving sibling pointers,
+    /// returning <see langword="null"/> when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    public static byte[]? TryBuildLeafPage(
+        LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+        => TryBuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression: true);
+
+    /// <summary>
+    /// Attempts to build an index leaf page, returning <see langword="null"/>
+    /// when the supplied entries do not fit in one page.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="prevPage">The prev page.</param>
+    /// <param name="nextPage">The next page.</param>
+    /// <param name="tailPage">The tail page.</param>
+    /// <param name="enablePrefixCompression">Whether to emit shared-prefix compression metadata.</param>
+    /// <param name="maxPrefixLength">Maximum number of leading bytes that may be shared through prefix compression.</param>
+    public static byte[]? TryBuildLeafPage(
+        LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        bool enablePrefixCompression,
+        int? maxPrefixLength = null)
+    {
+        try
+        {
+            return BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Builds an empty Jet3 (<c>.mdb</c> Access 97) index leaf page.
     /// Page header layout matches Jet4 (§4.1, probe-confirmed identical between
     /// formats by format probe) but the entry-start bitmask lives at <c>0x16</c> and

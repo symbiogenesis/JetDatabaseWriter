@@ -8,12 +8,10 @@ using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Unit tests for <see cref="IndexLeafIncremental"/> — the single-leaf incremental
-/// in-place leaf splice helper. Decode → splice → re-emit must round-trip
-/// back to entries that match the original input.
+/// Unit tests for index page decoding, leaf rebuilds, and entry splicing.
 /// Tests run against both Jet3 and Jet4/ACE layouts via <c>[Theory]</c> parameters.
 /// </summary>
-public sealed class IndexLeafIncrementalTests
+public sealed class IndexPageCodecAndEntrySplicerTests
 {
     private const long ParentTdef = 7;
 
@@ -34,7 +32,7 @@ public sealed class IndexLeafIncrementalTests
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, ParentTdef, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: true);
 
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
 
         Assert.Equal(3, decoded.Count);
         for (int i = 0; i < 3; i++)
@@ -53,7 +51,7 @@ public sealed class IndexLeafIncrementalTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
         Assert.Empty(decoded);
     }
 
@@ -65,7 +63,7 @@ public sealed class IndexLeafIncrementalTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
-        Assert.True(IndexLeafIncremental.IsSingleRootLeaf(page));
+        Assert.True(IndexPageCodec.IsSingleRootLeaf(layout, page));
     }
 
     [Theory]
@@ -77,7 +75,7 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, ParentTdef, [], prevPage: 0, nextPage: 99, tailPage: 0, enablePrefixCompression: false);
-        Assert.False(IndexLeafIncremental.IsSingleRootLeaf(page));
+        Assert.False(IndexPageCodec.IsSingleRootLeaf(layout, page));
     }
 
     [Theory]
@@ -85,10 +83,11 @@ public sealed class IndexLeafIncrementalTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public void IsSingleRootLeaf_FalseForIntermediatePage(DatabaseFormat format)
     {
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = new byte[PageSizeOf(format)];
         page[0] = 0x03; // intermediate
         page[1] = 0x01;
-        Assert.False(IndexLeafIncremental.IsSingleRootLeaf(page));
+        Assert.False(IndexPageCodec.IsSingleRootLeaf(layout, page));
     }
 
     [Theory]
@@ -107,7 +106,7 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 100, 2),
         };
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, adds, []);
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, adds, []);
         Assert.NotNull(spliced);
         Assert.Equal(3, spliced.Count);
         Assert.Equal(0, spliced[0].DataRow);
@@ -128,7 +127,7 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, true), 100, 2),
         };
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
             existing, [], [(100, 1)]);
 
         Assert.NotNull(spliced);
@@ -148,7 +147,7 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, true), 100, 0),
         };
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
             existing, [], [(999, 99)]); // not present
 
         Assert.Null(spliced);
@@ -170,7 +169,7 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 3, true), 100, 2),
         };
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
             existing, adds, [(100, 0)]);
 
         Assert.NotNull(spliced);
@@ -182,7 +181,7 @@ public sealed class IndexLeafIncrementalTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public void TryRebuildLeaf_RoundTripsThroughSeekableEncoding(DatabaseFormat format)
+    public void TryBuildLeafPage_RoundTripsThroughSeekableEncoding(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
@@ -192,19 +191,19 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 2, true), 200, 1),
         };
 
-        byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
+        byte[]? page = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
         Assert.NotNull(page);
         Assert.Equal(0x04, page[0]);
-        Assert.True(IndexLeafIncremental.IsSingleRootLeaf(layout, page));
+        Assert.True(IndexPageCodec.IsSingleRootLeaf(layout, page));
 
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
         Assert.Equal(2, decoded.Count);
     }
 
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public void TryRebuildLeaf_ReturnsNullOnOverflow(DatabaseFormat format)
+    public void TryBuildLeafPage_ReturnsNullOnOverflow(DatabaseFormat format)
     {
         // Build an entry list that vastly exceeds the leaf payload capacity for
         // either format. Each int entry is ~9 bytes; 1000 entries blow past the
@@ -218,7 +217,7 @@ public sealed class IndexLeafIncrementalTests
                 IndexKeyEncoder.EncodeEntry(LongIntegerType, i, true), 100, 0));
         }
 
-        byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
+        byte[]? page = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, entries);
         Assert.Null(page);
     }
 
@@ -242,7 +241,7 @@ public sealed class IndexLeafIncrementalTests
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, ParentTdef, entries, 0, 0, 0, enablePrefixCompression: true);
 
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
         Assert.Equal(3, decoded.Count);
 
         var adds = new List<IndexEntry>
@@ -250,13 +249,13 @@ public sealed class IndexLeafIncrementalTests
             new(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1003, true), 100, 3),
         };
 
-        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(decoded, adds, []);
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(decoded, adds, []);
         Assert.NotNull(spliced);
 
-        byte[]? newPage = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, spliced);
+        byte[]? newPage = IndexLeafPageBuilder.TryBuildLeafPage(layout, pageSize, ParentTdef, spliced);
         Assert.NotNull(newPage);
 
-        List<IndexEntry> reDecoded = IndexLeafIncremental.DecodeEntries(layout, newPage, pageSize);
+        List<IndexEntry> reDecoded = IndexPageCodec.DecodeLeafEntries(layout, newPage, pageSize);
         Assert.Equal(4, reDecoded.Count);
         for (int i = 0; i < 4; i++)
         {
@@ -273,22 +272,22 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] inter = new byte[pageSize];
         inter[0] = 0x03;
-        Assert.True(IndexLeafIncremental.IsIntermediate(inter));
+        Assert.True(IndexPageCodec.IsIntermediate(inter));
 
         byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
-        Assert.False(IndexLeafIncremental.IsIntermediate(leaf));
+        Assert.False(IndexPageCodec.IsIntermediate(leaf));
     }
 
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public void ReadNextLeafPage_ReturnsHeaderField(DatabaseFormat format)
+    public void ReadNextPage_ReturnsHeaderField(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, ParentTdef, [], prevPage: 0, nextPage: 12345, tailPage: 0, enablePrefixCompression: false);
-        Assert.Equal(12345, IndexLeafIncremental.ReadNextLeafPage(layout, page));
+        Assert.Equal(12345, IndexPageCodec.ReadNextPage(layout, page));
     }
 
     [Theory]
@@ -315,9 +314,9 @@ public sealed class IndexLeafIncrementalTests
 
         int rootIdx = (int)(build.RootPageNumber - build.FirstPageNumber);
         byte[] root = build.Pages[rootIdx];
-        Assert.True(IndexLeafIncremental.IsIntermediate(root));
+        Assert.True(IndexPageCodec.IsIntermediate(root));
 
-        long firstChild = IndexLeafIncremental.ReadFirstChildPointer(layout, root, pageSize);
+        long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, root, pageSize);
 
         // The first intermediate entry summarises the first leaf page, which
         // is the page allocated at FirstPageNumber.
@@ -332,7 +331,7 @@ public sealed class IndexLeafIncrementalTests
         int pageSize = PageSizeOf(format);
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(layout, pageSize, ParentTdef, [], 0, 0, 0, enablePrefixCompression: false);
-        Assert.Equal(0, IndexLeafIncremental.ReadFirstChildPointer(layout, leaf, pageSize));
+        Assert.Equal(0, IndexPageCodec.ReadFirstChildPointer(layout, leaf, pageSize));
     }
 
     private static int PageSizeOf(DatabaseFormat fmt) =>

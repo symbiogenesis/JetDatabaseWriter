@@ -143,7 +143,7 @@ internal static class LongRowProbe
                 break;
             }
 
-            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             current = entries[0].ChildPage;
         }
 
@@ -152,12 +152,12 @@ internal static class LongRowProbe
         while (current != 0 && ++guard < 100_000)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            foreach (IndexEntry e in IndexLeafIncremental.DecodeEntries(layout, page, pageSize))
+            foreach (IndexEntry e in IndexPageCodec.DecodeLeafEntries(layout, page, pageSize))
             {
                 result.Add(e.Key);
             }
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 

@@ -629,7 +629,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return null;
             }
 
-            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
+            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
             if (entries.Count == 0)
             {
                 return null;
@@ -845,7 +845,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 removePtrs.Add((dpDel, drDel));
             }
 
-            if (!IndexLeafIncremental.IsSingleRootLeaf(layout, rootPage))
+            if (!IndexPageCodec.IsSingleRootLeaf(layout, rootPage))
             {
                 // Multi-level tree (root is an intermediate 0x03 page) or a
                 // single leaf with sibling pointers (a child of an
@@ -968,11 +968,11 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                         return false;
                     }
 
-                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes));
-                    walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+                    allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes));
+                    walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
                 }
 
-                List<IndexEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
+                List<IndexEntry>? splicedAll = IndexEntrySplicer.Splice(allExisting, addEntries, removePtrs);
                 if (splicedAll is null)
                 {
                     this.LastIncrementalBail = $"C10 allExisting={allExisting.Count}";
@@ -1001,15 +1001,15 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, writer.PageSizeBytes);
-            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, rootPage, writer.PageSizeBytes);
+            List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
                 this.LastIncrementalBail = $"C12 existing={existing.Count}";
                 return false;
             }
 
-            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, writer.PageSizeBytes, tdefPage, spliced);
+            byte[]? newLeaf = IndexLeafPageBuilder.TryBuildLeafPage(layout, writer.PageSizeBytes, tdefPage, spliced);
             if (newLeaf is null)
             {
                 this.LastIncrementalBail = $"C13 spliced={spliced.Count}";
@@ -1309,13 +1309,13 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             int chainBudget = 1_000_000;
             while (true)
             {
-                long nextLeaf = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+                long nextLeaf = IndexPageCodec.ReadNextPage(layout, leaf);
                 if (nextLeaf <= 0)
                 {
                     break;
                 }
 
-                List<IndexEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
+                List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
                 if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
                 {
                     // composite belongs in this leaf (or earlier).
@@ -1338,19 +1338,19 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
             }
 
-            long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
-            long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
-            long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+            long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
+            long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
+            long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
             int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
-            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
 
             var addEntries = new List<IndexEntry>(1)
             {
                 new(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
             };
 
-            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
+            List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
                 existing,
                 addEntries,
                 []);

@@ -105,7 +105,7 @@ internal static class LongRowBisect
                 break;
             }
 
-            List<DecodedIntermediateEntry> iEntries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, reader.PageSize);
+            List<DecodedIntermediateEntry> iEntries = IndexPageCodec.DecodeIntermediateEntries(layout, page, reader.PageSize);
             current = iEntries[0].ChildPage;
         }
 
@@ -113,12 +113,12 @@ internal static class LongRowBisect
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, CancellationToken.None);
-            foreach (IndexEntry e in IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize))
+            foreach (IndexEntry e in IndexPageCodec.DecodeLeafEntries(layout, page, reader.PageSize))
             {
                 allKeys.Add(e.Key);
             }
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 

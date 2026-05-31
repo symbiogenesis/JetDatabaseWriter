@@ -305,7 +305,7 @@ public sealed class IndexLeafPageBuilderTests
         Assert.True(ReadU16(uncapped, layout.PrefLenOffset) > 2);
         Assert.Equal(2, ReadU16(capped, layout.PrefLenOffset));
 
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, capped, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, capped, pageSize);
         Assert.Equal(entries.Length, decoded.Count);
         for (int i = 0; i < entries.Length; i++)
         {
@@ -360,7 +360,7 @@ public sealed class IndexLeafPageBuilderTests
                 maxPrefixLength: maxPrefixLength);
 
             Assert.Equal(maxPrefixLength, ReadU16(page, layout.PrefLenOffset));
-            decodedAll.AddRange(IndexLeafIncremental.DecodeEntries(layout, page, pageSize));
+            decodedAll.AddRange(IndexPageCodec.DecodeLeafEntries(layout, page, pageSize));
         }
 
         Assert.Equal(entries.Count, decodedAll.Count);
@@ -404,7 +404,7 @@ public sealed class IndexLeafPageBuilderTests
 
         // Must not throw or read garbage — the decoder should stop at payloadEnd.
         // If we reach here, the decoder handled the corrupt bitmask gracefully.
-        _ = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        _ = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
     }
 
     [Theory]
@@ -418,7 +418,7 @@ public sealed class IndexLeafPageBuilderTests
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, 100, [], 0, 0, 0, enablePrefixCompression: false);
 
-        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        List<IndexEntry> decoded = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
         Assert.Empty(decoded);
     }
 

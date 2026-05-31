@@ -6357,10 +6357,10 @@ internal static class LongRowSuffixProbe
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            List<IndexEntry> entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+            List<IndexEntry> entries = IndexPageCodec.DecodeLeafEntries(layout, page, pageSize);
             result.AddRange(entries);
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 
@@ -6391,7 +6391,7 @@ internal static class LongRowSuffixProbe
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
                 throw new InvalidOperationException($"Intermediate page {current} has no entries.");
@@ -6416,9 +6416,9 @@ internal static class LongRowSuffixProbe
                     $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
             }
 
-            result.AddRange(IndexLeafIncremental.DecodeEntries(layout, page, pageSize));
+            result.AddRange(IndexPageCodec.DecodeLeafEntries(layout, page, pageSize));
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 
@@ -6449,7 +6449,7 @@ internal static class LongRowSuffixProbe
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
                 throw new InvalidOperationException($"Intermediate page {current} has no entries.");
@@ -6477,7 +6477,7 @@ internal static class LongRowSuffixProbe
 
             result.AddRange(DecodeLeafEntryDetails(layout, page, pageSize, current, ref position));
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 
@@ -6653,7 +6653,7 @@ internal static class LongRowSuffixProbe
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
             if (entries.Count == 0)
             {
                 throw new InvalidOperationException($"Intermediate page {current} has no entries.");
@@ -6680,7 +6680,7 @@ internal static class LongRowSuffixProbe
 
             result.Add(SummarizeRawLeafPage(layout, page, pageSize, current));
 
-            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 
