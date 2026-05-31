@@ -1,18 +1,20 @@
-# High-Impact Simplification TODOs
+# High-Impact Simplification Outcomes
 
-Status: active backlog with completed outcomes retained
+Status: completed architecture backlog, retained as a decision record
 Date: 2026-05-30
 
-This note tracks the remaining large simplification opportunities that look
-likely to delete or consolidate meaningful code while retaining features and
-performance. Completed outcomes stay here as waypoints so future work does not
-reopen settled architecture threads. The note intentionally excludes formatting,
-comments, small helper extractions, and local tidy-ups.
+This note records the large simplification opportunities that were pursued and
+closed. It is retained as a waypoint so future work does not reopen settled
+architecture threads or mistake historical implementation notes for active
+backlog. There are no remaining open items tracked here; new simplification work
+should start from current profiling, tests, and code shape.
 
-Each item should be treated as architecture work: start with characterization
-tests and benchmarks, then refactor behind existing public APIs.
+For similar future work, treat each item as architecture work: start with
+characterization tests and benchmarks, then refactor behind existing public APIs.
 
 ## 1. Build a Shared Index Cursor and B-tree Editor
+
+Status: completed 2026-05-30
 
 Primary files:
 
@@ -26,12 +28,12 @@ Primary files:
 - [../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs](../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs)
 - [../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs](../../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs)
 
-Why this is exciting: index logic is the largest remaining cluster of parallel
+Why this mattered: index logic was the largest remaining cluster of parallel
 implementations. Full rebuild, single-leaf splice, append-tail maintenance,
 same-leaf surgery, cross-leaf surgery, catalog splicing, relationship seeks,
-and uniqueness checks all understand overlapping pieces of the same B-tree
-format. A real cursor/editor abstraction could remove substantial code rather
-than merely move it.
+and uniqueness checks all understood overlapping pieces of the same B-tree
+format. The shared cursor/editor abstractions removed duplicate logic rather
+than merely moving it.
 
 Target shape:
 
@@ -70,23 +72,24 @@ pre-write/cursor tests passed (17/17), the full index namespace passed
 (446/446), `dotnet build --no-restore` passed, and the non-fuzz suite passed
 (3,559 succeeded, 2 environment skips).
 
-Guardrails:
+Durability guardrails:
 
-- [ ] Preserve Jet3 and Jet4/ACE layout selection via
+- [x] Preserve Jet3 and Jet4/ACE layout selection via
       `IndexLeafPageBuilder.LeafPageLayout` or a successor descriptor.
-- [ ] Preserve MSysObjects special handling; do not reintroduce unsafe
+- [x] Preserve MSysObjects special handling; do not reintroduce unsafe
       full-row re-encoding for catalog rows.
-- [ ] Validate with index, relationship, catalog, DAO CompactDatabase, and
+- [x] Validate with index, relationship, catalog, DAO CompactDatabase, and
       round-trip tests documented in
       [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md),
       [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md), and
       [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
-- [ ] Add focused tests for multi-level seek, duplicate-key leaf spans,
+- [x] Add focused tests for multi-level seek, duplicate-key leaf spans,
       tail-page append fall-through, same-leaf mutation, cross-leaf mutation,
       leaf underflow, and root split.
 
-Likely payoff: very high deletion and maintainability upside, with high
-compatibility risk. This is the top candidate.
+Outcome: the read cursor, page codec, mutation editor, relationship seeks, and
+unique-index checks now share encoded-key and page-layout infrastructure while
+keeping MSysObjects on the byte-preserving catalog path.
 
 ## 2. Replace Parallel Row Readers with a Row Decode Plan
 
@@ -101,10 +104,10 @@ Primary files:
 - [../../JetDatabaseWriter/ValueDecoding/TypedRowFallbackPolicy.cs](../../JetDatabaseWriter/ValueDecoding/TypedRowFallbackPolicy.cs)
 - [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
 
-Why this is exciting: the repo currently has string row cracking, typed
-object-array cracking, pooled-buffer cracking, direct POCO decoding, and
-writer-side partial column reads. All depend on the same row layout parser and
-column slicing rules, but each has its own switch/fallback surface.
+Why this mattered: the repo had string row cracking, typed object-array
+cracking, pooled-buffer cracking, direct POCO decoding, and writer-side partial
+column reads. All depended on the same row layout parser and column slicing
+rules, but each had its own switch/fallback surface.
 
 Target shape:
 
@@ -117,7 +120,7 @@ Target shape:
       writer helper code into shared plan components.
 - [x] Preserve the current async LVAL sentinel model so rows without external
       long values still complete synchronously.
-- [x] Make the writer's key-column reader use the same plan instead of its
+- [x] Make the writer's key-column reader use the same plan, retiring the
       private `TryDecodeColumnSlice` path.
 - [x] Keep `RowsAsStrings()` compatibility semantics intact unless an explicit
       compatibility review says otherwise.
@@ -192,11 +195,11 @@ Primary files:
 - [../../JetDatabaseWriter/Indexes/IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
 - [../../JetDatabaseWriter/Constants.cs](../../JetDatabaseWriter/Constants.cs)
 
-Why this is exciting: INLINE and REFERENCE usage-map bit math appears in reader
+Why this mattered: INLINE and REFERENCE usage-map bit math appeared in reader
 owned-page discovery, data-page insertion, global free-page allocation,
 index-page usage-map refresh, table drop cleanup, and page reclamation. A
-single model could remove duplicate parsing and make future REFERENCE-map
-support less scattered.
+single model removed duplicate parsing and made REFERENCE-map support less
+scattered.
 
 Target shape:
 
@@ -239,11 +242,11 @@ Primary files:
 - [../../JetDatabaseWriter/Relationships/RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs)
 - [../../JetDatabaseWriter/Schema/TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs)
 
-Why this is exciting: table creation, system-table scaffolding, complex flat
-tables, catalog rows, ACE rows, relationship objects, and LvProp emission are
-currently choreographed by bespoke sequences. The behavior is format-sensitive,
-but a declarative artifact model could remove a lot of orchestration code while
-making hidden dependencies explicit.
+Why this mattered: table creation, system-table scaffolding, complex flat
+tables, catalog rows, ACE rows, relationship objects, and LvProp emission were
+choreographed by bespoke sequences. The behavior is format-sensitive, but the
+declarative artifact model removed orchestration code while making hidden
+dependencies explicit.
 
 Target shape:
 
@@ -296,9 +299,9 @@ Guardrails:
 - [x] Run DAO compact/open-recordset validation for complex columns,
       relationships, linked tables, and fresh database creation.
 
-Likely payoff: medium to high deletion upside, especially in writer
-orchestration. Risk is mostly compatibility ordering rather than hot-path
-performance.
+Outcome: table, system, complex-table, relationship, linked-table, replacement,
+and deletion catalog work now flows through artifact plans and shared executor
+primitives instead of parallel row-mutation paths.
 
 ## 5. Reassess the Hand-Rolled Compound File Layer
 
@@ -358,13 +361,14 @@ Outcome: closed. The deletion upside is outweighed by dependency risk, and the
 local layer is already narrow enough that further simplification is unlikely to
 pay for itself without weakening coverage or compatibility.
 
-## Suggested Order
+## Completion Order
 
 1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26.
 2. IndexBTreeEditor mutation planner: completed 2026-05-26.
-3. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
-4. Declarative catalog artifact planning: completed 2026-05-30.
-5. CFB dependency decision: completed 2026-05-30; no dependency introduced.
+3. UsageMap ownership model: completed 2026-05-26.
+4. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
+5. Declarative catalog artifact planning: completed 2026-05-30.
+6. CFB dependency decision: completed 2026-05-30; no dependency introduced.
 
 ## Non-goals
 

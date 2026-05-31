@@ -195,7 +195,7 @@ JetDatabaseWriter/
 │   ├── RelationshipChildRowLocator.cs     (child-row location resolution from FK-side index seeks)
 │   ├── RelationshipKeyBuilder.cs          (shared FK composite-key projection and fallback key building)
 │   ├── RelationshipCascadePolicy.cs       (cascade recursion-depth guard)
-│   ├── RelationshipPageReader.cs          (owned page-copy adapter for index seekers)
+│   ├── RelationshipPageReader.cs          (owned page-copy adapter for index cursor reads)
 │   ├── FkRelationship.cs                  (enforced FK metadata model)
 │   ├── FkContext.cs                       (per-mutation FK lookup cache)
 │   ├── RelationshipRowSnapshot.cs         (MSysRelationships row rewrite snapshot)

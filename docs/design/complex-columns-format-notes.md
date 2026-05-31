@@ -275,7 +275,7 @@ Phase C10 lifts the C3 caveat that wrote `MSysComplexColumns.ComplexTypeObjectID
 
 Schemas come from [`format-probe-appendix-complex.md`](../format-probe/format-probe-appendix-complex.md) §`MSysComplexType_*` against `ComplexFields.accdb`.
 
-Helpers added on `AccessWriter`:
+Helpers now live on `ComplexColumnManager` and are called from `AccessWriter`:
 
 - `CreateMSysComplexTypeTemplatesAsync` — emits the nine tables in declaration order (TDEF page + catalog row, no indexes, no rows). Skipped for Jet3 / Jet4 `.mdb` and for the slim-catalog ACCDB (`WriteFullCatalogSchema = false`) per the existing C1 gating.
 - `ResolveComplexTypeTemplateName(ColumnDefinition)` (static) — returns the canonical template name for a complex column declaration, or `null` if the element type has no matching template.

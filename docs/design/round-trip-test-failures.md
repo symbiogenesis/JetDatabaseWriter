@@ -164,7 +164,7 @@ A binary patch experiment on the N1 reproducer (single empty `RT_Customers` tabl
 - Page 2790 still triggers `MSysDb (3011)` despite having only **1 byte** difference vs the DAO baseline (a bitmask bit at offset `0x01DD`: Writer=`0x00`, DAO=`0x40`). This single bitmask bit marks the entry-start position of the spliced entry and is expected to differ (the writer's entry has a different sort key because its table Id = 3008 vs DAO's 2671). Yet DAO rejects the page.
 - Page 2994 also failed when tested with the full round-trip test (which creates 2 tables + relationship, unlike N1 which only creates 1). The error `Object invalid or no longer set` suggested a cascading catalog-consistency issue when multiple catalog rows were present.
 
-The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) produced the empirical ground truth for this historical failure: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survived DAO compact, while the pre-fix writer copy of the same fixture failed.
+The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/Dao/DaoBaselineProbe.cs)) produced the empirical ground truth for this historical failure: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survived DAO compact, while the pre-fix writer copy of the same fixture failed.
 
 ## Historical tests in question
 
@@ -565,7 +565,7 @@ All three call sites (`TrySpliceCatalogIndexEntryAsync`, `TrySurgicalCrossLeafMa
 
 ### `rt-bisect` — escalating-step regression bisector
 
-[RoundTripBisect.cs](../../JetDatabaseWriter.FormatProbe/RoundTripBisect.cs):
+[RoundTripBisect.cs](../../JetDatabaseWriter.FormatProbe/Bisection/RoundTripBisect.cs):
 
 ```pwsh
 dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
@@ -586,7 +586,7 @@ During the original investigation, `N1_CreateOneTable` was the smallest writer s
 
 ### `rt-dao-baseline` — DAO-authored ground-truth comparator
 
-[DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs):
+[DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/Dao/DaoBaselineProbe.cs):
 
 ```pwsh
 dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline
