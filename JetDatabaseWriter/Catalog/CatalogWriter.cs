@@ -12,7 +12,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
@@ -242,34 +241,23 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             return null;
         }
 
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        byte[]? sid = null;
+        await writer.ForEachLiveTableRowAsync(
+            acesTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.DataPage.TDefOff) != acesTdefPage)
+                string hex = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, sidCol);
+                if (hex.Length <= 4)
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string hex = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, sidCol);
+                sid = ParseHexBytes(hex);
+                return new ValueTask<bool>(false);
+            },
+            cancellationToken).ConfigureAwait(false);
 
-                    if (hex.Length > 4)
-                    {
-                        return ParseHexBytes(hex);
-                    }
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
-
-        return null;
+        return sid;
     }
 
     /// <summary>
@@ -433,46 +421,31 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         var result = new List<CatalogRow>();
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != Constants.PageTypes.Data)
+        await writer.ForEachLiveTableRowAsync(
+            2,
+            (row, _) =>
             {
-                AccessBase.ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, writer.DataPage.TDefOff) != 2)
-            {
-                AccessBase.ReturnPage(page);
-                continue;
-            }
-
-            foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
-            {
+                byte[] page = row.Page;
+                RowLocation location = row.Location;
                 long id = idColumn is null
                     ? 0
-                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
+                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, idColumn));
                 long parentId = parentIdColumn is null
                     ? 0
-                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, parentIdColumn));
+                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, parentIdColumn));
 
                 result.Add(new CatalogRow(
-                    PageNumber: row.PageNumber,
-                    RowIndex: row.RowIndex,
-                    Name: writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType: CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags: CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
+                    PageNumber: location.PageNumber,
+                    RowIndex: location.RowIndex,
+                    Name: writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameColumn),
+                    ObjectType: CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, typeColumn)),
+                    Flags: CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, flagsColumn!)),
                     TDefPage: id & 0x00FFFFFFL,
                     Id: id,
                     ParentId: parentId));
-            }
-
-            AccessBase.ReturnPage(page);
-        }
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         return result;
     }
@@ -498,34 +471,21 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
         var usedIds = new HashSet<int>();
         int maxLow24 = 0;
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await writer.ForEachLiveTableRowAsync(
+            2,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.DataPage.TDefOff) != 2)
+                int id = CatalogValueReader.ParseInt32OrZero(
+                    writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, idColumn));
+                usedIds.Add(id);
+                if (id != 0)
                 {
-                    continue;
+                    maxLow24 = Math.Max(maxLow24, id & 0x00FFFFFF);
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    int id = CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
-                    _ = usedIds.Add(id);
-                    if (id != 0)
-                    {
-                        maxLow24 = Math.Max(maxLow24, id & 0x00FFFFFF);
-                    }
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         int low24 = Math.Max(1, maxLow24 + 1);
         for (int attempt = 0; attempt < 0x00FFFFFE; attempt++)

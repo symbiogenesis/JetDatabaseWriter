@@ -137,6 +137,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>Gets the writer options.</summary>
     internal AccessWriterOptions Options { get; }
 
+    private protected override bool CanCacheOwnedDataPages => false;
+
     /// <summary>Gets or sets the active explicit transaction.</summary>
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeActiveTransactionAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     internal JetTransaction? ActiveTransaction { get; set; }
@@ -3298,28 +3300,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
         if (tableDef is not null)
         {
-            for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                try
+            await this.ForEachOwnedDataPageAsync(
+                tdefPage,
+                (pageNumber, page, _) =>
                 {
-                    if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != tdefPage)
-                    {
-                        continue;
-                    }
-
-                    _ = pagesToFree.Add(pageNumber);
+                    pagesToFree.Add(pageNumber);
                     foreach (RowBound rowBound in this.EnumerateLiveRowBounds(page))
                     {
                         longValueRoots.AddRange(this.CollectLongValueRoots(page, rowBound, tableDef));
                     }
-                }
-                finally
-                {
-                    ReturnPage(page);
-                }
-            }
+
+                    return new ValueTask<bool>(true);
+                },
+                cancellationToken).ConfigureAwait(false);
         }
 
         byte[]? firstTdefPage = null;
@@ -3452,36 +3445,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        long total = this.DatabaseStream.Length / this.PageSizeBytes;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.ForEachLiveTableRowAsync(
+            acesTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != acesTdefPage)
+                string objectIdText = this.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
+                if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
+                    && ids.Contains(objectId))
                 {
-                    continue;
+                    object[] deletedIndexRow = acesDef.CreateNullValueRow();
+                    acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
+                    deletedRows.Add((row.Location, deletedIndexRow));
                 }
 
-                foreach (RowLocation row in this.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string objectIdText = this.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objectIdColumn);
-                    if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
-                        && ids.Contains(objectId))
-                    {
-                        object[] deletedIndexRow = acesDef.CreateNullValueRow();
-                        acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
-                        deletedRows.Add((row, deletedIndexRow));
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         foreach ((RowLocation row, _) in deletedRows)
         {
@@ -3769,24 +3748,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
     {
         var dataPages = new List<long>();
-        long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
-        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.ForEachOwnedDataPageAsync(
+            tdefPage,
+            (pageNumber, _, _) =>
             {
-                if (page[0] == Constants.PageTypes.Data && Ri32(page, this.DataPage.TDefOff) == tdefPage)
-                {
-                    dataPages.Add(pageNumber);
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
+                dataPages.Add(pageNumber);
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         if (dataPages.Count == 0 && rows.Count > 0)
         {
@@ -3850,34 +3819,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
         => this.catalogWriter.GetCatalogRowsAsync(msys, cancellationToken);
-
-    internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        var result = new List<RowLocation>();
-        long total = this.DatabaseStream.Length / this.PageSizeBytes;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != Constants.PageTypes.Data)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, this.DataPage.TDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            result.AddRange(this.EnumerateLiveRowLocations(pageNumber, page));
-            ReturnPage(page);
-        }
-
-        return result;
-    }
 
     /// <summary>
     /// Reads <paramref name="columnOrdinals"/>'s typed values out of a single

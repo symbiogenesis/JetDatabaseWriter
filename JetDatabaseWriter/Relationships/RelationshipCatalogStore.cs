@@ -13,7 +13,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipCatalogStore(AccessWriter writer)
 {
@@ -85,81 +84,63 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return results;
         }
 
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await writer.ForEachLiveTableRowAsync(
+            msysRelTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                byte[] page = row.Page;
+                RowLocation location = row.Location;
+                string name = writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameCol);
+                if (string.IsNullOrEmpty(name) || !namePredicate(name))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysRelTdefPage)
+                object[] values = new object[msysRelDef.Columns.Count];
+                for (int column = 0; column < values.Length; column++)
                 {
-                    continue;
+                    ColumnInfo tableColumn = msysRelDef.Columns[column];
+                    string raw = writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, tableColumn);
+                    values[column] = string.IsNullOrEmpty(raw)
+                        ? DBNull.Value
+                        : tableColumn.Type switch
+                        {
+                            LongIntegerType => CatalogValueReader.ParseInt32OrZero(raw),
+                            BigIntType => CatalogValueReader.ParseInt64OrZero(raw),
+                            IntegerType => (short)CatalogValueReader.ParseInt32OrZero(raw),
+                            ByteType => (byte)CatalogValueReader.ParseInt32OrZero(raw),
+                            ColumnType.BooleanType or
+                            ColumnType.MoneyType or
+                            ColumnType.FloatType or
+                            ColumnType.DoubleType or
+                            ColumnType.DateTimeType or
+                            ColumnType.BinaryType or
+                            ColumnType.TextType or
+                            ColumnType.OleType or
+                            ColumnType.MemoType or
+                            ColumnType.GuidType or
+                            ColumnType.NumericType or
+                            ColumnType.AttachmentType or
+                            ColumnType.ComplexType or
+                            ColumnType.DateTimeExtendedType or
+                            _ => raw,
+                        };
                 }
 
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string name = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (string.IsNullOrEmpty(name) || !namePredicate(name))
-                    {
-                        continue;
-                    }
-
-                    object[] values = new object[msysRelDef.Columns.Count];
-                    for (int column = 0; column < values.Length; column++)
-                    {
-                        ColumnInfo tableColumn = msysRelDef.Columns[column];
-                        string raw = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, tableColumn);
-                        values[column] = string.IsNullOrEmpty(raw)
-                            ? DBNull.Value
-                            : tableColumn.Type switch
-                            {
-                                LongIntegerType => CatalogValueReader.ParseInt32OrZero(raw),
-                                BigIntType => CatalogValueReader.ParseInt64OrZero(raw),
-                                IntegerType => (short)CatalogValueReader.ParseInt32OrZero(raw),
-                                ByteType => (byte)CatalogValueReader.ParseInt32OrZero(raw),
-                                ColumnType.BooleanType or
-                                ColumnType.MoneyType or
-                                ColumnType.FloatType or
-                                ColumnType.DoubleType or
-                                ColumnType.DateTimeType or
-                                ColumnType.BinaryType or
-                                ColumnType.TextType or
-                                ColumnType.OleType or
-                                ColumnType.MemoType or
-                                ColumnType.GuidType or
-                                ColumnType.NumericType or
-                                ColumnType.AttachmentType or
-                                ColumnType.ComplexType or
-                                ColumnType.DateTimeExtendedType or
-                                _ => raw,
-                            };
-                    }
-
-                    results.Add(new RelationshipRowSnapshot(
-                        row,
-                        name,
-                        writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objCol),
-                        writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refObjCol),
-                        writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, colCol),
-                        writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refColCol),
-                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, icolCol)),
-                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
-                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
-                        values));
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+                results.Add(new RelationshipRowSnapshot(
+                    location,
+                    name,
+                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, objCol),
+                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refObjCol),
+                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, colCol),
+                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refColCol),
+                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, icolCol)),
+                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, ccolCol)),
+                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, grbitCol)),
+                    values));
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         return results;
     }
@@ -313,38 +294,19 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return names;
         }
 
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await writer.ForEachLiveTableRowAsync(
+            msysRelTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string name = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                if (!string.IsNullOrEmpty(name))
                 {
-                    continue;
+                    names.Add(name);
                 }
 
-                if (Ri32(page, writer.DataPage.TDefOff) != msysRelTdefPage)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string name = writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.IsNullOrEmpty(name))
-                    {
-                        _ = names.Add(name);
-                    }
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         return names;
     }

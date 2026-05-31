@@ -94,28 +94,8 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
-        List<long>? mappedPages = await this.TryReadMappedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (mappedPages is not null)
-        {
-            foreach (long pageNumber in mappedPages)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.DataPage.TDefOff) == tdefPage && this.CanInsertRow(page, rowLength))
-                {
-                    writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
-                    return new PageInsertTarget { PageNumber = pageNumber, Page = page };
-                }
-
-                ReturnPage(page);
-            }
-
-            return null;
-        }
-
-        long total = writer.PhysicalPageCount;
-        for (long pageNumber = 1; pageNumber < total; pageNumber++)
+        IReadOnlyList<long> pageNumbers = await writer.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -130,60 +110,6 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         }
 
         return null;
-    }
-
-    private async ValueTask<List<long>?> TryReadMappedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        long totalPages = writer.PhysicalPageCount;
-        if (tdefPage <= 0 || tdefPage >= totalPages)
-        {
-            return null;
-        }
-
-        UsageMap.Pointer pointer;
-        byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (!UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out pointer)
-                || pointer.PageNumber <= 0
-                || pointer.PageNumber >= totalPages)
-            {
-                return null;
-            }
-        }
-        finally
-        {
-            ReturnPage(tdef);
-        }
-
-        byte[] usageMapPage = await writer.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, writer.DataPage, writer.PageSizeBytes, pointer.RowIndex, out RowBound rowBound))
-            {
-                return null;
-            }
-
-            var mappedPages = new List<long>();
-            return await UsageMap.TryEnumeratePagesAsync(
-                usageMapPage,
-                rowBound,
-                writer.PageSizeBytes,
-                totalPages,
-                minimumPageNumber: 1,
-                strict: true,
-                writer.ReadPageAsync,
-                ReturnPage,
-                mappedPages,
-                cancellationToken).ConfigureAwait(false)
-                ? mappedPages
-                : null;
-        }
-        finally
-        {
-            ReturnPage(usageMapPage);
-        }
     }
 
     /// <summary>

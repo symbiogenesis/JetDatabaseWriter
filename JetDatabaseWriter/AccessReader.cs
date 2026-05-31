@@ -20,7 +20,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -81,14 +80,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #endif
 
     private readonly AsyncReentrantOperationGate operationGate = new();
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeReaderResourcesAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
-    private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
-#if NET8_0_OR_GREATER
-    private readonly Lock ownedDataPagesCacheLock = new();
-#else
-    private readonly object ownedDataPagesCacheLock = new();
-#endif
-    private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
     private readonly LockFileCoordinator lockFile;
     private readonly bool strictParsing;
     private readonly ComplexColumnReader complexColumns;
@@ -128,7 +119,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         Guard.NotNull(options, nameof(options));
 
-        this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
         this.lockFile = LockFileCoordinator.ForReader(path, options);
         this.strictParsing = options.StrictParsing;
         this.complexColumns = new ComplexColumnReader(this);
@@ -2497,224 +2487,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         this.pageCache?.Dispose();
         this.rowBoundsCache?.Clear();
         this.rowBoundsCache?.Dispose();
-        this.ownedDataPageIndex.Dispose();
         this.InvalidateCatalogCache();
         await base.DisposeAsync().ConfigureAwait(false);
-    }
-
-    private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        if (tdefPage <= 0)
-        {
-            return [];
-        }
-
-        if (this.ActiveJournal is null && this.TryGetCachedOwnedDataPages(tdefPage, out long[] cachedPages))
-        {
-            return cachedPages;
-        }
-
-        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (mappedPages is not null)
-        {
-            if (this.ActiveJournal is null)
-            {
-                this.CacheOwnedDataPages(tdefPage, mappedPages);
-            }
-
-            return mappedPages;
-        }
-
-        Dictionary<long, long[]> pageIndex = await this.ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false);
-        return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
-            ? pageNumbers
-            : [];
-    }
-
-    private bool TryGetCachedOwnedDataPages(long tdefPage, out long[] pageNumbers)
-    {
-        lock (this.ownedDataPagesCacheLock)
-        {
-            bool found = this.ownedDataPagesByTdef.TryGetValue(tdefPage, out long[]? cachedPages);
-            pageNumbers = cachedPages ?? [];
-            return found;
-        }
-    }
-
-    private void CacheOwnedDataPages(long tdefPage, long[] pageNumbers)
-    {
-        lock (this.ownedDataPagesCacheLock)
-        {
-            this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
-        }
-    }
-
-    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
-        if (tdefPage <= 0 || tdefPage >= totalPages)
-        {
-            return null;
-        }
-
-        byte[] tdef = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (tdef[0] != Constants.PageTypes.TableDefinition
-                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMap.Pointer pointer)
-                || pointer.PageNumber <= 0)
-            {
-                return null;
-            }
-
-            uint declaredRows = tdef.Length >= Constants.TableDefinition.RowCountOffset + sizeof(uint)
-                ? Ru32(tdef, Constants.TableDefinition.RowCountOffset)
-                : 0;
-            return await this.TryReadMappedOwnedDataPagesAsync(
-                tdefPage,
-                pointer.PageNumber,
-                pointer.RowIndex,
-                declaredRows,
-                totalPages,
-                cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(tdef);
-        }
-    }
-
-    private async ValueTask<long[]?> TryReadMappedOwnedDataPagesAsync(
-        long tdefPage,
-        int usageMapPageNumber,
-        int usageMapRow,
-        uint declaredRows,
-        long totalPages,
-        CancellationToken cancellationToken)
-    {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
-        {
-            return null;
-        }
-
-        byte[] usageMapPage = await this.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, this.DataPage, this.PageSizeBytes, usageMapRow, out RowBound rowBound))
-            {
-                return null;
-            }
-
-            var mappedPages = new List<long>();
-            bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
-                usageMapPage,
-                rowBound,
-                this.PageSizeBytes,
-                totalPages,
-                minimumPageNumber: 1,
-                strict: true,
-                this.ReadPageAsync,
-                ReturnPage,
-                mappedPages,
-                cancellationToken).ConfigureAwait(false);
-            if (!recognizedMap)
-            {
-                return null;
-            }
-
-            if (mappedPages.Count == 0)
-            {
-                return declaredRows == 0 ? [] : null;
-            }
-
-            return await this.ValidateOwnedDataPagesAsync(tdefPage, mappedPages, declaredRows, cancellationToken).ConfigureAwait(false)
-                ? [.. mappedPages]
-                : null;
-        }
-        finally
-        {
-            ReturnPage(usageMapPage);
-        }
-    }
-
-    private async ValueTask<bool> ValidateOwnedDataPagesAsync(
-        long tdefPage,
-        List<long> pageNumbers,
-        uint declaredRows,
-        CancellationToken cancellationToken)
-    {
-        long liveRows = 0;
-        foreach (long pageNumber in pageNumbers)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != tdefPage)
-                {
-                    return false;
-                }
-
-                if (declaredRows > 0)
-                {
-                    liveRows += this.GetLiveRowBoundsCached(pageNumber, page).Length;
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return declaredRows == 0 || liveRows >= declaredRows;
-    }
-
-    private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
-    {
-        var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
-
-        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, this.DataPage.TDefOff);
-                if (owner <= 0)
-                {
-                    continue;
-                }
-
-                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
-                {
-                    ownedPages = [];
-                    pagesByOwner.Add(owner, ownedPages);
-                }
-
-                ownedPages.Add(pageNumber);
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        var result = new Dictionary<long, long[]>(pagesByOwner.Count);
-        foreach ((long owner, List<long>? ownedPages) in pagesByOwner)
-        {
-            result.Add(owner, [.. ownedPages]);
-        }
-
-        return result;
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>

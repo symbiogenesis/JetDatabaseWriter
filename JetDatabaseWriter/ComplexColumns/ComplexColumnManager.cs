@@ -461,40 +461,21 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
         int maxId = 0;
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        if (idCol != null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data)
+            await this.writer.ForEachLiveTableRowAsync(
+                msysComplexPg,
+                (row, _) =>
                 {
-                    continue;
-                }
-
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysComplexPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    if (idCol != null)
+                    string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, idCol);
+                    if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
                     {
-                        string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
-                        if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
-                        {
-                            maxId = v;
-                        }
+                        maxId = v;
                     }
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
+
+                    return new ValueTask<bool>(true);
+                },
+                cancellationToken).ConfigureAwait(false);
         }
 
         return maxId + 1;
@@ -930,52 +911,35 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return 0;
         }
 
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        long flatTdefPage = 0;
+        await this.writer.ForEachLiveTableRowAsync(
+            msysPg,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string rowName = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysPg)
+                string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, complexIdCol);
+                if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
+                string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                if (!CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
-                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
-                    if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
-                    {
-                        continue;
-                    }
-
-                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
-                    {
-                        return flatId & 0x00FFFFFFL;
-                    }
+                    return new ValueTask<bool>(true);
                 }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
 
-        return 0;
+                flatTdefPage = flatId & 0x00FFFFFFL;
+                return new ValueTask<bool>(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return flatTdefPage;
     }
 
     private async ValueTask<(long PageNumber, int RowIndex, int RowStart, int RowSize)> FindUniqueParentRowAsync(
@@ -989,58 +953,38 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         (long, int, int, int) match = default;
         bool found = false;
 
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            parentTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                bool ok = true;
+                for (int p = 0; p < predIndexes.Length; p++)
                 {
-                    continue;
+                    ColumnInfo c = parentDef.Columns[predIndexes[p]];
+                    string actual = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, c);
+                    if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
+                    {
+                        ok = false;
+                        break;
+                    }
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != parentTdefPage)
+                if (!ok)
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
+                if (found)
                 {
-                    bool ok = true;
-                    for (int p = 0; p < predIndexes.Length; p++)
-                    {
-                        ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                        string actual = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
-                        if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
-                        {
-                            ok = false;
-                            break;
-                        }
-                    }
-
-                    if (!ok)
-                    {
-                        continue;
-                    }
-
-                    if (found)
-                    {
-                        throw new InvalidOperationException(
-                            $"Parent row key matches more than one row in '{tableName}'.");
-                    }
-
-                    match = (row.PageNumber, row.RowIndex, row.RowStart, row.RowSize);
-                    found = true;
+                    throw new InvalidOperationException(
+                        $"Parent row key matches more than one row in '{tableName}'.");
                 }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+
+                match = (row.Location.PageNumber, row.Location.RowIndex, row.Location.RowStart, row.Location.RowSize);
+                found = true;
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         if (!found)
         {
@@ -1143,38 +1087,19 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
 
         int maxId = 0;
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            flatTdefPage,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string text = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, fkCol);
+                if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
                 {
-                    continue;
+                    maxId = v;
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != flatTdefPage)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                    if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
-                    {
-                        maxId = v;
-                    }
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         return maxId + 1;
     }
@@ -1380,46 +1305,27 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
+            var rowsToDelete = new List<RowLocation>();
+            await this.writer.ForEachLiveTableRowAsync(
+                flatTdefPage,
+                (row, _) =>
+                {
+                    string fkText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, fkCol);
+                    if (CatalogValueReader.TryParseInt32(fkText, out int fk)
+                        && ids.Contains(fk))
+                    {
+                        rowsToDelete.Add(row.Location);
+                    }
+
+                    return new ValueTask<bool>(true);
+                },
+                cancellationToken).ConfigureAwait(false);
+
             int deletedFromFlat = 0;
-            long total = this.writer.PhysicalPageCount;
-            for (long pageNumber = 3; pageNumber < total; pageNumber++)
+            foreach (RowLocation row in rowsToDelete)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var rowsToDelete = new List<int>();
-                byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (page[0] != Constants.PageTypes.Data)
-                    {
-                        continue;
-                    }
-
-                    if (Ri32(page, this.writer.DataPage.TDefOff) != flatTdefPage)
-                    {
-                        continue;
-                    }
-
-                    foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
-                    {
-                        string fkText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                        if (CatalogValueReader.TryParseInt32(fkText, out int fk)
-                            && ids.Contains(fk))
-                        {
-                            rowsToDelete.Add(row.RowIndex);
-                        }
-                    }
-                }
-                finally
-                {
-                    AccessBase.ReturnPage(page);
-                }
-
-                foreach (int rowIdx in rowsToDelete)
-                {
-                    await this.writer.MarkRowDeletedAsync(pageNumber, rowIdx, cancellationToken).ConfigureAwait(false);
-                    deletedFromFlat++;
-                }
+                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+                deletedFromFlat++;
             }
 
             if (deletedFromFlat > 0)
@@ -1460,52 +1366,32 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         long flatTdefPage = 0;
         var deletedRows = new List<(long PageNumber, int RowIndex)>();
 
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            msysCxPg,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string rowName = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
+                string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
+                string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                 {
-                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
-                    {
-                        continue;
-                    }
-
-                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (CatalogValueReader.TryParseInt64(flatText, out long fid))
-                    {
-                        flatTdefPage = fid & 0x00FFFFFFL;
-                    }
-
-                    deletedRows.Add((row.PageNumber, row.RowIndex));
+                    flatTdefPage = fid & 0x00FFFFFFL;
                 }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+
+                deletedRows.Add((row.Location.PageNumber, row.Location.RowIndex));
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         foreach ((long pg, int ri) in deletedRows)
         {
@@ -1576,54 +1462,34 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            msysCxPg,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string rowName = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
+                string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
+                object[] values = new object[msysCxDef.Columns.Count];
+                for (int i = 0; i < values.Length; i++)
                 {
-                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
-                    {
-                        continue;
-                    }
-
-                    object[] values = new object[msysCxDef.Columns.Count];
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
-                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
-                    }
-
-                    msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
-                    matched.Add((row.PageNumber, row.RowIndex, values));
+                    string text = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
+                    values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                 }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+
+                msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
+                matched.Add((row.Location.PageNumber, row.Location.RowIndex, values));
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
@@ -1658,48 +1524,28 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            msysCxPg,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
+                object[] values = new object[msysCxDef.Columns.Count];
+                for (int i = 0; i < values.Length; i++)
                 {
-                    continue;
+                    string text = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
+                    values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
-                    {
-                        continue;
-                    }
-
-                    object[] values = new object[msysCxDef.Columns.Count];
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        string text = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
-                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
-                    }
-
-                    msysCxDef.SetValueByName(values, "ConceptualTableID", parentTdefPage);
-                    matched.Add((row.PageNumber, row.RowIndex, values));
-                }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+                msysCxDef.SetValueByName(values, "ConceptualTableID", parentTdefPage);
+                matched.Add((row.Location.PageNumber, row.Location.RowIndex, values));
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
@@ -1781,52 +1627,32 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         var flatTdefPages = new HashSet<long>();
         var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
 
-        long total = this.writer.PhysicalPageCount;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
+        await this.writer.ForEachLiveTableRowAsync(
+            msysCxPg,
+            (row, _) =>
             {
-                if (page[0] != Constants.PageTypes.Data)
+                string rowName = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string idText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                if (!CatalogValueReader.TryParseInt32(idText, out int rid))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                if (Ri32(page, this.writer.DataPage.TDefOff) != msysCxPg)
+                if (!lookup.TryGetValue(rowName, out HashSet<int>? expectedIds) || !expectedIds.Contains(rid))
                 {
-                    continue;
+                    return new ValueTask<bool>(true);
                 }
 
-                foreach (RowLocation row in this.writer.EnumerateLiveRowLocations(pageNumber, page))
+                string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
-                    string rowName = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    string idText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!CatalogValueReader.TryParseInt32(idText, out int rid))
-                    {
-                        continue;
-                    }
-
-                    if (!lookup.TryGetValue(rowName, out HashSet<int>? expectedIds) || !expectedIds.Contains(rid))
-                    {
-                        continue;
-                    }
-
-                    string flatText = this.writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
-                    {
-                        _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
-                    }
-
-                    cxRowsToDelete.Add((row.PageNumber, row.RowIndex));
+                    flatTdefPages.Add(flatId & 0x00FFFFFFL);
                 }
-            }
-            finally
-            {
-                AccessBase.ReturnPage(page);
-            }
-        }
+
+                cxRowsToDelete.Add((row.Location.PageNumber, row.Location.RowIndex));
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
 
         foreach ((long pg, int ri) in cxRowsToDelete)
         {

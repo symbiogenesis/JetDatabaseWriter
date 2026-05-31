@@ -30,91 +30,11 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The strongest remaining pattern is repeated writer-side table-row scanning code
-that could reuse the same owned-page and live-row infrastructure already used by
-reader table scans.
+The strongest remaining candidates are now outside the table-row scanning path.
+The shared row walker and owned-page locator work is recorded under completed
+outcomes so future scouting does not reopen that thread.
 
-### 1. Shared table row walker and owned-page locator
-
-Primary files:
-
-- [../../JetDatabaseWriter/AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
-- [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
-- [../../JetDatabaseWriter/Catalog/CatalogWriter.cs](../../JetDatabaseWriter/Catalog/CatalogWriter.cs)
-- [../../JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs](../../JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs)
-- [../../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs)
-- [../../JetDatabaseWriter/Pages/UsageMap.cs](../../JetDatabaseWriter/Pages/UsageMap.cs)
-
-Why this looks like the best next pure win: reader-side scans already have a
-usage-map-aware owned-page discovery path in `AccessReader.GetOwnedDataPagesAsync`.
-That path reads the table's owned-page usage map, validates data-page ownership,
-caches stable results when no journal is active, and falls back to a whole-file
-owner index when the map is unfamiliar or corrupt.
-
-Several writer-side catalog and mutation helpers still repeat the lower-level
-pattern directly:
-
-- Iterate every physical page from page 3 to EOF.
-- Read the page.
-- Skip non-data pages.
-- Check `DataPage.TDefOff` against the target TDEF page.
-- Enumerate live rows with `EnumerateLiveRowLocations`.
-- Decode simple columns from each live row.
-- Return the page in a `finally` block.
-
-That code appears in catalog reads, non-table object-id allocation, relationship
-catalog discovery, complex-column ID and flat-table lookups, cascade cleanup,
-ACE cleanup, and writer `GetLiveRowLocationsAsync`.
-
-Target shape:
-
-- Introduce a shared internal row-walk surface, such as `TableRowScanner` or
-  `OwnedDataPageLocator`, usable by both `AccessReader` and `AccessWriter`.
-- Expose an internal method that returns candidate data pages for a TDEF page,
-  using the owned-page usage map when possible and the current full-file owner
-  index fallback otherwise.
-- Expose row iteration as `(pageNumber, page, RowLocation)` or a narrow visitor
-  callback so callers can decode only the columns they need without materializing
-  full typed rows.
-- Preserve the existing cached reader table-scan path and avoid adding async
-  enumerable overhead to hot writer paths where a visitor-style method is
-  clearer and cheaper.
-- Route writer `GetLiveRowLocationsAsync` through the shared page locator.
-- Convert repeated catalog, relationship, and complex-column scans one at a
-  time after the shared primitive is covered by tests.
-
-Likely payoff:
-
-- High deletion potential across `AccessWriter`, `CatalogWriter`,
-  `RelationshipCatalogStore`, and `ComplexColumnManager`.
-- Likely performance improvement for Access-authored or writer-authored tables
-  with recognized owned-page maps, because many writer helpers can stop walking
-  every physical page.
-- Better consistency in page-return and cancellation behavior.
-
-Risks and guardrails:
-
-- Preserve whole-file fallback for corrupt, unfamiliar, or missing owned-page
-  maps.
-- Preserve journal semantics: cached owned-page lists are safe only when the
-  active journal cannot make page ownership stale.
-- Keep writer mutation paths careful around pages that are read for inspection
-  and then later modified.
-- Do not force full typed row decoding where callers only need one or two
-  scalar catalog columns.
-
-Proof plan:
-
-- Characterize the shared locator with inline usage maps, reference usage maps,
-  missing maps, corrupt maps, and empty tables.
-- Run catalog, relationship, complex-column, index, and schema-evolution tests.
-- Run DAO CompactDatabase validation for fresh databases, relationships,
-  complex columns, linked tables, and catalog mutations.
-- Benchmark or at least time representative writer operations on databases with
-  many pages but small target system tables, where avoiding full physical scans
-  should show up clearly.
-
-### 2. Delete the stale index leaf facade
+### 1. Delete the stale index leaf facade
 
 Primary files:
 
@@ -162,7 +82,7 @@ Proof plan:
 - Run index relationship and DAO compact tests that exercise maintained B-trees.
 - Diff emitted page invariants before and after for representative index pages.
 
-### 3. Unify insert batch mutation flow
+### 2. Unify insert batch mutation flow
 
 Primary files:
 
@@ -227,7 +147,7 @@ Proof plan:
 - Benchmark bulk insert with and without indexes to verify allocation and
   throughput stay neutral or better.
 
-### 4. Make logical TDEF chains a small shared data structure
+### 3. Make logical TDEF chains a small shared data structure
 
 Primary files:
 
@@ -275,7 +195,7 @@ Proof plan:
 - Add focused tests for growing and shrinking a multi-page TDEF chain.
 - Run DAO CompactDatabase validation for relationship create, rename, and drop.
 
-### 5. Promote Numeric fixed-point payload encoding into `NumericEncoder`
+### 4. Promote Numeric fixed-point payload encoding into `NumericEncoder`
 
 Primary files:
 
@@ -300,8 +220,7 @@ Target shape:
 
 Likely payoff:
 
-- Smaller deletion than the row-walker or insert-flow work, but clean and
-  bounded.
+- Smaller deletion than the insert-flow work, but clean and bounded.
 - Reduces the chance that future Numeric fixes land in one path and not the
   other.
 
@@ -357,11 +276,10 @@ current large meaningful simplification bar on their own.
 
 Suggested order:
 
-1. Shared table row walker and owned-page locator.
-2. Delete or shrink `IndexLeafIncremental` into a focused splicer helper.
-3. Unify insert batch mutation flow.
-4. Extract logical TDEF chain read/write helpers.
-5. Promote Numeric fixed-point rescaling and magnitude shaping into
+1. Delete or shrink `IndexLeafIncremental` into a focused splicer helper.
+2. Unify insert batch mutation flow.
+3. Extract logical TDEF chain read/write helpers.
+4. Promote Numeric fixed-point rescaling and magnitude shaping into
    `NumericEncoder`.
 
 ## Completed outcomes
@@ -482,7 +400,51 @@ incremental-only requirements, complex-column parent identity rules, and DAO
 compact/open-recordset validation for complex columns, relationships, linked
 tables, and fresh database creation.
 
-### 5. Compound File dependency decision
+### 5. Shared table row walker and owned-page locator
+
+Status: completed 2026-05-30.
+
+Primary files:
+
+- [../../JetDatabaseWriter/AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs)
+- [../../JetDatabaseWriter/AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
+- [../../JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)
+- [../../JetDatabaseWriter/Catalog/CatalogWriter.cs](../../JetDatabaseWriter/Catalog/CatalogWriter.cs)
+- [../../JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs](../../JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs)
+- [../../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs)
+- [../../JetDatabaseWriter/Pages/DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs)
+
+The reader-owned table-page locator moved into `AccessBase` as a shared
+internal primitive. It now exposes `GetOwnedDataPagesAsync`,
+`ForEachOwnedDataPageAsync`, and `ForEachLiveTableRowAsync`, so reader and
+writer code use the same usage-map-aware page discovery and whole-file owner
+index fallback. Reader instances still cache stable owned-page results when no
+journal is active; writer instances deliberately avoid cross-call owned-page
+caching so table ownership mutations cannot leave cached page lists stale.
+
+Writer `GetLiveRowLocationsAsync`, catalog row reads, non-table object-id
+allocation, ACE cleanup, relationship catalog discovery, complex-column ID and
+flat-table lookups, cascade cleanup, rename/drop/update helpers, table-drop
+storage reclamation, system-table rewrites, and system-table insert target
+selection now route through the shared locator or visitor surface. The local
+`DataPageInserter` usage-map reader and the duplicate reader-only owned-page
+locator were deleted.
+
+Closeout diff: 7 files changed with 585 insertions and 888 deletions, for a net
+reduction of 303 lines while keeping the public API shape unchanged.
+
+Evidence at closeout: `dotnet build JetDatabaseWriter.slnx --no-restore
+--configuration Debug` passed, focused reader/relationship/catalog/complex-column
+tests passed with 66 succeeded, and the non-fuzz suite passed with 3,561
+succeeded and 2 environment skips.
+
+Preserve these guardrails: keep the whole-file fallback for corrupt,
+unfamiliar, or missing owned-page maps; keep writer owned-page lists uncached
+across calls unless a future mutation-invalidation story exists; do not force
+typed row materialization where callers only need scalar catalog columns; and
+keep page-return ownership inside the shared visitor methods.
+
+### 6. Compound File dependency decision
 
 Status: completed 2026-05-30; no dependency introduced.
 
@@ -511,6 +473,7 @@ framework, package size, and license review if this decision is reopened.
 4. RowDecodePlan, gated by BenchmarkDotNet evidence: completed 2026-05-30.
 5. Declarative catalog artifact planning: completed 2026-05-30.
 6. CFB dependency decision: completed 2026-05-30; no dependency introduced.
+7. Shared table row walker and owned-page locator: completed 2026-05-30.
 
 ## Non-goals
 
