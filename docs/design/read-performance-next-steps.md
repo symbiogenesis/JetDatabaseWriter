@@ -3,10 +3,11 @@
 Status: candidate guidance for future work
 Date: 2026-05-30
 
-This note is a companion to `read-performance-bottlenecks.md`. The existing
-bottleneck note records completed implementation and measurement work. Use this
-file when read performance still feels slow and the next move is to reshape the
-caller workload, add a targeted API, or gather new workload-specific evidence.
+This note is a companion to
+[read-performance-bottlenecks.md](read-performance-bottlenecks.md), which
+records completed implementation and measurement work. Use this file when read
+performance still feels slow and the next move is to reshape the caller
+workload, add a targeted API, or gather new workload-specific evidence.
 
 ## First checks
 

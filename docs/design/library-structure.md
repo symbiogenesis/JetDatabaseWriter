@@ -59,9 +59,17 @@ JetDatabaseWriter/
 │   ├── CatalogWriter.cs                   (InsertCatalogEntry, RewriteTable, RenameInCatalog)
 │   ├── CatalogValueReader.cs              (safe MSys* row access and tolerant invariant scalar parsing)
 │   └── Models/
+│       ├── CatalogArtifactPlan.cs
+│       ├── CatalogObjectAcePolicy.cs
+│       ├── CatalogObjectArtifact.cs
+│       ├── CatalogObjectIdPolicy.cs
+│       ├── CatalogTableArtifact.cs
 │       ├── CatalogEntry.cs
 │       ├── CatalogRow.cs
-│       └── TableDef.cs
+│       ├── TableDef.cs
+│       ├── UserTableCatalogDeletionArtifact.cs
+│       ├── UserTableCatalogDeletionResult.cs
+│       └── UserTableCatalogReplacementArtifact.cs
 │
 ├── DelimitedText/                         (internal CSV/delimited text parsing for linked text tables)
 │   ├── DelimitedTextReader.cs             (buffered record parser with quote, CR/LF, and limit handling)
@@ -84,7 +92,7 @@ JetDatabaseWriter/
 │       └── LvalChainResult.cs             (bounded chain-read result)
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
-│   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, and typed slice decoding)
+│   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
 │   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection)
 │   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
@@ -330,7 +338,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
 | **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
-| **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, typed fixed/variable slice decoding, calculated payload handling, and partial key-column reads |
+| **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
 | **Catalog Store** | `RelationshipCatalogStore` | Keeps MSysRelationships row emission/loading/rewrites separate from TDEF logical-index mutation |
 | **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
@@ -410,7 +418,7 @@ Visibility is controlled via the C# `internal` keyword on classes — not by stu
 
 These are symmetric but independent. Shared types live in neutral domains such as `Schema/` (`ColumnInfo`, `JetTypeInfo`) and `LongValues/` (`LongValueDescriptor`, `LongValueStore`) so the read path and write path do not depend on each other's implementation folders.
 
-`RowDecodePlan` is the read-side row decode coordinator. It is built from `TableDef`, an optional projection mask or partial-column ordinal list, and strictness requirements. The plan parses/preflights row layout once, resolves per-column slices through `AccessBase`, decodes typed fixed/variable values, emits async LVAL sentinels for `AccessReader` to resolve, and serves the writer's index/FK partial key-column reader. `RowsAsStrings()` and the direct POCO expression-tree decoder remain specialized sinks until future simplification slices fold them into the same plan.
+`RowDecodePlan` is the read-side row decode coordinator. It is built from `TableDef`, an optional projection mask or partial-column ordinal list, and strictness requirements. The plan parses/preflights row layout once, resolves per-column slices through `AccessBase`, materializes `RowsAsStrings()` rows, decodes typed fixed/variable values, emits async LVAL sentinels for `AccessReader` to resolve, supplies row-layout and slice resolution to the direct POCO expression-tree decoder, and serves the writer's index/FK partial key-column reader.
 
 ### 3. Models co-located with their domain
 

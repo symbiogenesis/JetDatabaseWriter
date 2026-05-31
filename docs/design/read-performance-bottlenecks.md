@@ -2,13 +2,14 @@
 
 Status: current-state summary; implementation and focused measurement complete
 Date: 2026-05-20
-Last updated: 2026-05-26
+Last updated: 2026-05-30
 
 This note records the current read-performance state for `AccessReader`. The
 previous implementation phases are complete, and there are no open action items
 tracked here. Future read-performance work should start from fresh profiling or
 release-quality BenchmarkDotNet results, not from reopening already-settled
-optimization threads.
+optimization threads. Candidate follow-up guidance lives in
+[read-performance-next-steps.md](read-performance-next-steps.md).
 
 ## Evidence sources
 
@@ -36,15 +37,19 @@ release-quality benchmark results justify reopening a specific area.
 - `Memo` and `Ole` slots emit `RowDecodePlan.LongValueRef` during sync
   cracking. The async wrapper resolves only the rows and cells that actually
   contain long values.
-- `RowsAsStrings()` intentionally remains on the string compatibility path over
-  `EnumerateRowsAsync` and `List<string>` materialization.
+- `RowsAsStrings()` keeps its compatibility semantics but now uses
+  `RowDecodePlan.CreateStrings` / `TryDecodeStringRowAsync` for row-layout
+  preflight and per-column string materialization instead of a separate row
+  parser.
 - `RowMapper<T>.Build(headers, sourceTypes?)` builds an expression-tree
   `Func<object?[], T>`. `BuildIndex` and `Map` remain for fallback paths and
   tests, type mismatches flow through `CoerceToTarget`, and the `ToRow` /
   `Accessor` API remains available for writer-side mapping.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
-  for primitive projections. It falls back to the typed crack path for calculated
-  columns, `Memo` / `Ole` LVAL columns, `Binary`, `Complex` /
+  for primitive projections. The compiled delegate still asks `RowDecodePlan`
+  to parse row layout and resolve column slices, so direct and fallback decode
+  paths share the same row-layout rules. It falls back to the typed crack path
+  for calculated columns, `Memo` / `Ole` LVAL columns, `Binary`, `Complex` /
   `Attachment`, hyperlinks, type-mismatched targets, or tables with complex
   columns. `Numeric` direct-decodes for decimal targets using `NumericScale`.
 - Synthetic benchmark databases are generated under `%TEMP%\JetBench\` by
@@ -60,7 +65,10 @@ release-quality benchmark results justify reopening a specific area.
 Focused BenchmarkDotNet ShortRun jobs were run after the implementation slices
 on Windows 11, .NET SDK 10.0.300, .NET 10.0.8, BenchmarkDotNet 0.15.8, Intel
 Core Ultra 7 268V. Treat these as engineering closeout measurements rather than
-release-quality full-run numbers.
+release-quality full-run numbers. A later 2026-05-30 ShortRun after the
+`RowsAsStrings()` and direct-decoder `RowDecodePlan` consolidation stayed
+neutral or better on the affected hot paths; the detailed closeout numbers are
+recorded in [high-impact-simplification-todos.md](high-impact-simplification-todos.md).
 
 | Area | ShortRun result | Decision |
 |---|---|---|

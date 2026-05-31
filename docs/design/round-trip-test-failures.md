@@ -1,6 +1,6 @@
 # Round-Trip Test Failures — Investigation Status
 
-## Current status (2026-05-23)
+## Resolved status of this investigation (last refreshed 2026-05-23)
 
 **Original DAO OpenRecordset blocker: RESOLVED.** The row-count, index seek,
 MEMO fidelity, and AutoNumber continuation DAO validation tests now pass on
@@ -73,7 +73,7 @@ the free list. Secure erase remains opt-in through
 The separate `0x4000` row-offset bit is treated as non-live/overflow, not as the
 deletion marker the writer should set.
 
-Full-suite verification: `dotnet test --project JetDatabaseWriter.Tests` passed
+Verification at that refresh: `dotnet test --project JetDatabaseWriter.Tests` passed
 with 3342 succeeded and 0 failed. Focused post-documentation checks also passed
 for data remanence, DAO storage maintenance, and relationship rename/drop
 mutation coverage.
@@ -135,7 +135,7 @@ Files changed: `AccessBase.cs`, `RowEncoder.cs`, `LongValueEncoder.cs`, `ColumnI
 **Fixes landed (all necessary, collectively sufficient for catalog correctness):**
 
 - ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null.
-- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field). DAO-authored user-table ACE rows use `FInheritable = False`.
+- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts owner/users ACE rows, plus an Admins row when the Admins SID can be harvested, for table artifacts whose ACE policy requires them. User tables emit ACE rows by default; hidden complex flat tables force emission explicitly. Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field). DAO-authored user-table ACE rows use `FInheritable = False`.
 - ⛔ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
 - ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4.RealIdx.LeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
@@ -252,9 +252,9 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 
 ### MSysACEs rows (`InsertAceRowsForTableAsync`, added 2026-05-03)
 
-- `InsertAceRowsForTableAsync(tdefPageNumber, ct)` inserts 3 ACE rows per new user table (owner / admins / users).
-- Called from `CreateTableInternalAsync` after `InsertCatalogEntryAsync`, gated on `catalogFlags == 0` (user tables only, not system tables).
-- Finds MSysACEs TDEF via `_relationships.FindSystemTableTdefPageAsync("MSysACEs", ct)`.
+- `InsertAceRowsForTableAsync(tdefPageNumber, ct)` inserts owner/users ACE rows, plus an Admins row when the Admins SID can be harvested, for table artifacts whose policy requires them.
+- Emitted from the catalog table-artifact executor after `InsertCatalogEntryAsync`. User tables emit ACE rows by default; artifacts can force or suppress emission through `CatalogTableArtifact.EmitAceRows`.
+- Finds the MSysACEs TDEF via `writer.Relationships.FindSystemTableTdefPageAsync("MSysACEs", ct)`.
 - Harvests the Admins-group SID dynamically from existing ACE rows (any SID > 2 bytes on an existing ACE data page).
 - Uses `InsertSystemRowAndMaintainAsync` pattern (row insertion + index maintenance on MSysACEs).
 - Constants in `Constants.Aces`: `DefaultAcm = 0x000FFEFF`, `OwnerSid = [0x71, 0x10]`, `UsersSid = [0x70, 0x10]`.
