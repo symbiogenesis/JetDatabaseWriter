@@ -225,9 +225,8 @@ internal static class LinkedTableManager
         CancellationToken cancellationToken)
     {
         LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
-        using var textReader = new StreamReader(source.FilePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        using var delimitedReader = new DelimitedTextReader(textReader, source.Format, source.Limits.Delimited);
-        return await delimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
+        using var records = new LinkedTextRecordReader(source);
+        return await records.DelimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async IAsyncEnumerable<string[]> RowsLinkedTextAsStringsAsync(
@@ -236,15 +235,35 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
         long rowCount = 0;
 
-        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
+        while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
         {
             cancellationToken.ThrowIfCancellationRequested();
             rowCount++;
             progress?.Report(rowCount);
-            yield return NormalizeStringRow(row, source.ColumnNames.Length);
+            yield return row;
+        }
+    }
+
+    internal static async IAsyncEnumerable<T> RowsLinkedTextMappedAsync<T>(
+        AccessReader reader,
+        LinkedTableInfo link,
+        IProgress<long>? progress,
+        Func<IReadOnlyList<ColumnMetadata>, Func<object?[], T>> mapperFactory,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        Func<object?[], T> map = mapperFactory(CreateLinkedTextColumnMetadata(rows.ColumnNames));
+        long rowCount = 0;
+
+        while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rowCount++;
+            progress?.Report(rowCount);
+            yield return map(row);
         }
     }
 
@@ -253,23 +272,8 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
-        var metadata = new List<ColumnMetadata>(source.ColumnNames.Length);
-        for (int i = 0; i < source.ColumnNames.Length; i++)
-        {
-            metadata.Add(new ColumnMetadata
-            {
-                Name = source.ColumnNames[i],
-                TypeName = "Text",
-                ClrType = typeof(string),
-                IsNullable = true,
-                IsFixedLength = false,
-                Ordinal = i,
-                Size = ColumnSize.Variable,
-            });
-        }
-
-        return metadata;
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        return CreateLinkedTextColumnMetadata(rows.ColumnNames);
     }
 
     internal static async ValueTask<DataTable> ReadLinkedTextDataTableAsync(
@@ -279,21 +283,21 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         CancellationToken cancellationToken)
     {
-        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
         DataTable? table = null;
         try
         {
             table = new DataTable(link.Name);
-            foreach (string columnName in source.ColumnNames)
+            foreach (string columnName in rows.ColumnNames)
             {
                 _ = table.Columns.Add(columnName, typeof(string));
             }
 
             long rowCount = 0;
-            await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
+            while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
             {
-                ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, rowCount, source.Limits.MaxMaterializedRows);
-                _ = table.Rows.Add(NormalizeStringRow(row, source.ColumnNames.Length));
+                ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, rowCount, rows.MaxMaterializedRows);
+                _ = table.Rows.Add(row);
                 rowCount++;
                 progress?.Report(rowCount);
                 if (maxRows.HasValue && rowCount >= maxRows.Value)
@@ -314,18 +318,28 @@ internal static class LinkedTableManager
         }
     }
 
-    internal static async ValueTask<uint?> GetLinkedTextMaterializedRowLimitAsync(
+    internal static async ValueTask<List<T>> ReadLinkedTextMappedRowsAsync<T>(
         AccessReader reader,
-        string tableName,
+        LinkedTableInfo link,
+        uint? maxRows,
+        Func<IReadOnlyList<ColumnMetadata>, Func<object?[], T>> mapperFactory,
         CancellationToken cancellationToken)
     {
-        LinkedTableInfo? link = await FindLinkedTableAsync(reader, tableName, cancellationToken).ConfigureAwait(false);
-        if (link?.Kind != LinkedTableKind.Text)
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        Func<object?[], T> map = mapperFactory(CreateLinkedTextColumnMetadata(rows.ColumnNames));
+        var items = new List<T>();
+
+        while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
         {
-            return null;
+            ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, items.Count, rows.MaxMaterializedRows);
+            items.Add(map(row));
+            if (maxRows.HasValue && items.Count >= maxRows.Value)
+            {
+                break;
+            }
         }
 
-        return CreateLinkedTextLimits(reader.LinkedSourceOpenOptions).MaxMaterializedRows;
+        return items;
     }
 
     internal static void ThrowIfLinkedTextMaterializedRowLimitExceeded(
@@ -518,14 +532,13 @@ internal static class LinkedTableManager
             linkedOptions.LinkedSourcePathValidator);
     }
 
-    private static async ValueTask<LinkedTextSource> GetLinkedTextSourceAsync(
+    private static async ValueTask<LinkedTextRowReader> OpenLinkedTextRowsAsync(
         AccessReader reader,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
         LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false);
-        return new LinkedTextSource(source.FilePath, source.Format, source.Limits, columnNames);
+        return await LinkedTextRowReader.OpenAsync(source, cancellationToken).ConfigureAwait(false);
     }
 
     private static LinkedTextDataSource GetLinkedTextDataSource(AccessReader reader, LinkedTableInfo link)
@@ -541,6 +554,26 @@ internal static class LinkedTableManager
 
         ValidateLinkedTextSourceFileSize(resolvedPath, limits, link.Name);
         return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString), limits);
+    }
+
+    private static List<ColumnMetadata> CreateLinkedTextColumnMetadata(string[] columnNames)
+    {
+        var metadata = new List<ColumnMetadata>(columnNames.Length);
+        for (int i = 0; i < columnNames.Length; i++)
+        {
+            metadata.Add(new ColumnMetadata
+            {
+                Name = columnNames[i],
+                TypeName = "Text",
+                ClrType = typeof(string),
+                IsNullable = true,
+                IsFixedLength = false,
+                Ordinal = i,
+                Size = ColumnSize.Variable,
+            });
+        }
+
+        return metadata;
     }
 
     private static void ThrowIfUnsupportedLinkedRead(LinkedTableInfo link)
@@ -647,55 +680,6 @@ internal static class LinkedTableManager
         }
 
         yield return connectString[start..];
-    }
-
-    private static async ValueTask<string[]> ReadLinkedTextColumnNamesAsync(
-        string filePath,
-        DelimitedTextFormat format,
-        LinkedTextLimits limits,
-        CancellationToken cancellationToken)
-    {
-        using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        using var delimitedReader = new DelimitedTextReader(reader, format, limits.Delimited);
-        DelimitedTextRecord? firstRecord = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
-        if (firstRecord is not { } record)
-        {
-            return [];
-        }
-
-        return format.HasHeaderRow
-            ? DelimitedTextColumnNames.Normalize(record.Fields)
-            : DelimitedTextColumnNames.CreateGenerated(record.FieldCount);
-    }
-
-    private static async IAsyncEnumerable<string[]> EnumerateTextDataRowsAsync(
-        string filePath,
-        DelimitedTextFormat format,
-        LinkedTextLimits limits,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        using var delimitedReader = new DelimitedTextReader(reader, format, limits.Delimited);
-        bool isFirstRecord = true;
-        while (true)
-        {
-            DelimitedTextRecord? record = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
-            if (record is not { } current)
-            {
-                yield break;
-            }
-
-            if (isFirstRecord)
-            {
-                isFirstRecord = false;
-                if (format.HasHeaderRow)
-                {
-                    continue;
-                }
-            }
-
-            yield return current.Fields;
-        }
     }
 
     private static string[] NormalizeStringRow(string[] row, int columnCount)
@@ -852,10 +836,115 @@ internal static class LinkedTableManager
 
     private readonly record struct LinkedTextDataSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits);
 
-    private readonly record struct LinkedTextSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits, string[] ColumnNames);
-
     private readonly record struct LinkedTextLimits(
         DelimitedTextLimits Delimited,
         long? MaxSourceFileBytes,
         uint? MaxMaterializedRows);
+
+    private sealed class LinkedTextRecordReader : IDisposable
+    {
+        private readonly StreamReader textReader;
+
+        internal LinkedTextRecordReader(LinkedTextDataSource source)
+        {
+            this.textReader = new StreamReader(source.FilePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            this.DelimitedReader = new DelimitedTextReader(this.textReader, source.Format, source.Limits.Delimited);
+        }
+
+        internal DelimitedTextReader DelimitedReader { get; }
+
+        public void Dispose()
+        {
+            this.DelimitedReader.Dispose();
+            this.textReader.Dispose();
+        }
+    }
+
+    private sealed class LinkedTextRowReader : IDisposable
+    {
+        private readonly LinkedTextRecordReader records;
+        private readonly int columnCount;
+        private string[]? firstDataRow;
+        private bool hasFirstDataRow;
+
+        private LinkedTextRowReader(
+            LinkedTextRecordReader records,
+            string[] columnNames,
+            string[]? firstDataRow,
+            bool hasFirstDataRow,
+            uint? maxMaterializedRows)
+        {
+            this.records = records;
+            this.ColumnNames = columnNames;
+            this.columnCount = columnNames.Length;
+            this.firstDataRow = firstDataRow;
+            this.hasFirstDataRow = hasFirstDataRow;
+            this.MaxMaterializedRows = maxMaterializedRows;
+        }
+
+        internal string[] ColumnNames { get; }
+
+        internal uint? MaxMaterializedRows { get; }
+
+        internal static async ValueTask<LinkedTextRowReader> OpenAsync(
+            LinkedTextDataSource source,
+            CancellationToken cancellationToken)
+        {
+            LinkedTextRecordReader? records = null;
+            try
+            {
+                records = new LinkedTextRecordReader(source);
+                DelimitedTextRecord? firstRecord = await records.DelimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+                string[] columnNames;
+                string[]? firstDataRow = null;
+                bool hasFirstDataRow = false;
+
+                if (firstRecord is not { } record)
+                {
+                    columnNames = [];
+                }
+                else if (source.Format.HasHeaderRow)
+                {
+                    columnNames = DelimitedTextColumnNames.Normalize(record.Fields);
+                }
+                else
+                {
+                    columnNames = DelimitedTextColumnNames.CreateGenerated(record.FieldCount);
+                    firstDataRow = NormalizeStringRow(record.Fields, columnNames.Length);
+                    hasFirstDataRow = true;
+                }
+
+                LinkedTextRowReader result = new(
+                    records,
+                    columnNames,
+                    firstDataRow,
+                    hasFirstDataRow,
+                    source.Limits.MaxMaterializedRows);
+                records = null;
+                return result;
+            }
+            finally
+            {
+                records?.Dispose();
+            }
+        }
+
+        internal async ValueTask<string[]?> ReadRowAsync(CancellationToken cancellationToken)
+        {
+            if (this.hasFirstDataRow)
+            {
+                this.hasFirstDataRow = false;
+                string[] row = this.firstDataRow!;
+                this.firstDataRow = null;
+                return row;
+            }
+
+            DelimitedTextRecord? record = await this.records.DelimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+            return record is { } current
+                ? NormalizeStringRow(current.Fields, this.columnCount)
+                : null;
+        }
+
+        public void Dispose() => this.records.Dispose();
+    }
 }

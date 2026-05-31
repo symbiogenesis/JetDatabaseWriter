@@ -1600,7 +1600,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
         => this.EnumerateLinkedTableRowsAsync(
             tableName,
-            link => this.EnumerateLinkedTextRowsAsync<T>(link, progress, cancellationToken),
+            link => LinkedTableManager.RowsLinkedTextMappedAsync(
+                this,
+                link,
+                progress,
+                static metadata => RowMapper<T>.Build(metadata),
+                cancellationToken),
             (source, link) => source.Rows<T>(link.SourceObjectName, progress, cancellationToken),
             cancellationToken);
 
@@ -1613,20 +1618,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             link => LinkedTableManager.RowsLinkedTextAsStringsAsync(this, link, progress, cancellationToken),
             (source, link) => source.RowsAsStrings(link.SourceObjectName, progress, cancellationToken),
             cancellationToken);
-
-    private async IAsyncEnumerable<T> EnumerateLinkedTextRowsAsync<T>(
-        LinkedTableInfo link,
-        IProgress<long>? progress,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-        where T : class, new()
-    {
-        List<ColumnMetadata> meta = await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
-        Func<object?[], T> textFactory = RowMapper<T>.Build(meta);
-        await foreach (string[] row in LinkedTableManager.RowsLinkedTextAsStringsAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return textFactory(row);
-        }
-    }
 
     private async IAsyncEnumerable<TRow> EnumerateLinkedTableRowsAsync<TRow>(
         string tableName,
@@ -1729,30 +1720,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        List<ColumnMetadata> meta = await this.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        uint? linkedTextMaxMaterializedRows = await LinkedTableManager.GetLinkedTextMaterializedRowLimitAsync(
-            this,
+        List<T>? linkedRows = await this.TryReadLinkedTableAsync(
             tableName,
+            link => LinkedTableManager.ReadLinkedTextMappedRowsAsync(
+                this,
+                link,
+                maxRows,
+                static metadata => RowMapper<T>.Build(metadata),
+                cancellationToken),
+            (source, link) => source.ReadTableAsync<T>(link.SourceObjectName, maxRows, cancellationToken),
             cancellationToken).ConfigureAwait(false);
-        Func<object?[], T> factoryFallback = RowMapper<T>.Build(meta);
-        var items = new List<T>();
-        int count = 0;
 
-        await foreach (object[] row in this.Rows(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
-        {
-            LinkedTableManager.ThrowIfLinkedTextMaterializedRowLimitExceeded(
-                tableName,
-                count,
-                linkedTextMaxMaterializedRows);
-            items.Add(factoryFallback(row));
-            count++;
-            if (maxRows.HasValue && count >= maxRows.Value)
-            {
-                break;
-            }
-        }
-
-        return items;
+        return linkedRows ?? [];
     }
 
     private async ValueTask<List<T>> ReadMappedTableAsync<T>(

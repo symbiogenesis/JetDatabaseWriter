@@ -30,20 +30,9 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The numeric payload encoding and LVAL row-location candidates are now recorded
-under completed outcomes. No high-payoff active simplification candidate is
-currently open; the lower-payoff candidate below remains useful only when
-adjacent work is already touching that code path.
-
-### Lower-payoff candidates
-
-This may still be worth doing opportunistically, but it does not meet the
-current large meaningful simplification bar on its own.
-
-- **Text linked-table enumeration:** `LinkedTableManager` has separate surfaces
-  for counting rows, streaming rows, metadata, and materializing a `DataTable`.
-  Some common source opening and row normalization is already shared. Further
-  consolidation might be useful, but the likely deletion is modest.
+The numeric payload encoding, LVAL row-location, and text linked-table
+enumeration candidates are now recorded under completed outcomes. No high-payoff
+or lower-payoff active simplification candidate is currently open.
 
 ### Not recommended as pure wins right now
 
@@ -63,10 +52,44 @@ current large meaningful simplification bar on its own.
   Further changes should be motivated by specific performance data or bug fixes,
   not another broad pass over row decoding.
 
-Suggested order: treat lower-payoff candidates as opportunistic follow-ups when
-related work is already in progress.
+Suggested order: treat any future lower-payoff candidates as opportunistic
+follow-ups when related work is already in progress.
 
 ## Completed outcomes
+
+### Completed linked-text row source reader
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/Relationships/LinkedTableManager.cs](../../JetDatabaseWriter/Relationships/LinkedTableManager.cs)
+- [../../JetDatabaseWriter/AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
+- [../../JetDatabaseWriter.Tests/Relationships/LinkedTextTableTests.cs](../../JetDatabaseWriter.Tests/Relationships/LinkedTextTableTests.cs)
+
+`LinkedTableManager` now owns linked-text source opening, header discovery,
+headerless first-row buffering, normalized row reads, metadata shaping, and
+materialized-row-limit enforcement through a shared row reader. Count-only reads
+still use the non-materializing `DelimitedTextReader.CountRecordsAsync` path,
+while string/object streaming, typed streaming, typed materialization, metadata,
+and `DataTable` materialization reuse the same normalized row source instead of
+reopening the file for separate metadata and data passes. `AccessReader` keeps
+the public linked-table orchestration surface and delegates linked-text mapped
+rows to the shared manager path.
+
+Evidence at closeout: the focused
+`JetDatabaseWriter.Tests.Relationships.LinkedTextTableTests` class passed with
+36 succeeded and 1 environment skip for directory symlink availability; the full
+`JetDatabaseWriter.Tests.Relationships` namespace passed with 163 succeeded and
+1 environment skip; and `dotnet build JetDatabaseWriter.slnx --no-restore
+--configuration Debug` passed across all projects and target frameworks.
+
+Preserve these guardrails: keep count-only linked-text reads non-materializing,
+keep no-header files treating the first record as both generated-column evidence
+and the first data row, keep ragged rows normalized to discovered column width,
+keep streaming APIs outside `LinkedTextMaxMaterializedRows`, and enforce the
+materialized-row limit before adding the extra row to a `DataTable` or typed
+list.
 
 ### Completed LVAL row-location handoff cleanup
 
