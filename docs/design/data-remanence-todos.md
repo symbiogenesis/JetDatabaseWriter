@@ -11,16 +11,7 @@ Existing public documentation lives in [README.md](../../README.md#data-remanenc
 
 ## Action Items
 
-### 1. Probe ordinary Access LVAL reclamation
-
-- [ ] Create a DAO baseline probe for ordinary MEMO/OLE delete and update on Jet4/ACE databases.
-- [ ] Determine whether Microsoft Access returns old external LVAL pages to the global free map before Compact & Repair, or leaves them orphaned until compaction.
-- [ ] Compare single-page and chained LVAL payloads, including update-to-new-LVAL and delete-row cases.
-- [ ] Promote any observed invariant into focused regression tests.
-
-Decision point: if Access frees old LVAL pages without scrubbing them, add a normal reclamation path independent of `SecureEraseMode`. If Access leaves them until Compact & Repair, keep the current default behavior and document the probe result.
-
-### 2. Fix or verify complex attachment secure erase
+### 1. Fix or verify complex attachment secure erase
 
 - [ ] Add a regression test for deleting a parent row with an attachment payload large enough to force external `FileData` LVAL pages while `SecureEraseMode.DeletedRowsAndFreedPages` is enabled.
 - [ ] Add equivalent coverage for dropping an attachment column and dropping a table that owns attachment complex columns.
@@ -29,6 +20,15 @@ Decision point: if Access frees old LVAL pages without scrubbing them, add a nor
 - [ ] Run the Access/DAO CompactDatabase signal after the byte-level marker checks.
 
 Current concern: ordinary MEMO/OLE row deletion passes the owning `TableDef` into the row-delete path so external LVAL roots can be collected. Some complex-column paths delete or clear hidden flat rows without that context, which may leave attachment `FileData` LVAL pages orphaned until Compact & Repair.
+
+### 2. Probe ordinary Access LVAL reclamation
+
+- [ ] Create a DAO baseline probe for ordinary MEMO/OLE delete and update on Jet4/ACE databases.
+- [ ] Determine whether Microsoft Access returns old external LVAL pages to the global free map before Compact & Repair, or leaves them orphaned until compaction.
+- [ ] Compare single-page and chained LVAL payloads, including update-to-new-LVAL and delete-row cases.
+- [ ] Promote any observed invariant into focused regression tests.
+
+Decision point: if Access frees old LVAL pages without scrubbing them, add a normal reclamation path independent of `SecureEraseMode`. If Access leaves them until Compact & Repair, keep the current default behavior and document the probe result.
 
 ### 3. Design a managed Compact & Repair style rebuild API
 
@@ -40,7 +40,17 @@ Current concern: ordinary MEMO/OLE row deletion passes the owning `TableDef` int
 
 Non-goal: forensic erasure of the original source file. A rebuild can omit deleted rows, orphaned pages, and interior free pages from the new file, but it cannot guarantee removal from storage hardware, filesystem journals, snapshots, backups, or prior copies.
 
-### 4. Evaluate an in-place update fast path
+### 4. Keep unused live-page gap cleanup rebuild-first
+
+- [ ] Treat full live-page compaction, arbitrary unused-gap scrubbing, and broader orphan-page reclamation as compact/rebuild design work, not as an extension of current secure erase.
+- [ ] Identify which unused byte ranges inside live data, index, TDEF, and usage-map pages can be safely overwritten.
+- [ ] Avoid scrubbing bytes that Access treats as reserved, copied-forward, page checksum/version space, row-offset slots, index prefix state, or table-definition metadata.
+- [ ] Prefer implementing broad gap cleanup through the managed compact/rebuild path before adding any in-place scrubber.
+- [ ] If an in-place scrubber is later proposed, require a separate design that proves exact byte ranges are disposable and validates with marker tests and DAO CompactDatabase across Jet3, Jet4, and ACE.
+
+This should not be mixed into `ScrubFreePagesAsync`, whose current contract is limited to pages already on the free list.
+
+### 5. Evaluate an in-place update fast path
 
 - [ ] Investigate whether Access updates row payloads in place when the replacement row fits the existing slot.
 - [ ] If Access does, design a conservative writer fast path for same-size or fits-in-slot updates.
@@ -49,16 +59,7 @@ Non-goal: forensic erasure of the original source file. A rebuild can omit delet
 
 This is a remanence and file-growth improvement, but it is more invasive than LVAL reclamation because row layout, indexes, and relationship enforcement all meet in `UpdateRowsAsync`.
 
-### 5. Design unused live-page gap scrubbing separately
-
-- [ ] Identify which unused byte ranges inside live data, index, TDEF, and usage-map pages can be safely overwritten.
-- [ ] Avoid scrubbing bytes that Access treats as reserved, copied-forward, page checksum/version space, row-offset slots, index prefix state, or table-definition metadata.
-- [ ] Prefer handling broad gap cleanup through the managed compact/rebuild path before adding an in-place scrubber.
-- [ ] If an in-place API is added, validate with marker tests and DAO CompactDatabase across Jet3, Jet4, and ACE.
-
-This should not be mixed into `ScrubFreePagesAsync`, whose current contract is limited to pages already on the free list.
-
-### 6. Refresh public docs after implementation choices
+### 6. Refresh public docs alongside implementation choices
 
 - [ ] Update the README data-remanence bullets after each implemented behavior change.
 - [ ] Keep the default-vs-secure distinction clear: normal Access parity and secure erase are separate goals.
