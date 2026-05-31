@@ -400,7 +400,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
         public int PageCacheSize => 0;
 
-        public bool ParallelPageReadsEnabled => false;
+        public PageReadOptimizationMode PageReadOptimizationMode => PageReadOptimizationMode.Disabled;
 
         public string LastDiagnostics => string.Empty;
 

@@ -68,7 +68,7 @@ release-quality full-run numbers.
 | Text decode | `Decode_Text_Untyped` is 14.3 ms / 4.6 MB, `Decode_Text_Typed` is 17.7 ms / 4.3 MB, and `Decode_Text_AsStrings` is 12.8 ms / 4.8 MB. | The `string.Create` and Latin-1 changes achieved the intended allocation reduction. No further text decode change is pending. |
 | DataTable strategies | Public numeric `ReadDataTableAsync` is 21.9 ms / 10.9 MB; `Rows.Add(object?[])` and `LoadDataRow` are about 21.4 ms but allocate 13.2 MB. Text alternatives are close: public 15.7 ms, `Rows.Add(object?[])` 13.7 ms, `LoadDataRow` 14.9 ms. | Keep production on the current `NewRow` path with `BeginLoadData` and `MinimumCapacity`; alternatives are not enough better to trade away conservative semantics. |
 | Owned-page discovery | Recognized per-table usage maps are about 2.3 ms for cold first-row/full-scan; forced whole-file fallback is about 15.7-15.8 ms on the same large-file shape. | Recognized maps avoid the O(total file pages) cold-start path. Keep the whole-file scan as a safety fallback for unfamiliar or invalid maps. |
-| Table-scan read-ahead | Warm full scans improve with `ParallelPageReadsEnabled`: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as a narrow opt-in throughput benefit; do not add tunable depth or LVAL-heavy read-ahead now. |
+| Table-scan read-ahead | Warm full scans improve when page-read optimization is enabled: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as an automatic but narrowly guarded throughput benefit with opt-out; do not add tunable depth or LVAL-heavy read-ahead now. |
 
 ## Historical baseline
 
@@ -193,23 +193,29 @@ Primary code path:
 
 ### 6. Table-scan read-ahead
 
-`ParallelPageReadsEnabled` switches path-opened databases to random-access file
-options and enables a conservative one-page read-ahead path for eligible simple
-table scans. The read-ahead path preserves row order and reuses the normal page
-cache.
+`PageReadOptimizationMode` controls whether path-opened databases use random-
+access file options and whether eligible simple table scans use a conservative
+one-page read-ahead path. The default `Auto` mode enables random-access reads
+for path-opened readers, but table-scan read-ahead is more selective than
+explicit `Enabled`: it requires a file-backed stream, no active transaction
+journal, and enough table pages to benefit after the first page. `Disabled`
+preserves the seek/read path and suppresses table-scan read-ahead. The read-
+ahead path preserves row order and reuses the normal page cache.
 
 Eligibility is intentionally narrow: page cache enabled, cache size of at least
-three pages, more than one data page, and no MEMO/OLE/complex/attachment
-columns. Those exclusions avoid cache re-entrancy and pooled-buffer ownership
-risks while long-value or complex-column resolution may read additional pages
-for the current row.
+three pages, more than one data page for explicit `Enabled` or at least three
+data pages for `Auto`, and no MEMO/OLE/complex/attachment columns. Those
+exclusions avoid cache re-entrancy and pooled-buffer ownership risks while
+long-value or complex-column resolution may read additional pages for the
+current row. In `Auto`, the first page is yielded before prefetch begins to
+avoid adding speculative I/O to first-row latency.
 
-Keep this as an opt-in throughput feature. Do not add tunable depth or
-LVAL-heavy read-ahead without a page-buffer lease model and a fresh profile.
+Keep this as automatic with opt-out. Do not add tunable depth or LVAL-heavy
+read-ahead without a page-buffer lease model and a fresh profile.
 
 Primary code path:
 
-- `AccessReaderOptions.ParallelPageReadsEnabled`
+- `AccessReaderOptions.PageReadOptimizationMode`
 - `AccessReader.CreateStream`
 - `AccessBase.EnableRandomAccessPageReadsIfSupported`
 - `AccessBase.ReadPageAsync`

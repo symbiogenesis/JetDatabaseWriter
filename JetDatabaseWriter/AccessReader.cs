@@ -72,6 +72,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
+    private const int MinimumAutoTableScanReadAheadPages = 3;
     private const int MinimumTableScanReadAheadCacheSlots = 3;
 
 #if NET8_0_OR_GREATER
@@ -137,7 +138,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         this.DiagnosticsEnabled = options.DiagnosticsEnabled;
         this.PageCacheSize = options.PageCacheSize;
-        this.ParallelPageReadsEnabled = options.ParallelPageReadsEnabled;
+        this.PageReadOptimizationMode = options.PageReadOptimizationMode;
 
         // Cache is created up front when enabled (>0); negative or zero leaves
         // it null and ReadPageCachedAsync bypasses caching entirely.
@@ -187,8 +188,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; } = 256;
 
-    /// <summary>Gets a value indicating whether asynchronous full-table reads use parallel processing for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    public bool ParallelPageReadsEnabled { get; }
+    /// <summary>Gets the page-I/O optimization mode used by this reader.</summary>
+    public PageReadOptimizationMode PageReadOptimizationMode { get; }
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;
@@ -238,7 +239,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             leaveOpen: false,
             suppressPageCache: suppressPageCache,
             cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (reader.ParallelPageReadsEnabled)
+        if (CanUseRandomAccessPageReads(reader.PageReadOptimizationMode))
         {
             reader.EnableRandomAccessPageReadsIfSupported();
         }
@@ -819,7 +820,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Task<TableScanPage>? nextPageTask = null;
         try
         {
-            for (int pageIndex = 0; pageIndex < pageNumbers.Count; pageIndex++)
+            int pageIndex = 0;
+            if (this.PageReadOptimizationMode == PageReadOptimizationMode.Auto)
+            {
+                yield return await this.ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+                pageIndex++;
+            }
+
+            for (; pageIndex < pageNumbers.Count; pageIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -845,16 +853,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Determines whether table pages should be read ahead.
     /// The cache returns page buffers to the shared pool on eviction, so read-ahead
     /// needs room for the previous, current, and prefetched data pages.
+    /// Auto mode stays conservative: only file-backed, non-transactional scans
+    /// with enough table pages use read-ahead, and the first page is yielded
+    /// before prefetch begins to preserve first-row latency.
     /// </summary>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="pageNumbers">The list of page numbers for the table.</param>
     /// <returns><c>true</c> if table pages should be read ahead; otherwise, <c>false</c>.</returns>
     private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
-        this.ParallelPageReadsEnabled
-            && this.pageCache is not null
+        this.pageCache is not null
             && this.PageCacheSize >= MinimumTableScanReadAheadCacheSlots
-            && pageNumbers.Count > 1
-            && !HasCacheReentrantScanColumns(tableDef);
+            && this.ActiveJournal is null
+            && !HasCacheReentrantScanColumns(tableDef)
+            && this.HasEligibleTableScanReadAheadPageCount(pageNumbers);
+
+    private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>
+        this.PageReadOptimizationMode switch
+        {
+            PageReadOptimizationMode.Auto => this.DatabaseStream is FileStream && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
+            PageReadOptimizationMode.Disabled => false,
+            PageReadOptimizationMode.Enabled => pageNumbers.Count > 1,
+            _ => false,
+        };
 
     private async ValueTask<TableScanPage> ReadTableScanPageAsync(long pageNumber, CancellationToken cancellationToken)
     {
@@ -2242,7 +2262,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
-        FileOptions accessPattern = options.ParallelPageReadsEnabled ? FileOptions.RandomAccess : FileOptions.SequentialScan;
+        FileOptions accessPattern = CanUseRandomAccessPageReads(options.PageReadOptimizationMode) ? FileOptions.RandomAccess : FileOptions.SequentialScan;
         return OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | accessPattern);
     }
 
@@ -2599,6 +2619,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         return false;
     }
+
+    private static bool CanUseRandomAccessPageReads(PageReadOptimizationMode mode) =>
+        mode != PageReadOptimizationMode.Disabled;
 
     private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
     {

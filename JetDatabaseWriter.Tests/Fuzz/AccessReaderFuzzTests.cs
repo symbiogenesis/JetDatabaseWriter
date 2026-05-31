@@ -53,7 +53,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 {
                     output.WriteLine($"CodePage: {reader.CodePage}");
                     output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
-                    output.WriteLine($"ParallelPageReadsEnabled: {reader.ParallelPageReadsEnabled}");
+                    output.WriteLine($"PageReadOptimizationMode: {reader.PageReadOptimizationMode}");
                     output.WriteLine($"PageCacheSize: {reader.PageCacheSize}");
                     output.WriteLine($"PageSize: {reader.PageSize}");
                     output.WriteLine($"DiagnosticsEnabled: {reader.DiagnosticsEnabled}");

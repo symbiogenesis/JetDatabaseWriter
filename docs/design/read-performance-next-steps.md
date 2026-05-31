@@ -68,13 +68,15 @@ For repeated full scans over simple tables, try:
 var options = new AccessReaderOptions
 {
     PageCacheSize = 2048,
-    ParallelPageReadsEnabled = true,
+    PageReadOptimizationMode = PageReadOptimizationMode.Enabled,
 };
 ```
 
-`ParallelPageReadsEnabled` is intentionally narrow: it requires page caching,
-more than one data page, and no MEMO/OLE/complex/attachment columns. It is most
-useful for warm full-scan throughput, not cold first-row latency.
+The default `PageReadOptimizationMode.Auto` enables the guarded read-ahead path
+for file-backed scans with at least three data pages. Use `Enabled` only when a
+caller wants to force the less conservative path after previously disabling it.
+The path requires page caching and no MEMO/OLE/complex/attachment columns. It
+is most useful for warm full-scan throughput, not cold first-row latency.
 
 ## Candidate library work
 
@@ -114,7 +116,7 @@ real workload. Useful comparisons:
 - Full `Rows(...)` versus narrow `Rows<T>()`.
 - `Rows(...).Where(...)` versus `SeekRowsAsync` for exact indexed predicates.
 - `Rows<T>()` two-phase MEMO/OLE filtering versus full-row long-value decode.
-- Default options versus larger `PageCacheSize` plus `ParallelPageReadsEnabled`.
+- Default options versus larger `PageCacheSize` plus explicit `PageReadOptimizationMode.Enabled`.
 - Streaming APIs versus `ReadDataTableAsync` only when full materialization is
   truly required.
 

@@ -72,7 +72,7 @@ internal static class LinkedTableManager
         {
             PageCacheSize = options.PageCacheSize,
             DiagnosticsEnabled = options.DiagnosticsEnabled,
-            ParallelPageReadsEnabled = options.ParallelPageReadsEnabled,
+            PageReadOptimizationMode = options.PageReadOptimizationMode,
             ValidateOnOpen = options.ValidateOnOpen,
             StrictParsing = options.StrictParsing,
             FileAccess = options.FileAccess,

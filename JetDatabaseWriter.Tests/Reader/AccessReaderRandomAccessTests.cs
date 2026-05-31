@@ -14,25 +14,22 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     private readonly List<string> paths = [];
 
     [Fact]
-    public async Task OpenAsync_PathWithParallelPageReads_UsesRandomAccessPageReads()
+    public async Task OpenAsync_PathWithAutoPageReadOptimization_UsesRandomAccessPageReads()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
-            new AccessReaderOptions
-            {
-                ParallelPageReadsEnabled = true,
-                UseLockFile = false,
-            },
+            new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
 
+        Assert.Equal(PageReadOptimizationMode.Auto, reader.PageReadOptimizationMode);
         Assert.True(reader.UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
     [Fact]
-    public async Task OpenAsync_PathWithParallelPageReads_ReadsMultiPageTableInOrder()
+    public async Task OpenAsync_PathWithAutoPageReadOptimization_ReadsMultiPageTableInOrder()
     {
         const int rowCount = 2_000;
         string path = await this.CreateReadableDatabaseAsync(rowCount);
@@ -41,7 +38,6 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             path,
             new AccessReaderOptions
             {
-                ParallelPageReadsEnabled = true,
                 PageCacheSize = 4,
                 UseLockFile = false,
             },
@@ -58,21 +54,26 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task OpenAsync_PathWithoutParallelPageReads_UsesSeekReadPageReads()
+    public async Task OpenAsync_PathWithDisabledPageReadOptimization_UsesSeekReadPageReads()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
-            new AccessReaderOptions { UseLockFile = false },
+            new AccessReaderOptions
+            {
+                PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
+                UseLockFile = false,
+            },
             TestContext.Current.CancellationToken);
 
+        Assert.Equal(PageReadOptimizationMode.Disabled, reader.PageReadOptimizationMode);
         Assert.False(reader.UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
     [Fact]
-    public async Task OpenAsync_CallerSuppliedFileStreamWithParallelPageReads_UsesSeekReadPageReads()
+    public async Task OpenAsync_CallerSuppliedFileStreamWithEnabledPageReadOptimization_UsesSeekReadPageReads()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
@@ -86,7 +87,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             stream,
             new AccessReaderOptions
             {
-                ParallelPageReadsEnabled = true,
+                PageReadOptimizationMode = PageReadOptimizationMode.Enabled,
                 UseLockFile = false,
             },
             leaveOpen: true,

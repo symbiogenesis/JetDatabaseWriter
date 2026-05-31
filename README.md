@@ -700,7 +700,7 @@ Table and column names are automatically converted to PascalCase C# identifiers 
 var options = new AccessReaderOptions("secretPassword")
 {
     PageCacheSize            = 512,    // pages in LRU cache (default: 256)
-    ParallelPageReadsEnabled = true,   // parallel I/O (default: false)
+    PageReadOptimizationMode = PageReadOptimizationMode.Auto, // random-access/read-ahead policy (default)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
     ValidateOnOpen           = true,   // format check on open (default: true)
     FileAccess               = FileAccess.Read,        // default

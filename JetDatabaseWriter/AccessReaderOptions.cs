@@ -3,6 +3,7 @@ namespace JetDatabaseWriter;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 
@@ -31,8 +32,8 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// <summary>Gets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
     public bool DiagnosticsEnabled { get; init; }
 
-    /// <summary>Gets a value indicating whether eligible table scans may read ahead and path-opened streams use random-access page reads. Default: false.</summary>
-    public bool ParallelPageReadsEnabled { get; init; }
+    /// <summary>Gets the page-I/O optimization mode. Default: <see cref="PageReadOptimizationMode.Auto" />.</summary>
+    public PageReadOptimizationMode PageReadOptimizationMode { get; init; } = PageReadOptimizationMode.Auto;
 
     /// <summary>Gets a value indicating whether the database format is validated on open. Default: true.</summary>
     public bool ValidateOnOpen { get; init; } = true;

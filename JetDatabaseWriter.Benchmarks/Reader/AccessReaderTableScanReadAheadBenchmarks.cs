@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
+using JetDatabaseWriter.Enums;
 
 public enum TableScanBenchmarkShape
 {
@@ -42,8 +43,8 @@ public class AccessReaderTableScanReadAheadBenchmarks
     [Params(TableScanBenchmarkShape.Numeric, TableScanBenchmarkShape.Text, TableScanBenchmarkShape.Wide)]
     public TableScanBenchmarkShape Shape { get; set; }
 
-    [Params(false, true)]
-    public bool ParallelPageReadsEnabled { get; set; }
+    [Params(PageReadOptimizationMode.Disabled, PageReadOptimizationMode.Auto, PageReadOptimizationMode.Enabled)]
+    public PageReadOptimizationMode PageReadOptimizationMode { get; set; }
 
     [Params(TableScanBenchmarkTemperature.ColdOpenFirstScan, TableScanBenchmarkTemperature.WarmRepeatScan)]
     public TableScanBenchmarkTemperature Temperature { get; set; }
@@ -131,5 +132,5 @@ public class AccessReaderTableScanReadAheadBenchmarks
         };
 
     private AccessReaderOptions CreateOptions()
-        => new() { ParallelPageReadsEnabled = this.ParallelPageReadsEnabled };
+        => new() { PageReadOptimizationMode = this.PageReadOptimizationMode };
 }

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
 using JetDatabaseWriter.Benchmarks.Models;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Per-row decode benchmarks: isolate per-row decode cost from the
@@ -213,10 +214,10 @@ public class AccessReaderRowDecodeBenchmarks
             new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_ParallelReads() => await CountColdUntypedRowsAsync(
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_PageReadOptimization() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
-            new AccessReaderOptions { ParallelPageReadsEnabled = true }).ConfigureAwait(false);
+            new AccessReaderOptions { PageReadOptimizationMode = PageReadOptimizationMode.Enabled }).ConfigureAwait(false);
 
     // ── Memo (LVAL) decode ────────────────────────────────────────────
     // Mixes inline (32 B), single-LVAL-page (~2 KB), and chained-LVAL

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -19,8 +20,8 @@ public interface IAccessReader : IAccessBase
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; }
 
-    /// <summary>Gets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    public bool ParallelPageReadsEnabled { get; }
+    /// <summary>Gets the page-I/O optimization mode used by this reader.</summary>
+    public PageReadOptimizationMode PageReadOptimizationMode { get; }
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics { get; }
