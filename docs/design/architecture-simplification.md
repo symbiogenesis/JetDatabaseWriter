@@ -231,11 +231,10 @@ are worth picking up when touching the same ownership boundary.
   to clearer homes. `IndexPageLayout` now owns Jet3 / Jet4 page-layout selection,
   `IndexPageCodec` owns leaf page build / try-build semantics next to the
   intermediate page codec, and `IndexLeafPageBuilder` was deleted.
-- [ ] Move relationship fallback string-key ownership out of `IndexHelpers` or
-  make the dependency explicit. `RelationshipKeyBuilder.Build` currently just
-  calls `IndexHelpers.BuildCompositeKey`; the cleaner target is for
-  relationship runtime policy to own snapshot/fallback key normalization while
-  index helpers keep encoded seek-key work.
+- [x] Move relationship fallback string-key ownership out of `IndexHelpers` or
+  make the dependency explicit. Completed 2026-05-31:
+  `RelationshipKeyBuilder` now owns canonical snapshot/fallback key
+  normalization directly, and `IndexHelpers` keeps only encoded seek-key work.
 - [ ] Normalize the `AccessBase` row decode-plan adapters.
   `TryParseRowLayoutForDecodePlan` and `ResolveColumnSliceForDecodePlan` exist
   only to expose private row-layout primitives to `RowDecodePlan`. Either make

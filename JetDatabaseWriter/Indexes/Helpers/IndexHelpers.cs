@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Indexes.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
@@ -14,9 +13,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// State-free index-related helpers extracted from <see cref="AccessWriter"/>.
-/// Holds the schema-validation, FK composite-key encoding, and B-tree
-/// split / descent helpers that depend only on their inputs (no
-/// <see cref="AccessBase"/> instance state).
+/// Holds schema-validation, encoded seek-key, and B-tree split / descent
+/// helpers that depend only on their inputs (no <see cref="AccessBase"/>
+/// instance state).
 /// </summary>
 internal static class IndexHelpers
 {
@@ -396,79 +395,6 @@ internal static class IndexHelpers
     }
 
     /// <summary>
-    /// Builds a canonical, type-tolerant string key from <paramref name="row"/>
-    /// for the columns listed in <paramref name="columnIndexes"/>. Returns
-    /// <see langword="null"/> when any component is <see cref="DBNull"/> /
-    /// <see langword="null"/> — Access treats a partial-null FK tuple as
-    /// unconstrained (the row is allowed even if no parent matches).
-    /// </summary>
-    /// <param name="row">The row values or row bytes.</param>
-    /// <param name="columnIndexes">The column indexes.</param>
-    public static string? BuildCompositeKey(object?[] row, int[] columnIndexes)
-    {
-        var sb = new StringBuilder();
-        for (int i = 0; i < columnIndexes.Length; i++)
-        {
-            int idx = columnIndexes[i];
-            if (idx < 0 || idx >= row.Length)
-            {
-                return null;
-            }
-
-            object? v = row[idx];
-            if (v is null or DBNull)
-            {
-                return null;
-            }
-
-            sb.Append('|');
-            AppendNormalized(sb, v);
-        }
-
-        return sb.ToString();
-    }
-
-    private static void AppendNormalized(StringBuilder sb, object value)
-    {
-        switch (value)
-        {
-            case string s:
-                // Access string equality is case-insensitive in JET — match that.
-                sb.Append('S').Append(':').Append(s.ToUpperInvariant());
-                break;
-            case Guid g:
-                sb.Append('G').Append(':').Append(g.ToString("N"));
-                break;
-            case byte[] b:
-                sb.Append('B').Append(':').Append(Convert.ToBase64String(b));
-                break;
-            case DateTime dt:
-                sb.Append('D').Append(':').Append(dt.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
-                break;
-            case bool bl:
-                sb.Append('?').Append(':').Append(bl ? '1' : '0');
-                break;
-            case IConvertible c:
-                // Numeric-ish: normalize through decimal for cross-width equality
-                // (e.g. user passes int 5 against a long parent column).
-                try
-                {
-                    decimal d = c.ToDecimal(CultureInfo.InvariantCulture);
-                    sb.Append('N').Append(':').Append(d.ToString(CultureInfo.InvariantCulture));
-                }
-                catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
-                {
-                    sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
-                }
-
-                break;
-            default:
-                sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
-                break;
-        }
-    }
-
-    /// <summary>
     /// Encodes the composite seek key for a single FK-side row using the
     /// parent-side column types and the per-column ascending flags captured
     /// at index resolution. Returns <see langword="null"/> when any column
@@ -499,9 +425,9 @@ internal static class IndexHelpers
 
                 if (v == null)
                 {
-                    // BuildCompositeKey already rejected partial-null tuples,
-                    // but be defensive — encoding a null key entry still
-                    // produces a well-formed flag-only block.
+                    // Callers already rejected partial-null tuples, but be
+                    // defensive: encoding a null key entry still produces a
+                    // well-formed flag-only block.
                     pieces[i] = EncodeSeekKeyColumn(
                         col.ColumnType,
                         null,
