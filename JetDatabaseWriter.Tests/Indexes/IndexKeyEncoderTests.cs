@@ -990,6 +990,16 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
+    public void Numeric_DeclaredScaleWrapper_RoundsHalfToEvenBeforeEncoding()
+    {
+        byte[] roundedDown = IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(1.245m, ascending: true, declaredScale: 2, legacy: false);
+        byte[] roundedUp = IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(1.235m, ascending: true, declaredScale: 2, legacy: false);
+
+        Assert.Equal(IndexKeyEncoder.EncodeNumericEntry(1.24m, ascending: true, targetScale: 2, legacy: false), roundedDown);
+        Assert.Equal(IndexKeyEncoder.EncodeNumericEntry(1.24m, ascending: true, targetScale: 2, legacy: false), roundedUp);
+    }
+
+    [Fact]
     public void Numeric_TargetScaleSmallerThanNatural_Throws() => Assert.Throws<ArgumentException>(() =>
                                                                            IndexKeyEncoder.EncodeNumericEntry(1.50m, ascending: true, targetScale: 0, legacy: false));
 

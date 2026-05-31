@@ -30,53 +30,10 @@ characterization tests and benchmarks, then refactor behind existing public APIs
 
 ## Active candidates
 
-The strongest remaining candidate is now Numeric payload encoding. The shared
-row walker, stale index leaf facade, insert mutation flow, and logical TDEF
-chain work are recorded under completed outcomes so future scouting does not
-reopen those threads.
-
-### 1. Promote Numeric fixed-point payload encoding into `NumericEncoder`
-
-Primary files:
-
-- [../../JetDatabaseWriter/ValueEncoding/NumericEncoder.cs](../../JetDatabaseWriter/ValueEncoding/NumericEncoder.cs)
-- [../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs](../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs)
-- [../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs](../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs)
-
-Why this is interesting: `NumericEncoder` already owns decimal decomposition,
-but row storage and index-key encoding both still perform similar work around
-natural scale, declared scale, `BigInteger` rescaling, and 16-byte unsigned
-mantissa shaping. The output frames differ, but the middle algorithm can be
-shared.
-
-Target shape:
-
-- Add a helper that converts a decimal value and target scale into sign, natural
-  scale, and a 16-byte big-endian unsigned magnitude.
-- Let `RowEncoder.EncodeNumericValue` use it for JET 17-byte column storage.
-- Let `IndexKeyEncoder.EncodeNumericEntry` use it before applying
-  Access/Jackcess index-key twiddling rules.
-- Keep precision checks and exception types compatible with existing callers.
-
-Likely payoff:
-
-- Smaller deletion than the insert-flow work, but clean and bounded.
-- Reduces the chance that future Numeric fixes land in one path and not the
-  other.
-
-Risks and guardrails:
-
-- Numeric precision, rounding, and scale behavior is compatibility-sensitive.
-- Preserve current differences between row storage and index-key output frames.
-- Preserve legacy Jet4 MDB vs newer ACCDB numeric index twiddling rules.
-
-Proof plan:
-
-- Add edge-case tests for zero, negative values, max precision, scale rounding,
-  overflow past 16-byte mantissa, and declared-scale index keys.
-- Run numeric value-encoding, index seek-key, unique-index, FK, and writer
-  round-trip tests.
-- Benchmark numeric-heavy row writes and index maintenance for neutral results.
+The numeric payload encoding candidate is now recorded under completed
+outcomes. No high-payoff active simplification candidate is currently open; the
+lower-payoff candidates below remain useful only when adjacent work is already
+touching those code paths.
 
 ### Lower-payoff candidates
 
@@ -114,12 +71,48 @@ current large meaningful simplification bar on their own.
   Further changes should be motivated by specific performance data or bug fixes,
   not another broad pass over row decoding.
 
-Suggested order:
-
-1. Promote Numeric fixed-point rescaling and magnitude shaping into
-  `NumericEncoder`.
+Suggested order: treat lower-payoff candidates as opportunistic follow-ups when
+related work is already in progress.
 
 ## Completed outcomes
+
+### Completed Numeric fixed-point payload helper
+
+Status: completed 2026-05-31.
+
+Primary files:
+
+- [../../JetDatabaseWriter/ValueEncoding/NumericEncoder.cs](../../JetDatabaseWriter/ValueEncoding/NumericEncoder.cs)
+- [../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs](../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs)
+- [../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs](../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs)
+- [../../JetDatabaseWriter.Tests/ValueEncoding/NumericEncoderTests.cs](../../JetDatabaseWriter.Tests/ValueEncoding/NumericEncoderTests.cs)
+- [../../JetDatabaseWriter.Tests/Writer/NumericRowEncodingTests.cs](../../JetDatabaseWriter.Tests/Writer/NumericRowEncodingTests.cs)
+
+`NumericEncoder.TryEncodeFixedPointPayload` now owns the shared NUMERIC
+fixed-point middle algorithm: decimal sign detection, natural-scale capture,
+target-scale rescaling, digit counting, 16-byte mantissa fit detection, and
+16-byte big-endian unsigned magnitude shaping. `RowEncoder.EncodeNumericValue`
+keeps row-storage ownership by rounding to declared scale, enforcing declared
+precision with `JetLimitationException`, applying the row sign byte, and running
+JET row-storage byte-order correction. `IndexKeyEncoder.EncodeNumericEntry`
+uses the same payload helper before applying Access/Jackcess legacy MDB versus
+new-style ACCDB index-key twiddling rules, preserving its `ArgumentException`
+target-scale validation and `NotSupportedException` mantissa-overflow contract.
+
+Evidence at closeout: focused helper/index/seek/FK/writer numeric classes passed
+with 127 succeeded; the existing
+`AccessWriterTests.InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly`
+theory passed with 13 succeeded; and `dotnet build JetDatabaseWriter.slnx
+--no-restore --configuration Debug` passed across all projects and target
+frameworks.
+
+Preserve these guardrails: keep fixed-point rescaling and 16-byte unsigned
+magnitude shaping centralized in `NumericEncoder`; keep row precision and
+mantissa exceptions as `JetLimitationException`; keep raw index target-scale
+errors as `ArgumentException` and 16-byte index mantissa overflow as
+`NotSupportedException`; keep declared-scale index wrappers rounding
+half-to-even before encoding; and keep row storage byte-order correction and
+index-key twiddling at their respective call sites.
 
 ### Completed logical TDEF chain helper
 

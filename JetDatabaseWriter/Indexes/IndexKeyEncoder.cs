@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Indexes;
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
-using System.Numerics;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
@@ -405,8 +404,7 @@ internal static class IndexKeyEncoder
     /// <paramref name="targetScale"/> to be byte-comparable. Callers should
     /// scan the snapshot to find the maximum natural scale present and pass it
     /// here. Values whose natural scale is less than <paramref name="targetScale"/>
-    /// are multiplied by <c>10^(targetScale - naturalScale)</c> via
-    /// <see cref="BigInteger"/> arithmetic; values whose mantissa exceeds the
+    /// are multiplied by <c>10^(targetScale - naturalScale)</c>; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
     /// <see cref="NotSupportedException"/>, which lets index maintenance use
     /// the conservative rebuild or snapshot fallback path.
@@ -448,66 +446,34 @@ internal static class IndexKeyEncoder
 
         decimal d = ToDecimal(value!);
 
-        // Build BigInteger from the unsigned 96-bit mantissa: 12 LE data bytes
-        // plus a trailing zero byte that forces BigInteger to interpret the
-        // value as positive (sign is tracked separately in `negative`).
-        byte[] leMantissa = new byte[13];
-        NumericEncoder.Decompose(d, leMantissa.AsSpan(0, 12), out bool negative, out int scale);
-
         Guard.InRange(targetScale, 0, 28, nameof(targetScale));
 
-        if (targetScale < scale)
-        {
-            throw new ArgumentException(
-                $"targetScale ({targetScale}) must be >= the value's natural scale ({scale}).",
-                nameof(targetScale));
-        }
-
-        var mag = new BigInteger(leMantissa);
-
-        if (targetScale > scale)
-        {
-            mag *= BigInteger.Pow(10, targetScale - scale);
-        }
-
-        // Encode mag as big-endian 16-byte unsigned. BigInteger.ToByteArray returns
-        // little-endian two's-complement; mag is non-negative here so we just need
-        // to drop any trailing zero sign-byte before reversing.
-        byte[] magLe = mag.ToByteArray();
-        int magLen = magLe.Length;
-        while (magLen > 0 && magLe[magLen - 1] == 0)
-        {
-            magLen--;
-        }
-
-        if (magLen > 16)
+        Span<byte> magnitudeBe = stackalloc byte[16];
+        if (!NumericEncoder.TryEncodeFixedPointPayload(d, targetScale, magnitudeBe, out NumericEncoder.FixedPointPayload payload))
         {
             throw new NotSupportedException(
-                $"Numeric index key mantissa requires {magLen} bytes after rescale to {targetScale} digits, " +
+                $"Numeric index key mantissa requires {payload.MagnitudeByteCount} bytes after rescale to {targetScale} digits, " +
                 "which exceeds the 16-byte (128-bit) NUMERIC field. Use a smaller target scale or a smaller value.");
         }
 
         byte[] valueBytes = new byte[17];
-        valueBytes[0] = negative ? (byte)0x80 : (byte)0x00;
-        for (int i = 0; i < magLen; i++)
-        {
-            valueBytes[1 + (16 - 1 - i)] = magLe[i];
-        }
+        valueBytes[0] = payload.Negative ? (byte)0x80 : (byte)0x00;
+        magnitudeBe.CopyTo(valueBytes.AsSpan(1, 16));
 
         // Apply Jackcess byte-twiddling rules (see XML doc above).
         if (legacy)
         {
-            if (negative == ascending)
+            if (payload.Negative == ascending)
             {
                 FlipBytes(valueBytes);
             }
 
-            valueBytes[0] = negative ? (byte)0x00 : (byte)0xFF;
+            valueBytes[0] = payload.Negative ? (byte)0x00 : (byte)0xFF;
         }
         else
         {
             valueBytes[0] = 0xFF;
-            if (negative == ascending)
+            if (payload.Negative == ascending)
             {
                 FlipBytes(valueBytes);
             }
@@ -544,17 +510,8 @@ internal static class IndexKeyEncoder
             return EncodeNumericEntry(null, ascending, declaredScale, legacy);
         }
 
-        decimal d = ToDecimal(value);
-        int natural = (decimal.GetBits(d)[3] >> 16) & 0x7F;
-        if (natural > declaredScale)
-        {
-            // Mirror Access: cells whose natural scale exceeds the column's
-            // declared scale are rounded half-to-even to fit. (Access stores
-            // every Numeric cell at the declared scale on insert; we don't
-            // round at the row-write boundary, but the index key MUST
-            // be canonical or unique enforcement and seeks both break.)
-            d = decimal.Round(d, declaredScale, MidpointRounding.ToEven);
-        }
+        // Mirror Access: cells are canonical at the column's declared scale.
+        decimal d = decimal.Round(ToDecimal(value), declaredScale, MidpointRounding.ToEven);
 
         return EncodeNumericEntry(d, ascending, declaredScale, legacy);
     }

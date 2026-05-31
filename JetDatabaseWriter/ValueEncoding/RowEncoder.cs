@@ -4,7 +4,6 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
-using System.Numerics;
 using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -181,51 +180,23 @@ internal sealed class RowEncoder(AccessWriter writer)
     {
         byte precision = column.NumericPrecision == 0 ? (byte)18 : column.NumericPrecision;
         byte declaredScale = column.NumericScale;
-        decimal scaled = decimal.Round(value, declaredScale, MidpointRounding.ToEven);
-        if (scaled < 0)
-        {
-            scaled = decimal.Negate(scaled);
-            dest[0] = 0x80;
-        }
-        else
-        {
-            dest[0] = 0x00;
-        }
+        decimal rounded = decimal.Round(value, declaredScale, MidpointRounding.ToEven);
 
-        byte[] leMantissa = new byte[13];
-        NumericEncoder.Decompose(scaled, leMantissa.AsSpan(0, 12), out _, out int naturalScale);
-        var magnitude = new BigInteger(leMantissa);
-        if (declaredScale > naturalScale)
-        {
-            magnitude *= BigInteger.Pow(10, declaredScale - naturalScale);
-        }
-
-        int digits = magnitude.IsZero ? 1 : magnitude.ToString(CultureInfo.InvariantCulture).Length;
-        if (digits > precision)
+        Span<byte> magnitudeBe = stackalloc byte[16];
+        bool fits = NumericEncoder.TryEncodeFixedPointPayload(rounded, declaredScale, magnitudeBe, out NumericEncoder.FixedPointPayload payload);
+        if (payload.DigitCount > precision)
         {
             throw new JetLimitationException(
                 $"Numeric value '{value}' exceeds NUMERIC({precision},{declaredScale}) precision after rounding.");
         }
 
-        byte[] magnitudeLe = magnitude.ToByteArray();
-        int magnitudeLength = magnitudeLe.Length;
-        while (magnitudeLength > 0 && magnitudeLe[magnitudeLength - 1] == 0)
-        {
-            magnitudeLength--;
-        }
-
-        if (magnitudeLength > 16)
+        if (!fits)
         {
             throw new JetLimitationException(
-                $"Numeric value '{value}' requires {magnitudeLength} bytes, exceeding the 16-byte NUMERIC mantissa.");
+                $"Numeric value '{value}' requires {payload.MagnitudeByteCount} bytes, exceeding the 16-byte NUMERIC mantissa.");
         }
 
-        Span<byte> magnitudeBe = stackalloc byte[16];
-        for (int i = 0; i < magnitudeLength; i++)
-        {
-            magnitudeBe[16 - 1 - i] = magnitudeLe[i];
-        }
-
+        dest[0] = payload.Negative ? (byte)0x80 : (byte)0x00;
         JetTypeInfo.FixNumericByteOrder(magnitudeBe);
         magnitudeBe.CopyTo(dest.Slice(1, 16));
     }
