@@ -24,7 +24,7 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     /// starts with "VersionHistory" and whose ComplexTypeName matches
     /// the version-history template pattern.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task ComplexDataFixture_HasVersionHistoryNamedColumn(string path)
@@ -44,7 +44,7 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     /// The version-history column has a ComplexTypeName containing "VH"
     /// (the Access system prefix for version-history template tables).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task VersionHistoryColumn_HasVHComplexTypeName(string path)
@@ -70,7 +70,7 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     /// Attachment, MultiValue, and VersionHistory. This confirms the fixture
     /// exercises the full complex-column range.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task ComplexDataFixture_HasAllThreeComplexSubtypes(string path)
@@ -92,7 +92,7 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
     /// The version-history flat child table is readable by the reader
     /// (it is a hidden system table whose rows hold historical values).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
     public async Task VersionHistoryFlatTable_IsReadable(string path)

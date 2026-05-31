@@ -129,13 +129,12 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     continue;
                 }
 
-                // Skip Binary single-column indexes for now: the V2010
+                // Skip Binary single-column indexes: the V2010
                 // binIdxTest fixture exposes long binary keys whose on-disk
                 // leaf reconstruction does not match the
                 // <see cref="IndexKeyEncoder"/> general-binary-entry output
-                // — a known gap also flagged in upstream Jackcess
-                // (<c>"TODO long rows not handled completely yet in V2010 —
-                // seems to truncate entry at 508 bytes"</c>). The text-key
+                // — a known gap also flagged by upstream Jackcess' V2010
+                // long-row truncation note. The text-key
                 // analogue is documented in
                 // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
                 if (colMeta.ClrType == typeof(byte[]))

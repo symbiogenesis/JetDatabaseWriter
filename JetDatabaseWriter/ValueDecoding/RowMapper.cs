@@ -216,7 +216,7 @@ internal static class RowMapper<T>
     /// and the CLR source types from the cached <see cref="TableDef.ClrTypes"/>
     /// projection (populated by <c>InitializeColumnMetadata</c>).
     /// </summary>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="td">Parsed table definition.</param>
     public static Func<object?[], T> Build(TableDef td)
     {
         Guard.NotNull(td, nameof(td));
@@ -235,7 +235,7 @@ internal static class RowMapper<T>
     /// expression compilation happens at most once per <see cref="TableDef"/>
     /// instance and is transparently amortised across batch writes.
     /// </summary>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="td">Parsed table definition.</param>
     /// <param name="item">The source item.</param>
     public static object[] ToRow(TableDef td, T item)
     {
@@ -249,7 +249,7 @@ internal static class RowMapper<T>
     /// <typeparamref name="T"/> into an <c>object[]</c> in the column order
     /// of <paramref name="td"/>. Unmatched columns produce <see cref="DBNull.Value"/>.
     /// </summary>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="td">Parsed table definition.</param>
     private static Func<T, object[]> BuildToRow(TableDef td)
     {
         int count = td.Columns.Count;

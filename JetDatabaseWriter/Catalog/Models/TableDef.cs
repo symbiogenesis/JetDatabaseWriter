@@ -17,7 +17,7 @@ internal sealed class TableDef
     public long RowCount { get; set; }
 
     /// <summary>
-    /// <c>Gets or sets a value indicating whether true</c> if ColNum sequence has gaps.
+    /// Gets or sets a value indicating whether the physical ColNum sequence has gaps.
     /// </summary>
     public bool HasDeletedColumns { get; set; }
 

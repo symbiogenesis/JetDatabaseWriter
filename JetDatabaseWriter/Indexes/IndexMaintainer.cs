@@ -47,7 +47,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// retain any reference to the original buffer.
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -92,7 +92,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// the incremental and catalog-splice paths).
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<(TdefPreambleStatus Status, TdefPreamble Preamble)> ReadTdefPreambleAsync(
         long tdefPage,
         CancellationToken cancellationToken)
@@ -151,7 +151,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     public async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
@@ -699,7 +699,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <param name="tableDef">The table def.</param>
     /// <param name="insertedRows">The inserted rows.</param>
     /// <param name="deletedRows">The deleted rows.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<bool> TryMaintainIndexesIncrementalAsync(
         long tdefPage,
         TableDef tableDef,
@@ -1164,7 +1164,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// <param name="tableDef">The table def.</param>
     /// <param name="newRowLoc">The new row loc.</param>
     /// <param name="newRowValues">The new row values.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <remarks>
     /// <para>
     /// Used by <c>InsertCatalogEntryAsync</c> for MSysObjects to keep

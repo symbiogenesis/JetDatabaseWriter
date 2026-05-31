@@ -101,7 +101,7 @@ public abstract class AccessBase : IAccessBase
     /// When non-null, page writes/appends are buffered into the journal
     /// instead of being flushed to the underlying stream, and page reads
     /// consult the journal first so the transaction sees its own writes.
-    /// Set/cleared exclusively by <see cref="AccessWriter"/> while holding
+    /// Set and cleared exclusively by <see cref="AccessWriter"/> while holding
     /// <see cref="IoGate"/>.
     /// </summary>
     internal PageJournal? ActiveJournal { get; set; }
@@ -634,7 +634,7 @@ public abstract class AccessBase : IAccessBase
     /// Used by both <see cref="AccessReader"/> (read-only sequential) and
     /// <see cref="AccessWriter"/> (read-write random-access).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <param name="access">The access.</param>
     /// <param name="share">The share.</param>
     /// <param name="options">The options.</param>
@@ -724,7 +724,7 @@ public abstract class AccessBase : IAccessBase
     /// TDEF header stripped before appending.
     /// </summary>
     /// <param name="startPage">The start page.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private protected async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -955,7 +955,7 @@ public abstract class AccessBase : IAccessBase
     /// <c>ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested();</c>
     /// that opens nearly every public writer entry point.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
     {
@@ -968,7 +968,7 @@ public abstract class AccessBase : IAccessBase
     /// advancing <paramref name="pos"/> past the name bytes.
     /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
     /// </summary>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="td">Parsed table definition.</param>
     /// <param name="pos">The byte position.</param>
     /// <param name="name">The name.</param>
     internal int ReadColumnName(byte[] td, ref int pos, out string name)
@@ -1103,7 +1103,7 @@ public abstract class AccessBase : IAccessBase
 
     /// <summary>Finds a catalog entry by name (case-insensitive).</summary>
     /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
         List<CatalogEntry> userTables = await this.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -1111,7 +1111,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private protected abstract ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default);
 
     // ── Table page enumeration ───────────────────────────────────────

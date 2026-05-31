@@ -32,8 +32,8 @@ internal static class LinkedTableManager
     /// source paths must reside under. Relative entries are resolved against the
     /// directory containing <paramref name="hostDatabasePath"/>.
     /// </summary>
-    /// <param name="allowlist">A value indicating whether allowlist.</param>
-    /// <param name="hostDatabasePath">The host database path.</param>
+    /// <param name="allowlist">Directory allowlist entries supplied by the caller.</param>
+    /// <param name="hostDatabasePath">Path to the database that owns the linked-table definitions.</param>
     internal static string[] NormalizeAllowlist(IReadOnlyList<string> allowlist, string hostDatabasePath)
     {
         if (allowlist == null || allowlist.Count == 0)
@@ -95,7 +95,7 @@ internal static class LinkedTableManager
     /// MSysObjects on the given <paramref name="reader"/>.
     /// </summary>
     /// <param name="reader">The reader.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
     internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(AccessReader reader, CancellationToken cancellationToken)
     {
@@ -182,7 +182,7 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="reader">The reader.</param>
     /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal static async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
         List<LinkedTableInfo> links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
@@ -197,7 +197,7 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="reader">The reader.</param>
     /// <param name="link">The linked-table metadata.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="FileNotFoundException">Thrown when the linked source database cannot be found.</exception>
     internal static async ValueTask<AccessReader> OpenLinkedSourceAsync(
         AccessReader reader,
@@ -552,7 +552,7 @@ internal static class LinkedTableManager
 
         string kindDescription = link.Kind switch
         {
-            LinkedTableKind.Access => "Access-file", // should never reach here due to the if-check above, but included for completeness
+            LinkedTableKind.Access => "Access-file",
             LinkedTableKind.Odbc => "ODBC",
             LinkedTableKind.Text => "text",
             _ => "non-Access",

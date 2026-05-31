@@ -79,29 +79,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private readonly IndexMaintainer indexMaintainer;
     private readonly HashSet<long> ownedMapWritableTdefs = [];
 
-    /// <summary>Owns TDEF emission and empty-database bootstrap builders.
+    /// <summary>Coordinates TDEF emission and empty-database bootstrap builders.
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
     private readonly TDefPageBuilder tdefPageBuilder;
 
-    /// <summary>Owns LVAL chain encoding: pre-encode oversized MEMO/OLE/Attachment payloads.</summary>
+    /// <summary>Pre-encodes oversized MEMO/OLE/Attachment payloads into LVAL chains.</summary>
     private readonly LongValueEncoder longValueEncoder;
 
-    /// <summary>Owns pre-write unique-index violation checks.</summary>
+    /// <summary>Runs pre-write unique-index violation checks.</summary>
     private readonly UniqueIndexChecker uniqueIndexChecker;
 
-    /// <summary>Owns transaction lifecycle: begin, commit, rollback, auto-commit wrapping.</summary>
+    /// <summary>Coordinates transaction lifecycle: begin, commit, rollback, auto-commit wrapping.</summary>
     private readonly TransactionLifecycle transactionLifecycle;
 
-    /// <summary>Owns catalog (MSysObjects) write operations: insert, rename, ACE rows.</summary>
+    /// <summary>Writes catalog (MSysObjects) entries, renames, and ACE rows.</summary>
     private readonly CatalogWriter catalogWriter;
 
     /// <summary>Encodes value arrays into on-disk row byte layouts.</summary>
     private readonly RowEncoder rowEncoder;
 
-    /// <summary>Owns data-page allocation and row insertion mechanics.</summary>
+    /// <summary>Handles data-page allocation and row insertion mechanics.</summary>
     private readonly DataPageInserter dataPageInserter;
 
-    /// <summary>Owns the global page free-list allocator and maintenance operations.</summary>
+    /// <summary>Maintains the global page free-list allocator.</summary>
     private readonly PageAllocator pageAllocator;
 
     /// <summary>Gets the foreign-key / relationship subsystem. Relationship
@@ -588,9 +588,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="columns">The columns.</param>
     /// <param name="indexes">The indexes.</param>
     /// <param name="catalogFlags">The catalog flags.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="reservedTdefPageNumber">The reserved TDEF page number.</param>
-    /// <param name="emitLvProp">A value indicating whether LvProp metadata is emitted.</param>
+    /// <param name="emitLvProp">Whether to emit LvProp metadata.</param>
     /// <param name="markSystemTableTdef">The mark system table TDEF.</param>
     /// <param name="emitAceRows">The ACE-row emission override.</param>
     /// <exception cref="InvalidDataException">Thrown when a reserved TDEF page is requested for a multi-page table definition.</exception>
@@ -1939,7 +1939,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// invokes <paramref name="work"/> directly using the flush-per-page path.
     /// </summary>
     /// <param name="work">The work to execute.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
         => this.transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
@@ -1948,7 +1948,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <typeparam name="TResult">The result type produced by <paramref name="work"/>.</typeparam>
     /// <param name="work">The work to execute.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
         => this.transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
@@ -1959,7 +1959,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// per-page encryption and cooperative byte-range locks are honoured.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
         => this.transactionLifecycle.CommitTransactionAsync(transaction, cancellationToken);
 
@@ -1968,7 +1968,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// in-memory journal without touching the database file.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
         => this.transactionLifecycle.RollbackTransactionAsync(transaction, cancellationToken);
 
@@ -2092,7 +2092,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
     /// <param name="fkCtx">The foreign key ctx.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask InsertRowCoreAsync(
         string tableName,
         long tdefPage,
@@ -2251,7 +2251,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="locations">The locations.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask RollbackInsertedRowsAsync(long tdefPage, List<RowLocation> locations, CancellationToken cancellationToken)
     {
         if (locations.Count == 0)
@@ -3623,8 +3623,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="values">The values.</param>
-    /// <param name="updateTDefRowCount">A value indicating whether to update the table row count in the TDEF.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <remarks>
     /// User-row inserts are batched by <see cref="InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
     /// for performance; system-table inserts are infrequent and can afford to
@@ -3708,7 +3708,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// real-idx descriptors point at unallocated pages.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
     {
         byte[] page = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
@@ -3764,8 +3764,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
-    /// <param name="updateTDefRowCount">A value indicating whether to update the table row count in the TDEF.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> does not contain one value per column in <paramref name="tableDef"/>.</exception>
     internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
@@ -3866,7 +3866,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="rows">The row collection.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the system table has rows to rewrite but no data pages are present.</exception>
     internal async ValueTask RewriteSystemTableRowsAsync(
         long tdefPage,
@@ -4002,7 +4002,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="loc">The row location.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="columnOrdinals">The column ordinals.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
         RowLocation loc,
         TableDef tableDef,

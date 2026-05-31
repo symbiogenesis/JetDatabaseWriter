@@ -20,19 +20,13 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <para>
 /// Supported column types: <c>Byte (0x02)</c>, <c>Integer (0x03)</c>,
 /// <c>LongInteger (0x04)</c>, <c>Money (0x05)</c>, <c>Float (0x06)</c>,
-/// <c>Double (0x07)</c>, <c>DateTime (0x08)</c>, <c>BigInt (0x13)</c>, <c>Text (0x0A)</c>
-/// using the "General Legacy" encoding documented in HACKING.md (digits and
-/// ASCII letters only; any character outside <c>0-9 / A-Z / a-z</c> throws
-/// <see cref="NotSupportedException"/>, which the index-maintenance loop
-/// catches to leave the index leaf untouched), <c>Guid (0x0F)</c> and
-/// <c>Binary (0x09)</c> using the Jackcess "general binary entry" wrapping
-/// (payload packed into 9-byte length-suffixed segments; ascending leaves
-/// data bytes intact and intermediate length bytes at <c>0x09</c> with the
-/// final length byte at the actual segment length, descending bit-flips
-/// every data byte and the FINAL length byte but leaves intermediate length
-/// bytes at <c>0x09</c>). MEMO, OLE, and complex are still
-/// deferred (no clean HACKING.md spec for any of them). DATETIMEEXT uses
-/// the same general-binary-entry packing with its 42-byte fixed payload.
+/// <c>Double (0x07)</c>, <c>DateTime (0x08)</c>, and <c>BigInt (0x13)</c>
+/// using fixed-width sort keys; <c>Text (0x0A)</c> and <c>Memo (0x0C)</c>
+/// using the General Legacy text encoder; and <c>Guid (0x0F)</c>,
+/// <c>Binary (0x09)</c>, and <c>DateTimeExtended (0x14)</c> using the
+/// Jackcess "general binary entry" wrapping. OLE, Attachment, and Complex
+/// columns are intentionally unsupported because Access does not permit
+/// indexes on them.
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -46,15 +40,11 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// preserves order for the numeric encodings as well.
 /// </para>
 /// <para>
-/// <b>Validation status:</b> the per-type byte sequences below match the
-/// conventional B-tree encoding documented in HACKING.md and used by Jackcess.
-/// They have NOT been byte-compared against a real Access-authored index leaf
-/// (no fixture in this repo carries one for these specific types, and the
-/// writer pipeline that would let us synthesise one is leaf-page emission, which is what
-/// uses this encoder). Round-trip via the in-repo reader still works because
-/// the reader does not use leaf pages for row enumeration; Microsoft Access itself is
-/// the only consumer that will exercise these bytes, and it must validate
-/// after a Compact &amp; Repair (see §8 of the design doc).
+/// <b>Validation status:</b> fixed-width encodings follow the conventional
+/// B-tree encoding documented in HACKING.md and used by Jackcess. Text/Memo
+/// validation lives with <see cref="GeneralLegacyTextIndexEncoder"/>, including
+/// long-row fixtures. Microsoft Access Compact &amp; Repair remains the final
+/// compatibility oracle for writer-emitted index leaves (see §8 of the design doc).
 /// </para>
 /// </summary>
 internal static class IndexKeyEncoder

@@ -44,7 +44,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
     /// <param name="ownerTdefPage">The owner TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<object[]> PreEncodeLongValuesAsync(long ownerTdefPage, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
         _ = ownerTdefPage;
@@ -130,7 +130,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
     /// its successor's <c>lval_dp</c> pointer.
     /// </summary>
     /// <param name="data">The data bytes or values.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="lvalTokenOverride">The long value token override.</param>
     /// <param name="packRowsAtEnd">The pack rows at end.</param>
     /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>

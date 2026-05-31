@@ -434,8 +434,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
         foreach (ColumnMetadata col in meta)
         {
-            // Touch every persisted-property field. Reaching them without a throw is
-            // the conformance contract — mdb-prop just exits zero on a successful dump.
+            // Read every persisted-property field to verify it is accessible.
             _ = col.Description;
             _ = col.DefaultValueExpression;
             _ = col.ValidationRuleExpression;

@@ -36,7 +36,7 @@ public interface IAccessReader : IAccessBase
     public ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     public ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
 
@@ -44,7 +44,7 @@ public interface IAccessReader : IAccessBase
     /// Returns metadata about linked tables (Access-file, text, and ODBC)
     /// found in the database catalog asynchronously.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A list of <see cref="LinkedTableInfo"/> with metadata for each linked table.</returns>
     public ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
 
@@ -52,7 +52,7 @@ public interface IAccessReader : IAccessBase
     /// Returns name, stored row-count, and column-count for every user table asynchronously.
     /// Calling this instead of <see cref="ListTablesAsync"/> avoids a duplicate catalog scan.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A list of <see cref="TableStat"/> with metadata for each user table.</returns>
     public ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
 
@@ -60,7 +60,7 @@ public interface IAccessReader : IAccessBase
     /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount asynchronously.
     /// Ideal for binding to data grids or exporting to CSV/Excel.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="DataTable"/> containing table metadata.</returns>
     public ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default);
 
@@ -80,7 +80,7 @@ public interface IAccessReader : IAccessBase
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     public ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new();
@@ -187,15 +187,15 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
-    /// <param name="progress">The progress.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
     public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     public ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
 
@@ -205,8 +205,8 @@ public interface IAccessReader : IAccessBase
     /// This fully materializes every user table; prefer table-by-table streaming for large databases
     /// unless callers specifically need <see cref="DataTable"/> instances.
     /// </summary>
-    /// <param name="progress">The progress.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
@@ -216,8 +216,8 @@ public interface IAccessReader : IAccessBase
     /// This fully materializes every user table; prefer <see cref="RowsAsStrings(string, IProgress{long}?, CancellationToken)"/>
     /// when streaming string rows is sufficient.
     /// </summary>
-    /// <param name="progress">The progress.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 

@@ -23,7 +23,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// Reads a page through the writer cache and returns a caller-owned clone.
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
         byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -283,7 +283,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="rootPage">The root page.</param>
     /// <param name="addEntries">The add entries.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<bool> TryAppendToTailLeafAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -397,7 +397,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="firstDp">The first data page.</param>
     /// <param name="addEntries">The add entries.</param>
     /// <param name="removeEntries">The remove entries.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<bool> TrySurgicalMultiLevelMaintainAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -613,9 +613,9 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="layout">The layout.</param>
     /// <param name="rootPage">The root page.</param>
     /// <param name="searchKey">The search key.</param>
-    /// <param name="path">The file path.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
-    /// <param name="allowTailOvershoot">A value indicating whether allow tail overshoot.</param>
+    /// <param name="path">Optional collector for the descent steps taken.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="allowTailOvershoot">Whether to follow the page tail pointer when the search key is beyond the last entry.</param>
     internal async ValueTask<long> DescendCapturingAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long rootPage,
@@ -694,7 +694,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Captured root-to-leaf descent path.</param>
     /// <param name="newSummary">The new summary.</param>
     private List<(long PageNum, byte[] Bytes)>? PrepareAncestorReplaceWrites(
         IndexLeafPageBuilder.LeafPageLayout layout,
@@ -768,7 +768,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Captured root-to-leaf descent path.</param>
     /// <param name="leftSummary">The left summary.</param>
     /// <param name="rightSummaries">The right summaries.</param>
     internal List<(long PageNum, byte[] Bytes)>? PrepareAncestorSplitWrites(
@@ -854,7 +854,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// level above, by definition of "same target leaf").
     /// </summary>
     /// <param name="leafPage">The leaf page.</param>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Captured root-to-leaf descent path for this leaf.</param>
     private sealed class LeafGroup(long leafPage, List<DescentStep> path)
     {
         /// <summary>Gets the page number of the target leaf.</summary>
@@ -910,7 +910,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="firstDpOffset">The first data page offset.</param>
     /// <param name="addEntries">The add entries.</param>
     /// <param name="removeEntries">The remove entries.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<bool> TrySurgicalCrossLeafMaintainAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
@@ -1364,7 +1364,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="addEntries">The add entries.</param>
     /// <param name="removeEntries">The remove entries.</param>
     /// <param name="maxLeafGroupCount">The max leaf group count.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<Dictionary<long, LeafGroup>?> GroupChangesByTargetLeafAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long firstDp,
@@ -1472,7 +1472,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="intermediatePage">The intermediate page.</param>
     /// <param name="overrides">The overrides.</param>
     /// <param name="rewrites">The rewrites.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<long> GetEffectiveTailPageAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long intermediatePage,
@@ -1527,7 +1527,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="existingPageRewrites">The existing page rewrites.</param>
     /// <param name="stagingState">The staging state.</param>
     /// <param name="newPageAppends">The new page appends.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> TryStageIntermediateRewritesAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,

@@ -19,7 +19,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <summary>
     /// Begins an explicit page-buffered transaction against the owning writer.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
@@ -60,7 +60,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// exception before commit replay leaves the database in its pre-call state.
     /// </summary>
     /// <param name="work">The work to execute.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
         if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
@@ -102,7 +102,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// </summary>
     /// <typeparam name="TResult">The result type produced by <paramref name="work"/>.</typeparam>
     /// <param name="work">The work to execute.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
         if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
@@ -145,7 +145,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// normal page-write pipeline.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
     internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
@@ -215,7 +215,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// in-memory journal without touching the database file.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
     internal async ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
@@ -249,7 +249,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <summary>
     /// Increments the page-0 "commit lock byte" at header offset <c>0x14</c>.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask BumpCommitLockByteAsync(CancellationToken cancellationToken)
     {
         byte[] page0 = await writer.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
@@ -267,7 +267,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <summary>
     /// Flushes the underlying stream durably.
     /// </summary>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
         => await writer.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
 }

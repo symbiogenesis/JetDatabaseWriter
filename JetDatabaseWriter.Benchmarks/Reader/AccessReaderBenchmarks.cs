@@ -18,8 +18,7 @@ using JetDatabaseWriter.Models;
 public class AccessReaderBenchmarks
 {
     /// <summary>
-    /// Numeric/date-heavy table used to exercise the typed fixed-width decode path.
-    /// 5 ints, 1 short, 1 currency (decimal), 1 single (float), 2 datetimes, 2 short text columns.
+    /// Name of the numeric/date-heavy <c>OrderDetails</c> table from NorthwindTraders.accdb.
     /// </summary>
     private const string NumericTable = "OrderDetails";
 
@@ -86,9 +85,8 @@ public class AccessReaderBenchmarks
     }
 
     /// <summary>
-    /// Baseline: untyped row stream over a numeric/date-heavy table.
-    /// Targets the per-column ReadFixedString → ParseValue round-trip the typed
-    /// path will eventually replace.
+    /// Baseline untyped row stream over a numeric/date-heavy table. Compare with
+    /// <see cref="StreamRowsTyped_All_Numeric"/> to measure typed mapper overhead.
     /// </summary>
     /// <returns>Row count for the numeric/date-heavy table.</returns>
     [Benchmark]
@@ -99,8 +97,8 @@ public class AccessReaderBenchmarks
     }
 
     /// <summary>
-    /// Baseline: typed row stream (Rows&lt;T&gt;) over the same numeric/date-heavy
-    /// table. Exercises RowMapper&lt;T&gt; on top of the untyped row path.
+    /// Typed row stream (Rows&lt;T&gt;) over the same numeric/date-heavy table.
+    /// Exercises RowMapper&lt;T&gt; on top of the decoded row path.
     /// </summary>
     /// <returns>Row count for the typed numeric/date-heavy table stream.</returns>
     [Benchmark]

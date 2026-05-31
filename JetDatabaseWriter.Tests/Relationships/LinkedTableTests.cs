@@ -733,7 +733,7 @@ public sealed class LinkedTableTests : IDisposable
     /// <param name="linkedTableName">The linked table name.</param>
     /// <param name="sourceDbPath">The source db path.</param>
     /// <param name="foreignTableName">The foreign table name.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private static async ValueTask InjectLinkedTableEntryAsync(
         string dbPath,
         string linkedTableName,

@@ -463,7 +463,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// empty data page whose <c>free_space</c> equals the full page-size
     /// minus header.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
@@ -2067,7 +2067,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     /// <summary>Opens a writer asynchronously with lockfile disabled.</summary>
     /// <param name="stream">The stream.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken = default)
     {
         stream.Position = 0;
@@ -2076,7 +2076,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     /// <summary>Opens a reader asynchronously with lockfile disabled.</summary>
     /// <param name="stream">The stream.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken cancellationToken = default)
     {
         stream.Position = 0;

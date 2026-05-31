@@ -22,7 +22,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// <summary>
     /// The fixture has exactly one user table (<c>Table1</c>).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -42,7 +42,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// <c>Table1</c> has at least one attachment-kind complex column
     /// (<c>attach-data</c>).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -64,7 +64,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// <summary>
     /// <c>Table1</c> has a multi-value complex column (<c>multi-value-data</c>).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -89,7 +89,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// COMPRESSED_FORMATS skip-list, these payloads are stored with deflate
     /// compression (typeFlag <c>0x01</c>) and decoded correctly by the reader.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -116,7 +116,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// The attachment file names match the known Jackcess test data:
     /// <c>test_data.txt</c> and <c>test_data2.txt</c> (×2).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -141,7 +141,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// The multi-value column (<c>multi-value-data</c>) contains at least 5
     /// items across all parent rows.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
@@ -169,7 +169,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
     /// All 4 rows in <c>Table1</c> can be streamed without throwing,
     /// even though the table contains complex columns.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]

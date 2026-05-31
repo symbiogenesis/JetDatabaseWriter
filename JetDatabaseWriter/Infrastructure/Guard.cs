@@ -118,7 +118,7 @@ internal static class Guard
     /// throwing <see cref="FileNotFoundException"/> with a consistent "Database file not found"
     /// message when it does not exist.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <param name="paramName">The param name.</param>
     /// <exception cref="FileNotFoundException">Thrown when <paramref name="path"/> does not reference an existing file.</exception>
     public static void RequireExistingDatabaseFile([NotNull] string? path, string paramName)

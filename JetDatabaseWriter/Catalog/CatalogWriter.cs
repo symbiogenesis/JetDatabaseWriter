@@ -29,7 +29,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="tableName">The table name.</param>
     /// <param name="tdefPageNumber">The TDEF page number.</param>
     /// <param name="lvProp">The LvProp payload.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
         => this.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
 
@@ -40,7 +40,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="tdefPageNumber">The TDEF page number.</param>
     /// <param name="lvProp">The LvProp payload.</param>
     /// <param name="catalogFlags">The catalog flags.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -74,7 +74,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="catalogFlags">The catalog flags.</param>
     /// <param name="owner">The owner.</param>
     /// <param name="lvProp">The LvProp payload.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask InsertCatalogObjectAsync(
         int objectId,
         int parentId,
@@ -231,7 +231,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// Inserts 3 ACE rows into <c>MSysACEs</c> for a newly-created user table.
     /// </summary>
     /// <param name="tdefPageNumber">The TDEF page number.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
         long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
@@ -378,7 +378,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// </summary>
     /// <param name="acesTdefPage">The aces TDEF page.</param>
     /// <param name="acesDef">The aces def.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]?> HarvestAdminsSidAsync(long acesTdefPage, TableDef acesDef, CancellationToken cancellationToken)
     {
         ColumnInfo? sidCol = acesDef.FindColumn("SID");
@@ -424,7 +424,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="oldName">The old name.</param>
     /// <param name="newName">The new name.</param>
     /// <param name="lvProp">The LvProp payload.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when no catalog row exists for <paramref name="oldName"/>.</exception>
     internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
@@ -476,7 +476,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// returns a decoded row for each live catalog entry.
     /// </summary>
     /// <param name="msys">The system-table data.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");

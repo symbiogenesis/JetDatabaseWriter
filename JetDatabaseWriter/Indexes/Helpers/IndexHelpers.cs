@@ -54,7 +54,7 @@ internal static class IndexHelpers
     /// (used slots agree, unused slots are 0xFFFF). Returns <see langword="false"/>
     /// when the descriptor would extend past <paramref name="td"/>'s end.
     /// </summary>
-    /// <param name="td">The table-definition buffer.</param>
+    /// <param name="td">Parsed table definition.</param>
     /// <param name="phys">The physical column descriptor.</param>
     /// <param name="columnNumbers">The column numbers.</param>
     public static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
@@ -778,7 +778,7 @@ internal static class IndexHelpers
     /// (surgical mutation requires this; multi-leaf change-sets bail to
     /// the bulk path).
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Captured root-to-leaf descent path to replay.</param>
     /// <param name="searchKey">The search key.</param>
     public static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
     {

@@ -243,11 +243,11 @@ internal static class EncryptionManager
     /// Changes the password of an already-encrypted JET / ACE database in place,
     /// preserving the existing on-disk encryption format.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="newPassword">The new password.</param>
     /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask ChangePasswordAsync(
         string path,
         string oldPassword,
@@ -271,11 +271,11 @@ internal static class EncryptionManager
     /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
     /// requested <paramref name="targetFormat"/>.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <param name="newPassword">The new password.</param>
     /// <param name="targetFormat">The target format.</param>
     /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         string path,
@@ -306,10 +306,10 @@ internal static class EncryptionManager
     /// <summary>
     /// Removes encryption from a JET / ACE database in place.
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask DecryptAsync(
         string path,
         string oldPassword,
@@ -333,7 +333,7 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="newPassword">The new password.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask ChangePasswordAsync(
         Stream stream,
         string oldPassword,
@@ -357,7 +357,7 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="newPassword">The new password.</param>
     /// <param name="targetFormat">The target format.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         Stream stream,
@@ -388,7 +388,7 @@ internal static class EncryptionManager
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="oldPassword">The old password.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask DecryptAsync(
         Stream stream,
         string oldPassword,
@@ -413,7 +413,7 @@ internal static class EncryptionManager
     /// </summary>
     /// <param name="hdr">The database header bytes.</param>
     /// <param name="format">The format.</param>
-    /// <param name="isCompoundFileEncrypted">A value indicating whether is compound file encrypted.</param>
+    /// <param name="isCompoundFileEncrypted">Whether the database is wrapped in an encrypted compound file.</param>
     /// <param name="password">The password.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
     public static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
@@ -526,7 +526,7 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when a flat Agile encrypted database is detected and no password was supplied.</exception>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
@@ -578,7 +578,7 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted Standard or Agile package is detected and no password was supplied.</exception>
     internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
         Stream stream,

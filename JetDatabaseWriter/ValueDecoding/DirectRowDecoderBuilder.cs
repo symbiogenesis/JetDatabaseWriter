@@ -295,7 +295,7 @@ internal static class DirectRowDecoderBuilder
 /// <param name="page">The page bytes.</param>
 /// <param name="rowStart">The row start.</param>
 /// <param name="rowSize">The row size.</param>
-/// <param name="target">The target.</param>
+/// <param name="target">Target object whose mapped properties are populated.</param>
 /// <returns>
 /// <see langword="true"/> when the row was decoded; <see langword="false"/>
 /// when the row should be skipped (empty / malformed trailer).

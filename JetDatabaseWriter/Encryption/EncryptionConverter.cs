@@ -40,7 +40,7 @@ internal static class EncryptionConverter
     /// </summary>
     /// <param name="source">The source.</param>
     /// <param name="password">The password.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted flat Agile database is detected and no password was supplied.</exception>
     public static async ValueTask<(byte[] Plaintext, AccessEncryptionFormat SourceFormat)> ReadDecryptedAsync(
         Stream source,
@@ -193,8 +193,8 @@ internal static class EncryptionConverter
     /// <param name="source">The source.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
-    /// <param name="isLegacyAesCfb">A value indicating whether is legacy aes compound file.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="isLegacyAesCfb">Whether the source uses the legacy AES CFB wrapper.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the source database is shorter than one whole JET page.</exception>
     private static async ValueTask<byte[]> ReadFlatDecryptedAsync(
         Stream source,
@@ -365,7 +365,7 @@ internal static class EncryptionConverter
     /// </summary>
     /// <param name="db">The database input.</param>
     /// <param name="fmt">The database format.</param>
-    /// <param name="isLegacyAesCfb">A value indicating whether is legacy aes compound file.</param>
+    /// <param name="isLegacyAesCfb">Whether the database used the legacy AES CFB wrapper.</param>
     private static void StripEncryptionFromHeader(byte[] db, DatabaseFormat fmt, bool isLegacyAesCfb)
     {
         if (isLegacyAesCfb)
@@ -413,7 +413,7 @@ internal static class EncryptionConverter
     /// </summary>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
-    /// <param name="useAccdbLegacyMask">A value indicating whether use accdb legacy mask.</param>
+    /// <param name="useAccdbLegacyMask">Whether to use the ACCDB legacy password mask instead of the Jet4 mask.</param>
     /// <exception cref="JetLimitationException">Thrown when the password is too long for the fixed header password area.</exception>
     private static void EncodeJet4StylePassword(byte[] header, ReadOnlySpan<char> password, bool useAccdbLegacyMask)
     {

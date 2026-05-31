@@ -320,7 +320,7 @@ internal static class TestDatabases
     /// Returns a skip reason string when the file is missing, or null when it exists.
     /// Use with <c>Skip = SkipIfMissing(path)</c> on [Fact].
     /// </summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     public static string? SkipIfMissing(string path) =>
         File.Exists(path) ? null : $"Test database not found: {path}";
 
@@ -341,7 +341,7 @@ internal static class TestDatabases
     }
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    /// <param name="path">The file path.</param>
+    /// <param name="path">Path to the file.</param>
     internal static bool IsReadable(string path) =>
         ReadableCache.GetOrAdd(path, static p =>
         {
@@ -366,8 +366,8 @@ internal static class TestDatabases
         });
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    /// <param name="path">The file path.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="path">Path to the file.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal static async ValueTask<bool> IsReadableAsync(string path, CancellationToken cancellationToken = default)
     {
         if (ReadableCache.TryGetValue(path, out bool cached))

@@ -43,7 +43,7 @@ internal static class IndexPageCodec
     /// <param name="prevPage">The previous sibling page.</param>
     /// <param name="nextPage">The next sibling page.</param>
     /// <param name="tailPage">The tail page.</param>
-    /// <param name="enablePrefixCompression">A value indicating whether prefix compression is enabled.</param>
+    /// <param name="enablePrefixCompression">Whether prefix compression is enabled.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
     public static byte[] BuildLeafPage(

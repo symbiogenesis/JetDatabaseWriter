@@ -116,7 +116,7 @@ internal sealed class JetByteRangeLock
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="pageSize">The page size.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<IDisposable> AcquirePageLockAsync(long pageNumber, int pageSize, CancellationToken cancellationToken = default)
     {
         if (!this.IsEnabled)

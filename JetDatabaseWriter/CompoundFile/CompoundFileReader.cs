@@ -30,7 +30,7 @@ internal static class CompoundFileReader
     /// Parses the compound file and returns its named top-level streams.
     /// </summary>
     /// <param name="stream">The stream.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken)
     {
         Guard.NotNull(stream, nameof(stream));

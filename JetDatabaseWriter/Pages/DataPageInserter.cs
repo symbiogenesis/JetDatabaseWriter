@@ -199,7 +199,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     /// </summary>
     /// <param name="tdefPageNumber">The TDEF page number.</param>
     /// <param name="dataPageNumber">The data page number.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
     {
         byte[] tdef = await writer.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);

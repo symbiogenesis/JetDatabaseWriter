@@ -157,7 +157,7 @@ internal static class IndexLeafPageBuilder
     /// <param name="prevPage">The prev page.</param>
     /// <param name="nextPage">The next page.</param>
     /// <param name="tailPage">The tail page.</param>
-    /// <param name="enablePrefixCompression">A value indicating whether enable prefix compression.</param>
+    /// <param name="enablePrefixCompression">Whether to emit shared-prefix compression metadata.</param>
     public static byte[] BuildJet4LeafPage(
         int pageSize,
         long parentTdefPage,
@@ -185,8 +185,8 @@ internal static class IndexLeafPageBuilder
     /// <param name="prevPage">The prev page.</param>
     /// <param name="nextPage">The next page.</param>
     /// <param name="tailPage">The tail page.</param>
-    /// <param name="enablePrefixCompression">A value indicating whether enable prefix compression.</param>
-    /// <param name="maxPrefixLength">The max prefix length.</param>
+    /// <param name="enablePrefixCompression">Whether to emit shared-prefix compression metadata.</param>
+    /// <param name="maxPrefixLength">Maximum number of leading bytes that may be shared through prefix compression.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, data-page pointer, or entry bitmask exceeds the format limits.</exception>
     public static byte[] BuildLeafPage(
         LeafPageLayout layout,

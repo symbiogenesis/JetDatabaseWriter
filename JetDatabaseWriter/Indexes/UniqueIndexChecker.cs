@@ -26,7 +26,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
         long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
@@ -149,7 +149,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="pendingRows">The pending rows.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask CheckUniqueIndexesPreInsertAsync(
         long tdefPage,
         TableDef tableDef,
@@ -190,7 +190,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <param name="tableName">The table name.</param>
     /// <param name="descriptors">The descriptors.</param>
     /// <param name="pendingRows">The pending rows.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
@@ -252,7 +252,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     /// <param name="tableName">The table name.</param>
     /// <param name="snapshot">The snapshot.</param>
     /// <param name="updates">The updates.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask CheckUniqueIndexesPreUpdateAsync(
         long tdefPage,
         TableDef tableDef,

@@ -116,7 +116,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// <c>"yyyy-MM-dd HH:mm:ss"</c> round-trip, so parity with the legacy path
     /// must hold here.
     /// </summary>
-    /// <param name="isoText">A value indicating whether iso text.</param>
+    /// <param name="isoText">ISO-formatted date/time text.</param>
     [Theory]
     [InlineData("1899-12-30 00:00:00")] // OADate epoch
     [InlineData("1900-01-01 00:00:00")]

@@ -53,7 +53,7 @@ internal sealed class IndexCursor
     /// </summary>
     /// <param name="rootPageNumber">The root page number.</param>
     /// <param name="searchKey">The search key.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<bool> ContainsKeyAsync(
         long rootPageNumber,
         byte[] searchKey,
@@ -76,7 +76,7 @@ internal sealed class IndexCursor
     /// </summary>
     /// <param name="rootPageNumber">The root page number.</param>
     /// <param name="searchKey">The search key.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsAsync(
         long rootPageNumber,
         byte[] searchKey,

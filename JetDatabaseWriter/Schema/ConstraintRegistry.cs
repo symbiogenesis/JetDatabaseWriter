@@ -126,7 +126,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="tableName">The table name.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
-    /// <param name="cancellationToken">A value indicating whether cancellation token.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
