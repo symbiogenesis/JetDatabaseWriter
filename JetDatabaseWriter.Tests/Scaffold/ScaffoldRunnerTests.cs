@@ -443,6 +443,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
+        public ValueTask<System.Data.DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
         public ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
             where T : class, new() =>
             throw new NotImplementedException();

@@ -1412,15 +1412,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
-    /// Each column uses its native CLR type (int, DateTimeType, decimal, etc.).
+    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
+    public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+        => this.ReadDataTableCoreAsync(tableName, maxRows, progress, preserveComplexReferences: false, cancellationToken);
+
+    /// <summary>
+    /// Reads the entire table into a DataTable with properly typed columns asynchronously.
+    /// This is a compatibility alias for <see cref="ReadTableAsync(string?, uint?, IProgress{long}?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
     public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
-        => this.ReadDataTableCoreAsync(tableName, maxRows, progress, preserveComplexReferences: false, cancellationToken);
+        => this.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
 
     internal ValueTask<DataTable> ReadDataTableForSchemaRewriteAsync(string tableName, CancellationToken cancellationToken = default)
         => this.ReadDataTableCoreAsync(tableName, maxRows: null, progress: null, preserveComplexReferences: true, cancellationToken);
@@ -1983,7 +1995,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
             CatalogEntry table = tables[i];
             progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
-            result[table.Name] = await this.ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
+            result[table.Name] = await this.ReadTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         return result;

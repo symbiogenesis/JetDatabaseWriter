@@ -163,13 +163,13 @@ Property names are matched to column headers **case-insensitively**. Unmatched p
 ### Typed DataTable
 
 ```csharp
-DataTable dt = await reader.ReadDataTableAsync("Products", cancellationToken: cancellationToken);
+DataTable dt = await reader.ReadTableAsync("Products", cancellationToken: cancellationToken);
 // dt.Columns["ProductID"].DataType    == typeof(int)
 // dt.Columns["UnitPrice"].DataType    == typeof(decimal)
 // dt.Columns["Discontinued"].DataType == typeof(bool)
 ```
 
-`ReadDataTableAsync`, `ReadAllTablesAsync`, and the string-typed DataTable APIs fully materialize their results. They are convenient for data binding, previews, exports, and compatibility code; for bulk processing or large-table scans, prefer `Rows(...)` or `Rows<T>(...)` so rows stream lazily and can short-circuit through async LINQ.
+`ReadTableAsync`, `ReadAllTablesAsync`, and the string-typed DataTable APIs fully materialize their results. They are convenient for data binding, previews, exports, and compatibility code; for bulk processing or large-table scans, prefer `Rows(...)` or `Rows<T>(...)` so rows stream lazily and can short-circuit through async LINQ. `ReadDataTableAsync` remains available as a compatibility alias for `ReadTableAsync`.
 
 ### Column metadata
 
@@ -185,7 +185,7 @@ foreach (ColumnMetadata col in meta)
 
 ### Date/Time Extended
 
-Access 2019+ Date/Time Extended columns decode to `DateTime` with `DateTimeKind.Unspecified`, preserving the 100 ns tick precision stored in the 42-byte Access payload. Metadata reports `TypeName == "Date/Time Extended"` and `ClrType == typeof(DateTime)`; `Rows(...)`, `Rows<T>(...)`, and `ReadDataTableAsync` surface row values as `DateTime`.
+Access 2019+ Date/Time Extended columns decode to `DateTime` with `DateTimeKind.Unspecified`, preserving the 100 ns tick precision stored in the 42-byte Access payload. Metadata reports `TypeName == "Date/Time Extended"` and `ClrType == typeof(DateTime)`; `Rows(...)`, `Rows<T>(...)`, and `ReadTableAsync` surface row values as `DateTime`.
 
 Classic `Date/Time` remains the default for `new ColumnDefinition("When", typeof(DateTime))`. To author a Date/Time Extended column in an ACCDB database, opt in explicitly:
 
@@ -559,7 +559,7 @@ await writer.CreateLinkedTextTableAsync(
     foreignFileName:      "orders.csv",
     connectString:        "Text;HDR=YES;FMT=Delimited");
 
-DataTable csvRows = await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: cancellationToken);
+DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationToken: cancellationToken);
 ```
 
 > ODBC links remain metadata-only. Fixed-width text links and schema.ini type inference are not part of the managed text reader. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
@@ -725,7 +725,7 @@ await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOpti
 ## Error Handling
 
 ```csharp
-try { var dt = await reader.ReadDataTableAsync("Orders"); }
+try { var dt = await reader.ReadTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }

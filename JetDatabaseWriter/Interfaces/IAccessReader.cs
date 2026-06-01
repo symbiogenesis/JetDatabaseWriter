@@ -75,6 +75,20 @@ public interface IAccessReader : IAccessBase
     public ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads the entire table into a DataTable with properly typed columns asynchronously.
+    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
+    /// Prefer <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> or
+    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/> for bulk processing
+    /// when a fully materialized <see cref="DataTable"/> is not required.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
+    public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
@@ -179,14 +193,10 @@ public interface IAccessReader : IAccessBase
     public ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads the entire table into a DataTable with properly typed columns asynchronously.
-    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
-    /// Prefer <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> or
-    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/> for bulk processing
-    /// when a fully materialized <see cref="DataTable"/> is not required.
+    /// Compatibility alias for <see cref="ReadTableAsync(string?, uint?, IProgress{long}?, CancellationToken)"/>.
     /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="maxRows">The max rows.</param>
+    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
