@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Enums;
 
 internal enum IndexQueryKind
 {

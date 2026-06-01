@@ -1,6 +1,7 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Indexes;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
