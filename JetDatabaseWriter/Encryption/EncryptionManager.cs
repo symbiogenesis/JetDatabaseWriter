@@ -108,6 +108,14 @@ internal static class EncryptionManager
         return null;
     }
 
+    private const int HeaderPasswordLength = 40;
+
+    private const int HeaderPasswordLengthPrefixLength = 4;
+
+    private const int HeaderPasswordCharSize = 2;
+
+    private const int HeaderPasswordNormalizedLength = HeaderPasswordLengthPrefixLength + HeaderPasswordLength;
+
     /// <summary>
     /// Constant RC4 key Microsoft Access applies to header bytes [0x18 .. 0x18+126]
     /// (Jet3) or [0x18 .. 0x18+128] (Jet4/ACE) at file write time. The same key
@@ -449,8 +457,7 @@ internal static class EncryptionManager
                         "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
                 }
 
-                string storedPassword = DecodeHeaderPassword(hdr, Jet4PasswordMask);
-                if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
+                if (!HeaderPasswordMatches(hdr, Jet4PasswordMask, password.Span))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -479,8 +486,7 @@ internal static class EncryptionManager
                         "Provide a password via AccessReaderOptions.Password.");
                 }
 
-                string storedPassword = DecodeHeaderPassword(hdr, AccdbLegacyPasswordMask);
-                if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
+                if (!HeaderPasswordMatches(hdr, AccdbLegacyPasswordMask, password.Span))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -501,8 +507,7 @@ internal static class EncryptionManager
             }
 
             // ACCDB uses the same XOR scheme as Jet4 for the header password area.
-            string storedPassword = DecodeHeaderPassword(hdr, Jet4PasswordMask);
-            if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
+            if (!HeaderPasswordMatches(hdr, Jet4PasswordMask, password.Span))
             {
                 throw new UnauthorizedAccessException(
                     "The provided password is incorrect for this database.");
@@ -1020,26 +1025,60 @@ internal static class EncryptionManager
     }
 #pragma warning restore CA5358
 
-    /// <summary>
-    /// Shared XOR-mask password decoder for the 40-byte header password area
-    /// at offset 0x42. The 40 bytes are XOR'd with a fixed mask and the 4-byte
-    /// creation date at offset 0x72. Decodes as UTF-16LE and stops at the first
-    /// NUL char because the encryption flag at 0x62 overlaps byte 32 of the area
-    /// and can produce a non-null artifact.
-    /// </summary>
-    /// <param name="hdr">The database header bytes.</param>
-    /// <param name="mask">The encryption mask or page bitmask.</param>
-    private static string DecodeHeaderPassword(byte[] hdr, ReadOnlySpan<byte> mask)
+    private static bool HeaderPasswordMatches(byte[] hdr, ReadOnlySpan<byte> mask, ReadOnlySpan<char> password)
     {
-        Span<byte> decoded = stackalloc byte[40];
-        for (int i = 0; i < 40; i++)
+        Span<byte> storedNormalized = stackalloc byte[HeaderPasswordNormalizedLength];
+        Span<byte> suppliedNormalized = stackalloc byte[HeaderPasswordNormalizedLength];
+
+        NormalizeStoredHeaderPassword(hdr, mask, storedNormalized);
+        NormalizeSuppliedHeaderPassword(password, suppliedNormalized);
+
+        bool matches = CryptographicOperations.FixedTimeEquals(storedNormalized, suppliedNormalized);
+        CryptographicOperations.ZeroMemory(storedNormalized);
+        CryptographicOperations.ZeroMemory(suppliedNormalized);
+        return matches;
+    }
+
+    private static void NormalizeStoredHeaderPassword(byte[] hdr, ReadOnlySpan<byte> mask, Span<byte> destination)
+    {
+        destination.Clear();
+        Span<byte> passwordBytes = destination.Slice(HeaderPasswordLengthPrefixLength, HeaderPasswordLength);
+
+        for (int offset = 0; offset < HeaderPasswordLength; offset++)
         {
-            decoded[i] = (byte)(hdr[0x42 + i] ^ mask[i] ^ hdr[0x72 + (i % 4)]);
+            passwordBytes[offset] = (byte)(hdr[0x42 + offset] ^ mask[offset] ^ hdr[0x72 + (offset % 4)]);
         }
 
-        string raw = Encoding.Unicode.GetString(decoded);
-        int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
-        return nullIdx >= 0 ? raw[..nullIdx] : raw;
+        int passwordByteLength = HeaderPasswordLength;
+        for (int offset = 0; offset < HeaderPasswordLength; offset += HeaderPasswordCharSize)
+        {
+            if (passwordBytes[offset] == 0 && passwordBytes[offset + 1] == 0)
+            {
+                passwordByteLength = offset;
+                passwordBytes[offset..].Clear();
+                break;
+            }
+        }
+
+        Wu32(destination, 0, (uint)passwordByteLength);
+    }
+
+    private static void NormalizeSuppliedHeaderPassword(ReadOnlySpan<char> password, Span<byte> destination)
+    {
+        destination.Clear();
+        Span<byte> passwordBytes = destination.Slice(HeaderPasswordLengthPrefixLength, HeaderPasswordLength);
+        const int maxPasswordChars = HeaderPasswordLength / HeaderPasswordCharSize;
+        int charsToEncode = Math.Min(password.Length, maxPasswordChars);
+
+        if (charsToEncode > 0)
+        {
+            _ = Encoding.Unicode.GetBytes(password[..charsToEncode], passwordBytes);
+        }
+
+        uint passwordByteLength = password.Length <= maxPasswordChars
+            ? (uint)(password.Length * HeaderPasswordCharSize)
+            : uint.MaxValue;
+        Wu32(destination, 0, passwordByteLength);
     }
 
     /// <summary>
