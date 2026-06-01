@@ -12,7 +12,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>v4.0.0 — Async-only API, full encryption/password support (Jet3 XOR, Jet4 RC4, ACCDB AES), lockfile handling, scaffolding CLI tool, create new database files. See CHANGELOG.md for full details.</PackageReleaseNotes>
+    <PackageReleaseNotes>v4.0.0 — Async-only API, full encryption/password support (Jet3 XOR, Jet4 RC4, ACCDB AES), lockfile handling, scaffolding CLI tool, create new database files.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
