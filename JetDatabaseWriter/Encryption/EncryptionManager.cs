@@ -994,6 +994,7 @@ internal static class EncryptionManager
         try
         {
 #pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
+#if NETSTANDARD2_1
             using (var md5 = MD5.Create())
             {
                 if (!md5.TryComputeHash(input, hash, out _))
@@ -1001,6 +1002,12 @@ internal static class EncryptionManager
                     throw new CryptographicException("MD5 hash computation failed.");
                 }
             }
+#else
+            if (MD5.HashData(input, hash) != hash.Length)
+            {
+                throw new CryptographicException("MD5 hash computation failed.");
+            }
+#endif
 #pragma warning restore CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
 
             hash[..4].CopyTo(destination);
