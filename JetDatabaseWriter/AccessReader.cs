@@ -2752,14 +2752,34 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (this.DiagnosticsEnabled)
         {
-            var diag = new StringBuilder();
-            _ = diag.AppendLine($"JET: {(this.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {this.PageSizeBytes}  TotalPages: {this.DatabaseStream.Length / this.PageSizeBytes}");
-            _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
-                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[{GetTypeDisplayName(c.Type)}]")));
-            _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
+            StringBuilder diag = new StringBuilder()
+                .Append("JET: ")
+                .Append(this.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")
+                .Append("  PageSize: ")
+                .Append(this.PageSizeBytes)
+                .Append("  TotalPages: ")
+                .Append(this.DatabaseStream.Length / this.PageSizeBytes)
+                .AppendLine()
+                .Append("MSysObjects cols (")
+                .Append(msys.Columns.Count)
+                .Append("): ")
+                .AppendJoin(", ", msys.Columns.Select(static c => $"{c.Name}[{GetTypeDisplayName(c.Type)}]"))
+                .AppendLine()
+                .Append("Catalog pages: ")
+                .Append(catPages)
+                .Append("  Total rows scanned: ")
+                .Append(allRows)
+                .Append("  User tables: ")
+                .Append(result.Count)
+                .AppendLine();
+
             foreach (CatalogEntry e in result)
             {
-                _ = diag.AppendLine($"  [{e.Name}] TDEF page {e.TDefPage}");
+                _ = diag.Append("  [")
+                    .Append(e.Name)
+                    .Append("] TDEF page ")
+                    .Append(e.TDefPage)
+                    .AppendLine();
             }
 
             this.LastDiagnostics = diag.ToString();
