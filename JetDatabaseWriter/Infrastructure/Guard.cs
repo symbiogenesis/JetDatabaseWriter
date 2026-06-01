@@ -51,6 +51,15 @@ internal static class Guard
 #endif
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void NotEmpty<T>(ReadOnlyMemory<T> value, string paramName)
+    {
+        if (value.IsEmpty)
+        {
+            throw new ArgumentException("Value cannot be empty", paramName);
+        }
+    }
+
     /// <summary>
     /// Validates that <paramref name="value"/> falls in the inclusive range
     /// <c>[min, max]</c>. On failure throws an <see cref="ArgumentOutOfRangeException"/>

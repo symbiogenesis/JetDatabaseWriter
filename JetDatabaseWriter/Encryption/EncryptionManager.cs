@@ -273,13 +273,13 @@ internal static class EncryptionManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask ChangePasswordAsync(
         string path,
-        string oldPassword,
-        string newPassword,
+        ReadOnlyMemory<char> oldPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        Guard.NotEmpty(newPassword, nameof(newPassword));
         return ReencryptFileAsync(
             path,
             oldPassword,
@@ -302,13 +302,13 @@ internal static class EncryptionManager
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         string path,
-        string newPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessEncryptionFormat targetFormat,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        Guard.NotEmpty(newPassword, nameof(newPassword));
         if (targetFormat == AccessEncryptionFormat.None)
         {
             throw new ArgumentException(
@@ -335,7 +335,7 @@ internal static class EncryptionManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask DecryptAsync(
         string path,
-        string oldPassword,
+        ReadOnlyMemory<char> oldPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
     {
@@ -351,7 +351,7 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Stream-based equivalent of <see cref="ChangePasswordAsync(string,string,string,AccessWriterOptions?,CancellationToken)"/>.
+    /// Stream-based equivalent of <see cref="ChangePasswordAsync(string,ReadOnlyMemory{char},ReadOnlyMemory{char},AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="oldPassword">The old password.</param>
@@ -359,12 +359,12 @@ internal static class EncryptionManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask ChangePasswordAsync(
         Stream stream,
-        string oldPassword,
-        string newPassword,
+        ReadOnlyMemory<char> oldPassword,
+        ReadOnlyMemory<char> newPassword,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        Guard.NotEmpty(newPassword, nameof(newPassword));
         return ReencryptStreamAsync(
             stream,
             oldPassword,
@@ -375,7 +375,7 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Stream-based equivalent of <see cref="EncryptAsync(string,string,AccessEncryptionFormat,AccessWriterOptions?,CancellationToken)"/>.
+    /// Stream-based equivalent of <see cref="EncryptAsync(string,ReadOnlyMemory{char},AccessEncryptionFormat,AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="newPassword">The new password.</param>
@@ -384,12 +384,12 @@ internal static class EncryptionManager
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
     public static ValueTask EncryptAsync(
         Stream stream,
-        string newPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessEncryptionFormat targetFormat,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        Guard.NotEmpty(newPassword, nameof(newPassword));
         if (targetFormat == AccessEncryptionFormat.None)
         {
             throw new ArgumentException(
@@ -407,14 +407,14 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Stream-based equivalent of <see cref="DecryptAsync(string,string,AccessWriterOptions?,CancellationToken)"/>.
+    /// Stream-based equivalent of <see cref="DecryptAsync(string,ReadOnlyMemory{char},AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public static ValueTask DecryptAsync(
         Stream stream,
-        string oldPassword,
+        ReadOnlyMemory<char> oldPassword,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
@@ -698,8 +698,8 @@ internal static class EncryptionManager
 
     private static async ValueTask ReencryptFileAsync(
         string path,
-        string? oldPassword,
-        string? newPassword,
+        ReadOnlyMemory<char>? oldPassword,
+        ReadOnlyMemory<char>? newPassword,
         AccessEncryptionFormat? targetFormat,
         bool requireSourceEncrypted,
         AccessWriterOptions? options,
@@ -778,8 +778,8 @@ internal static class EncryptionManager
 
     private static async ValueTask ReencryptStreamAsync(
         Stream stream,
-        string? oldPassword,
-        string? newPassword,
+        ReadOnlyMemory<char>? oldPassword,
+        ReadOnlyMemory<char>? newPassword,
         AccessEncryptionFormat? targetFormat,
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
@@ -802,14 +802,14 @@ internal static class EncryptionManager
 
     private static async ValueTask<byte[]> ReencryptCoreAsync(
         Stream source,
-        string? oldPassword,
-        string? newPassword,
+        ReadOnlyMemory<char>? oldPassword,
+        ReadOnlyMemory<char>? newPassword,
         AccessEncryptionFormat? targetFormat,
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
     {
-        ReadOnlyMemory<char> oldPwd = oldPassword.AsMemory();
-        ReadOnlyMemory<char> newPwd = newPassword.AsMemory();
+        ReadOnlyMemory<char> oldPwd = oldPassword.GetValueOrDefault();
+        ReadOnlyMemory<char> newPwd = newPassword.GetValueOrDefault();
 
         long origPos = source.Position;
         AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);

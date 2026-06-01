@@ -16,9 +16,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// <para>
 /// Implements the read-decrypt-rewrite pipeline used by
-/// <see cref="AccessWriter.ChangePasswordAsync(string, string?, string, AccessWriterOptions?, CancellationToken)"/>,
-/// <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
-/// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>.
+/// <see cref="AccessWriter.ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>,
+/// <see cref="AccessWriter.EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
+/// and <see cref="AccessWriter.DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
 /// </para>
 /// <para>
 /// All public entry points are pure byte-array transforms — they never touch

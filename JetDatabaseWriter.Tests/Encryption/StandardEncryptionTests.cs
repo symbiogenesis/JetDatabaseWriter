@@ -46,6 +46,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     private const string TestPassword = "secret";
     private const string WrongPassword = "wrong_password_123";
 
+    private static ReadOnlyMemory<char> TestPasswordMemory => TestPassword.AsMemory();
+
     // ═══════════════════════════════════════════════════════════════════
     // 1. PASSWORD ENFORCEMENT
     // ═══════════════════════════════════════════════════════════════════
@@ -602,7 +604,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         {
             await AccessWriter.EncryptAsync(
                 path,
-                TestPassword,
+                TestPasswordMemory,
                 AccessEncryptionFormat.AccdbStandard,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
@@ -630,15 +632,15 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         {
             await AccessWriter.EncryptAsync(
                 path,
-                TestPassword,
+                TestPasswordMemory,
                 AccessEncryptionFormat.AccdbStandard,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 
             await AccessWriter.ChangePasswordAsync(
                 path,
-                TestPassword,
-                newPassword,
+                TestPasswordMemory,
+                newPassword.AsMemory(),
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 
@@ -669,14 +671,14 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         {
             await AccessWriter.EncryptAsync(
                 path,
-                TestPassword,
+                TestPasswordMemory,
                 AccessEncryptionFormat.AccdbStandard,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 
             await AccessWriter.DecryptAsync(
                 path,
-                TestPassword,
+                TestPasswordMemory,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 

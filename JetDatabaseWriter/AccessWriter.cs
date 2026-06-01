@@ -1666,23 +1666,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Changes the password of an already-encrypted JET / ACE database in place,
     /// preserving the existing on-disk encryption format. Use
-    /// <see cref="EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>
+    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>
     /// to add encryption to an unencrypted database, or
-    /// <see cref="DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>
+    /// <see cref="DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>
     /// to remove it.
     /// </summary>
     /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
-    /// <param name="oldPassword">The current password.</param>
-    /// <param name="newPassword">The new password (must be non-empty).</param>
+    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
+    /// <param name="newPassword">The new password (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring; the password fields are ignored.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong, or the database is unencrypted.</exception>
-    /// <exception cref="ArgumentException"><paramref name="newPassword"/> is null or empty.</exception>
+    /// <exception cref="ArgumentException"><paramref name="newPassword"/> is empty.</exception>
     public static ValueTask ChangePasswordAsync(
         string path,
-        string oldPassword,
-        string newPassword,
+        ReadOnlyMemory<char> oldPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
         => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
@@ -1692,20 +1692,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// requested <paramref name="targetFormat"/>.
     /// </summary>
     /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
-    /// <param name="newPassword">The password to apply (must be non-empty).</param>
+    /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="targetFormat">The encryption format to use. Must be valid for the file kind (Jet4 / ACE).</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="newPassword"/> is null/empty,
+    /// <paramref name="newPassword"/> is empty,
     /// <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>,
     /// or the format is not valid for the underlying file kind.
     /// </exception>
     /// <exception cref="InvalidOperationException">The file is already encrypted.</exception>
     public static ValueTask EncryptAsync(
         string path,
-        string newPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessEncryptionFormat targetFormat,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -1716,7 +1716,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// unencrypted file with no header password residue.
     /// </summary>
     /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
-    /// <param name="oldPassword">The current password.</param>
+    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
@@ -1724,56 +1724,56 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="InvalidOperationException">The file is already unencrypted.</exception>
     public static ValueTask DecryptAsync(
         string path,
-        string oldPassword,
+        ReadOnlyMemory<char> oldPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
         => EncryptionManager.DecryptAsync(path, oldPassword, options, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
-    /// <see cref="ChangePasswordAsync(string, string, string, AccessWriterOptions?, CancellationToken)"/>.
+    /// <see cref="ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
     /// The stream must be readable, writable, and seekable; it is rewritten
     /// in place (length may change for Agile transitions).
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
-    /// <param name="oldPassword">The current password.</param>
-    /// <param name="newPassword">The new password (must be non-empty).</param>
+    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
+    /// <param name="newPassword">The new password (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask ChangePasswordAsync(
         Stream stream,
-        string oldPassword,
-        string newPassword,
+        ReadOnlyMemory<char> oldPassword,
+        ReadOnlyMemory<char> newPassword,
         CancellationToken cancellationToken = default)
         => EncryptionManager.ChangePasswordAsync(stream, oldPassword, newPassword, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
-    /// <see cref="EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>.
+    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
-    /// <param name="newPassword">The password to apply.</param>
+    /// <param name="newPassword">The password to apply. Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="targetFormat">The encryption format to use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask EncryptAsync(
         Stream stream,
-        string newPassword,
+        ReadOnlyMemory<char> newPassword,
         AccessEncryptionFormat targetFormat,
         CancellationToken cancellationToken = default)
         => EncryptionManager.EncryptAsync(stream, newPassword, targetFormat, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
-    /// <see cref="DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>.
+    /// <see cref="DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the encrypted database bytes.</param>
-    /// <param name="oldPassword">The current password.</param>
+    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask DecryptAsync(
         Stream stream,
-        string oldPassword,
+        ReadOnlyMemory<char> oldPassword,
         CancellationToken cancellationToken = default)
         => EncryptionManager.DecryptAsync(stream, oldPassword, cancellationToken);
 

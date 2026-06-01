@@ -514,7 +514,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         await AccessWriter.EncryptAsync(
             dbPath,
-            Password,
+            Password.AsMemory(),
             AccessEncryptionFormat.AccdbAgile,
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);

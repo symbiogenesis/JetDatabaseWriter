@@ -26,7 +26,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 | Crypto CSPRNG | **Mostly already implemented.** Office Standard/Agile salts, verifier material, HMAC keys, flat Agile encoding keys, and Jet4 RC4 db keys use `RandomNumberGenerator`. | No CSPRNG todo unless new random material is added. |
 | Crypto comparisons | **Partially valid.** Office Standard/Agile password verifier and Agile HMAC comparisons use fixed-time comparison. Legacy Jet4/ACCDB header password checks in `EncryptionManager.ResolveReaderPageKeys` still use `SequenceEqual`. | Add fixed-time legacy password compare todo. |
 | Key material lifetime | **Partially valid.** Password UTF-16 buffers and some PBKDF scratch buffers are zeroed, but derived keys/intermediate keys/HMAC material commonly remain in managed arrays until GC. | Add best-effort zeroization and documentation todo. |
-| Password `string` exposure | **Partially valid.** Options store `ReadOnlyMemory<char>`, but convenience constructors and encryption mutation APIs still take `string`, and immutable caller strings cannot be erased. | Add span/memory overload or documentation todo. |
+| Password `string` exposure | **Partially valid.** Options store `ReadOnlyMemory<char>`, and encryption mutation APIs now take `ReadOnlyMemory<char>`. Convenience constructors and caller-created `string.AsMemory()` values can still leave immutable strings on the GC heap. | Mutation API completed; keep residual managed-memory documentation todo. |
 | Weak encryption formats | **Valid as documentation/API risk.** The API can explicitly write legacy RC4/password-only/AES-ECB-compatible formats because Access compatibility requires them. Agile is available, but docs should make it the recommended new-write target and warn on legacy choices. | Add docs/API warning todo. |
 | Wrong-password exception type | **Valid.** Wrong or missing database passwords map to `UnauthorizedAccessException`, which callers can confuse with filesystem ACL failures. | Add exception taxonomy todo. |
 | Linked-table hardening and disclosure path | **Valid split.** Linked source hardening is strong and well documented. A standard `SECURITY.md` is absent. | Add `SECURITY.md` todo. |
@@ -67,7 +67,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 - [x] Add regression tests that cover wrong-password paths for Jet4 RC4, ACCDB legacy password, and ACCDB AES CFB-wrapped header-password verification.
 - [x] Add best-effort `CryptographicOperations.ZeroMemory` cleanup for derived keys, intermediate Agile keys, verifier/HMAC material, and temporary plaintext password encodings where lifetimes are locally owned.
 - [ ] Document the residual managed-memory limitation: caller-provided strings and copied arrays can still remain on the GC heap.
-- [ ] Add non-`string` password overloads for encryption mutation APIs, or document that `string` overloads are convenience APIs with non-erasable password lifetime.
+- [x] Replace encryption mutation API `string` password parameters with `ReadOnlyMemory<char>` parameters.
 - [ ] Make Agile encryption the documented recommendation for new encrypted ACCDB output.
 - [ ] Warn in docs, and possibly via an opt-in diagnostic callback, when callers explicitly select legacy weak formats such as Jet4 RC4, ACCDB legacy password-only, or AES-128 ECB-compatible page encryption.
 - [ ] Consider a dedicated exception type for missing/incorrect database passwords so callers can distinguish password failure from filesystem access denial.

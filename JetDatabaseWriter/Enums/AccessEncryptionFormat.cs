@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Identifies the on-disk encryption layout of a JET / ACE database.
-/// Used by <see cref="AccessWriter.EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>
+/// Used by <see cref="AccessWriter.EncryptAsync(string, System.ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>
 /// to choose which scheme to apply when encrypting a previously-unencrypted
 /// file, and returned by <see cref="AccessWriter.DetectEncryptionFormatAsync(string, System.Threading.CancellationToken)"/>
 /// for inspection.
