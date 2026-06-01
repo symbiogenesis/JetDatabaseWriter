@@ -33,7 +33,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>` |
+| ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>`; explicit `FromIndex<T>(...)` for index-backed reads |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -212,7 +212,27 @@ foreach (IndexMetadata idx in indexes)
 
 Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Use `IndexMetadata.EnforcesUniqueness` for semantic uniqueness and `IndexMetadata.HasUniqueFlag` when you need the raw real-index `flags & 0x01` bit. Access does not always set that flag on primary keys because uniqueness is implied by `Kind == PrimaryKey`.
 
-`SeekRowsAsync` performs an exact Jet4/ACE index seek by table name, index name, and key tuple, returning the same typed `object[]` row shape as `Rows(...)`. It supports unique and non-unique indexes, including composite keys; range scans remain out of scope for this API.
+`FromIndex(...)` starts an explicit Jet4/ACE index-backed read. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
+
+```csharp
+await foreach (Company company in reader
+    .FromIndex<Company>("Companies", "IX_CompanyName")
+    .WhereEquals("Contoso")
+    .ToRowsAsync(cancellationToken))
+{
+    Console.WriteLine(company.Name);
+}
+
+await foreach (Order order in reader
+    .FromIndex<Order>("Orders", "IX_OrderDate")
+    .WhereBetween(startDate, endDate, lowerInclusive: true, upperInclusive: false)
+    .ToRowsAsync(cancellationToken))
+{
+    Console.WriteLine(order.OrderId);
+}
+```
+
+`SeekRowsAsync` remains the exact-key compatibility surface by table name, index name, and full key tuple, returning the same typed `object[]` row shape as `Rows(...)`. It supports unique and non-unique indexes, including composite keys; use `FromIndex(...)` for range or leading-key-prefix scans.
 
 ```csharp
 await foreach (object[] row in reader.SeekRowsAsync("Companies", "IX_CompanyName", ["Contoso"], cancellationToken))
@@ -366,7 +386,7 @@ await foreach (string[] row in reader.RowsAsStrings("Orders")
 }
 ```
 
-Filtering and projection run client-side per row — there is no SQL engine underneath — but enumeration is fully lazy and `Take`/`First` short-circuit the underlying page reader.
+Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. Use `FromIndex(...)` for explicit index-backed equality, leading-key-prefix, or range reads; use `SeekRowsAsync` when you only need the older full-key exact-match object-array API.
 
 ---
 

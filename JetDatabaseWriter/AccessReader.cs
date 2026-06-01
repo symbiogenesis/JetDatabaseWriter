@@ -17,6 +17,7 @@ using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -1052,16 +1053,90 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
+    public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(indexName, nameof(indexName));
+        return new AccessObjectIndexQuery(this, tableName, indexName);
+    }
+
+    /// <inheritdoc/>
+    public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(indexName, nameof(indexName));
+        return new AccessTypedIndexQuery<T>(this, tableName, indexName);
+    }
+
+    /// <inheritdoc/>
     public async IAsyncEnumerable<object[]> SeekRowsAsync(
         string tableName,
         string indexName,
         IReadOnlyList<object?> keyValues,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (object[] row in this.ReadIndexRowsAsObjectsAsync(
+                tableName,
+                indexName,
+                IndexQueryCriteria.Exact(keyValues),
+                cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    internal IAsyncEnumerable<object[]> ReadIndexRowsAsObjectsAsync(
+        string tableName,
+        string indexName,
+        IndexQueryCriteria criteria,
+        CancellationToken cancellationToken = default) =>
+        this.EnumerateIndexRowsAsync<object[]>(
+            tableName,
+            indexName,
+            criteria,
+            static _ => (static row => (object[])row, null),
+            cancellationToken);
+
+    internal IAsyncEnumerable<T> ReadIndexRowsAsync<T>(
+        string tableName,
+        string indexName,
+        IndexQueryCriteria criteria,
+        CancellationToken cancellationToken = default)
+        where T : class, new() =>
+        this.EnumerateIndexRowsAsync(
+            tableName,
+            indexName,
+            criteria,
+            static td =>
+            {
+                string[] headers = new string[td.Columns.Count];
+                for (int i = 0; i < td.Columns.Count; i++)
+                {
+                    headers[i] = td.Columns[i].Name;
+                }
+
+                Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+                bool[]? wantedColumns = td.HasComplexColumns
+                    ? null
+                    : RowMapper<T>.GetBoundColumnMask(headers);
+
+                return (factory, wantedColumns);
+            },
+            cancellationToken);
+
+    private async IAsyncEnumerable<TRow> EnumerateIndexRowsAsync<TRow>(
+        string tableName,
+        string indexName,
+        IndexQueryCriteria criteria,
+        Func<TableDef, (Func<object?[], TRow> Factory, bool[]? WantedColumns)> createProjection,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(indexName, nameof(indexName));
-        Guard.NotNull(keyValues, nameof(keyValues));
+        Guard.NotNull(criteria, nameof(criteria));
+        Guard.NotNull(createProjection, nameof(createProjection));
         cancellationToken.ThrowIfCancellationRequested();
 
         (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1092,17 +1167,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        byte[] searchKey = this.EncodeIndexSeekKey(tableName, index, td, keyValues);
         var cursor = new IndexCursor(
             this.ReadPageCachedAsync,
             this.PageSizeBytes);
-        List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsAsync(
-            index.FirstDp,
-            searchKey,
+        List<(long DataPage, int RowIndex)> hits = await this.FindIndexRowLocationsAsync(
+            tableName,
+            index,
+            td,
+            criteria,
+            cursor,
             cancellationToken).ConfigureAwait(false);
 
-        bool needsComplexPass = td.HasComplexColumns;
-        bool needsHyperlinkPass = td.HasHyperlinkColumns;
+        (Func<object?[], TRow> factory, bool[]? wantedColumns) = createProjection(td);
+
+        bool needsComplexPass = td.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
             ? await this.complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
@@ -1116,6 +1197,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 td,
                 dataPage,
                 rowIndex,
+                wantedColumns,
                 complexData,
                 needsComplexPass,
                 needsHyperlinkPass,
@@ -1125,7 +1207,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            yield return (object[])row;
+            yield return factory(row);
         }
     }
 
@@ -1306,20 +1388,122 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
-    private byte[] EncodeIndexSeekKey(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues)
+    private async ValueTask<List<(long DataPage, int RowIndex)>> FindIndexRowLocationsAsync(
+        string tableName,
+        IndexMetadata index,
+        TableDef tableDef,
+        IndexQueryCriteria criteria,
+        IndexCursor cursor,
+        CancellationToken cancellationToken)
     {
-        if (keyValues.Count != index.Columns.Count)
+        static bool IsEmptyRange(byte[]? lowerKey, bool lowerInclusive, byte[]? upperKey, bool upperInclusive)
+        {
+            if (lowerKey == null || upperKey == null)
+            {
+                return false;
+            }
+
+            int comparison = IndexHelpers.CompareKeyBytes(lowerKey, upperKey);
+            return comparison > 0 || (comparison == 0 && (!lowerInclusive || !upperInclusive));
+        }
+
+        switch (criteria.Kind)
+        {
+            case IndexQueryKind.All:
+                return await cursor.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    lowerKey: null,
+                    lowerInclusive: true,
+                    lowerIsPrefix: false,
+                    upperKey: null,
+                    upperInclusive: true,
+                    upperIsPrefix: false,
+                    requiredPrefix: null,
+                    cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.Exact:
+                byte[] searchKey = this.EncodeIndexSeekKey(tableName, index, tableDef, criteria.Values!);
+                return await cursor.FindRowLocationsAsync(index.FirstDp, searchKey, cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.KeyPrefix:
+                byte[] prefixKey = this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Values!, nameof(criteria));
+                return await cursor.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    prefixKey,
+                    lowerInclusive: true,
+                    lowerIsPrefix: false,
+                    upperKey: null,
+                    upperInclusive: true,
+                    upperIsPrefix: false,
+                    requiredPrefix: prefixKey,
+                    cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.Range:
+                byte[]? lowerKey = criteria.Lower is null
+                    ? null
+                    : this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Lower.Values, nameof(criteria));
+                byte[]? upperKey = criteria.Upper is null
+                    ? null
+                    : this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Upper.Values, nameof(criteria));
+                bool lowerIsPrefix = criteria.Lower != null && criteria.Lower.Values.Count < index.Columns.Count;
+                bool upperIsPrefix = criteria.Upper != null && criteria.Upper.Values.Count < index.Columns.Count;
+
+                if (IsEmptyRange(lowerKey, criteria.Lower?.IsInclusive ?? true, upperKey, criteria.Upper?.IsInclusive ?? true))
+                {
+                    return [];
+                }
+
+                return await cursor.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    lowerKey,
+                    criteria.Lower?.IsInclusive ?? true,
+                    lowerIsPrefix,
+                    upperKey,
+                    criteria.Upper?.IsInclusive ?? true,
+                    upperIsPrefix,
+                    requiredPrefix: null,
+                    cancellationToken).ConfigureAwait(false);
+
+            default:
+                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
+        }
+    }
+
+    private byte[] EncodeIndexSeekKey(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
+        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: true, nameof(keyValues));
+
+    private byte[] EncodeIndexKeyPrefix(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
+        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
+
+    private byte[] EncodeIndexKey(
+        string tableName,
+        IndexMetadata index,
+        TableDef tableDef,
+        IReadOnlyList<object?> keyValues,
+        bool requireFullKey,
+        string paramName)
+    {
+        Guard.NotNull(keyValues, paramName);
+
+        if (requireFullKey && keyValues.Count != index.Columns.Count)
         {
             throw new ArgumentException(
                 $"Index '{index.Name}' on table '{tableName}' expects {index.Columns.Count} key value(s), but {keyValues.Count} were supplied.",
-                nameof(keyValues));
+                paramName);
+        }
+
+        if (!requireFullKey && (keyValues.Count == 0 || keyValues.Count > index.Columns.Count))
+        {
+            throw new ArgumentException(
+                $"Index '{index.Name}' on table '{tableName}' expects between 1 and {index.Columns.Count} leading key value(s), but {keyValues.Count} were supplied.",
+                paramName);
         }
 
         bool legacyNumeric = this.Format == DatabaseFormat.Jet4Mdb;
-        byte[][] perColumn = new byte[index.Columns.Count][];
+        byte[][] perColumn = new byte[keyValues.Count][];
         int totalLength = 0;
 
-        for (int i = 0; i < index.Columns.Count; i++)
+        for (int i = 0; i < keyValues.Count; i++)
         {
             IndexColumnReference keyColumn = index.Columns[i];
 
@@ -1349,6 +1533,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         TableDef td,
         long dataPage,
         int rowIndex,
+        bool[]? wantedColumns,
         Dictionary<int, Dictionary<int, byte[]>>? complexData,
         bool needsComplexPass,
         bool needsHyperlinkPass,
@@ -1365,7 +1550,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, this.strictParsing);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, this.strictParsing);
         object?[]? row = await this.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
         if (row == null)
         {

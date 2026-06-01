@@ -742,6 +742,100 @@ internal static class IndexPageCodec
     }
 
     /// <summary>
+    /// Appends row-location matches from one leaf page when their canonical
+    /// keys fall within the supplied encoded bounds.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="lowerKey">The encoded lower key, or <see langword="null"/>.</param>
+    /// <param name="lowerInclusive">Whether <paramref name="lowerKey"/> is inclusive.</param>
+    /// <param name="lowerIsPrefix">Whether <paramref name="lowerKey"/> represents a leading-key prefix.</param>
+    /// <param name="upperKey">The encoded upper key, or <see langword="null"/>.</param>
+    /// <param name="upperInclusive">Whether <paramref name="upperKey"/> is inclusive.</param>
+    /// <param name="upperIsPrefix">Whether <paramref name="upperKey"/> represents a leading-key prefix.</param>
+    /// <param name="requiredPrefix">An encoded key prefix every match must start with, or <see langword="null"/>.</param>
+    /// <param name="matches">The matches.</param>
+    public static bool CollectRangeLeafEntries(
+        IndexPageLayout layout,
+        byte[] page,
+        int pageSize,
+        byte[]? lowerKey,
+        bool lowerInclusive,
+        bool lowerIsPrefix,
+        byte[]? upperKey,
+        bool upperInclusive,
+        bool upperIsPrefix,
+        byte[]? requiredPrefix,
+        List<(long DataPage, int RowIndex)> matches)
+    {
+        if (!IsLeaf(page)
+            || !TryGetPayloadEnd(layout, page, pageSize, out int payloadEnd)
+            || payloadEnd <= layout.FirstEntryOffset)
+        {
+            return false;
+        }
+
+        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int entryStart = layout.FirstEntryOffset;
+        int prefixStart = layout.FirstEntryOffset;
+        bool isFirstEntry = true;
+        bool hasEntries = false;
+        while (entryStart < payloadEnd)
+        {
+            int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
+            int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
+            int suffixLength = entryEnd - entryStart - LeafTrailerSize;
+            if (!IsEntryReadable(page, entryStart, suffixLength, LeafTrailerSize))
+            {
+                return false;
+            }
+
+            if (isFirstEntry && prefixLength > suffixLength)
+            {
+                return false;
+            }
+
+            if (IsRangeMatch(
+                page,
+                prefixStart,
+                entryStart,
+                suffixLength,
+                prefixLength,
+                isFirstEntry,
+                lowerKey,
+                lowerInclusive,
+                lowerIsPrefix,
+                upperKey,
+                upperInclusive,
+                upperIsPrefix,
+                requiredPrefix,
+                out bool stopScanning))
+            {
+                int pointerOffset = entryStart + suffixLength;
+                long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
+                matches.Add((dataPage, page[pointerOffset + 3]));
+            }
+
+            if (stopScanning)
+            {
+                return false;
+            }
+
+            hasEntries = true;
+            if (nextEntryStart < 0)
+            {
+                break;
+            }
+
+            isFirstEntry = false;
+            entryStart = nextEntryStart;
+        }
+
+        return hasEntries;
+    }
+
+    /// <summary>
     /// Returns the start offset of the next entry on a page, or <c>-1</c>
     /// when the bitmask has no later entry start before the payload end.
     /// </summary>
@@ -1034,20 +1128,7 @@ internal static class IndexPageCodec
         int length = Math.Min(searchKey.Length, canonicalLength);
         for (int offset = 0; offset < length; offset++)
         {
-            byte entryByte;
-            if (isFirstEntry || prefixLength == 0)
-            {
-                entryByte = page[entryStart + offset];
-            }
-            else if (offset < prefixLength)
-            {
-                entryByte = page[prefixStart + offset];
-            }
-            else
-            {
-                entryByte = page[entryStart + offset - prefixLength];
-            }
-
+            byte entryByte = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, offset);
             int difference = searchKey[offset] - entryByte;
             if (difference != 0)
             {
@@ -1056,6 +1137,118 @@ internal static class IndexPageCodec
         }
 
         return searchKey.Length - canonicalLength;
+    }
+
+    private static bool IsRangeMatch(
+        byte[] page,
+        int prefixStart,
+        int entryStart,
+        int suffixLength,
+        int prefixLength,
+        bool isFirstEntry,
+        byte[]? lowerKey,
+        bool lowerInclusive,
+        bool lowerIsPrefix,
+        byte[]? upperKey,
+        bool upperInclusive,
+        bool upperIsPrefix,
+        byte[]? requiredPrefix,
+        out bool stopScanning)
+    {
+        stopScanning = false;
+
+        if (lowerKey != null)
+        {
+            int lowerComparison = CompareSearchKeyToEntry(lowerKey, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
+            if (lowerComparison > 0 || (!lowerInclusive && lowerComparison == 0))
+            {
+                return false;
+            }
+
+            if (!lowerInclusive && lowerIsPrefix && EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, lowerKey))
+            {
+                return false;
+            }
+        }
+
+        if (requiredPrefix != null)
+        {
+            int prefixComparison = CompareSearchKeyToEntry(requiredPrefix, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
+            if (prefixComparison > 0)
+            {
+                return false;
+            }
+
+            if (!EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, requiredPrefix))
+            {
+                stopScanning = true;
+                return false;
+            }
+        }
+
+        if (upperKey != null)
+        {
+            int upperComparison = CompareSearchKeyToEntry(upperKey, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
+            bool startsWithUpper = upperIsPrefix
+                && EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, upperKey);
+            if (startsWithUpper && upperInclusive)
+            {
+                return true;
+            }
+
+            if (upperComparison < 0 || (!upperInclusive && upperComparison == 0))
+            {
+                stopScanning = true;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool EntryStartsWithKey(
+        byte[] page,
+        int prefixStart,
+        int entryStart,
+        int suffixLength,
+        int prefixLength,
+        bool isFirstEntry,
+        byte[] requiredPrefix)
+    {
+        int canonicalLength = isFirstEntry || prefixLength == 0 ? suffixLength : prefixLength + suffixLength;
+        if (requiredPrefix.Length > canonicalLength)
+        {
+            return false;
+        }
+
+        for (int offset = 0; offset < requiredPrefix.Length; offset++)
+        {
+            byte entryByte = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, offset);
+            if (entryByte != requiredPrefix[offset])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static byte ReadCanonicalKeyByte(
+        byte[] page,
+        int prefixStart,
+        int entryStart,
+        int prefixLength,
+        bool isFirstEntry,
+        int offset)
+    {
+        if (isFirstEntry || prefixLength == 0)
+        {
+            return page[entryStart + offset];
+        }
+
+        return offset < prefixLength
+            ? page[prefixStart + offset]
+            : page[entryStart + offset - prefixLength];
     }
 
     private static byte[] DecodeCanonicalKey(

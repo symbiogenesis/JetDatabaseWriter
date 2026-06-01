@@ -74,10 +74,10 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 
 ### 3. Make query and mutation costs harder to miss
 
-- [ ] Update `IAccessReader.Rows`, `Rows<T>`, and `RowsAsStrings` XML docs to say that LINQ `Where` / `Select` operators are client-side and require a table scan unless enumeration short-circuits.
-- [ ] Keep README examples, but add one nearby sentence pointing index users to `SeekRowsAsync` for exact-key lookups.
-- [ ] Document that `SeekRowsAsync` is exact-match only, not a range scan, anywhere query-like examples are shown.
-- [ ] Design an index-aware range/equality helper if range scans become a supported API goal.
+- [x] Update `IAccessReader.Rows`, `Rows<T>`, and `RowsAsStrings` XML docs to say that LINQ `Where` / `Select` operators are client-side and require a table scan unless enumeration short-circuits.
+- [x] Keep README examples, but add one nearby sentence pointing index users to `SeekRowsAsync` for exact-key lookups.
+- [x] Document that `SeekRowsAsync` is exact-match only, not a range scan, anywhere query-like examples are shown.
+- [x] Design an index-aware range/equality helper if range scans become a supported API goal.
 - [ ] Add richer mutation APIs for `UpdateRowsAsync` / `DeleteRowsAsync`, such as composite equality, range predicates, or an explicit scan predicate with clear cost semantics.
 - [ ] Do not add more `AsStrings` twins without a short API review; prefer options, extension methods, or clearly compatibility-scoped helpers.
 

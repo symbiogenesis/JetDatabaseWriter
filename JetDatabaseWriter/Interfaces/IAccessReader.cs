@@ -133,6 +133,38 @@ public interface IAccessReader : IAccessBase
     public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Starts an explicit index-backed read query over <paramref name="indexName"/>
+    /// and returns matching rows as typed object arrays.
+    /// </summary>
+    /// <remarks>
+    /// Predicates added through the returned query are evaluated by walking the
+    /// named Access index. Standard LINQ operators composed over
+    /// <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> remain
+    /// client-side table scans unless enumeration short-circuits.
+    /// </remarks>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="indexName">Index name (case-insensitive).</param>
+    /// <returns>A fluent index-query builder.</returns>
+    public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName);
+
+    /// <summary>
+    /// Starts an explicit index-backed read query over <paramref name="indexName"/>
+    /// and maps matching rows to <typeparamref name="T"/>.
+    /// </summary>
+    /// <remarks>
+    /// Predicates added through the returned query are evaluated by walking the
+    /// named Access index. Standard LINQ operators composed over
+    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/> remain
+    /// client-side table scans unless enumeration short-circuits.
+    /// </remarks>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="indexName">Index name (case-insensitive).</param>
+    /// <returns>A fluent index-query builder.</returns>
+    public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+        where T : class, new();
+
+    /// <summary>
     /// Seeks rows through the named index using an exact key tuple and returns matching rows
     /// as typed object arrays in index order.
     /// </summary>
@@ -225,6 +257,8 @@ public interface IAccessReader : IAccessBase
     /// <see cref="IAsyncEnumerable{T}"/> of typed object arrays. Compose with the standard
     /// async LINQ operators (<c>Where</c>, <c>Take</c>, <c>Select</c>, <c>ToListAsync</c>,
     /// <c>FirstOrDefaultAsync</c>, <c>CountAsync</c>, …) — no terminal <c>Execute</c> required.
+    /// LINQ filtering and projection run client-side and require a table scan unless enumeration
+    /// short-circuits; use <see cref="FromIndex(string, string)"/> for explicit index-backed reads.
     /// Ideal for large tables — use <c>await foreach</c> to process one row at a time.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -236,7 +270,9 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>
     /// as a lazily-streamed <see cref="IAsyncEnumerable{T}"/>.
-    /// Compose with the standard async LINQ operators.
+    /// Compose with the standard async LINQ operators. LINQ filtering and projection run client-side
+    /// and require a table scan unless enumeration short-circuits; use
+    /// <see cref="FromIndex{T}(string, string)"/> for explicit index-backed reads.
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -249,6 +285,8 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed
     /// <see cref="IAsyncEnumerable{T}"/> of string arrays.
+    /// LINQ filtering and projection run client-side and require a table scan unless enumeration
+    /// short-circuits; use <see cref="FromIndex(string, string)"/> for explicit index-backed reads.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
