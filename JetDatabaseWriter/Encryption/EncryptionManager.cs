@@ -98,7 +98,7 @@ internal static class EncryptionManager
     /// </summary>
     /// <param name="format">The format.</param>
     /// <param name="hdr">The database header bytes.</param>
-    public static byte[]? GetJet3PageMask(DatabaseFormat format, byte[] hdr)
+    private static byte[]? GetJet3PageMask(DatabaseFormat format, byte[] hdr)
     {
         if (format == DatabaseFormat.Jet3Mdb && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
         {
@@ -115,6 +115,21 @@ internal static class EncryptionManager
     private const int HeaderPasswordCharSize = 2;
 
     private const int HeaderPasswordNormalizedLength = HeaderPasswordLengthPrefixLength + HeaderPasswordLength;
+
+    /// <summary>Builds the page-decryption key holder for a database header and password context.</summary>
+    /// <param name="hdr">The database header bytes.</param>
+    /// <param name="format">The format.</param>
+    /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
+    /// <param name="password">The password.</param>
+    internal static PageDecryptionKeys CreatePageDecryptionKeys(
+        byte[] hdr,
+        DatabaseFormat format,
+        bool isLegacyAesCfb,
+        ReadOnlyMemory<char> password)
+    {
+        (uint? rc4DbKey, byte[]? aesPageKey) = ResolveReaderPageKeys(hdr, format, isLegacyAesCfb, password);
+        return new PageDecryptionKeys(GetJet3PageMask(format, hdr), rc4DbKey, aesPageKey);
+    }
 
     /// <summary>
     /// Constant RC4 key Microsoft Access applies to header bytes [0x18 .. 0x18+126]
@@ -421,13 +436,13 @@ internal static class EncryptionManager
     /// </summary>
     /// <param name="hdr">The database header bytes.</param>
     /// <param name="format">The format.</param>
-    /// <param name="isCompoundFileEncrypted">Whether the database is wrapped in an encrypted compound file.</param>
+    /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
     /// <param name="password">The password.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
-    public static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
+    private static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
         byte[] hdr,
         DatabaseFormat format,
-        bool isCompoundFileEncrypted,
+        bool isLegacyAesCfb,
         ReadOnlyMemory<char> password)
     {
         uint? rc4DbKey = null;
@@ -474,7 +489,7 @@ internal static class EncryptionManager
         // Many normal ACCDB files reuse overlapping bits at 0x62, so we only
         // enforce password verification for the known legacy-password signature
         // emitted by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
-        if (format == DatabaseFormat.AceAccdb && ver >= 3 && !isCompoundFileEncrypted && hdr.Length > 0x62)
+        if (format == DatabaseFormat.AceAccdb && ver >= 3 && !isLegacyAesCfb && hdr.Length > 0x62)
         {
             byte encFlag = hdr[0x62];
             if (encFlag == 0x07)
@@ -496,7 +511,7 @@ internal static class EncryptionManager
 
         // ACCDB genuine AES encryption (CFB-wrapped file presented as a raw
         // header by the synthetic legacy path).
-        if (isCompoundFileEncrypted)
+        if (isLegacyAesCfb)
         {
             if (password.IsEmpty)
             {
@@ -849,12 +864,12 @@ internal static class EncryptionManager
             return;
         }
 
-        if (keys.Jet3XorMask is { } jet3Mask)
+        if (keys.HasJet3XorMask)
         {
-            ApplyJet3Xor(buf, offset, pageNumber, pageSize, jet3Mask);
+            ApplyJet3Xor(buf, offset, pageNumber, pageSize, keys.Jet3XorMask);
         }
 
-        if (keys.Rc4DbKey is uint dbKey)
+        if (keys.TryGetRc4DbKey(out uint dbKey))
         {
             Span<byte> rc4Key = stackalloc byte[4];
             try
@@ -868,7 +883,7 @@ internal static class EncryptionManager
             }
         }
 
-        if (keys.AesPageKey is not null)
+        if (keys.HasAesPageKey)
         {
             AesEcbInPlace(keys.GetAesDecryptor(), buf, offset, pageSize);
         }
@@ -908,12 +923,12 @@ internal static class EncryptionManager
         }
 
         // Inverse order of DecryptPageInPlace: AES → RC4 → Jet3 XOR.
-        if (keys.AesPageKey is not null)
+        if (keys.HasAesPageKey)
         {
             AesEcbInPlace(keys.GetAesEncryptor(), buf, offset, pageSize);
         }
 
-        if (keys.Rc4DbKey is uint dbKey)
+        if (keys.TryGetRc4DbKey(out uint dbKey))
         {
             // RC4 is symmetric: same operation encrypts and decrypts.
             Span<byte> rc4Key = stackalloc byte[4];
@@ -928,10 +943,10 @@ internal static class EncryptionManager
             }
         }
 
-        if (keys.Jet3XorMask is { } jet3Mask)
+        if (keys.HasJet3XorMask)
         {
             // XOR is symmetric.
-            ApplyJet3Xor(buf, offset, pageNumber, pageSize, jet3Mask);
+            ApplyJet3Xor(buf, offset, pageNumber, pageSize, keys.Jet3XorMask);
         }
     }
 
@@ -944,7 +959,7 @@ internal static class EncryptionManager
     /// <param name="pageNumber">The page number.</param>
     /// <param name="pageSize">The page size.</param>
     /// <param name="mask">The encryption mask or page bitmask.</param>
-    private static void ApplyJet3Xor(byte[] buf, int offset, long pageNumber, int pageSize, byte[] mask)
+    private static void ApplyJet3Xor(byte[] buf, int offset, long pageNumber, int pageSize, ReadOnlySpan<byte> mask)
     {
         long fileOffset = pageNumber * pageSize;
         for (int b = 0; b < pageSize; b++)
@@ -956,7 +971,7 @@ internal static class EncryptionManager
     /// <summary>Returns true when <paramref name="keys"/> has any active page encryption configured.</summary>
     /// <param name="keys">The page encryption keys.</param>
     public static bool HasPageEncryption(PageDecryptionKeys keys) =>
-        keys != null && (keys.Jet3XorMask != null || keys.Rc4DbKey.HasValue || keys.AesPageKey != null);
+        keys != null && (keys.HasJet3XorMask || keys.HasRc4DbKey || keys.HasAesPageKey);
 
     // ── Crypto primitives ────────────────────────────────────────────
 

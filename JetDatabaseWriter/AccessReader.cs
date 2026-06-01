@@ -105,17 +105,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="path">The path to the Access database file. May be empty when opened from a stream.</param>
     /// <param name="options">Options for configuring the AccessReader.</param>
     /// <param name="stream">An open, seekable stream for the database file.</param>
-    /// <param name="hdr">Header bytes read from page 0.</param>
+    /// <param name="header">Header bytes read from page 0.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
     /// <param name="suppressPageCache">Whether to skip allocating the per-reader page caches regardless of options.</param>
     private AccessReader(
         string path,
         AccessReaderOptions options,
         Stream stream,
-        byte[] hdr,
+        byte[] header,
         bool leaveOpen = false,
         bool suppressPageCache = false)
-        : base(stream, hdr, path, leaveOpen)
+        : base(
+            stream,
+            header,
+            options.Password,
+            path,
+            leaveOpen)
     {
         Guard.NotNull(options, nameof(options));
 
@@ -123,7 +128,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         this.strictParsing = options.StrictParsing;
         this.complexColumns = new ComplexColumnReader(this);
         this.LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, path);
-        ReadOnlyMemory<char> password = this.LinkedSourceOpenOptions.Password;
 
         this.DiagnosticsEnabled = options.DiagnosticsEnabled;
         this.PageCacheSize = options.PageCacheSize;
@@ -139,11 +143,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         this.longValueDecoder = new LongValueDecoder(this);
 
-        bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
-        (this.PageKeys.Rc4DbKey, this.PageKeys.AesPageKey) =
-            EncryptionManager.ResolveReaderPageKeys(hdr, this.Format, isAccdbCfbEncrypted, password);
-
-        if (isAccdbCfbEncrypted)
+        bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
+        if (isLegacyAesCfb)
         {
             // ACCDB AES (legacy synthetic CFB header path): page-level
             // decryption is now configured; skip catalog validation because

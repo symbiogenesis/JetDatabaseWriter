@@ -5,10 +5,10 @@ using System.Security.Cryptography;
 using JetDatabaseWriter.Encryption;
 
 /// <summary>
-/// Mutable holder for the three page-decryption keys an open database may need.
-/// Populated during reader construction; consulted by every page read.
+/// Owns the page-decryption keys an open database may need.
+/// Built during reader/writer construction; consulted by every page read.
 /// Caches an <see cref="Aes"/> instance and a pair of <see cref="ICryptoTransform"/>
-/// objects derived from <see cref="AesPageKey"/> so AES-encrypted databases pay
+/// objects derived from the AES page key so AES-encrypted databases pay
 /// the key-schedule + transform-creation cost once per file open instead of once
 /// per page. ECB mode has no chaining state, so the same transforms are reused
 /// across every page (callers must serialize access — the existing per-reader
@@ -20,39 +20,54 @@ internal sealed class PageDecryptionKeys : IDisposable
     private ICryptoTransform? aesEncryptor;
     private ICryptoTransform? aesDecryptor;
     private byte[]? aesPageKey;
+    private uint rc4DbKey;
+    private byte[]? jet3XorMask;
 
-    /// <summary>Gets or sets the Jet3 XOR mask, non-null when Jet3 page encryption is active.</summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
-    public byte[]? Jet3XorMask { get; set; }
-
-    /// <summary>Gets or sets the Jet4 RC4 database key (header offset 0x3E), non-null when RC4 page encryption is active.</summary>
-    public uint? Rc4DbKey { get; set; }
-
-    /// <summary>Gets or sets the AES-128 page decryption key, non-null when ACCDB CFB AES page encryption is active.</summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
-    public byte[]? AesPageKey
+    /// <summary>Initializes a new instance of the <see cref="PageDecryptionKeys"/> class.</summary>
+    /// <param name="jet3XorMask">The Jet3 XOR mask. Copied into owned storage when present.</param>
+    /// <param name="rc4DbKey">The Jet4 RC4 database key.</param>
+    /// <param name="aesPageKey">The AES-128 page decryption key. Ownership is transferred to this instance.</param>
+    internal PageDecryptionKeys(byte[]? jet3XorMask, uint? rc4DbKey, byte[]? aesPageKey)
     {
-        get => this.aesPageKey;
-        set
+        if (jet3XorMask is not null)
         {
-            this.DisposeAesTransforms();
-            if (!ReferenceEquals(this.aesPageKey, value))
-            {
-                OfficeCryptoPrimitives.ZeroIfNotNull(this.aesPageKey);
-            }
-
-            this.aesPageKey = value;
+            this.jet3XorMask = (byte[])jet3XorMask.Clone();
         }
+
+        this.rc4DbKey = rc4DbKey.GetValueOrDefault();
+        this.HasRc4DbKey = rc4DbKey.HasValue;
+        this.aesPageKey = aesPageKey;
     }
 
-    /// <summary>Returns the cached AES decryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
+    /// <summary>Gets a value indicating whether Jet3 page XOR encryption is active.</summary>
+    internal bool HasJet3XorMask => this.jet3XorMask is not null;
+
+    /// <summary>Gets a value indicating whether Jet4 RC4 page encryption is active.</summary>
+    internal bool HasRc4DbKey { get; private set; }
+
+    /// <summary>Gets a value indicating whether ACCDB CFB AES page encryption is active.</summary>
+    internal bool HasAesPageKey => this.aesPageKey is not null;
+
+    /// <summary>Gets a read-only view of the Jet3 XOR mask. Call only when <see cref="HasJet3XorMask"/> is true.</summary>
+    internal ReadOnlySpan<byte> Jet3XorMask => this.jet3XorMask.AsSpan();
+
+    /// <summary>Attempts to get the active Jet4 RC4 database key.</summary>
+    /// <param name="dbKey">The Jet4 RC4 database key.</param>
+    /// <returns><see langword="true"/> when RC4 page encryption is active.</returns>
+    internal bool TryGetRc4DbKey(out uint dbKey)
+    {
+        dbKey = this.rc4DbKey;
+        return this.HasRc4DbKey;
+    }
+
+    /// <summary>Returns the cached AES decryptor for the current AES page key, building it on first use.</summary>
     internal ICryptoTransform GetAesDecryptor()
     {
         this.EnsureAesTransforms();
         return this.aesDecryptor!;
     }
 
-    /// <summary>Returns the cached AES encryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
+    /// <summary>Returns the cached AES encryptor for the current AES page key, building it on first use.</summary>
     internal ICryptoTransform GetAesEncryptor()
     {
         this.EnsureAesTransforms();
@@ -64,8 +79,8 @@ internal sealed class PageDecryptionKeys : IDisposable
     {
         this.DisposeAesTransforms();
         this.DisposeAesPageKey();
-        this.Rc4DbKey = null;
-        this.Jet3XorMask = null;
+        this.DisposeJet3XorMask();
+        this.DisposeRc4DbKey();
     }
 
     private void EnsureAesTransforms()
@@ -103,5 +118,17 @@ internal sealed class PageDecryptionKeys : IDisposable
     {
         OfficeCryptoPrimitives.ZeroIfNotNull(this.aesPageKey);
         this.aesPageKey = null;
+    }
+
+    private void DisposeJet3XorMask()
+    {
+        OfficeCryptoPrimitives.ZeroIfNotNull(this.jet3XorMask);
+        this.jet3XorMask = null;
+    }
+
+    private void DisposeRc4DbKey()
+    {
+        this.rc4DbKey = 0;
+        this.HasRc4DbKey = false;
     }
 }

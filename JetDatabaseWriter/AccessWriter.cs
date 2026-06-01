@@ -156,7 +156,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool outerEncryptedLeaveOpen = false,
         AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
-        : base(stream, header, path, leaveOpen)
+        : base(
+            stream,
+            header,
+            options.Password,
+            path,
+            leaveOpen)
     {
         this.Options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
@@ -187,24 +192,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 return await this.ReadLvPropBlockAsync(entry.TDefPage, ct).ConfigureAwait(false);
             });
-
-        // Real CFB-wrapped encrypted ACCDBs (Agile / Office Crypto API) can
-        // only be edited via the in-memory decrypt-then-rewrap path — caller
-        // must supply the outer encrypted stream. The 'header' passed here is
-        // expected to be the inner Jet header, so IsCompoundFileEncrypted
-        // returns false on it. Synthetic legacy AES-128 CFB-wrapped .accdb
-        // files (CFB magic at byte 0 but flat per-page AES-128-ECB beneath)
-        // are written in place — the existing PrepareEncryptedPageForWrite
-        // pipeline re-encrypts every page we flush.
-        bool isLegacyAesCfb =
-            EncryptionManager.IsCompoundFileEncrypted(header) && !this.isAgileEncryptedRewrap;
-
-        // Populate page-encryption keys for in-place re-encryption of writes
-        // (Jet3 XOR is already configured by AccessBase; this resolves the
-        // Jet4 RC4 database key and / or the legacy AES-128 page key when
-        // applicable).
-        (this.PageKeys.Rc4DbKey, this.PageKeys.AesPageKey) =
-            EncryptionManager.ResolveReaderPageKeys(header, this.Format, isLegacyAesCfb, options.Password);
 
         this.lockFileCoordinator.Acquire();
         try

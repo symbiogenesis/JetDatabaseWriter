@@ -77,12 +77,11 @@ public abstract class AccessBase : IAccessBase
     internal Encoding AnsiEncoding => this.AnsiEncodingCore;
 
     /// <summary>
-    /// Gets per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Populated during
-    /// reader construction by <see cref="EncryptionManager"/>. Mutated only on the
-    /// constructor thread; consulted by every page read via
+    /// Gets per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Built during
+    /// reader/writer construction by <see cref="EncryptionManager"/>; consulted by every page read via
     /// <see cref="EncryptionManager.DecryptPageInPlace(byte[], long, int, PageDecryptionKeys)"/>.
     /// </summary>
-    private protected PageDecryptionKeys PageKeys { get; } = new();
+    private protected PageDecryptionKeys PageKeys { get; }
 
     internal bool IsDisposed { get; private set; }
 
@@ -125,20 +124,26 @@ public abstract class AccessBase : IAccessBase
     /// from a pre-read database file header.
     /// </summary>
     /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
-    /// <param name="hdr">Header bytes read from page 0.</param>
+    /// <param name="header">Header bytes read from page 0.</param>
+    /// <param name="password">The database password.</param>
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
-    private protected AccessBase(Stream stream, byte[] hdr, string path = "", bool leaveOpen = false)
+    private protected AccessBase(
+        Stream stream,
+        byte[] header,
+        ReadOnlyMemory<char> password,
+        string path = "",
+        bool leaveOpen = false)
     {
         this.DatabaseStream = stream;
         this.leaveOpen = leaveOpen;
         this.DatabasePath = path ?? string.Empty;
         this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
 
-        this.Format = EncryptionConverter.DetectFormat(hdr);
+        this.Format = EncryptionConverter.DetectFormat(header);
         this.PageSizeBytes = GetPageSize(this.Format);
-
-        this.PageKeys.Jet3XorMask = EncryptionManager.GetJet3PageMask(this.Format, hdr);
+        bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
+        this.PageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Format, isLegacyAesCfb, password);
 
         // Codepage / sort order: stored as a UInt16 at hdr[0x3C], scrambled by
         // the constant-key RC4 stream Microsoft Access applies to header bytes
@@ -147,7 +152,7 @@ public abstract class AccessBase : IAccessBase
         // of a corrupted byte. ACE / ACCDB stores text as UTF-16 in user data
         // so the codepage there is largely cosmetic, but Jet3 .mdb files (and
         // Jet4 catalog names) need it correct to round-trip non-ASCII names.
-        this.CodePageCore = EncryptionManager.DecodeHeaderCodePage(hdr, this.Format);
+        this.CodePageCore = EncryptionManager.DecodeHeaderCodePage(header, this.Format);
         if (this.CodePageCore <= 0)
         {
             this.CodePageCore = 1252;  // default to Windows-1252 if unknown
