@@ -65,7 +65,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 
 - [x] Replace legacy Jet4 / ACCDB header password `SequenceEqual` checks with a fixed-time comparison over a normalized representation.
 - [x] Add regression tests that cover wrong-password paths for Jet4 RC4, ACCDB legacy password, and ACCDB AES CFB-wrapped header-password verification.
-- [ ] Add best-effort `CryptographicOperations.ZeroMemory` cleanup for derived keys, intermediate Agile keys, verifier/HMAC material, and temporary plaintext password encodings where lifetimes are locally owned.
+- [x] Add best-effort `CryptographicOperations.ZeroMemory` cleanup for derived keys, intermediate Agile keys, verifier/HMAC material, and temporary plaintext password encodings where lifetimes are locally owned.
 - [ ] Document the residual managed-memory limitation: caller-provided strings and copied arrays can still remain on the GC heap.
 - [ ] Add non-`string` password overloads for encryption mutation APIs, or document that `string` overloads are convenience APIs with non-erasable password lifetime.
 - [ ] Make Agile encryption the documented recommendation for new encrypted ACCDB output.

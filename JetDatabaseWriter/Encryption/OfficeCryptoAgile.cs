@@ -108,14 +108,16 @@ internal static class OfficeCryptoAgile
 
         AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] passwordUtf16 = PasswordToUtf16(password);
+        byte[]? intermediateKey = null;
         try
         {
-            byte[] intermediateKey = ResolvePassword(descriptor, passwordUtf16);
+            intermediateKey = ResolvePassword(descriptor, passwordUtf16);
             VerifyDataIntegrity(descriptor, intermediateKey, encryptedPackage);
             return DecryptPackage(descriptor, intermediateKey, encryptedPackage);
         }
         finally
         {
+            OfficeCryptoPrimitives.ZeroIfNotNull(intermediateKey);
             CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
@@ -135,20 +137,30 @@ internal static class OfficeCryptoAgile
         Guard.NotNull(innerPackage, nameof(innerPackage));
 
         byte[] passwordUtf16 = PasswordToUtf16(password);
+        byte[]? verifierHashInput = null;
+        byte[]? intermediateKey = null;
+        byte[]? verifierInputKey = null;
+        byte[]? verifierHashKey = null;
+        byte[]? keyValueKey = null;
+        byte[]? hmacPasswordKey = null;
+        byte[]? hmacPasswordValue = null;
+        byte[]? verifierHash = null;
+        byte[]? hmacKey = null;
+        byte[]? hmacValue = null;
         try
         {
             // Fresh random material on every encrypt: salts and the
             // intermediate key must never be reused across sessions.
             byte[] keyDataSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
             byte[] passwordSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
-            byte[] verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
-            byte[] intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
+            verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
+            intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
             // Pre-derive the three password-bound keys once: each PBKDF
             // iteration is 100k SHA-512s, so we share the iterated state
             // by computing it inline rather than reusing DeriveKey thrice.
-            (byte[] verifierInputKey, byte[] verifierHashKey, byte[] keyValueKey,
-             _, _) = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+            (verifierInputKey, verifierHashKey, keyValueKey, hmacPasswordKey, hmacPasswordValue) =
+                DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
 
             // Encrypt the verifier triple. Agile uses the password salt as
             // the IV directly (block-size = salt-size = 16) for these fields.
@@ -158,7 +170,7 @@ internal static class OfficeCryptoAgile
                 NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
-            byte[] verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
+            verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
 
             byte[] verifierHashCipher = AesCbcRaw(
                 PadToBlock(verifierHash),
@@ -178,8 +190,8 @@ internal static class OfficeCryptoAgile
             // dataIntegrity (MS-OFFCRYPTO §2.3.4.14): generate a random HMAC
             // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
             // both the key and the value with the intermediate key.
-            byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
-            byte[] hmacValue = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
+            hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
+            hmacValue = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
 
             byte[] hmacKeyCipher = AesCbcRaw(
                 PadToBlock(hmacKey),
@@ -215,6 +227,16 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashInput);
+            OfficeCryptoPrimitives.ZeroIfNotNull(intermediateKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(keyValueKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacPasswordKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacPasswordValue);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacValue);
             CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
@@ -252,37 +274,44 @@ internal static class OfficeCryptoAgile
         }
 
         (byte[] encryptionInfo, byte[] intermediateKey, byte[] keyDataSalt) = CreateFlatEncryptionInfo(password);
-        if (Constants.AgileEncryption.FlatEncryptionInfoOffset + encryptionInfo.Length > Constants.PageSizes.Jet4)
+        try
         {
-            throw new InvalidDataException("Agile EncryptionInfo is too large to embed in the ACCDB header page.");
+            if (Constants.AgileEncryption.FlatEncryptionInfoOffset + encryptionInfo.Length > Constants.PageSizes.Jet4)
+            {
+                throw new InvalidDataException("Agile EncryptionInfo is too large to embed in the ACCDB header page.");
+            }
+
+            byte[] result = (byte[])plaintext.Clone();
+            byte[] encodingKey = RandomBytes(4);
+            byte[] headerPage = new byte[Constants.PageSizes.Jet4];
+            Buffer.BlockCopy(result, 0, headerPage, 0, headerPage.Length);
+            EncryptionManager.TransformHeaderMask(headerPage);
+            Buffer.BlockCopy(encodingKey, 0, headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey.Length);
+            Wu16(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, checked((ushort)encryptionInfo.Length));
+            Buffer.BlockCopy(encryptionInfo, 0, headerPage, Constants.AgileEncryption.FlatEncryptionInfoOffset, encryptionInfo.Length);
+            EncryptionManager.TransformHeaderMask(headerPage);
+            Buffer.BlockCopy(headerPage, 0, result, 0, headerPage.Length);
+
+            for (int pageNumber = 1, offset = Constants.PageSizes.Jet4;
+                 offset < result.Length;
+                 pageNumber++, offset += Constants.PageSizes.Jet4)
+            {
+                byte[] plainPage = new byte[Constants.PageSizes.Jet4];
+                Buffer.BlockCopy(result, offset, plainPage, 0, plainPage.Length);
+                byte[] cipherPage = AesCbcRaw(
+                    plainPage,
+                    intermediateKey,
+                    FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize),
+                    encrypt: true);
+                Buffer.BlockCopy(cipherPage, 0, result, offset, cipherPage.Length);
+            }
+
+            return result;
         }
-
-        byte[] result = (byte[])plaintext.Clone();
-        byte[] encodingKey = RandomBytes(4);
-        byte[] headerPage = new byte[Constants.PageSizes.Jet4];
-        Buffer.BlockCopy(result, 0, headerPage, 0, headerPage.Length);
-        EncryptionManager.TransformHeaderMask(headerPage);
-        Buffer.BlockCopy(encodingKey, 0, headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey.Length);
-        Wu16(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, checked((ushort)encryptionInfo.Length));
-        Buffer.BlockCopy(encryptionInfo, 0, headerPage, Constants.AgileEncryption.FlatEncryptionInfoOffset, encryptionInfo.Length);
-        EncryptionManager.TransformHeaderMask(headerPage);
-        Buffer.BlockCopy(headerPage, 0, result, 0, headerPage.Length);
-
-        for (int pageNumber = 1, offset = Constants.PageSizes.Jet4;
-             offset < result.Length;
-             pageNumber++, offset += Constants.PageSizes.Jet4)
+        finally
         {
-            byte[] plainPage = new byte[Constants.PageSizes.Jet4];
-            Buffer.BlockCopy(result, offset, plainPage, 0, plainPage.Length);
-            byte[] cipherPage = AesCbcRaw(
-                plainPage,
-                intermediateKey,
-                FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize),
-                encrypt: true);
-            Buffer.BlockCopy(cipherPage, 0, result, offset, cipherPage.Length);
+            CryptographicOperations.ZeroMemory(intermediateKey);
         }
-
-        return result;
     }
 
     /// <summary>
@@ -311,9 +340,10 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
 
         byte[] passwordUtf16 = PasswordToUtf16(password);
+        byte[]? intermediateKey = null;
         try
         {
-            byte[] intermediateKey = ResolvePassword(descriptor, passwordUtf16);
+            intermediateKey = ResolvePassword(descriptor, passwordUtf16);
             byte[] result = (byte[])encryptedDatabase.Clone();
             int wholeLength = result.Length - (result.Length % Constants.PageSizes.Jet4);
             for (int pageNumber = 1, offset = Constants.PageSizes.Jet4;
@@ -335,6 +365,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
+            OfficeCryptoPrimitives.ZeroIfNotNull(intermediateKey);
             CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
@@ -448,25 +479,50 @@ internal static class OfficeCryptoAgile
 
     private static byte[] ResolvePassword(AgileDescriptor d, byte[] passwordUtf16)
     {
-        // 1. Verify the password by decrypting verifierHashInput / Value.
-        byte[] verifierInputKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashInput, d.SpinCount, d.PasswordKeyBits / 8);
-        byte[] verifierHashKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashValue, d.SpinCount, d.PasswordKeyBits / 8);
-        byte[] keyValueKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyEncryptedKeyValue, d.SpinCount, d.PasswordKeyBits / 8);
-
-        byte[] verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, verifierInputKey, d.PasswordSalt);
-        byte[] storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, verifierHashKey, d.PasswordSalt);
-
-        byte[] expectedHash = OfficeCryptoPrimitives.Sha512(Truncate(verifierInput, d.PasswordSaltSize));
-
-        if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, storedHash, expectedHash.Length))
+        byte[]? verifierInputKey = null;
+        byte[]? verifierHashKey = null;
+        byte[]? keyValueKey = null;
+        byte[]? verifierInput = null;
+        byte[]? verifierInputForHash = null;
+        byte[]? storedHash = null;
+        byte[]? expectedHash = null;
+        byte[]? intermediate = null;
+        try
         {
-            throw new UnauthorizedAccessException(
-                "The provided password is incorrect for this database.");
-        }
+            // 1. Verify the password by decrypting verifierHashInput / Value.
+            verifierInputKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashInput, d.SpinCount, d.PasswordKeyBits / 8);
+            verifierHashKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashValue, d.SpinCount, d.PasswordKeyBits / 8);
+            keyValueKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyEncryptedKeyValue, d.SpinCount, d.PasswordKeyBits / 8);
 
-        // 2. Recover the intermediate key.
-        byte[] intermediate = AesCbcDecrypt(d.EncryptedKeyValue, keyValueKey, d.PasswordSalt);
-        return Truncate(intermediate, d.KeyDataKeyBits / 8);
+            verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, verifierInputKey, d.PasswordSalt);
+            storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, verifierHashKey, d.PasswordSalt);
+
+            verifierInputForHash = Truncate(verifierInput, d.PasswordSaltSize);
+            expectedHash = OfficeCryptoPrimitives.Sha512(verifierInputForHash);
+
+            if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, storedHash, expectedHash.Length))
+            {
+                throw new UnauthorizedAccessException(
+                    "The provided password is incorrect for this database.");
+            }
+
+            // 2. Recover the intermediate key.
+            intermediate = AesCbcDecrypt(d.EncryptedKeyValue, keyValueKey, d.PasswordSalt);
+            byte[] intermediateKey = new byte[d.KeyDataKeyBits / 8];
+            Buffer.BlockCopy(intermediate, 0, intermediateKey, 0, Math.Min(intermediateKey.Length, intermediate.Length));
+            return intermediateKey;
+        }
+        finally
+        {
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(keyValueKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInput);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputForHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(storedHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(expectedHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(intermediate);
+        }
     }
 
     /// <summary>
@@ -486,21 +542,41 @@ internal static class OfficeCryptoAgile
             return;
         }
 
-        byte[] hmacKeyIv = HmacIv(d.KeyDataSalt, BlockKeyHmacKey);
-        byte[] hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue);
-
-        byte[] hmacKeyRaw = AesCbcRaw(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false);
-        byte[] hmacKey = Truncate(hmacKeyRaw, d.KeyDataHashSize);
-
-        byte[] hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
-        byte[] storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);
-
-        byte[] computedHmac = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
-
-        if (!OfficeCryptoPrimitives.FixedTimeEquals(computedHmac, storedHmac, d.KeyDataHashSize))
+        byte[]? hmacKeyIv = null;
+        byte[]? hmacValueIv = null;
+        byte[]? hmacKeyRaw = null;
+        byte[]? hmacKey = null;
+        byte[]? hmacValueRaw = null;
+        byte[]? storedHmac = null;
+        byte[]? computedHmac = null;
+        try
         {
-            throw new InvalidDataException(
-                "Package integrity check failed: the EncryptedPackage HMAC does not match the stored dataIntegrity value.");
+            hmacKeyIv = HmacIv(d.KeyDataSalt, BlockKeyHmacKey);
+            hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue);
+
+            hmacKeyRaw = AesCbcRaw(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false);
+            hmacKey = Truncate(hmacKeyRaw, d.KeyDataHashSize);
+
+            hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
+            storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);
+
+            computedHmac = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
+
+            if (!OfficeCryptoPrimitives.FixedTimeEquals(computedHmac, storedHmac, d.KeyDataHashSize))
+            {
+                throw new InvalidDataException(
+                    "Package integrity check failed: the EncryptedPackage HMAC does not match the stored dataIntegrity value.");
+            }
+        }
+        finally
+        {
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacKeyIv);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacValueIv);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacKeyRaw);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacValueRaw);
+            OfficeCryptoPrimitives.ZeroIfNotNull(storedHmac);
+            OfficeCryptoPrimitives.ZeroIfNotNull(computedHmac);
         }
     }
 
@@ -519,15 +595,18 @@ internal static class OfficeCryptoAgile
         const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
         byte[] h = new byte[hashBytes];
         byte[] scratchHash = new byte[hashBytes];
+        byte[]? buf = null;
+        byte[]? iter = null;
+        byte[]? final = null;
 
         try
         {
-            byte[] buf = new byte[salt.Length + passwordUtf16.Length];
+            buf = new byte[salt.Length + passwordUtf16.Length];
             Buffer.BlockCopy(salt, 0, buf, 0, salt.Length);
             Buffer.BlockCopy(passwordUtf16, 0, buf, salt.Length, passwordUtf16.Length);
             OfficeCryptoPrimitives.HashSha512(buf, h);
 
-            byte[] iter = new byte[4 + h.Length];
+            iter = new byte[4 + h.Length];
             for (int i = 0; i < spinCount; i++)
             {
                 Wi32(iter, 0, i);
@@ -537,7 +616,7 @@ internal static class OfficeCryptoAgile
                 (h, scratchHash) = (scratchHash, h);
             }
 
-            byte[] final = new byte[h.Length + blockKey.Length];
+            final = new byte[h.Length + blockKey.Length];
             Buffer.BlockCopy(h, 0, final, 0, h.Length);
             blockKey.CopyTo(final.AsSpan(h.Length));
             OfficeCryptoPrimitives.HashSha512(final, scratchHash);
@@ -556,6 +635,9 @@ internal static class OfficeCryptoAgile
         {
             CryptographicOperations.ZeroMemory(h);
             CryptographicOperations.ZeroMemory(scratchHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(buf);
+            OfficeCryptoPrimitives.ZeroIfNotNull(iter);
+            OfficeCryptoPrimitives.ZeroIfNotNull(final);
         }
     }
 
@@ -726,17 +808,25 @@ internal static class OfficeCryptoAgile
         const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
         byte[] h = new byte[hashBytes];
         byte[] scratchHash = new byte[hashBytes];
+        byte[]? init = null;
+        byte[]? iter = null;
+        byte[]? verifierInput = null;
+        byte[]? verifierHash = null;
+        byte[]? keyValue = null;
+        byte[]? hmacKey = null;
+        byte[]? hmacValue = null;
+        bool returned = false;
 
         try
         {
             // Initial: H0 = SHA512(salt || passwordUtf16Le).
-            byte[] init = new byte[passwordSalt.Length + passwordUtf16.Length];
+            init = new byte[passwordSalt.Length + passwordUtf16.Length];
             Buffer.BlockCopy(passwordSalt, 0, init, 0, passwordSalt.Length);
             Buffer.BlockCopy(passwordUtf16, 0, init, passwordSalt.Length, passwordUtf16.Length);
             OfficeCryptoPrimitives.HashSha512(init, h);
 
             // Iterate: H_(i+1) = SHA512(uint32_le(i) || H_i).
-            byte[] iter = new byte[4 + h.Length];
+            iter = new byte[4 + h.Length];
             for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
             {
                 Wi32(iter, 0, i);
@@ -747,17 +837,28 @@ internal static class OfficeCryptoAgile
             }
 
             // Mix in each block-key constant.
-            return (
-                FinalizeKey(h, BlockKeyVerifierHashInput),
-                FinalizeKey(h, BlockKeyVerifierHashValue),
-                FinalizeKey(h, BlockKeyEncryptedKeyValue),
-                FinalizeKey(h, BlockKeyHmacKey),
-                FinalizeKey(h, BlockKeyHmacValue));
+            verifierInput = FinalizeKey(h, BlockKeyVerifierHashInput);
+            verifierHash = FinalizeKey(h, BlockKeyVerifierHashValue);
+            keyValue = FinalizeKey(h, BlockKeyEncryptedKeyValue);
+            hmacKey = FinalizeKey(h, BlockKeyHmacKey);
+            hmacValue = FinalizeKey(h, BlockKeyHmacValue);
+            returned = true;
+            return (verifierInput, verifierHash, keyValue, hmacKey, hmacValue);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(h);
             CryptographicOperations.ZeroMemory(scratchHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(init);
+            OfficeCryptoPrimitives.ZeroIfNotNull(iter);
+            if (!returned)
+            {
+                OfficeCryptoPrimitives.ZeroIfNotNull(verifierInput);
+                OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
+                OfficeCryptoPrimitives.ZeroIfNotNull(keyValue);
+                OfficeCryptoPrimitives.ZeroIfNotNull(hmacKey);
+                OfficeCryptoPrimitives.ZeroIfNotNull(hmacValue);
+            }
         }
     }
 
@@ -783,6 +884,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
+            CryptographicOperations.ZeroMemory(buf);
             CryptographicOperations.ZeroMemory(hf);
         }
     }
@@ -863,15 +965,24 @@ internal static class OfficeCryptoAgile
         ReadOnlySpan<char> password)
     {
         byte[] passwordUtf16 = PasswordToUtf16(password);
+        byte[]? verifierHashInput = null;
+        byte[]? intermediateKey = null;
+        byte[]? verifierInputKey = null;
+        byte[]? verifierHashKey = null;
+        byte[]? keyValueKey = null;
+        byte[]? hmacPasswordKey = null;
+        byte[]? hmacPasswordValue = null;
+        byte[]? verifierHash = null;
+        bool returned = false;
         try
         {
             byte[] keyDataSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
             byte[] passwordSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
-            byte[] verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
-            byte[] intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
+            verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
+            intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
-            (byte[] verifierInputKey, byte[] verifierHashKey, byte[] keyValueKey,
-             _, _) = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+            (verifierInputKey, verifierHashKey, keyValueKey, hmacPasswordKey, hmacPasswordValue) =
+                DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
 
             byte[] verifierInputCipher = AesCbcRaw(
                 PadToBlock(verifierHashInput),
@@ -879,7 +990,7 @@ internal static class OfficeCryptoAgile
                 NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
-            byte[] verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
+            verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
 
             byte[] verifierHashCipher = AesCbcRaw(
                 PadToBlock(verifierHash),
@@ -909,10 +1020,23 @@ internal static class OfficeCryptoAgile
             encryptionInfo[4] = (byte)Constants.AgileEncryption.Flags;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
+            returned = true;
             return (encryptionInfo, intermediateKey, keyDataSalt);
         }
         finally
         {
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashInput);
+            if (!returned)
+            {
+                OfficeCryptoPrimitives.ZeroIfNotNull(intermediateKey);
+            }
+
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(keyValueKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacPasswordKey);
+            OfficeCryptoPrimitives.ZeroIfNotNull(hmacPasswordValue);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
             CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }

@@ -15,6 +15,14 @@ internal static class OfficeCryptoPrimitives
 
     public const int Sha512HashBytes = 64;
 
+    public static void ZeroIfNotNull(byte[]? buffer)
+    {
+        if (buffer is not null)
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+        }
+    }
+
     public static byte[] Sha1(ReadOnlySpan<byte> source)
     {
         byte[] hash = new byte[Sha1HashBytes];

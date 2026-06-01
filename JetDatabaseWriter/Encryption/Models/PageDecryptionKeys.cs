@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Encryption.Models;
 
 using System;
 using System.Security.Cryptography;
+using JetDatabaseWriter.Encryption;
 
 /// <summary>
 /// Mutable holder for the three page-decryption keys an open database may need.
@@ -18,6 +19,7 @@ internal sealed class PageDecryptionKeys : IDisposable
     private Aes? aes;
     private ICryptoTransform? aesEncryptor;
     private ICryptoTransform? aesDecryptor;
+    private byte[]? aesPageKey;
 
     /// <summary>Gets or sets the Jet3 XOR mask, non-null when Jet3 page encryption is active.</summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
@@ -30,11 +32,16 @@ internal sealed class PageDecryptionKeys : IDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Mutable key holder by design.")]
     public byte[]? AesPageKey
     {
-        get;
+        get => this.aesPageKey;
         set
         {
             this.DisposeAesTransforms();
-            field = value;
+            if (!ReferenceEquals(this.aesPageKey, value))
+            {
+                OfficeCryptoPrimitives.ZeroIfNotNull(this.aesPageKey);
+            }
+
+            this.aesPageKey = value;
         }
     }
 
@@ -53,7 +60,13 @@ internal sealed class PageDecryptionKeys : IDisposable
     }
 
     /// <inheritdoc/>
-    public void Dispose() => this.DisposeAesTransforms();
+    public void Dispose()
+    {
+        this.DisposeAesTransforms();
+        this.DisposeAesPageKey();
+        this.Rc4DbKey = null;
+        this.Jet3XorMask = null;
+    }
 
     private void EnsureAesTransforms()
     {
@@ -62,14 +75,12 @@ internal sealed class PageDecryptionKeys : IDisposable
             return;
         }
 
-        if (this.AesPageKey == null)
-        {
+        byte[] key = this.aesPageKey ??
             throw new InvalidOperationException("AesPageKey must be set before requesting AES transforms.");
-        }
 
 #pragma warning disable CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
         this.aes = Aes.Create();
-        this.aes.Key = this.AesPageKey;
+        this.aes.Key = key;
         this.aes.Mode = CipherMode.ECB;
         this.aes.Padding = PaddingMode.None;
 #pragma warning restore CA5358, RS0030 // ECB mode is required to match the ACCDB AES page encryption scheme
@@ -86,5 +97,11 @@ internal sealed class PageDecryptionKeys : IDisposable
         this.aesEncryptor = null;
         this.aesDecryptor = null;
         this.aes = null;
+    }
+
+    private void DisposeAesPageKey()
+    {
+        OfficeCryptoPrimitives.ZeroIfNotNull(this.aesPageKey);
+        this.aesPageKey = null;
     }
 }

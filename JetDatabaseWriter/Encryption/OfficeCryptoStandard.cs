@@ -53,10 +53,15 @@ internal static class OfficeCryptoStandard
 
         StandardDescriptor descriptor = ParseDescriptor(encryptionInfo);
         byte[] key = DeriveKey(password, descriptor);
-
-        VerifyPassword(key, descriptor);
-
-        return DecryptPackage(key, encryptedPackage);
+        try
+        {
+            VerifyPassword(key, descriptor);
+            return DecryptPackage(key, encryptedPackage);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     /// <summary>
@@ -83,25 +88,36 @@ internal static class OfficeCryptoStandard
         RandomNumberGenerator.Fill(verifier);
 
         byte[] key = DeriveKeyCore(password, salt, keyBits / 8, spinCount);
+        byte[]? verifierHash = null;
+        byte[]? verifierHashPadded = null;
+        try
+        {
+            // Encrypt verifier (16 bytes -> 16 bytes via AES-CBC, IV=0).
+            byte[] encryptedVerifier = AesCbcZeroIv(verifier, key, encrypt: true);
 
-        // Encrypt verifier (16 bytes → 16 bytes via AES-CBC, IV=0).
-        byte[] encryptedVerifier = AesCbcZeroIv(verifier, key, encrypt: true);
+            // Hash the verifier with SHA-1 -> 20 bytes, then pad to 32 for encryption.
+            verifierHash = OfficeCryptoPrimitives.Sha1(verifier);
 
-        // Hash the verifier with SHA-1 → 20 bytes, then pad to 32 for encryption.
-        byte[] verifierHash = OfficeCryptoPrimitives.Sha1(verifier);
+            // Pad to 32 bytes (next multiple of AES block size above 20).
+            verifierHashPadded = new byte[32];
+            Buffer.BlockCopy(verifierHash, 0, verifierHashPadded, 0, verifierHash.Length);
+            byte[] encryptedVerifierHash = AesCbcZeroIv(verifierHashPadded, key, encrypt: true);
 
-        // Pad to 32 bytes (next multiple of AES block size above 20).
-        byte[] verifierHashPadded = new byte[32];
-        Buffer.BlockCopy(verifierHash, 0, verifierHashPadded, 0, verifierHash.Length);
-        byte[] encryptedVerifierHash = AesCbcZeroIv(verifierHashPadded, key, encrypt: true);
+            // Build EncryptionInfo binary blob.
+            byte[] encryptionInfo = BuildEncryptionInfo(salt, encryptedVerifier, encryptedVerifierHash, keyBits);
 
-        // Build EncryptionInfo binary blob.
-        byte[] encryptionInfo = BuildEncryptionInfo(salt, encryptedVerifier, encryptedVerifierHash, keyBits);
+            // Build EncryptedPackage: 8-byte LE size prefix + AES-CBC encrypted data.
+            byte[] encryptedPackage = EncryptPackage(innerPackage, key);
 
-        // Build EncryptedPackage: 8-byte LE size prefix + AES-CBC encrypted data.
-        byte[] encryptedPackage = EncryptPackage(innerPackage, key);
-
-        return (encryptionInfo, encryptedPackage);
+            return (encryptionInfo, encryptedPackage);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+            CryptographicOperations.ZeroMemory(verifier);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashPadded);
+        }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -223,16 +239,23 @@ internal static class OfficeCryptoStandard
             const int hashBytes = OfficeCryptoPrimitives.Sha1HashBytes;
             byte[] h = new byte[hashBytes];
             byte[] scratchHash = new byte[hashBytes];
+            byte[]? initial = null;
+            byte[]? iterBuf = null;
+            byte[]? finalBuf = null;
+            byte[]? derivedBuf = null;
+            byte[]? x1 = null;
+            byte[]? x2 = null;
+            byte[]? x3 = null;
 
             try
             {
-                byte[] initial = new byte[salt.Length + passwordBytes.Length];
+                initial = new byte[salt.Length + passwordBytes.Length];
                 Buffer.BlockCopy(salt, 0, initial, 0, salt.Length);
                 passwordBytes.CopyTo(initial.AsSpan(salt.Length));
                 OfficeCryptoPrimitives.HashSha1(initial, h);
 
                 // Step 2: For i = 0 to spinCount-1: H = SHA1(LE32(i) || H)
-                byte[] iterBuf = new byte[4 + hashBytes]; // 4-byte iterator + 20-byte hash
+                iterBuf = new byte[4 + hashBytes]; // 4-byte iterator + 20-byte hash
                 for (int i = 0; i < spinCount; i++)
                 {
                     Wi32(iterBuf, 0, i);
@@ -242,7 +265,7 @@ internal static class OfficeCryptoStandard
                 }
 
                 // Step 3: Hderived = SHA1(H || blockKey) where blockKey = 0x00000000
-                byte[] finalBuf = new byte[h.Length + 4];
+                finalBuf = new byte[h.Length + 4];
                 Buffer.BlockCopy(h, 0, finalBuf, 0, h.Length);
 
                 // blockKey bytes are already zero from allocation.
@@ -260,13 +283,13 @@ internal static class OfficeCryptoStandard
                 }
 
                 // Extend using X1/X2 derivation (MS-OFFCRYPTO §2.3.6.2).
-                byte[] derivedBuf = new byte[64];
+                derivedBuf = new byte[64];
                 for (int i = 0; i < 64; i++)
                 {
                     derivedBuf[i] = (byte)(i < hashBytes ? (h[i] ^ 0x36) : 0x36);
                 }
 
-                byte[] x1 = new byte[hashBytes];
+                x1 = new byte[hashBytes];
                 OfficeCryptoPrimitives.HashSha1(derivedBuf, x1);
 
                 for (int i = 0; i < 64; i++)
@@ -274,10 +297,10 @@ internal static class OfficeCryptoStandard
                     derivedBuf[i] = (byte)(i < hashBytes ? (h[i] ^ 0x5C) : 0x5C);
                 }
 
-                byte[] x2 = new byte[hashBytes];
+                x2 = new byte[hashBytes];
                 OfficeCryptoPrimitives.HashSha1(derivedBuf, x2);
 
-                byte[] x3 = new byte[x1.Length + x2.Length];
+                x3 = new byte[x1.Length + x2.Length];
                 Buffer.BlockCopy(x1, 0, x3, 0, x1.Length);
                 Buffer.BlockCopy(x2, 0, x3, x1.Length, x2.Length);
 
@@ -289,6 +312,13 @@ internal static class OfficeCryptoStandard
             {
                 CryptographicOperations.ZeroMemory(h);
                 CryptographicOperations.ZeroMemory(scratchHash);
+                OfficeCryptoPrimitives.ZeroIfNotNull(initial);
+                OfficeCryptoPrimitives.ZeroIfNotNull(iterBuf);
+                OfficeCryptoPrimitives.ZeroIfNotNull(finalBuf);
+                OfficeCryptoPrimitives.ZeroIfNotNull(derivedBuf);
+                OfficeCryptoPrimitives.ZeroIfNotNull(x1);
+                OfficeCryptoPrimitives.ZeroIfNotNull(x2);
+                OfficeCryptoPrimitives.ZeroIfNotNull(x3);
             }
         }
         finally
@@ -308,21 +338,33 @@ internal static class OfficeCryptoStandard
 
     private static void VerifyPassword(byte[] key, StandardDescriptor d)
     {
-        // Decrypt the 16-byte EncryptedVerifier → plaintext verifier.
-        byte[] verifier = AesCbcZeroIv(d.EncryptedVerifier, key, encrypt: false);
-
-        // Decrypt the EncryptedVerifierHash → padded hash.
-        byte[] verifierHash = AesCbcZeroIv(d.EncryptedVerifierHash, key, encrypt: false);
-
-        // Compute expected hash: SHA1(verifier).
-        byte[] expectedHash = OfficeCryptoPrimitives.Sha1(verifier);
-
-        // Compare first VerifierHashSize bytes (20 for SHA-1).
-        int compareLen = Math.Min(d.VerifierHashSize, expectedHash.Length);
-        if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, verifierHash, compareLen))
+        byte[]? verifier = null;
+        byte[]? verifierHash = null;
+        byte[]? expectedHash = null;
+        try
         {
-            throw new UnauthorizedAccessException(
-                "The provided password is incorrect for this database.");
+            // Decrypt the 16-byte EncryptedVerifier -> plaintext verifier.
+            verifier = AesCbcZeroIv(d.EncryptedVerifier, key, encrypt: false);
+
+            // Decrypt the EncryptedVerifierHash -> padded hash.
+            verifierHash = AesCbcZeroIv(d.EncryptedVerifierHash, key, encrypt: false);
+
+            // Compute expected hash: SHA1(verifier).
+            expectedHash = OfficeCryptoPrimitives.Sha1(verifier);
+
+            // Compare first VerifierHashSize bytes (20 for SHA-1).
+            int compareLen = Math.Min(d.VerifierHashSize, expectedHash.Length);
+            if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, verifierHash, compareLen))
+            {
+                throw new UnauthorizedAccessException(
+                    "The provided password is incorrect for this database.");
+            }
+        }
+        finally
+        {
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifier);
+            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
+            OfficeCryptoPrimitives.ZeroIfNotNull(expectedHash);
         }
     }
 
@@ -361,6 +403,7 @@ internal static class OfficeCryptoStandard
 
         byte[] result = new byte[(int)decryptedSize];
         Buffer.BlockCopy(plaintext, 0, result, 0, (int)decryptedSize);
+        CryptographicOperations.ZeroMemory(plaintext);
         return result;
     }
 

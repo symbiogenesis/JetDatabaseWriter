@@ -262,6 +262,7 @@ internal static class EncryptionConverter
         uint dbKey = Ru32(dbKeyBytes, 0);
 
         Buffer.BlockCopy(dbKeyBytes, 0, result, 0x3E, 4);
+        CryptographicOperations.ZeroMemory(dbKeyBytes);
         EncodeJet4StylePassword(result, password, useAccdbLegacyMask: false);
 
         // The 40-byte password area at 0x42 overlaps the encryption flag at
@@ -450,7 +451,7 @@ internal static class EncryptionConverter
             header[0x42 + i] = (byte)(padded[i] ^ mask[i] ^ header[0x72 + (i % 4)]);
         }
 
-        padded.Clear();
+        CryptographicOperations.ZeroMemory(padded);
     }
 
     /// <summary>SHA-256(password)[..16] — matches <c>EncryptionManager.DeriveAesPageKey</c>.</summary>
@@ -465,21 +466,22 @@ internal static class EncryptionConverter
         {
             int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);
             Span<byte> hash = stackalloc byte[32];
-            OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
+            try
+            {
+                OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
 
-            CryptographicOperations.ZeroMemory(utf8[..utf8Len]);
-
-            byte[] key = new byte[16];
-            hash[..16].CopyTo(key);
-            CryptographicOperations.ZeroMemory(hash);
-            return key;
+                byte[] key = new byte[16];
+                hash[..16].CopyTo(key);
+                return key;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(hash);
+            }
         }
         finally
         {
-            if (rented != null)
-            {
-                CryptographicOperations.ZeroMemory(rented);
-            }
+            CryptographicOperations.ZeroMemory(utf8);
         }
     }
 

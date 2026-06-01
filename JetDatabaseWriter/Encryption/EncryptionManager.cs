@@ -857,8 +857,15 @@ internal static class EncryptionManager
         if (keys.Rc4DbKey is uint dbKey)
         {
             Span<byte> rc4Key = stackalloc byte[4];
-            DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
-            Rc4Transform(buf, offset, pageSize, rc4Key);
+            try
+            {
+                DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
+                Rc4Transform(buf, offset, pageSize, rc4Key);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(rc4Key);
+            }
         }
 
         if (keys.AesPageKey is not null)
@@ -910,8 +917,15 @@ internal static class EncryptionManager
         {
             // RC4 is symmetric: same operation encrypts and decrypts.
             Span<byte> rc4Key = stackalloc byte[4];
-            DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
-            Rc4Transform(buf, offset, pageSize, rc4Key);
+            try
+            {
+                DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
+                Rc4Transform(buf, offset, pageSize, rc4Key);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(rc4Key);
+            }
         }
 
         if (keys.Jet3XorMask is { } jet3Mask)
@@ -959,17 +973,25 @@ internal static class EncryptionManager
         Wu32(input, 0, dbKey);
         Wu32(input, 4, pageNumber);
         Span<byte> hash = stackalloc byte[16];
-#pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
-        using (var md5 = MD5.Create())
+        try
         {
-            if (!md5.TryComputeHash(input, hash, out _))
+#pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
+            using (var md5 = MD5.Create())
             {
-                throw new CryptographicException("MD5 hash computation failed.");
+                if (!md5.TryComputeHash(input, hash, out _))
+                {
+                    throw new CryptographicException("MD5 hash computation failed.");
+                }
             }
-        }
 #pragma warning restore CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
 
-        hash[..4].CopyTo(destination);
+            hash[..4].CopyTo(destination);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(input);
+            CryptographicOperations.ZeroMemory(hash);
+        }
     }
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
@@ -980,25 +1002,32 @@ internal static class EncryptionManager
     private static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)
     {
         Span<byte> s = stackalloc byte[256];
-        for (int i = 0; i < 256; i++)
+        try
         {
-            s[i] = (byte)i;
-        }
+            for (int i = 0; i < 256; i++)
+            {
+                s[i] = (byte)i;
+            }
 
-        int j = 0;
-        for (int i = 0; i < 256; i++)
-        {
-            j = (j + s[i] + key[i % key.Length]) & 0xFF;
-            (s[i], s[j]) = (s[j], s[i]);
-        }
+            int j = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                j = (j + s[i] + key[i % key.Length]) & 0xFF;
+                (s[i], s[j]) = (s[j], s[i]);
+            }
 
-        int x = 0, y = 0;
-        for (int k = 0; k < length; k++)
+            int x = 0, y = 0;
+            for (int k = 0; k < length; k++)
+            {
+                x = (x + 1) & 0xFF;
+                y = (y + s[x]) & 0xFF;
+                (s[x], s[y]) = (s[y], s[x]);
+                data[offset + k] ^= s[(s[x] + s[y]) & 0xFF];
+            }
+        }
+        finally
         {
-            x = (x + 1) & 0xFF;
-            y = (y + s[x]) & 0xFF;
-            (s[x], s[y]) = (s[y], s[x]);
-            data[offset + k] ^= s[(s[x] + s[y]) & 0xFF];
+            CryptographicOperations.ZeroMemory(s);
         }
     }
 
@@ -1030,13 +1059,18 @@ internal static class EncryptionManager
         Span<byte> storedNormalized = stackalloc byte[HeaderPasswordNormalizedLength];
         Span<byte> suppliedNormalized = stackalloc byte[HeaderPasswordNormalizedLength];
 
-        NormalizeStoredHeaderPassword(hdr, mask, storedNormalized);
-        NormalizeSuppliedHeaderPassword(password, suppliedNormalized);
+        try
+        {
+            NormalizeStoredHeaderPassword(hdr, mask, storedNormalized);
+            NormalizeSuppliedHeaderPassword(password, suppliedNormalized);
 
-        bool matches = CryptographicOperations.FixedTimeEquals(storedNormalized, suppliedNormalized);
-        CryptographicOperations.ZeroMemory(storedNormalized);
-        CryptographicOperations.ZeroMemory(suppliedNormalized);
-        return matches;
+            return CryptographicOperations.FixedTimeEquals(storedNormalized, suppliedNormalized);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(storedNormalized);
+            CryptographicOperations.ZeroMemory(suppliedNormalized);
+        }
     }
 
     private static void NormalizeStoredHeaderPassword(byte[] hdr, ReadOnlySpan<byte> mask, Span<byte> destination)
@@ -1100,11 +1134,15 @@ internal static class EncryptionManager
         {
             int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
             Span<byte> hash = stackalloc byte[32];
-            OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
-
-            byte[] key = hash[..16].ToArray(); // AES-128
-            CryptographicOperations.ZeroMemory(hash);
-            return key;
+            try
+            {
+                OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
+                return hash[..16].ToArray(); // AES-128
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(hash);
+            }
         }
         finally
         {
