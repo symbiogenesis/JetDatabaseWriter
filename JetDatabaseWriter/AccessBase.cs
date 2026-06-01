@@ -263,16 +263,31 @@ public abstract class AccessBase : IAccessBase
         }
 
         this.IsDisposed = true;
-        if (!this.leaveOpen)
+        try
         {
-            await this.DatabaseStream.DisposeAsync().ConfigureAwait(false);
+            if (!this.leaveOpen)
+            {
+                await this.DatabaseStream.DisposeAsync().ConfigureAwait(false);
+            }
         }
+        finally
+        {
+            this.DisposeBaseManagedResources();
+            GC.SuppressFinalize(this);
+        }
+    }
 
+    /// <summary>
+    /// Disposes base-owned managed resources other than the backing stream.
+    /// Used by derived constructors when construction fails before an instance
+    /// can be returned to the caller and disposed normally.
+    /// </summary>
+    private protected void DisposeBaseManagedResources()
+    {
         this.IoGate.Dispose();
         this.PageKeys.Dispose();
         this.ownedDataPagesByTdef.Clear();
         this.ownedDataPageIndex.Dispose();
-        GC.SuppressFinalize(this);
     }
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>

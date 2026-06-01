@@ -84,7 +84,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly LockFileCoordinator lockFile;
     private readonly bool strictParsing;
     private readonly ComplexColumnReader complexColumns;
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, with failed construction cleaned up by DisposeReaderConstructionResources.")]
     private readonly LruCache<long, byte[]>? pageCache;
     private readonly LongValueDecoder longValueDecoder;
 
@@ -96,7 +96,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// their own — correctness doesn't depend on the two caches being kept in
     /// lock-step.
     /// </summary>
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, with failed construction cleaned up by DisposeReaderConstructionResources.")]
     private readonly LruCache<long, RowBound[]>? rowBoundsCache;
 
     /// <summary>
@@ -126,50 +126,56 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNull(options, nameof(options));
 
         this.lockFile = LockFileCoordinator.ForReader(path, options);
-        this.strictParsing = options.StrictParsing;
-        this.complexColumns = new ComplexColumnReader(this);
-        this.LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, path);
-
-        this.DiagnosticsEnabled = options.DiagnosticsEnabled;
-        this.PageCacheSize = options.PageCacheSize;
-        this.PageReadOptimizationMode = options.PageReadOptimizationMode;
-
-        // Cache is created up front when enabled (>0); negative or zero leaves
-        // it null and ReadPageCachedAsync bypasses caching entirely.
-        if (!suppressPageCache && this.PageCacheSize > 0)
-        {
-            this.pageCache = new LruCache<long, byte[]>(this.PageCacheSize, ReturnPage);
-            this.rowBoundsCache = new LruCache<long, RowBound[]>(this.PageCacheSize);
-        }
-
-        this.longValueDecoder = new LongValueDecoder(this);
-
-        bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
-        if (isLegacyAesCfb)
-        {
-            // ACCDB AES (legacy synthetic CFB header path): page-level
-            // decryption is now configured; skip catalog validation because
-            // the header bytes themselves are still raw CFB until ReadPageAsync
-            // decrypts page 1+ on first access.
-            return;
-        }
-
-        if (options.ValidateOnOpen)
-        {
-            this.ValidateDatabaseFormat();
-        }
-
-        // Release the lock-file slot if post-acquire setup throws. OpenAsync's
-        // catch only owns the stream and never sees this half-built reader.
-        this.lockFile.Acquire();
+        bool constructionComplete = false;
         try
         {
+            this.strictParsing = options.StrictParsing;
+            this.complexColumns = new ComplexColumnReader(this);
+            this.LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, path);
+
+            this.DiagnosticsEnabled = options.DiagnosticsEnabled;
+            this.PageCacheSize = options.PageCacheSize;
+            this.PageReadOptimizationMode = options.PageReadOptimizationMode;
+
+            // Cache is created up front when enabled (>0); negative or zero leaves
+            // it null and ReadPageCachedAsync bypasses caching entirely.
+            if (!suppressPageCache && this.PageCacheSize > 0)
+            {
+                this.pageCache = new LruCache<long, byte[]>(this.PageCacheSize, ReturnPage);
+                this.rowBoundsCache = new LruCache<long, RowBound[]>(this.PageCacheSize);
+            }
+
+            this.longValueDecoder = new LongValueDecoder(this);
+
+            bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
+            if (isLegacyAesCfb)
+            {
+                // ACCDB AES (legacy synthetic CFB header path): page-level
+                // decryption is now configured; skip catalog validation because
+                // the header bytes themselves are still raw CFB until ReadPageAsync
+                // decrypts page 1+ on first access.
+                constructionComplete = true;
+                return;
+            }
+
+            if (options.ValidateOnOpen)
+            {
+                this.ValidateDatabaseFormat();
+            }
+
+            // OpenAsync's catch owns only the stream and never sees this
+            // half-built reader, so failed construction after slot acquisition
+            // must release the lock-file slot through DisposeReaderConstructionResources.
+            this.lockFile.Acquire();
             this.ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            constructionComplete = true;
         }
-        catch
+        finally
         {
-            this.lockFile.Dispose();
-            throw;
+            if (!constructionComplete)
+            {
+                this.DisposeReaderConstructionResources();
+            }
         }
     }
 
@@ -2634,12 +2640,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private async ValueTask DisposeReaderResourcesAsync()
     {
+        this.DisposePageCaches();
+        this.InvalidateCatalogCache();
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private void DisposeReaderConstructionResources()
+    {
+        this.DisposePageCaches();
+        this.lockFile.Dispose();
+        this.DisposeBaseManagedResources();
+    }
+
+    private void DisposePageCaches()
+    {
         this.pageCache?.Clear();
         this.pageCache?.Dispose();
         this.rowBoundsCache?.Clear();
         this.rowBoundsCache?.Dispose();
-        this.InvalidateCatalogCache();
-        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
