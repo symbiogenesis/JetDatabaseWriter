@@ -36,16 +36,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
 
 /// <summary>
-/// Last maintenance path used by <see cref="AccessWriter.InsertSystemRowAndMaintainAsync"/>.
-/// </summary>
-internal enum SystemTableIndexMaintenancePath
-{
-    None = 0,
-    SkippedNoMaintainableIndexes = 1,
-    Incremental = 2,
-}
-
-/// <summary>
 /// Pure-managed writer for Microsoft Access JET databases (.mdb / .accdb).
 /// Supports creating tables, inserting, updating, and deleting rows.
 /// </summary>
