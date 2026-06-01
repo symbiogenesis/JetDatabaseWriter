@@ -13,7 +13,6 @@ using SharpFuzz;
 using Xunit;
 
 #pragma warning disable CA1031 // Catching all exceptions is intentional for fuzz testing.
-#pragma warning disable CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
 
 /// <summary>
 /// Fuzz test for AccessReader. This test is designed to find crashes and robustness issues by exploring random input data.
@@ -221,7 +220,9 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 return null;
             }
 
+#pragma warning disable CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
             int idx = random?.Next(0, files.Length) ?? new Random().Next(files.Length);
+#pragma warning restore CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
             string chosen = files[idx];
             return await File.ReadAllBytesAsync(chosen);
         }
