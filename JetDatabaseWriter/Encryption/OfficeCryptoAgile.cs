@@ -8,10 +8,6 @@ using System.Xml;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable CA5358 // Cipher modes are fixed by the ECMA-376 Agile spec.
-#pragma warning disable CA5379 // SHA-512 is the spec-mandated Agile hash; spinCount is honoured.
-#pragma warning disable CA5401 // AES-CBC IVs are spec-derived (salt / blockKey / segment index).
-
 /// <summary>
 /// ECMA-376 §2.3.4.10–.13 ("Agile") encryption support — used by Office
 /// Crypto API encrypted .accdb files (Access 2010 SP1 and later, and

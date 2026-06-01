@@ -8,10 +8,6 @@ using System.Text;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable CA5350 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
-#pragma warning disable CA5358 // AES-CBC with IV=0 is the spec-mandated mode for Standard encryption.
-#pragma warning disable CA5401 // IV is fixed to zeros per the Standard encryption specification.
-
 /// <summary>
 /// MS-OFFCRYPTO §2.3.6 "Standard" encryption support — used by Office 2007
 /// (Access 2007) password-encrypted .accdb files. Parses the binary
