@@ -40,6 +40,18 @@ internal static class DirectRowDecoderBuilder
     private static readonly MethodInfo ReadDateTimeExtendedMethod =
         GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeExtendedAt), StaticNonPublic);
 
+    private static readonly PropertyInfo ColumnSliceKindProperty =
+        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.Kind));
+
+    private static readonly PropertyInfo ColumnSliceDataStartProperty =
+        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.DataStart));
+
+    private static readonly PropertyInfo ColumnSliceDataLenProperty =
+        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.DataLen));
+
+    private static readonly PropertyInfo ColumnSliceBoolValueProperty =
+        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.BoolValue));
+
     /// <summary>
     /// Builds a direct decoder for <typeparamref name="T"/> bound against
     /// <paramref name="headers"/>/<paramref name="columns"/>, or returns
@@ -136,11 +148,6 @@ internal static class DirectRowDecoderBuilder
             Expression.Return(returnLabel, Expression.Constant(false))),
         };
 
-        PropertyInfo kindProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.Kind));
-        PropertyInfo dataStartProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataStart));
-        PropertyInfo dataLenProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.DataLen));
-        PropertyInfo boolValueProp = typeof(AccessBase.ColumnSlice).GetProperty(nameof(AccessBase.ColumnSlice.BoolValue));
-
         foreach ((int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col) entry in bound)
         {
             ColumnInfo col = entry.Col;
@@ -159,10 +166,10 @@ internal static class DirectRowDecoderBuilder
                     layoutLocal,
                     colExpr)));
 
-            MemberExpression kindExpr = Expression.Property(sliceLocal, kindProp);
-            MemberExpression dataStartExpr = Expression.Property(sliceLocal, dataStartProp);
-            MemberExpression dataLenExpr = Expression.Property(sliceLocal, dataLenProp);
-            MemberExpression boolValueExpr = Expression.Property(sliceLocal, boolValueProp);
+            MemberExpression kindExpr = Expression.Property(sliceLocal, ColumnSliceKindProperty);
+            MemberExpression dataStartExpr = Expression.Property(sliceLocal, ColumnSliceDataStartProperty);
+            MemberExpression dataLenExpr = Expression.Property(sliceLocal, ColumnSliceDataLenProperty);
+            MemberExpression boolValueExpr = Expression.Property(sliceLocal, ColumnSliceBoolValueProperty);
 
             // Compute the absolute offset once (rowStart + slice.DataStart).
             BinaryExpression offsetExpr = Expression.Add(rowStartParam, dataStartExpr);
@@ -270,6 +277,9 @@ internal static class DirectRowDecoderBuilder
 
     private static MethodInfo GetRequiredMethod(Type declaringType, string name, BindingFlags bindingAttr) =>
         declaringType.GetMethod(name, bindingAttr) ?? throw new MissingMethodException(declaringType.FullName ?? declaringType.Name, name);
+
+    private static PropertyInfo GetRequiredProperty(Type declaringType, string name) =>
+        declaringType.GetProperty(name) ?? throw new MissingMemberException(declaringType.FullName ?? declaringType.Name, name);
 
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)
     {
