@@ -4,6 +4,10 @@ JetDatabaseWriter incorporates material from the following third-party sources.
 It also documents reference-only projects used to guide interoperability and
 coverage work where no source code, binaries, or fixtures were copied.
 
+Third-party notices for database test fixture sets are included alongside the corresponding fixtures:
+   - [Jackcess database fixtures](JetDatabaseWriter.Tests/Databases/Jackcess/THIRD-PARTY-NOTICES.txt)
+   - [mdbtools/mdbtestdata database fixtures](JetDatabaseWriter.Tests/Databases/mdbtools/THIRD-PARTY-NOTICES.txt)
+
 ## Sep
 
 The internal delimited-text parser under `JetDatabaseWriter/DelimitedText/`

@@ -46,7 +46,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 | Boolean options | **Low priority.** Booleans are ordinary on options objects and are named at call sites; less concerning than positional boolean method parameters. | No todo. |
 | `DBNull` instead of `null` | **Valid API tradeoff.** Current docs explicitly say object-array rows surface `DBNull.Value`; typed POCOs are the modern path. | Optional future API todo. |
 | Release/versioning discipline | **Valid.** The project has package version metadata and a publish workflow, but there is no standalone release-history file; package release notes now stay inline instead of pointing to an absent one. No local GitHub release metadata can be verified from the repo. | Add release-process todo. |
-| Test-fixture and reference licensing | **Partially valid.** [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) documents verbatim Jackcess tables, a Jackcess port/adaptation, OpenMcdf fixtures, Sep influence, and ESE reference-only use. README also names mdbtools, but the notices do not explicitly say mdbtools is reference-only/no copied material. | Add provenance cleanup todo. |
+| Test-fixture and reference licensing | **Already documented.** [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) documents verbatim Jackcess tables, a Jackcess port/adaptation, OpenMcdf fixtures, Sep influence, ESE reference-only use, and links to local Jackcess and mdbtools fixture notices. The mdbtools fixture notice records mdbtools format-spec reference-only use. | Completed provenance cleanup. |
 | Upstream/fork attribution | **Partially valid.** NuGet metadata names Diego Ripera and points to the original repository, but README does not explain project lineage or retained upstream material. | Add README attribution todo. |
 | `SECURITY.md` | **Valid.** `.github/SECURITY.md` is absent. | Add disclosure-process todo. |
 
@@ -111,7 +111,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 - [x] Keep package release notes inline instead of pointing to an absent release-history file.
 - [ ] Define the intended SemVer/API stability policy for the current `4.0.0` package line.
 - [ ] Add a README lineage/attribution note explaining the relationship to the original `diegoripera/JetDatabaseWriter` / `JetDatabaseReader` work and which code/material remains derived.
-- [ ] Extend [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) to mention mdbtools as reference-only if no mdbtools code, fixtures, or vectors were copied.
+- [x] Extend [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) to link to the local Jackcess and mdbtools fixture notices, with mdbtools format-spec reference-only usage documented in `JetDatabaseWriter.Tests/Databases/mdbtools/THIRD-PARTY-NOTICES.txt`.
 - [ ] Re-audit checked-in test fixtures and generated index-code resources when adding new copied corpus material; record source, license, and whether the material is verbatim, adapted, or reference-only.
 
 ## Non-Todos From This Review
