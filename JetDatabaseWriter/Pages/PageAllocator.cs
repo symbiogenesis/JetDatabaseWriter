@@ -9,8 +9,6 @@ using JetDatabaseWriter.Enums;
 using static JetDatabaseWriter.AccessBase;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1204 // Static helpers stay near related instance helpers.
-
 /// <summary>
 /// Owns the Access global page-allocation map on page 1 and exposes page
 /// reserve, free, scrub, and tail-shrink operations for the writer.
@@ -79,7 +77,7 @@ internal sealed class PageAllocator(AccessWriter writer)
     internal async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken)
     {
         var freePages = new SortedSet<long>(await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false));
-        long totalPages = this.LogicalPageCount;
+        long totalPages = writer.LogicalPageCount;
         for (long pageNumber = 2; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -122,7 +120,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
 
         bool secure = writer.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-        long totalPages = this.LogicalPageCount;
+        long totalPages = writer.LogicalPageCount;
         long newTotalPages = totalPages;
         while (newTotalPages > 3)
         {
@@ -154,7 +152,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
     internal async ValueTask<bool> IsPageFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= this.LogicalPageCount)
+        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= writer.LogicalPageCount)
         {
             return false;
         }
@@ -171,7 +169,8 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
     }
 
-    private long LogicalPageCount => writer.LogicalPageCount;
+    private static bool IsPhysicallyReusableFreePage(byte[] page)
+        => page[0] is Constants.PageTypes.Freed or 0x00;
 
     private static long FindContiguousRun(List<long> freePages, int pageCount)
     {
@@ -232,7 +231,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                 globalPage,
                 rowBound,
                 writer.PageSizeBytes,
-                this.LogicalPageCount,
+                writer.LogicalPageCount,
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
                 writer.ReadPageAsync,
@@ -352,7 +351,7 @@ internal sealed class PageAllocator(AccessWriter writer)
             rowStart,
             rowSize,
             writer.PageSizeBytes,
-            this.LogicalPageCount,
+            writer.LogicalPageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
             existingFreePages);
@@ -377,7 +376,7 @@ internal sealed class PageAllocator(AccessWriter writer)
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
-        if (mapPageNumber <= 0 || mapPageNumber >= this.LogicalPageCount)
+        if (mapPageNumber <= 0 || mapPageNumber >= writer.LogicalPageCount)
         {
             return false;
         }
@@ -529,7 +528,4 @@ internal sealed class PageAllocator(AccessWriter writer)
             }
         }
     }
-
-    private static bool IsPhysicallyReusableFreePage(byte[] page)
-        => page[0] is Constants.PageTypes.Freed or 0x00;
 }
