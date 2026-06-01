@@ -13,8 +13,6 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1204
-
 /// <summary>
 /// Builds table-definition (TDEF) pages and the bootstrap bytes for a new,
 /// empty database file.
@@ -679,9 +677,6 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         }
     }
 
-    private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
-        => (LogicalTDefChain.MaterializePages(logical, usedLength, writer.PageSizeBytes), firstDpLogicalOffsets);
-
     private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
     [
         ("Id",          LongIntegerType,     0, 0, 0,  4,           0x03),
@@ -715,4 +710,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         ("LvModule",     OleType,      15, 9, 0,  0,           0x12),
         ("LvExtra",      OleType,      16, 10, 0, 0,           0x12),
     ];
+
+    private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
+        => (LogicalTDefChain.MaterializePages(logical, usedLength, writer.PageSizeBytes), firstDpLogicalOffsets);
 }

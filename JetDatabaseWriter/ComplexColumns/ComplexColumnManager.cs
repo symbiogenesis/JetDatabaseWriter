@@ -234,39 +234,6 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         => new(name, clrType, maxLength);
 
     /// <summary>
-    /// scaffolds the nine <c>MSysComplexType_*</c> template tables
-    /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
-    /// <c>IEEEDouble</c>, <c>GUID</c>, <c>Decimal</c>, <c>Text</c>, <c>Attachment</c>)
-    /// into a freshly-created ACCDB so subsequent <see cref="EmitComplexColumnArtifactsAsync"/>
-    /// calls can populate <c>MSysComplexColumns.ComplexTypeObjectID</c> with a real
-    /// catalog id instead of the placeholder <c>0</c>. Each catalog row carries
-    /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
-    /// for type-template tables) so the templates are excluded from
-    /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
-    /// see <see href="docs/format-probe/format-probe-appendix-complex.md" />.
-    /// </summary>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
-    {
-        var tableArtifacts = new List<CatalogTableArtifact>(ComplexTypeTemplates.Length);
-        foreach ((string name, ColumnDefinition[] cols) in ComplexTypeTemplates)
-        {
-            tableArtifacts.Add(new CatalogTableArtifact(
-                name,
-                cols,
-                [],
-                Constants.SystemObjects.ComplexTypeTemplateFlags,
-                EmitLvProp: false,
-                EmitUsageMap: false,
-                MarkSystemTableTdef: false,
-                EmitAceRows: false,
-                RegisterConstraints: false));
-        }
-
-        await this.writer.ExecuteCatalogArtifactPlanAsync(new CatalogArtifactPlan(tableArtifacts, []), cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
     /// Maps a user-declared complex column to the canonical
     /// <c>MSysComplexType_*</c> template name. Returns <see langword="null"/>
     /// when the column is not complex or its element type has no matching template.
@@ -331,6 +298,39 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// scaffolds the nine <c>MSysComplexType_*</c> template tables
+    /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
+    /// <c>IEEEDouble</c>, <c>GUID</c>, <c>Decimal</c>, <c>Text</c>, <c>Attachment</c>)
+    /// into a freshly-created ACCDB so subsequent <see cref="EmitComplexColumnArtifactsAsync"/>
+    /// calls can populate <c>MSysComplexColumns.ComplexTypeObjectID</c> with a real
+    /// catalog id instead of the placeholder <c>0</c>. Each catalog row carries
+    /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
+    /// for type-template tables) so the templates are excluded from
+    /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
+    /// see <see href="docs/format-probe/format-probe-appendix-complex.md" />.
+    /// </summary>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
+    {
+        var tableArtifacts = new List<CatalogTableArtifact>(ComplexTypeTemplates.Length);
+        foreach ((string name, ColumnDefinition[] cols) in ComplexTypeTemplates)
+        {
+            tableArtifacts.Add(new CatalogTableArtifact(
+                name,
+                cols,
+                [],
+                Constants.SystemObjects.ComplexTypeTemplateFlags,
+                EmitLvProp: false,
+                EmitUsageMap: false,
+                MarkSystemTableTdef: false,
+                EmitAceRows: false,
+                RegisterConstraints: false));
+        }
+
+        await this.writer.ExecuteCatalogArtifactPlanAsync(new CatalogArtifactPlan(tableArtifacts, []), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
