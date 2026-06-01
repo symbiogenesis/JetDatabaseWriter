@@ -88,7 +88,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 - [ ] Ensure transaction-budget overflow tests stay tied to the public option and exception type.
 - [ ] Design a batched schema migration API so multiple add/drop/rename operations can be paid for with one copy-and-swap rewrite.
 - [ ] Keep the existing DDL copy-and-swap caveat in README and XML docs until a batched or in-place path exists.
-- [ ] Reword the top-level performance/feature bullet for "optional parallel page reads" so it coexists clearly with the single-instance I/O gate limitation.
+- [x] Reword the top-level performance/feature bullet for "optional parallel page reads" so it coexists clearly with the single-instance I/O gate limitation.
 
 ### 5. Document semantic boundaries of Access-like behavior
 
