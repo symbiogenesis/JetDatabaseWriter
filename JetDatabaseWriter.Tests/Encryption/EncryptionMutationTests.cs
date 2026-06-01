@@ -306,6 +306,28 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             await AccessWriter.ChangePasswordAsync(path, "totally-wrong", SecondPassword, NoLockOptions, TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(AccessEncryptionFormat.Jet4Rc4, FirstPassword + "x")]
+    [InlineData(AccessEncryptionFormat.Jet4Rc4, FirstPassword + "\0")]
+    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword, FirstPassword + "x")]
+    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword, FirstPassword + "\0")]
+    [InlineData(AccessEncryptionFormat.AccdbAesCfbWrapped, FirstPassword + "x")]
+    [InlineData(AccessEncryptionFormat.AccdbAesCfbWrapped, FirstPassword + "\0")]
+    public async Task HeaderPasswordFormats_OpenWithWrongPassword_ThrowsUnauthorizedAccessException(
+        AccessEncryptionFormat format,
+        string wrongPassword)
+    {
+        string sourcePath = format == AccessEncryptionFormat.Jet4Rc4
+            ? TestDatabases.AdventureWorks
+            : TestDatabases.NorthwindTraders;
+        string extension = format == AccessEncryptionFormat.Jet4Rc4 ? ".mdb" : ".accdb";
+        string path = await this.CloneAsync(sourcePath, extension);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, format, NoLockOptions, TestContext.Current.CancellationToken);
+
+        await AssertWrongPasswordAsync(path, wrongPassword);
+    }
+
     [Fact]
     public async Task EncryptAsync_Jet4Rc4_OnAccdbFile_ThrowsNotSupported()
     {
