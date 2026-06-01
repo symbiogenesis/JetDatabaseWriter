@@ -1891,8 +1891,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
             }
 
-            bool canUseDirectMap = projectedColumns.Count > 0
-                && projectedColumns.TrueForAll(static projection => projection.Column.Type is not ComplexType and not AttachmentType);
+            bool canUseDirectMap = projectedColumns.TrueForAll(static projection => projection.Column.Type is not ComplexType and not AttachmentType);
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {
