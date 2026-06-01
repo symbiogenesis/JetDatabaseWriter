@@ -303,7 +303,7 @@ internal static class EncryptionManager
     public static ValueTask EncryptAsync(
         string path,
         ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat targetFormat,
+        AccessEncryptionFormat? targetFormat = null,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
     {
@@ -375,7 +375,7 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Stream-based equivalent of <see cref="EncryptAsync(string,ReadOnlyMemory{char},AccessEncryptionFormat,AccessWriterOptions?,CancellationToken)"/>.
+    /// Stream-based equivalent of <see cref="EncryptAsync(string,ReadOnlyMemory{char},AccessEncryptionFormat?,AccessWriterOptions?,CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="newPassword">The new password.</param>
@@ -385,7 +385,7 @@ internal static class EncryptionManager
     public static ValueTask EncryptAsync(
         Stream stream,
         ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat targetFormat,
+        AccessEncryptionFormat? targetFormat = null,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
@@ -831,7 +831,10 @@ internal static class EncryptionManager
             .ReadDecryptedAsync(source, oldPwd, cancellationToken)
             .ConfigureAwait(false);
 
-        AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
+        AccessEncryptionFormat effectiveTarget = targetFormat
+            ?? (requireSourceEncrypted
+                ? sourceFormat
+                : EncryptionConverter.ResolveBestTargetFormat(plaintext));
         return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 

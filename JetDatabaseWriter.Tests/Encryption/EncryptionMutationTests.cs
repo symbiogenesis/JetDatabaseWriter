@@ -18,7 +18,7 @@ using Xunit;
 /// <summary>
 /// <para>
 /// Round-trip tests for the encryption-mutation API exposed by
-/// <see cref="AccessWriter.EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
+/// <see cref="AccessWriter.EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>,
 /// <see cref="AccessWriter.ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>,
 /// and <see cref="AccessWriter.DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
 /// </para>
@@ -68,6 +68,52 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         AccessEncryptionFormat fmt = await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken);
 
         Assert.Equal(AccessEncryptionFormat.None, fmt);
+    }
+
+    // ───── Default target selection ─────────────────────────────────
+
+    [Fact]
+    public async Task EncryptAsync_DefaultTarget_OnAccdbFile_UsesAccessNativeAgile()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+
+        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        List<string> originalTables = await ListTablesAsync(path, password: null);
+
+        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, options: NoLockOptions, cancellationToken: ct);
+
+        await AssertFlatAgileAsync(path, ct);
+        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, ct));
+        await AssertOpenableAsync(path, FirstPassword, originalTables);
+    }
+
+    [Fact]
+    public async Task EncryptAsync_DefaultTarget_OnJet4MdbFile_UsesJet4Rc4()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+
+        string path = await this.CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+        List<string> originalTables = await ListTablesAsync(path, password: null);
+
+        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, options: NoLockOptions, cancellationToken: ct);
+
+        Assert.Equal(AccessEncryptionFormat.Jet4Rc4, await AccessWriter.DetectEncryptionFormatAsync(path, ct));
+        await AssertOpenableAsync(path, FirstPassword, originalTables);
+    }
+
+    [Fact]
+    public async Task EncryptAsync_DefaultTarget_OnJet3MdbFile_ThrowsNotSupported()
+    {
+        string path = await this.CloneAsync(TestDatabases.Jet3Test, ".mdb");
+
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await AccessWriter.EncryptAsync(
+                path,
+                FirstPasswordMemory,
+                options: NoLockOptions,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
     }
 
     // ───── Lock files ────────────────────────────────────────────────
@@ -395,7 +441,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await ms.WriteAsync(original.AsMemory(), TestContext.Current.CancellationToken);
         ms.Position = 0;
 
-        await AccessWriter.EncryptAsync(ms, FirstPasswordMemory, AccessEncryptionFormat.AccdbAgile, TestContext.Current.CancellationToken);
+        await AccessWriter.EncryptAsync(ms, FirstPasswordMemory, cancellationToken: TestContext.Current.CancellationToken);
 
         ms.Position = 0;
         await AccessWriter.DecryptAsync(ms, FirstPasswordMemory, TestContext.Current.CancellationToken);

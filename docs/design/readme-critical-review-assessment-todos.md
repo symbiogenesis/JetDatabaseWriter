@@ -68,7 +68,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 - [x] Add best-effort `CryptographicOperations.ZeroMemory` cleanup for derived keys, intermediate Agile keys, verifier/HMAC material, and temporary plaintext password encodings where lifetimes are locally owned.
 - [ ] Document the residual managed-memory limitation: caller-provided strings and copied arrays can still remain on the GC heap.
 - [x] Replace encryption mutation API `string` password parameters with `ReadOnlyMemory<char>` parameters.
-- [ ] Make Agile encryption the documented recommendation for new encrypted ACCDB output.
+- [x] Make Agile encryption the documented recommendation for new encrypted ACCDB output.
 - [ ] Warn in docs, and possibly via an opt-in diagnostic callback, when callers explicitly select legacy weak formats such as Jet4 RC4, ACCDB legacy password-only, or AES-128 ECB-compatible page encryption.
 - [ ] Consider a dedicated exception type for missing/incorrect database passwords so callers can distinguish password failure from filesystem access denial.
 

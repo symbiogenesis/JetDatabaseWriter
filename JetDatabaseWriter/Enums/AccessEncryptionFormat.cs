@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Identifies the on-disk encryption layout of a JET / ACE database.
-/// Used by <see cref="AccessWriter.EncryptAsync(string, System.ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>
+/// Used by <see cref="AccessWriter.EncryptAsync(string, System.ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, System.Threading.CancellationToken)"/>
 /// to choose which scheme to apply when encrypting a previously-unencrypted
 /// file, and returned by <see cref="AccessWriter.DetectEncryptionFormatAsync(string, System.Threading.CancellationToken)"/>
 /// for inspection.
@@ -39,7 +39,8 @@ public enum AccessEncryptionFormat
     /// <summary>
     /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
     /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
-    /// is embedded in page 0 and data pages are encrypted in place.
+    /// is embedded in page 0 and data pages are encrypted in place. This is the
+    /// default and recommended writer target for new encrypted ACCDB output.
     /// </summary>
     AccdbAgile = 4,
 

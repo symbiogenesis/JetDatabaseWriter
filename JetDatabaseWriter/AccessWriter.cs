@@ -1666,7 +1666,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Changes the password of an already-encrypted JET / ACE database in place,
     /// preserving the existing on-disk encryption format. Use
-    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>
+    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>
     /// to add encryption to an unencrypted database, or
     /// <see cref="DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>
     /// to remove it.
@@ -1688,12 +1688,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
 
     /// <summary>
-    /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
-    /// requested <paramref name="targetFormat"/>.
+    /// Encrypts a currently-unencrypted JET / ACE database in place, applying
+    /// <paramref name="targetFormat"/> when supplied or the best supported
+    /// password encryption for the database format when omitted.
     /// </summary>
     /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
     /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use. Must be valid for the file kind (Jet4 / ACE).</param>
+    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
@@ -1706,7 +1707,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public static ValueTask EncryptAsync(
         string path,
         ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat targetFormat,
+        AccessEncryptionFormat? targetFormat = null,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
         => EncryptionManager.EncryptAsync(path, newPassword, targetFormat, options, cancellationToken);
@@ -1749,17 +1750,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Stream-based equivalent of
-    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>.
+    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>.
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
     /// <param name="newPassword">The password to apply. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use.</param>
+    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask EncryptAsync(
         Stream stream,
         ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat targetFormat,
+        AccessEncryptionFormat? targetFormat = null,
         CancellationToken cancellationToken = default)
         => EncryptionManager.EncryptAsync(stream, newPassword, targetFormat, cancellationToken);
 

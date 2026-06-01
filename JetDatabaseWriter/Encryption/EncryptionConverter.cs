@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <para>
 /// Implements the read-decrypt-rewrite pipeline used by
 /// <see cref="AccessWriter.ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>,
-/// <see cref="AccessWriter.EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>,
+/// <see cref="AccessWriter.EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>,
 /// and <see cref="AccessWriter.DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
 /// </para>
 /// <para>
@@ -29,6 +29,33 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal static class EncryptionConverter
 {
     private const int HeaderLength = 0x80;
+
+    /// <summary>
+    /// Resolves the strongest writer-supported password encryption format for
+    /// a clean database image based on its JET / ACE format.
+    /// </summary>
+    /// <param name="plaintext">The plaintext database bytes.</param>
+    /// <returns>The default target encryption format.</returns>
+    /// <exception cref="InvalidDataException">Thrown when <paramref name="plaintext"/> is shorter than a JET header.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the database format has no password encryption target.</exception>
+    public static AccessEncryptionFormat ResolveBestTargetFormat(byte[] plaintext)
+    {
+        Guard.NotNull(plaintext, nameof(plaintext));
+        if (plaintext.Length < HeaderLength)
+        {
+            throw new InvalidDataException("Plaintext database is shorter than the JET header.");
+        }
+
+        return DetectFormat(plaintext) switch
+        {
+            DatabaseFormat.Jet4Mdb => AccessEncryptionFormat.Jet4Rc4,
+            DatabaseFormat.AceAccdb => AccessEncryptionFormat.AccdbAgile,
+            DatabaseFormat.Jet3Mdb => throw new NotSupportedException(
+                "Jet3 (.mdb) databases do not have a supported password encryption target. " +
+                "Use a Jet4 .mdb or ACE .accdb database for password encryption."),
+            _ => throw new InvalidDataException("The database format is unknown."),
+        };
+    }
 
     /// <summary>
     /// Reads <paramref name="source"/>, applies any active decryption, and
