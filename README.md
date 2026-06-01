@@ -57,6 +57,8 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), [OpenMcdf](https://github.com/ironfede/openmcdf), and Microsoft's [Extensible Storage Engine](https://github.com/microsoft/Extensible-Storage-Engine) for analogous storage-engine risk categories, with additional coverage for corner cases, corruption resilience, and format variants.
 
+For a compact map of writer-created disk-format surfaces and their strongest DAO OpenRecordset / CompactDatabase validation signals, see the [writer disk-format validation matrix](docs/design/writer-disk-format-validation-matrix.md).
+
 Beyond functional tests, the codebase is validated by:
 
 - **Strict compiler settings** — nullable reference types, warnings-as-errors, `WarningLevel 9999`, `AnalysisLevel latest-all`, and arithmetic overflow checking enabled globally

@@ -58,7 +58,7 @@ Primary evidence used here: [README.md](../../README.md), [cve-vulnerability-ana
 - [ ] Make the same change in [cve-vulnerability-analysis.md](../cve-vulnerability-analysis.md), especially the header and final inventory line.
 - [ ] Avoid implying that historical Microsoft CVE coverage is a complete security guarantee for this independent implementation.
 - [ ] Keep the CVE table valuable by framing each row as class coverage, code guard, and regression signal.
-- [ ] Add a short README link to [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) near the correctness claims so readers can see the actual DAO/OpenRecordset/CompactDatabase evidence.
+- [x] Add a short README link to [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) near the correctness claims so readers can see the actual DAO/OpenRecordset/CompactDatabase evidence.
 - [ ] Reword the collation/index-key paragraph so "byte-exact" is visibly scoped to specific fixtures, exported matrices, and tested formats, not arbitrary text indexes.
 
 ### 2. Tighten crypto hygiene and password ergonomics
