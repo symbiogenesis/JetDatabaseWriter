@@ -2001,32 +2001,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
-    /// <summary>
-    /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
-    /// Use this for compatibility scenarios.
-    /// </summary>
-    /// <param name="progress">Optional progress reporter for table read operations.</param>
-    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    /// <returns>A dictionary mapping table names to their corresponding DataTables with all columns as strings.</returns>
-    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
-    {
-        using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
-        List<CatalogEntry> tables = await this.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-
-        for (int i = 0; i < tables.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            CatalogEntry table = tables[i];
-            progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
-            result[table.Name] = await this.ReadTableAsStringsAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        return result;
-    }
-
     /// <inheritdoc/>
     [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is invoked from DisposeReaderResourcesAsync, passed as a step to LockFileCoordinator.DisposeAfterAsync.")]
     public override async ValueTask DisposeAsync()

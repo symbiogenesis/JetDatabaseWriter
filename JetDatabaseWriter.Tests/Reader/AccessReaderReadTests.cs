@@ -16,7 +16,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for: ReadTableAsync (DataTable), ReadTableAsStringDataTable,
-/// ReadAllTables, ReadAllTablesAsStrings.
+/// and ReadAllTables.
 /// </summary>
 /// <param name="db">The database input.</param>
 public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -190,40 +190,6 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
                 .Any(col => col.DataType != typeof(string)));
 
         Assert.True(anyTypedColumn);
-    }
-
-    // ── ReadAllTablesAsStrings ────────────────────────────────────────
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task ReadAllTablesAsStrings_AllColumns_AreStringType(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
-
-        foreach ((string? tableName, DataTable? dt) in all)
-        {
-            foreach (DataColumn col in dt.Columns)
-            {
-                Assert.Equal(typeof(string), col.DataType);
-            }
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task ReadAllTablesAsStrings_RowCounts_MatchReadAllTables(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-
-        Dictionary<string, DataTable> typed = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
-        Dictionary<string, DataTable> strings = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
-
-        foreach (string name in typed.Keys)
-        {
-            Assert.Equal(typed[name].Rows.Count, strings[name].Rows.Count);
-        }
     }
 
     // ── ReadTable<T> (generic POCO) ─────────────────────────────────────

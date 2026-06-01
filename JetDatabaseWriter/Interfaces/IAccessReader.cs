@@ -221,17 +221,6 @@ public interface IAccessReader : IAccessBase
     public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
-    /// Use this for compatibility scenarios.
-    /// This fully materializes every user table; prefer <see cref="RowsAsStrings(string, IProgress{long}?, CancellationToken)"/>
-    /// when streaming string rows is sufficient.
-    /// </summary>
-    /// <param name="progress">Optional row-count progress sink.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed
     /// <see cref="IAsyncEnumerable{T}"/> of typed object arrays. Compose with the standard
     /// async LINQ operators (<c>Where</c>, <c>Take</c>, <c>Select</c>, <c>ToListAsync</c>,

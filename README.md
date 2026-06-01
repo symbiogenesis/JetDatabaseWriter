@@ -372,9 +372,9 @@ Filtering and projection run client-side per row — there is no SQL engine unde
 
 ## Reading All Tables
 
-`ReadAllTablesAsync` and `ReadAllTablesAsStringsAsync` materialize every user table in one call and accept a `Progress<TableProgress>` callback that fires once per table:
+`ReadAllTablesAsync` materializes every user table in one call and accepts a `Progress<TableProgress>` callback that fires once per table:
 
-For large databases, enumerate `ListTablesAsync()` and stream each table with `Rows(...)` or `Rows<T>(...)` unless you specifically need `DataTable` instances for every table.
+For large databases, enumerate `ListTablesAsync()` and stream each table with `Rows(...)` or `Rows<T>(...)` unless you specifically need `DataTable` instances for every table. For string-typed `DataTable` compatibility across all tables, enumerate `ListTablesAsync()` and call `ReadTableAsStringsAsync(...)` per table.
 
 ```csharp
 Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(

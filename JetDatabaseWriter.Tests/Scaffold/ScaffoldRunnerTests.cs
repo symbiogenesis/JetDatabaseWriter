@@ -477,9 +477,6 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<Dictionary<string, System.Data.DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<Dictionary<string, System.Data.DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
-
         public IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
