@@ -24,10 +24,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        if (writer.IsDisposed)
-        {
-            throw new ObjectDisposedException(nameof(AccessWriter));
-        }
+        Guard.ThrowIfDisposed(writer.IsDisposed, writer);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -152,10 +149,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     {
         Guard.NotNull(transaction, nameof(transaction));
 
-        if (writer.IsDisposed)
-        {
-            throw new ObjectDisposedException(nameof(AccessWriter));
-        }
+        Guard.ThrowIfDisposed(writer.IsDisposed, writer);
 
         PageJournal journal;
         await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);

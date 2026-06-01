@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 
 internal sealed class DelimitedTextReader : IDisposable
 {
@@ -647,11 +648,5 @@ internal sealed class DelimitedTextReader : IDisposable
 
     private void IncrementLineNumber() => this.lineNumber++;
 
-    private void ThrowIfDisposed()
-    {
-        if (this.buffer.Length == 0)
-        {
-            throw new ObjectDisposedException(nameof(DelimitedTextReader));
-        }
-    }
+    private void ThrowIfDisposed() => Guard.ThrowIfDisposed(this.buffer.Length == 0, this);
 }
