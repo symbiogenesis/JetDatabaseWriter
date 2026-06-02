@@ -12,8 +12,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class UsageMap
 {
-    internal readonly record struct Pointer(int RowIndex, int PageNumber);
-
     internal static int PagesPerReferenceMapPage(int pageSize)
         => (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
 
@@ -23,7 +21,7 @@ internal static class UsageMap
     internal static int AlignInlineBasePage(long pageNumber)
         => checked((int)(pageNumber / 8 * 8));
 
-    internal static bool TryReadPointer(byte[] page, int offset, out Pointer pointer)
+    internal static bool TryReadPointer(byte[] page, int offset, out UsageMapPointer pointer)
     {
         pointer = default;
         if (offset < 0 || offset + 3 >= page.Length)
@@ -31,7 +29,7 @@ internal static class UsageMap
             return false;
         }
 
-        pointer = new Pointer(
+        pointer = new UsageMapPointer(
             page[offset],
             page[offset + 1] | (page[offset + 2] << 8) | (page[offset + 3] << 16));
         return true;

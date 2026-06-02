@@ -1249,7 +1249,7 @@ public abstract class AccessBase : IAccessBase
         try
         {
             if (tdef[0] != Constants.PageTypes.TableDefinition
-                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMap.Pointer pointer)
+                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMapPointer pointer)
                 || pointer.PageNumber <= 0)
             {
                 return null;

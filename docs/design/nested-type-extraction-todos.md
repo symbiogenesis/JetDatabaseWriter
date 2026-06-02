@@ -172,8 +172,7 @@ adds no real discoverability win.
 
 ### 9. `UsageMap.Pointer`
 
-- [ ] Used from [AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs#L1251).
-  Optional move to `Pages/Models/UsageMapPointer.cs`.
+- [x] Move `UsageMap.Pointer` to `Pages/Models/UsageMapPointer.cs`.
 
 ### 10. `ComplexColumnManager.ComplexColumnAllocation`
 
