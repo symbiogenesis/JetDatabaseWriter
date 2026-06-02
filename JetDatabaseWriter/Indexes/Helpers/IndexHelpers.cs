@@ -634,9 +634,9 @@ internal static class IndexHelpers
     /// <summary>
     /// greedy left-fill N-way split of an
     /// INTERMEDIATE page's entry list. Each candidate page is validated by
-    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> so the
-    /// per-page byte budget — including the §4.4 prefix-compression savings
-    /// the simpler leaf splitter cannot model — is respected exactly.
+    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage(IndexPageLayout, int, long, IReadOnlyList{DecodedIntermediateEntry}, int?)"/>
+    /// so the per-page byte budget — including the §4.4 prefix-compression
+    /// savings the simpler leaf splitter cannot model — is respected exactly.
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="pageSize">The page size.</param>
@@ -664,7 +664,7 @@ internal static class IndexHelpers
             // intermediate's entry count (typically ≤ a few hundred).
             int end = i + 1;
             byte[]? lastFit = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, pageSize, parentTdefPage, entries.GetRange(i, 1), prevPage: 0, nextPage: 0, tailPage: 0);
+                layout, pageSize, parentTdefPage, entries.GetRange(i, 1));
             if (lastFit is null)
             {
                 // A single entry won't fit — degenerate, bail.
@@ -675,7 +675,7 @@ internal static class IndexHelpers
             {
                 List<DecodedIntermediateEntry> probe = entries.GetRange(i, end - i + 1);
                 byte[]? probeBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, pageSize, parentTdefPage, probe, prevPage: 0, nextPage: 0, tailPage: 0);
+                    layout, pageSize, parentTdefPage, probe);
                 if (probeBytes is null)
                 {
                     break;

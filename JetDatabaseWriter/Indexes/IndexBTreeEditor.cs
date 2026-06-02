@@ -164,9 +164,6 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 writer.PageSizeBytes,
                 parentTdefPage: 0,
                 entries,
-                prevPage: 0,
-                nextPage: 0,
-                tailPage: 0,
                 enablePrefixCompression: true,
                 maxPrefixLength: maxPrefixLength);
             freeSpace = Ru16(page, 2);

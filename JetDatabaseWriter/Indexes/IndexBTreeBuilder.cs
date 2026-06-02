@@ -271,6 +271,33 @@ internal static class IndexBTreeBuilder
             maxPrefixLength);
     }
 
+    /// <summary>
+    /// Builds a single-page intermediate with zeroed sibling/tail pointers — the
+    /// shape used by size-probing helpers (such as greedy intermediate splitting)
+    /// that emit a candidate page in isolation without preserving an existing
+    /// sibling chain.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="maxPrefixLength">The max prefix length.</param>
+    public static byte[]? TryBuildIntermediatePage(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<DecodedIntermediateEntry> entries,
+        int? maxPrefixLength = null)
+        => TryBuildIntermediatePage(
+            layout,
+            pageSize,
+            parentTdefPage,
+            entries,
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            maxPrefixLength);
+
     private static (List<List<DecodedIntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
         long childPageBase,
         int childPageCount,

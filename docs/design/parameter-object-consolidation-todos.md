@@ -158,29 +158,51 @@ Relevant code:
 
 #### 4. Prefer the zero-pointer index page-builder overloads at call sites
 
-- [ ] Audit every `BuildLeafPage` / `TryBuildLeafPage` /
+- [x] Audit every `BuildLeafPage` / `TryBuildLeafPage` /
   `BuildIntermediatePage` / `TryBuildIntermediatePage` call site that passes
   `prevPage: 0, nextPage: 0, tailPage: 0`. Each of these can switch to the
   existing 4-arg convenience overload and drop three arguments without any API
   change.
-- [ ] Keep the long-form overloads for genuine sibling-preserving rewrites such
+- [x] Keep the long-form overloads for genuine sibling-preserving rewrites such
   as `IndexBTreeEditor.TryBuildSplitLeafPages`. Those callers must continue to
   pass `prevPage:` / `nextPage:` / `tailPage:` as **named arguments** so a
   swapped pointer is caught at compile / review time.
-- [ ] Do **not** replace the three `long` parameters with an unnamed
+- [x] Do **not** replace the three `long` parameters with an unnamed
   `(long Prev, long Next, long Tail)` tuple. A plain value tuple loses the
   named-argument guard at the call site, which is the exact transposition
   hazard this entire backlog is trying to reduce.
-- [ ] Defer adding a dedicated sibling-pointer struct (`IndexSiblingPointers`)
+- [x] Defer adding a dedicated sibling-pointer struct (`IndexSiblingPointers`)
   to P1. It is a viable next step if the long-form overloads remain noisy after
   the zero-pointer cleanup, but it adds a new type and so does not belong in
   P0.
-- [ ] Run index build/edit tests and focused index maintenance tests.
+- [x] Run index build/edit tests and focused index maintenance tests.
 
 Payoff: the highest-arity sibling-pointer call sites are the ones already
 passing all zeros; switching them to the existing convenience overloads removes
 those three arguments outright. Sibling-preserving callers keep their explicit
 named arguments and stay as resistant to transposition as they are today.
+
+Implementation notes (2026-06-01):
+
+- Added two additive convenience overloads to mirror the existing
+  `IndexPageCodec.TryBuildLeafPage(layout, pageSize, parentTdefPage, entries)`
+  shape: `IndexPageCodec.BuildLeafPage(..., bool enablePrefixCompression, int? maxPrefixLength = null)`
+  and `IndexBTreeBuilder.TryBuildIntermediatePage(..., int? maxPrefixLength = null)`.
+  Both forward to the long-form overload with `prevPage: 0, nextPage: 0, tailPage: 0`.
+- Switched six production zero-pointer call sites to the convenience overloads:
+  `AccessWriter.cs` (×2 empty-leaf bootstrap), `RelationshipManager.cs` (×2 new
+  real-idx leaf allocation), `IndexBTreeEditor.TryMeasureLeafFreeSpace`
+  (free-space probe), and the two `IndexHelpers.TryGreedySplitIntermediateInN`
+  size-probe call sites.
+- Left the existing zero-pointer call site in `IndexMaintainer.cs:1004` alone
+  (already uses the 4-arg `TryBuildLeafPage` convenience overload).
+- Did not refactor test call sites: tests that pass `0, 0, 0` are typically
+  asserting the header bytes those zeros produce, so the explicit zeros
+  document the under-test header values.
+- Did not introduce a `BuildIntermediatePage` convenience overload — no
+  production site emits a zero-pointer intermediate via that entry point;
+  the only zero-pointer intermediate writers go through
+  `IndexBTreeBuilder.TryBuildIntermediatePage`.
 
 Relevant code:
 

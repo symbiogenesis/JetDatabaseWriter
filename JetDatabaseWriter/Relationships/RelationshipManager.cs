@@ -258,9 +258,6 @@ internal sealed class RelationshipManager
                 this.writer.PageSizeBytes,
                 primaryTdefPage,
                 [],
-                prevPage: 0,
-                nextPage: 0,
-                tailPage: 0,
                 enablePrefixCompression: false);
             long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
@@ -273,9 +270,6 @@ internal sealed class RelationshipManager
                 this.writer.PageSizeBytes,
                 foreignTdefPage,
                 [],
-                prevPage: 0,
-                nextPage: 0,
-                tailPage: 0,
                 enablePrefixCompression: false);
             long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);

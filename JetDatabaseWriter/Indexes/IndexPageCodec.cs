@@ -127,6 +127,36 @@ internal static class IndexPageCodec
     }
 
     /// <summary>
+    /// Builds a single-page leaf with zeroed sibling/tail pointers — the
+    /// shape produced by callers that emit a fresh root leaf rather than
+    /// rewriting an existing entry in a sibling chain.
+    /// </summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="entries">The entries.</param>
+    /// <param name="enablePrefixCompression">Whether prefix compression is enabled.</param>
+    /// <param name="maxPrefixLength">The maximum prefix length.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
+    public static byte[] BuildLeafPage(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        bool enablePrefixCompression,
+        int? maxPrefixLength = null)
+        => BuildLeafPage(
+            layout,
+            pageSize,
+            parentTdefPage,
+            entries,
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression,
+            maxPrefixLength);
+
+    /// <summary>
     /// Attempts to build an index leaf page, returning <see langword="null"/>
     /// when the supplied entries do not fit in one page.
     /// </summary>

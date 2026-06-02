@@ -501,9 +501,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 this.PageSizeBytes,
                 parentTdefPage: 2,
                 entries: [],
-                prevPage: 0,
-                nextPage: 0,
-                tailPage: 0,
                 enablePrefixCompression: false);
             long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
             leafPageNumbers[i] = leafPageNumber;
@@ -714,9 +711,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     this.PageSizeBytes,
                     tdefPageNumber,
                     [],
-                    prevPage: 0,
-                    nextPage: 0,
-                    tailPage: 0,
                     enablePrefixCompression: false);
                 long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[indexIndex] = leafPageNumber;
