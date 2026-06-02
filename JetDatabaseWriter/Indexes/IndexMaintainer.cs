@@ -232,7 +232,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 continue;
             }
 
-            var entries = new List<(byte[] Key, long Page, byte Row)>(rowCount);
+            List<IndexEntry> entries = new(rowCount);
             object?[] cells = new object?[keyColInfos.Count];
             for (int r = 0; r < rowCount; r++)
             {
@@ -243,7 +243,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
 
                 byte[] composite = this.EncodeCompositeKey(keyColInfos, cells);
-                entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
+                entries.Add(new IndexEntry(composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
             }
 
             entries.Sort(static (a, b) => IndexHelpers.CompareKeyBytes(a.Key, b.Key));
@@ -266,14 +266,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
             }
 
-            var leafEntries = new List<IndexEntry>(entries.Count);
-            foreach ((byte[] key, long page, byte row) in entries)
-            {
-                leafEntries.Add(new IndexEntry(key, page, row));
-            }
-
             long firstPageNumber = writer.PhysicalPageCount;
-            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, leafEntries, firstPageNumber);
+            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, entries, firstPageNumber);
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
 
@@ -290,7 +284,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (reservedFirstPage != firstPageNumber)
                 {
                     firstPageNumber = reservedFirstPage;
-                    build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, leafEntries, firstPageNumber);
+                    build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, entries, firstPageNumber);
                     rootPageNumber = build.RootPageNumber;
                 }
 

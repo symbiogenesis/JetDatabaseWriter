@@ -24,7 +24,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - Note: this overlaps with the row-values wrapper task. If that wrapper is implemented first, skip this intermediate tuple shape.
   - Files: `JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs` methods that rename complex-column artifacts and update parent table ids.
 
-- [ ] Use `IndexEntry` directly while rebuilding index entries.
+- [x] Use `IndexEntry` directly while rebuilding index entries.
   - Before: `List<(byte[] Key, long Page, byte Row)> entries`, then a second pass converting each tuple into `new IndexEntry(key, page, row)`.
   - After: `List<IndexEntry> entries`; sort by `entry.Key` and pass the list onward without conversion.
   - File: `JetDatabaseWriter/Indexes/IndexMaintainer.cs` bulk index rebuild path.
