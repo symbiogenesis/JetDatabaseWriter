@@ -13,7 +13,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - After: `List<ColumnInfo> projectedColumns`; read `column.Name` and `ResolveClrType(column)` directly.
   - Files: `JetDatabaseWriter/AccessReader.cs` around `ReadTableAsync<T>` and `ReadProjectedTableAsync<T>`.
 
-- [ ] Return `RowLocation` from the unique-parent-row lookup.
+- [x] Return `RowLocation` from the unique-parent-row lookup.
   - Before: `ValueTask<(long PageNumber, int RowIndex, int RowStart, int RowSize)> FindUniqueParentRowAsync(...)` plus a local `(long, int, int, int) match`.
   - After: `ValueTask<RowLocation> FindUniqueParentRowAsync(...)` and assign `match = row.Location`.
   - File: `JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs`.

@@ -807,16 +807,15 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Locate the unique parent row.
-        (long parentPageNumber, int parentRowIndex, int parentRowStart, int parentRowSize) =
-            await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
-                .ConfigureAwait(false);
+        RowLocation parentLocation = await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
+            .ConfigureAwait(false);
 
         // Read the existing ConceptualTableID from the parent row's complex slot;
         // allocate a fresh one when the slot is null.
         int conceptualTableId = await this.ReadOrAllocateConceptualTableIdAsync(
-            parentPageNumber,
-            parentRowStart,
-            parentRowSize,
+            parentLocation.PageNumber,
+            parentLocation.RowStart,
+            parentLocation.RowSize,
             complexCol,
             flatTdefPage,
             flatDef,
@@ -942,7 +941,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         return flatTdefPage;
     }
 
-    private async ValueTask<(long PageNumber, int RowIndex, int RowStart, int RowSize)> FindUniqueParentRowAsync(
+    private async ValueTask<RowLocation> FindUniqueParentRowAsync(
         long parentTdefPage,
         TableDef parentDef,
         int[] predIndexes,
@@ -950,7 +949,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         string tableName,
         CancellationToken cancellationToken)
     {
-        (long, int, int, int) match = default;
+        RowLocation match = default;
         bool found = false;
 
         await this.writer.ForEachLiveTableRowAsync(
@@ -980,7 +979,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         $"Parent row key matches more than one row in '{tableName}'.");
                 }
 
-                match = (row.Location.PageNumber, row.Location.RowIndex, row.Location.RowStart, row.Location.RowSize);
+                match = row.Location;
                 found = true;
                 return new ValueTask<bool>(true);
             },
