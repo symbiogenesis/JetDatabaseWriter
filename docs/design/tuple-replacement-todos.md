@@ -8,7 +8,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
 
 ## Existing Type Already Fits
 
-- [ ] Use `ColumnInfo` directly for projected typed reads.
+- [x] Use `ColumnInfo` directly for projected typed reads.
   - Before: `List<(string Name, ColumnInfo Column)> projectedColumns` in `AccessReader.ReadTableAsync<T>` and `ReadProjectedTableAsync<T>`.
   - After: `List<ColumnInfo> projectedColumns`; read `column.Name` and `ResolveClrType(column)` directly.
   - Files: `JetDatabaseWriter/AccessReader.cs` around `ReadTableAsync<T>` and `ReadProjectedTableAsync<T>`.

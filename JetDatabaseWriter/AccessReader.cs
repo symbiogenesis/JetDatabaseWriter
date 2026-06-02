@@ -1886,18 +1886,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (resolved != null)
         {
             List<string> resolvedHeaders = resolved.Value.Td.Columns.ConvertAll(column => column.Name);
-            var projectedColumns = new List<(string Name, ColumnInfo Column)>(resolvedHeaders.Count);
+            var projectedColumns = new List<ColumnInfo>(resolvedHeaders.Count);
             RowMapper<T>.Accessor?[] fullIndex = RowMapper<T>.BuildIndex(resolvedHeaders);
 
             for (int i = 0; i < resolvedHeaders.Count; i++)
             {
                 if (fullIndex[i] != null)
                 {
-                    projectedColumns.Add((resolvedHeaders[i], resolved.Value.Td.Columns[i]));
+                    projectedColumns.Add(resolved.Value.Td.Columns[i]);
                 }
             }
 
-            bool canUseDirectMap = projectedColumns.TrueForAll(static projection => projection.Column.Type is not ComplexType and not AttachmentType);
+            bool canUseDirectMap = projectedColumns.TrueForAll(static column => column.Type is not ComplexType and not AttachmentType);
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {
@@ -1982,7 +1982,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private async ValueTask<List<T>> ReadProjectedTableAsync<T>(
         long tdefPage,
         TableDef td,
-        List<(string Name, ColumnInfo Column)> projectedColumns,
+        List<ColumnInfo> projectedColumns,
         uint? maxRows,
         CancellationToken cancellationToken)
         where T : class, new()
@@ -1991,8 +1991,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var projectedSourceTypes = new Type[projectedColumns.Count];
         for (int i = 0; i < projectedColumns.Count; i++)
         {
-            headers[i] = projectedColumns[i].Name;
-            projectedSourceTypes[i] = ResolveClrType(projectedColumns[i].Column);
+            ColumnInfo column = projectedColumns[i];
+            headers[i] = column.Name;
+            projectedSourceTypes[i] = ResolveClrType(column);
         }
 
         Func<object?[], T> factory = RowMapper<T>.Build(headers, projectedSourceTypes);
@@ -2001,7 +2002,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int[] projectedOrdinals = new int[projectedColumns.Count];
         for (int i = 0; i < projectedColumns.Count; i++)
         {
-            int ordinal = td.Columns.IndexOf(projectedColumns[i].Column);
+            int ordinal = td.Columns.IndexOf(projectedColumns[i]);
             if (ordinal < 0)
             {
                 return items;
