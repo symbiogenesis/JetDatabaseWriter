@@ -142,8 +142,8 @@ and [IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs).
 Used from [RowEncoder.cs](../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs)
 and [IndexKeyEncoder.cs](../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs).
 
-- [ ] Move to `ValueEncoding/Models/FixedPointPayload.cs`.
-- [ ] Run numeric/decimal encoding tests.
+- [x] Move to `ValueEncoding/Models/FixedPointPayload.cs`.
+- [x] Run numeric/decimal encoding tests.
 
 ### 7. Extract `LongValueStore.LvalRowLocation`
 

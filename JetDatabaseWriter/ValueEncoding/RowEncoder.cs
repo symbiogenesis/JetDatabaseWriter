@@ -184,7 +184,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         decimal rounded = decimal.Round(value, declaredScale, MidpointRounding.ToEven);
 
         Span<byte> magnitudeBe = stackalloc byte[16];
-        bool fits = NumericEncoder.TryEncodeFixedPointPayload(rounded, declaredScale, magnitudeBe, out NumericEncoder.FixedPointPayload payload);
+        bool fits = NumericEncoder.TryEncodeFixedPointPayload(rounded, declaredScale, magnitudeBe, out FixedPointPayload payload);
         if (payload.DigitCount > precision)
         {
             throw new JetLimitationException(

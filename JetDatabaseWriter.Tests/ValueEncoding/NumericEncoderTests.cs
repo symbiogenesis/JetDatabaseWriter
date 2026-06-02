@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueEncoding;
 using System;
 using System.Globalization;
 using JetDatabaseWriter.ValueEncoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using Xunit;
 
 /// <summary>
@@ -19,7 +20,7 @@ public sealed class NumericEncoderTests
             0m,
             targetScale: 2,
             magnitude,
-            out NumericEncoder.FixedPointPayload payload);
+            out FixedPointPayload payload);
 
         Assert.True(fits);
         Assert.False(payload.Negative);
@@ -38,7 +39,7 @@ public sealed class NumericEncoderTests
             -1.23m,
             targetScale: 4,
             magnitude,
-            out NumericEncoder.FixedPointPayload payload);
+            out FixedPointPayload payload);
 
         byte[] expected = new byte[16];
         expected[14] = 0x30;
@@ -62,7 +63,7 @@ public sealed class NumericEncoderTests
             value,
             targetScale: 0,
             magnitude,
-            out NumericEncoder.FixedPointPayload payload);
+            out FixedPointPayload payload);
 
         byte[] expected =
         [
@@ -104,7 +105,7 @@ public sealed class NumericEncoderTests
             decimal.MaxValue,
             targetScale: 28,
             magnitude,
-            out NumericEncoder.FixedPointPayload payload);
+            out FixedPointPayload payload);
 
         Assert.False(fits);
         Assert.Equal(0, payload.NaturalScale);

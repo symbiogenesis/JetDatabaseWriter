@@ -8,6 +8,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueEncoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 using static JetDatabaseWriter.Enums.ColumnType;
 
@@ -449,7 +450,7 @@ internal static class IndexKeyEncoder
         Guard.InRange(targetScale, 0, 28, nameof(targetScale));
 
         Span<byte> magnitudeBe = stackalloc byte[16];
-        if (!NumericEncoder.TryEncodeFixedPointPayload(d, targetScale, magnitudeBe, out NumericEncoder.FixedPointPayload payload))
+        if (!NumericEncoder.TryEncodeFixedPointPayload(d, targetScale, magnitudeBe, out FixedPointPayload payload))
         {
             throw new NotSupportedException(
                 $"Numeric index key mantissa requires {payload.MagnitudeByteCount} bytes after rescale to {targetScale} digits, " +
