@@ -23,9 +23,9 @@ domain concept through several layers.
 
 Work in priority order. Start with changes that reduce high-arity private
 helpers without adding new named types, then add internal domain types only
-where repeated bundles remain error-prone, and leave public API additions for
-last because they carry documentation, compatibility, and long-term surface-area
-costs.
+where repeated bundles remain error-prone. Public API additions are deliberately
+out of scope for this backlog unless caller workflows show a concrete ergonomic
+payoff; arity alone is not enough.
 
 - **P0: No-new-type arity reductions.** Highest impact per unit of risk. These
   should reuse existing domain types, split private helpers, or pass existing
@@ -33,9 +33,6 @@ costs.
 - **P1: Internal domain-type consolidation.** Use this once P0 leaves a real
   repeated concept crossing method boundaries. New types here should stay
   internal and allocation-free.
-- **P2: Additive public API ergonomics.** Useful, but not urgent. Public request
-  types must be additive, documented, validated at the writer boundary, and
-  justified by caller ergonomics rather than arity alone.
 
 ## Cross-Cutting Design Constraints
 
@@ -50,23 +47,21 @@ regressing performance or security.
   `LongValueDescriptor`, `LockFileSettings`). A class would add a per-call heap
   allocation on hot paths such as index seeks, which is exactly the regression
   this refactor must avoid.
-- **Account for the `async` + `in` interaction.** Both `EmitFkLogicalIdxAsync`
-  and `IndexCursor.FindRowLocationsInRangeAsync` are `async ValueTask`, so the
-  C# language forbids `in` / `ref` / `ref readonly` parameters. New bundle
+- **Account for the `async` + `in` interaction.**
+  `IndexCursor.FindRowLocationsInRangeAsync` is `async ValueTask`, so the C#
+  language forbids `in` / `ref` / `ref readonly` parameters there. New bundle
   structs must be passed by value on async signatures. Keep them small (a few
   references plus a few bytes of flags) so the copy is cheap.
 - **Do not add defensive copies that were not there before.** Public types like
   `IndexKeyBound` already copy their inputs. Internal encoded buffers produced
   by `EncodeIndexKeyPrefix` are already fresh single-use arrays, so wrapping
   them in a new struct must not allocate a second copy.
-- **Keep validation at the existing trust boundary.** A request or target type
-  is not a security boundary. Path / connection-string normalization, ODBC
-  prefix handling, LvProp signature validation, and case-insensitive
-  parent-row-key matching must continue to happen in the writer entry point.
 - **Benchmark before/after on hot paths.** When a touched method is exercised
-  by `JetDatabaseWriter.Benchmarks` (notably index seeks and reader scans), run
-  the relevant benchmark on `main` and on the change and attach the deltas to
-  the PR. Adaptive job is preferred per the repo BenchmarkDotNet conventions.
+  by `JetDatabaseWriter.Benchmarks`, run the relevant benchmark on `main` and
+  on the change and attach the deltas to the PR. For hot paths that are not yet
+  benchmarked, such as index-range seeks, add a focused benchmark or record an
+  equivalent before/after allocation/perf probe. Adaptive job is preferred per
+  the repo BenchmarkDotNet conventions.
 - **Honor checked arithmetic and BannedSymbols.txt.** Bundles must not
   introduce narrowing casts that could throw at runtime under the repo's
   global `CheckForOverflowUnderflow`, and must not reintroduce banned APIs.
@@ -113,14 +108,15 @@ Relevant code:
 - [x] Keep `tdefPage`, `columnNumbers`, `indexName`, relationship-side bytes,
   and `CancellationToken` separate in this first pass.
 - [x] Update the two call sites to pass `pkPlan` and `fkPlan` directly.
-- [x] Do not introduce `FkLogicalIdxSideSpec` in this pass. Reassess after the
-  existing plan struct has removed the most mechanical arity.
+- [x] Do not introduce `FkLogicalIdxSideSpec`. `FkSidePlan` removes the
+  highest-risk parallel scalar group; the remaining named relationship-side
+  arguments do not justify a new type without new behavior.
 - [x] Run or add relationship tests covering same-table relationships, shared
   existing real indexes, newly allocated real indexes, and cascade flags.
 
 Payoff: this reduces the 13-parameter method using an existing domain value and
-removes the highest-risk group of parallel scalars. It also sets up a cleaner
-diff if a full side-spec type is still needed later.
+removes the highest-risk group of parallel scalars without adding a speculative
+side-spec type.
 
 Relevant code:
 
@@ -171,10 +167,10 @@ Relevant code:
   `(long Prev, long Next, long Tail)` tuple. A plain value tuple loses the
   named-argument guard at the call site, which is the exact transposition
   hazard this entire backlog is trying to reduce.
-- [x] Defer adding a dedicated sibling-pointer struct (`IndexSiblingPointers`)
-  to P1. It is a viable next step if the long-form overloads remain noisy after
-  the zero-pointer cleanup, but it adds a new type and so does not belong in
-  P0.
+- [x] Do not add a dedicated sibling-pointer struct (`IndexSiblingPointers`)
+  solely to shorten the remaining long-form overloads. The sibling-preserving
+  callers already use named arguments, which keeps the transposition guard at
+  the actual call site.
 - [x] Run index build/edit tests and focused index maintenance tests.
 
 Payoff: the highest-arity sibling-pointer call sites are the ones already
@@ -322,8 +318,10 @@ Relevant code:
 
 ### P1. Add internal domain types only where P0 leaves repeated bundles
 
-These changes add new internal types. Take them after the no-new-type cleanup,
-or immediately if a P0 attempt makes the code less clear.
+These changes add new internal types only where the no-new-type cleanup still
+leaves a concrete repeated concept crossing method boundaries. The only current
+candidate that meets that bar is the encoded index-range shape used by the
+reader, cursor, and page codec.
 
 #### 7. Add an internal encoded index-range type
 
@@ -350,9 +348,10 @@ or immediately if a P0 attempt makes the code less clear.
 - [ ] Add or refresh focused index range tests covering inclusive/exclusive
   lower bounds, inclusive/exclusive upper bounds, prefix bounds, and required
   prefix filtering.
-- [ ] Run `JetDatabaseWriter.Benchmarks` index-seek benchmarks before and after
-  and attach the deltas. No statistically significant regression is acceptable
-  for this refactor.
+- [ ] Run a focused index-range/seek BenchmarkDotNet benchmark before and after
+  and attach the deltas. If the benchmark suite still lacks one, add the
+  benchmark or record an equivalent before/after allocation/perf probe. No
+  statistically significant regression is acceptable for this refactor.
 
 Payoff: public query callers already use `IndexKeyBound`, but the reader
 immediately explodes those bounds into repeated `byte[]?` plus boolean triples.
@@ -367,124 +366,6 @@ Relevant code:
 - [`IndexCursor.FindRowLocationsInRangeAsync`](../../JetDatabaseWriter/Indexes/IndexCursor.cs)
 - [`IndexPageCodec.CollectRangeLeafEntries`](../../JetDatabaseWriter/Indexes/IndexPageCodec.cs)
 
-#### 8. Consider a full FK logical-index side spec
-
-- [ ] After P0 folds `FkSidePlan` into `EmitFkLogicalIdxAsync`, reassess whether
-  the remaining relationship-side scalars are still easy to transpose.
-- [ ] If needed, add a private `readonly record struct` such as
-  `FkLogicalIdxSideSpec` for one side of a relationship emission.
-- [ ] Include the TDEF page, column numbers, logical index name, `FkSidePlan`,
-  side table type, other-side logical index number, other-side table page, and
-  cascade bytes.
-- [ ] Replace the remaining side-specific parameters with the new spec plus
-  `CancellationToken`. The method is `async ValueTask`, so the spec must be
-  passed by value; keep its field count and total size modest.
-- [ ] Build parent and child specs at the two call sites so side-specific values
-  are named once before mutation begins. Reuse the cascade bytes already
-  computed locally instead of re-deriving them inside the spec.
-- [ ] Run or add relationship tests covering same-table relationships, shared
-  existing real indexes, newly allocated real indexes, and cascade flags.
-
-Payoff: this is the more complete relationship cleanup, but it should not be
-the first move because `FkSidePlan` already addresses a meaningful part of the
-13-parameter signature with no new type.
-
-Relevant code:
-
-- [`RelationshipManager.EmitFkLogicalIdxAsync`](../../JetDatabaseWriter/Relationships/RelationshipManager.cs)
-- [`FkSidePlan`](../../JetDatabaseWriter/Relationships/RelationshipManager.cs)
-- [`RelationshipDefinition`](../../JetDatabaseWriter/Models/RelationshipDefinition.cs)
-
-#### 9. Consider a usage-map enumeration context only if usage-map behavior grows
-
-- [ ] Reassess after P0 pushes `RowBound` through the helper stack. If the
-  remaining repeated values are still hard to reason about, evaluate an
-  internal `UsageMapEnumerationContext` as a `readonly record struct` that
-  carries page size, total page count, minimum page number, strictness, and the
-  page read/return callbacks.
-- [ ] Do not add the context only to reduce arity. The P0 `RowBound` cleanup
-  should be enough unless usage-map traversal policy gains more behavior.
-- [ ] Keep `List<long> pageNumbers` as a separate output parameter even if a
-  context is added, so callers continue to control list ownership and capacity.
-- [ ] Run owned-data-page discovery tests and any usage-map/reference-map tests.
-
-Payoff: this remains a reasonable future direction, but it is lower priority
-than using the existing `RowBound` first.
-
-Relevant code:
-
-- [`UsageMap.TryEnumeratePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
-- [`UsageMap.TryEnumerateReferencePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
-- [`AccessBase.TryReadMappedOwnedDataPagesAsync`](../../JetDatabaseWriter/AccessBase.cs)
-- [`RowBound`](../../JetDatabaseWriter/Pages/Models/RowBound.cs)
-
-### P2. Evaluate additive public API ergonomics last
-
-These items are more about public caller experience than immediate high-arity
-risk. They should trail the internal cleanups because they expand the public API
-surface and need documentation and compatibility review.
-
-#### 10. Evaluate additive linked-table creation request types
-
-- [ ] Decide whether the linked-table creation API should gain additive
-  overloads that take request types rather than replacing existing overloads.
-- [ ] Do not reuse `LinkedTableInfo` directly unless its output-metadata role is
-  deliberately changed; creation needs source columns and cached LvProp variants
-  that `LinkedTableInfo` does not currently model.
-- [ ] Consider separate public request types for Access-file links, text links,
-  and ODBC links, or one discriminated-style request with clear required fields.
-  Public request types should be `sealed record` (reference-type record) with
-  `init`-only properties to match the existing public model style
-  (`LinkedTableInfo`, `AttachmentInput`, `RelationshipDefinition`).
-- [ ] Keep existing overloads for compatibility if public request types are
-  added.
-- [ ] Keep validation at the writer entry point. The request type stores values;
-  it does not normalize the ODBC `"ODBC;"` prefix, validate the cached LvProp
-  signature, or canonicalize paths. Those checks must keep firing in
-  `AccessWriter` so a request type cannot be used to bypass them.
-- [ ] Add API docs and tests for validation errors on missing/invalid fields,
-  including the existing `MR2\0` / `KKD\0` LvProp signature check.
-
-Payoff: the public schema API repeats linked table name, source path or
-connection string, source object name, and optional schema payload across
-several overloads. The overloads are readable today, so this is an ergonomics
-backlog item rather than an urgent internal cleanup.
-
-Relevant code:
-
-- [`IAccessSchema`](../../JetDatabaseWriter/Interfaces/IAccessSchema.cs)
-- [`AccessWriter.CreateLinkedOdbcTableAsync`](../../JetDatabaseWriter/AccessWriter.cs)
-- [`LinkedTableInfo`](../../JetDatabaseWriter/Models/LinkedTableInfo.cs)
-- [`CatalogObjectArtifact.LinkedTable`](../../JetDatabaseWriter/Catalog/Models/CatalogObjectArtifact.cs)
-
-#### 11. Evaluate a complex-column target type
-
-- [ ] Consider a public or internal `ComplexColumnTarget` / `ParentRowReference`
-  type containing `TableName`, `ColumnName`, and `ParentRowKey`.
-- [ ] Preserve the current parent-row-key matching contract: the
-  `IReadOnlyDictionary<string, object?>` is matched case-insensitively on column
-  name and string value. A target type must not silently swap in a different
-  comparer, and must not require callers to pre-build a case-insensitive
-  dictionary.
-- [ ] Keep payload types separate: `AttachmentInput` already models attachment
-  payloads well, while multi-value item payloads remain arbitrary values.
-- [ ] If public, add overloads for `AddAttachmentAsync` and
-  `AddMultiValueItemAsync` rather than replacing existing methods.
-- [ ] If internal only, use the target type to simplify
-  `ComplexColumnManager.AddComplexItemCoreAsync` and its callers.
-- [ ] Add tests for composite parent row keys and wrong-column-kind errors.
-
-Payoff: attachment and multi-value item additions repeat the same parent
-complex-column target shape. This is useful if more complex-column operations
-are planned, but the current two public methods are still understandable.
-
-Relevant code:
-
-- [`IAccessWriter.AddAttachmentAsync`](../../JetDatabaseWriter/Interfaces/IAccessWriter.cs)
-- [`IAccessWriter.AddMultiValueItemAsync`](../../JetDatabaseWriter/Interfaces/IAccessWriter.cs)
-- [`ComplexColumnManager.AddComplexItemCoreAsync`](../../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs)
-- [`AttachmentInput`](../../JetDatabaseWriter/Models/AttachmentInput.cs)
-
 ## Explicit Non-Goals
 
 - Do not replace high-arity record constructors that already are the domain type,
@@ -494,14 +375,18 @@ Relevant code:
   any consolidation there should be benchmark-driven.
 - Do not change public APIs in a breaking way for this cleanup. Prefer additive
   overloads or internal-only refactors.
+- Do not add public request or target types solely to make signatures shorter.
+  Reopen those ideas only when concrete caller workflows show the current API is
+  awkward enough to justify more public surface area.
 - Do not create generic parameter-bag types. Each type should name a real domain
   concept and carry validation or meaning that scalar parameters cannot.
 
 ## Validation Notes
 
 - Index range cleanup should run focused index-query tests first, then broader
-  index maintenance tests if shared codec behavior changes, and finally the
-  index-seek benchmarks for the no-regression guarantee.
+  index maintenance tests if shared codec behavior changes, and finally a
+  focused index-range/seek benchmark or equivalent allocation/perf probe for
+  the no-regression guarantee.
 - Relationship-side cleanup should run relationship creation/enforcement tests,
   including cascade update/delete coverage.
 - Usage-map cleanup should run owned-page discovery tests and writer round-trip
@@ -513,8 +398,6 @@ Relevant code:
 - Reader helper cleanup should run projection, index seek, hyperlink, and
   complex-column read tests, and confirm via an allocation sample that the
   hoisted `RowDecodePlan` removes the per-hit allocation on multi-hit seeks.
-- Public API additions should include XML documentation and compile coverage in
-  tests or samples so the overload set remains discoverable.
 - Every refactor must keep a clean Release build under the repo's strict
   analyzer settings (StyleCop, Roslynator, banned APIs, warnings-as-errors).
 
