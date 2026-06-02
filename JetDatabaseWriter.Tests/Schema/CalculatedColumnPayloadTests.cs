@@ -75,7 +75,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
             new AccessReaderOptions { UseLockFile = false },
             TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
             DaoTableName,
             TestContext.Current.CancellationToken);
 

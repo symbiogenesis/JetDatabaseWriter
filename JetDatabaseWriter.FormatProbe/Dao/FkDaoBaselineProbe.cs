@@ -165,7 +165,7 @@ internal static class FkDaoBaselineProbe
     private static async Task<Dictionary<string, int>> DumpCatalogRowsAsync(AccessReader reader)
     {
         var ids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysObjects");
+        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysObjects");
         if (columns.Count == 0)
         {
             Console.WriteLine("MSysObjects: <missing>");
@@ -203,7 +203,7 @@ internal static class FkDaoBaselineProbe
             return;
         }
 
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysACEs");
+        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysACEs");
         Dictionary<string, int> ordinals = BuildOrdinals(columns);
         if (!ordinals.ContainsKey("ObjectId"))
         {
@@ -239,7 +239,7 @@ internal static class FkDaoBaselineProbe
 
     private static async Task DumpRelationshipsAsync(AccessReader reader)
     {
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysRelationships");
+        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysRelationships");
         if (columns.Count == 0)
         {
             Console.WriteLine("MSysRelationships: <missing>");

@@ -53,7 +53,7 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable dt = await reader.ReadDataTableAsync(table, 1, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.Equal(meta.Count, dt.Columns.Count);

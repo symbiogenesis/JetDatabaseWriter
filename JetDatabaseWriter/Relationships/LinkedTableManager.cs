@@ -267,7 +267,7 @@ internal static class LinkedTableManager
         }
     }
 
-    internal static async ValueTask<List<ColumnMetadata>> GetLinkedTextColumnMetadataAsync(
+    internal static async ValueTask<IReadOnlyList<ColumnMetadata>> GetLinkedTextColumnMetadataAsync(
         AccessReader reader,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
@@ -318,7 +318,7 @@ internal static class LinkedTableManager
         }
     }
 
-    internal static async ValueTask<List<T>> ReadLinkedTextMappedRowsAsync<T>(
+    internal static async ValueTask<IReadOnlyList<T>> ReadLinkedTextMappedRowsAsync<T>(
         AccessReader reader,
         LinkedTableInfo link,
         uint? maxRows,

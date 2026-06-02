@@ -369,7 +369,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         List<LinkedTableInfo> links = await this.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
@@ -377,7 +377,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();
@@ -412,7 +412,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _ = dt.Columns.Add("RowCount", typeof(long));
             _ = dt.Columns.Add("ColumnCount", typeof(int));
 
-            List<TableStat> stats = await this.GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<TableStat> stats = await this.GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
             foreach (TableStat s in stats)
             {
                 _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
@@ -921,7 +921,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -930,7 +930,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            List<ColumnMetadata>? linkedMetadata = await this.TryReadLinkedTableAsync(
+            IReadOnlyList<ColumnMetadata>? linkedMetadata = await this.TryReadLinkedTableAsync(
                 tableName,
                 link => LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken),
                 (source, link) => source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken),
@@ -1594,7 +1594,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A list of user table names.</returns>
-    public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         List<CatalogEntry> tables = await this.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -1875,7 +1875,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new()
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
@@ -1923,7 +1923,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        List<T>? linkedRows = await this.TryReadLinkedTableAsync(
+        IReadOnlyList<T>? linkedRows = await this.TryReadLinkedTableAsync(
             tableName,
             link => LinkedTableManager.ReadLinkedTextMappedRowsAsync(
                 this,
@@ -2172,7 +2172,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="progress">Optional progress reporter for table read operations.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
-    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyDictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();

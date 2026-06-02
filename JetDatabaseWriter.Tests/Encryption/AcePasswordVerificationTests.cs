@@ -98,7 +98,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // After authentication, ListTables should return the original database tables.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -108,7 +108,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Reading table data after password verification should return valid rows.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         DataTable dt = await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken);
@@ -121,7 +121,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Streaming rows should work normally after password verification.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -144,10 +144,10 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     {
         // Column metadata should be fully readable after password verification.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {

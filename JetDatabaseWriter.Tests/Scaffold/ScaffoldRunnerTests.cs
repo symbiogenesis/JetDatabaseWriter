@@ -404,13 +404,13 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
         public string LastDiagnostics => string.Empty;
 
-        public ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
+        public ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return new ValueTask<List<string>>([.. tables]);
+            return new ValueTask<IReadOnlyList<string>>([.. tables]);
         }
 
-        public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
+        public ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (this.failingTables.TryGetValue(tableName, out Exception? ex))
@@ -420,7 +420,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
             if (this.columnsByTable.TryGetValue(tableName, out List<ColumnMetadata>? cols))
             {
-                return new ValueTask<List<ColumnMetadata>>(cols);
+                return new ValueTask<IReadOnlyList<ColumnMetadata>>(cols);
             }
 
             throw new InvalidOperationException($"Table '{tableName}' not configured in fake");
@@ -431,10 +431,10 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<System.Data.DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default) =>
+        public ValueTask<IReadOnlyList<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default) =>
+        public ValueTask<IReadOnlyList<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         public ValueTask<System.Data.DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default) =>
@@ -446,7 +446,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<System.Data.DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+        public ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
             where T : class, new() =>
             throw new NotImplementedException();
 
@@ -481,7 +481,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<Dictionary<string, System.Data.DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default) =>
+        public ValueTask<IReadOnlyDictionary<string, System.Data.DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         public IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default) =>

@@ -39,7 +39,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         string[] names = meta.Select(m => m.Name).ToArray();
 
         Assert.Contains("ColumnName", names);
@@ -60,7 +60,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // The scaffold must set the system flag (0x80000000) so MSysComplexColumns
         // does not appear in the user-table listing.
@@ -80,7 +80,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         Assert.Empty(meta);
     }
 
@@ -96,7 +96,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         Assert.Empty(meta);
     }
 
@@ -253,14 +253,14 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("Documents", userTables, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain(userTables, t => t.StartsWith("f_", StringComparison.Ordinal));
 
         // The flat table has the per-kind value columns from the design doc §2.4.1.
         IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
         ComplexColumnInfo attachment = Assert.Single(info);
-        List<ColumnMetadata> flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
         string[] names = flatMeta.Select(m => m.Name).ToArray();
         Assert.Contains("FileURL", names);
         Assert.Contains("FileName", names);
@@ -323,7 +323,7 @@ public sealed class ComplexColumnsWriterTests
 
         foreach (string template in ExpectedTemplateNames)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.NotEmpty(meta);
         }
     }
@@ -339,7 +339,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         foreach (string template in ExpectedTemplateNames)
         {
             Assert.DoesNotContain(template, userTables, StringComparer.OrdinalIgnoreCase);
@@ -359,7 +359,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
         string[] names = meta.Select(m => m.Name).ToArray();
         Assert.Contains("FileData", names);
         Assert.Contains("FileFlags", names);
@@ -382,7 +382,7 @@ public sealed class ComplexColumnsWriterTests
 
         foreach (string template in ExpectedTemplateNames)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
             Assert.Empty(meta);
         }
     }
@@ -421,7 +421,7 @@ public sealed class ComplexColumnsWriterTests
         // The id is a TDEF page; verify the page belongs to MSysComplexType_Attachment
         // by hitting the table by name (only matches if the template table exists at
         // that page).
-        List<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken);
         Assert.NotEmpty(tplMeta);
     }
 
@@ -458,7 +458,7 @@ public sealed class ComplexColumnsWriterTests
         int actual = Convert.ToInt32(row["ComplexTypeObjectID"], CultureInfo.InvariantCulture);
         Assert.True(actual > 0, $"Expected ComplexTypeObjectID > 0, got {actual}.");
 
-        List<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Text", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Text", TestContext.Current.CancellationToken);
         Assert.NotEmpty(tplMeta);
     }
 }

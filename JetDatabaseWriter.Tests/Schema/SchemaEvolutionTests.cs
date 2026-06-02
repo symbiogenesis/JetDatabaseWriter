@@ -193,7 +193,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         ColumnMetadata amount = Assert.Single(metadata, column => column.Name == "Amount");
         Assert.Equal("Currency", amount.TypeName);
 

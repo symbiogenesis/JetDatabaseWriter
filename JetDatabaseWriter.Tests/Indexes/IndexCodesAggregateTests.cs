@@ -69,10 +69,10 @@ public sealed class IndexCodesAggregateTests
 
         var report = new List<IndexReport>();
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
+            IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);

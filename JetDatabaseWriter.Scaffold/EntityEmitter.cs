@@ -46,7 +46,7 @@ internal static class EntityEmitter
 
     public static string Emit(
         string className,
-        List<ColumnMetadata> columns,
+        IReadOnlyList<ColumnMetadata> columns,
         string ns,
         bool useRecords,
         bool nullable)

@@ -30,7 +30,7 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal("Table1", tables[0]);
@@ -47,7 +47,7 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "Table1",
             TestContext.Current.CancellationToken);
 

@@ -51,7 +51,7 @@ internal static class TextIndexEncoderFixtureHarness
         int totalKeysValidated = 0;
         IReadOnlyCollection<string> skip = skipTables ?? [];
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             if (skip.Contains(tableName, StringComparer.OrdinalIgnoreCase))
@@ -59,7 +59,7 @@ internal static class TextIndexEncoderFixtureHarness
                 continue;
             }
 
-            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
+            IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);

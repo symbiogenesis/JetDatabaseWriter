@@ -36,7 +36,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -52,12 +52,11 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_AllTables_HaveVisibleColumns(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> cols =
-                await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.NotEmpty(cols);
         }
     }
@@ -73,12 +72,11 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_NoColumnHasBlankName(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> cols =
-                await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             foreach (ColumnMetadata col in cols)
             {
                 Assert.False(
@@ -100,7 +98,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_RowDecode_SucceedsForAllFixtures(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -122,12 +120,11 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_ReadableTables_DataTableColumnCount_MatchesMetadata(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta =
-                await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
             DataTable dt = await reader.ReadDataTableAsync(
                 table, maxRows: 1, cancellationToken: TestContext.Current.CancellationToken);
@@ -147,7 +144,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_RowsEnumerable_DecodesAllRows(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -173,7 +170,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_RowsAsStrings_DecodesAllRows(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -199,12 +196,11 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_ReadTableAsStrings_ColumnCountMatchesMetadata(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta =
-                await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
             DataTable dt = await reader.ReadTableAsStringsAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
@@ -225,7 +221,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_AllPaths_ProduceSameRowCount(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -262,7 +258,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     public async Task DelCol_Rows_ValuesMatchDataTable(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -314,7 +310,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<DelColFullRow> rows = await reader.ReadTableAsync<DelColFullRow>(
+        IReadOnlyList<DelColFullRow> rows = await reader.ReadTableAsync<DelColFullRow>(
             "Table1", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(rows);
@@ -333,7 +329,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<DelColProjectedRow> rows = await reader.ReadTableAsync<DelColProjectedRow>(
+        IReadOnlyList<DelColProjectedRow> rows = await reader.ReadTableAsync<DelColProjectedRow>(
             "Table1", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(rows);

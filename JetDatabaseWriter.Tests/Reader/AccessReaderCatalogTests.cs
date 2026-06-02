@@ -28,7 +28,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(tables);
         Assert.NotEmpty(tables);
@@ -41,7 +41,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.All(tables, name => Assert.False(string.IsNullOrWhiteSpace(name)));
     }
@@ -53,7 +53,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(tables.Count, tables.Distinct().Count());
     }
@@ -83,7 +83,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         // Canonical system tables (catalog + ACE complex/storage helpers).
         // Every fixture has at least MSysObjects + MSysAccessStorage; the
@@ -129,8 +129,8 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(tables.Count, stats.Count);
     }
@@ -141,7 +141,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        List<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         Assert.All(stats, s =>
         {
@@ -174,7 +174,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         DataTable dt = await reader.GetTablesAsDataTableAsync(TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(tables.Count, dt.Rows.Count);
     }
@@ -243,7 +243,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.NotEmpty(meta);
         }
     }
@@ -255,7 +255,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         for (int i = 0; i < meta.Count; i++)
         {
@@ -270,7 +270,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.All(meta, m => Assert.NotNull(m.ClrType));
     }
@@ -287,7 +287,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
 
         foreach (string table in await reader.ListTablesAsync(ct))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, ct);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, ct);
             ColumnMetadata? bad = meta.FirstOrDefault(col => col.TypeName.StartsWith("0x", StringComparison.Ordinal));
             if (bad is not null)
             {
@@ -335,7 +335,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable preview = await reader.ReadDataTableAsync(table, 10, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(preview);
         Assert.Equal(meta.Count, preview.Columns.Count);

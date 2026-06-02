@@ -61,7 +61,7 @@ public sealed class ComplexColumnsDropTableTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent gone from user listing.
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Documents", tables, StringComparer.OrdinalIgnoreCase);
 
         // The MSysComplexColumns row that joined the parent column to its flat
@@ -191,7 +191,7 @@ public sealed class ComplexColumnsDropTableTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Plain", tables, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -225,7 +225,7 @@ public sealed class ComplexColumnsDropTableTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("Plain", tables, StringComparer.OrdinalIgnoreCase);
     }
 }

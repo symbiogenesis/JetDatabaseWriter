@@ -207,7 +207,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 },
                 cancellationToken).ConfigureAwait(false);
 
-            List<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
             tableCount = tables.Count;
             encryptedTableExists = tables.Contains(EncryptedCompactTable, StringComparer.OrdinalIgnoreCase);
 
@@ -317,7 +317,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         int preCompactTableCount,
         CancellationToken cancellationToken)
     {
-        List<string> postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         var rowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var foreignKeyIndexNames = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         for (int tableOrdinal = 0; tableOrdinal < StressTableCount; tableOrdinal++)
@@ -644,7 +644,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
-        List<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         return tables.Count;
     }
 

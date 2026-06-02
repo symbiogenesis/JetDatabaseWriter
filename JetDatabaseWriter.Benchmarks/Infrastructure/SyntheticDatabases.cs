@@ -358,9 +358,9 @@ internal static class SyntheticDatabases
 
     private static async Task<long> ResolveTdefPageAsync(AccessReader reader, string tableName)
     {
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
-        int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
+        int idIndex = FindColumnIndex(metadata, "Id");
+        int nameIndex = FindColumnIndex(metadata, "Name");
         if (idIndex < 0 || nameIndex < 0)
         {
             throw new InvalidDataException("MSysObjects is missing Id or Name metadata.");
@@ -375,6 +375,19 @@ internal static class SyntheticDatabases
         }
 
         throw new InvalidDataException($"Could not resolve the TDEF page for table '{tableName}'.");
+    }
+
+    private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> metadata, string name)
+    {
+        for (int index = 0; index < metadata.Count; index++)
+        {
+            if (string.Equals(metadata[index].Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static int FindOwnedUsageMapRowStart(byte[] fileBytes, int pageSize, long tdefPage)

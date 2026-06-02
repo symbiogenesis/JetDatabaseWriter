@@ -18,8 +18,8 @@ public class DataTableMaterializationBenchmarks
 {
     private AccessReader numericReader = null!;
     private AccessReader textReader = null!;
-    private List<ColumnMetadata> numericMetadata = null!;
-    private List<ColumnMetadata> textMetadata = null!;
+    private IReadOnlyList<ColumnMetadata> numericMetadata = null!;
+    private IReadOnlyList<ColumnMetadata> textMetadata = null!;
     private int numericRows;
     private int textRows;
 

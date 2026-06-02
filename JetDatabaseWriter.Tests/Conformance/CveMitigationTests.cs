@@ -219,7 +219,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -283,7 +283,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             leaveOpen: true,
             ct);
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string table in tables)
         {
             int count = 0;
@@ -372,7 +372,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -473,7 +473,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -556,7 +556,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -646,7 +646,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -756,7 +756,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -862,7 +862,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;
@@ -943,7 +943,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             leaveOpen: true,
             ct);
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         int totalRows = 0;
         foreach (string table in tables)
         {
@@ -1001,7 +1001,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 leaveOpen: true,
                 ct);
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string table in tables)
             {
                 int count = 0;

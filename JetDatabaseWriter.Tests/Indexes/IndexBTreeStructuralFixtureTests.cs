@@ -154,7 +154,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         int btreesChecked = 0;
         int totalEntries = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;
@@ -237,7 +237,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         var seenInvalidPages = new HashSet<long>();
         int totalEntries = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;

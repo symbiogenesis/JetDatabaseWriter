@@ -29,7 +29,7 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkIndexCount = 0;
         foreach (string table in tables)
@@ -52,7 +52,7 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -78,7 +78,7 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
             TestDatabases.NorthwindTraders,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundAny = false;
         foreach (string table in tables)
@@ -115,7 +115,7 @@ public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixt
         }
 
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkCount = 0;
         foreach (string table in tables)

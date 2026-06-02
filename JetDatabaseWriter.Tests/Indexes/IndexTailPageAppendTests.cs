@@ -109,7 +109,7 @@ public sealed class IndexTailPageAppendTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(
             "OleColumnSupported", TestContext.Current.CancellationToken);
         Assert.Equal(2, cols.Count);
         Assert.Equal("Blob", cols[1].Name);

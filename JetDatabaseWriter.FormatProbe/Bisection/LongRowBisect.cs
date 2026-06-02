@@ -83,7 +83,7 @@ internal static class LongRowBisect
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
-        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
+        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
         int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();
         await foreach (string[] row in reader.RowsAsStrings("Table11", cancellationToken: CancellationToken.None))
@@ -278,7 +278,7 @@ internal static class LongRowBisect
         return pos >= 0 ? pos + from : -1;
     }
 
-    private static int FindColumnOrdinal(List<ColumnMetadata> columns, string name)
+    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
     {
         for (int i = 0; i < columns.Count; i++)
         {

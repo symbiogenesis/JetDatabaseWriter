@@ -67,7 +67,7 @@ internal static class LongRowProbe
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
 
         foreach (string tableName in new[] { "Table11", "Table11_desc" })
         {
@@ -79,7 +79,7 @@ internal static class LongRowProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}")
                 .AppendLine();
 
-            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
+            IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
             int dataOrdinal = FindColumnOrdinal(columns, "data");
             var rowValues = new List<string?>();
             await foreach (string[] row in reader.RowsAsStrings(tableName, cancellationToken: ct))
@@ -164,7 +164,7 @@ internal static class LongRowProbe
         return result;
     }
 
-    private static int FindColumnOrdinal(List<ColumnMetadata> columns, string name)
+    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
     {
         for (int i = 0; i < columns.Count; i++)
         {

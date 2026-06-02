@@ -34,7 +34,7 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int totalIndexes = 0;
@@ -64,7 +64,7 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundExtDateIndexColumn = false;
         foreach (string table in tables)
@@ -113,7 +113,7 @@ public sealed class IndexExtendedDateTests(DatabaseCache db) : IClassFixture<Dat
             TestDatabases.ExtDateTestV2019,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         int totalRows = 0;
 
         foreach (string table in tables)

@@ -51,7 +51,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
         Assert.All(tables, name => Assert.False(
@@ -77,7 +77,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         DataTable dt = await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken);
@@ -100,7 +100,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         // Read as DataTable (typed columns) rather than specific POCO,
@@ -129,7 +129,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken)
@@ -155,10 +155,10 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
@@ -205,7 +205,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(all);
         Assert.All(all.Values, Assert.NotNull);
@@ -221,7 +221,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         // The table names from an AES-encrypted copy must match the original
         // unencrypted database. This verifies end-to-end decryption fidelity.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        List<string> expectedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> expectedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
@@ -232,7 +232,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> actualTables = await encReader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> actualTables = await encReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedTables.Order(), actualTables.Order());
     }
@@ -242,7 +242,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     {
         // Row counts from the encrypted copy must match the original.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        List<TableStat> expectedStats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<TableStat> expectedStats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await this.CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
@@ -253,7 +253,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         await using var ms = new MemoryStream(data, writable: false);
         await using AccessReader encReader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<TableStat> actualStats = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<TableStat> actualStats = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedStats.Count, actualStats.Count);
         foreach (TableStat expected in expectedStats)

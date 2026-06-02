@@ -62,7 +62,7 @@ public sealed class WriterTDefAutoNumFlagTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int tablesWithAutonum = 0;
         int tablesWithoutAutonum = 0;

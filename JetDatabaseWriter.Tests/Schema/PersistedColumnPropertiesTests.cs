@@ -230,7 +230,7 @@ public sealed class PersistedColumnPropertiesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Items", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Items", TestContext.Current.CancellationToken);
 
         ColumnMetadata qty = meta.Single(m => m.Name == "Qty");
         Assert.Equal("0", qty.DefaultValueExpression);
@@ -263,7 +263,7 @@ public sealed class PersistedColumnPropertiesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
         Assert.Equal(3, meta.Count);
 
         ColumnMetadata qty = meta.Single(m => m.Name == "Qty");
@@ -292,7 +292,7 @@ public sealed class PersistedColumnPropertiesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
 
         Assert.Single(meta);
         Assert.Equal("Qty", meta[0].Name);
@@ -318,7 +318,7 @@ public sealed class PersistedColumnPropertiesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
 
         ColumnMetadata renamed = meta.Single(m => m.Name == "Quantity");
         Assert.Equal("0", renamed.DefaultValueExpression);

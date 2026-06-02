@@ -28,7 +28,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "MSysAccessStorage",
             TestContext.Current.CancellationToken);
 
@@ -68,7 +68,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(
             "MSysNavPaneGroups",
             TestContext.Current.CancellationToken);
 

@@ -71,7 +71,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("SM_FreshBootstrap", tables);
 
         DataTable table = await reader.ReadDataTableAsync("SM_FreshBootstrap", cancellationToken: TestContext.Current.CancellationToken);
@@ -916,7 +916,7 @@ public sealed class DaoStorageMaintenanceTests
         IEnumerable<string> systemTables,
         CancellationToken cancellationToken)
     {
-        List<string> userTables = await reader.ListTablesAsync(cancellationToken);
+        IReadOnlyList<string> userTables = await reader.ListTablesAsync(cancellationToken);
         foreach (string systemTable in systemTables)
         {
             Assert.DoesNotContain(systemTable, userTables, StringComparer.OrdinalIgnoreCase);

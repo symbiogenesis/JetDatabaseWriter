@@ -52,7 +52,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
         Assert.Contains("Orders", tables);
@@ -104,7 +104,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Umsätze", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Umsätze", TestContext.Current.CancellationToken);
         int expected = meta.Count;
 
         long observed = 0;
@@ -155,7 +155,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Orders", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Orders", TestContext.Current.CancellationToken);
         int shipCountryOrdinal = meta.Select((c, i) => (c, i)).First(t => t.c.Name == "ShipCountry").i;
 
         List<object[]> matches = await reader.Rows("Orders", cancellationToken: TestContext.Current.CancellationToken)
@@ -233,7 +233,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains("Asset Items", tables);
     }
@@ -279,7 +279,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Asset Items", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Asset Items", TestContext.Current.CancellationToken);
         int expected = meta.Count;
 
         long observed = 0;
@@ -322,13 +322,13 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         bool sawDateColumn = false;
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             if (meta.Any(c => c.ClrType == typeof(System.DateTime)))
             {
                 sawDateColumn = true;
@@ -356,12 +356,12 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyDateValue = false;
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] dateOrdinals = meta
                 .Select((c, i) => (c, i))
                 .Where(t => t.c.ClrType == typeof(System.DateTime))
@@ -405,7 +405,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsDateTestDatabase, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool checkedAtLeastOne = false;
         foreach (string table in tables)
@@ -429,7 +429,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     private static async ValueTask AssertColumnPropertiesDumpAsync(AccessReader reader, string tableName)
     {
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
 
         foreach (ColumnMetadata col in meta)
@@ -447,12 +447,12 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     private async ValueTask AssertEveryTableStreamsAsync(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int expected = meta.Count;
 
             long observed = 0;

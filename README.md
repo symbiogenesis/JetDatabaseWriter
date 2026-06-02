@@ -98,10 +98,10 @@ public class Order
 
 await using var reader = await AccessReader.OpenAsync("database.mdb");
 
-List<string> tables = await reader.ListTablesAsync();
+IReadOnlyList<string> tables = await reader.ListTablesAsync();
 Console.WriteLine($"Found {tables.Count} tables: {string.Join(", ", tables)}");
 
-List<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100);
+IReadOnlyList<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100);
 foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
@@ -156,7 +156,7 @@ public class Product
     public bool Discontinued { get; set; }
 }
 
-List<Product> products = await reader.ReadTableAsync<Product>("Products", maxRows: 100, cancellationToken);
+IReadOnlyList<Product> products = await reader.ReadTableAsync<Product>("Products", maxRows: 100, cancellationToken);
 decimal total = products.Where(p => !p.Discontinued).Sum(p => p.UnitPrice);
 ```
 
@@ -176,7 +176,7 @@ DataTable dt = await reader.ReadTableAsync("Products", cancellationToken: cancel
 ### Column metadata
 
 ```csharp
-List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Products", cancellationToken);
+IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Products", cancellationToken);
 foreach (ColumnMetadata col in meta)
 {
     Type   clrType = col.ClrType;         // e.g. typeof(int), typeof(string)
@@ -399,7 +399,7 @@ Filtering and projection run client-side per row and require a table scan unless
 For large databases, enumerate `ListTablesAsync()` and stream each table with `Rows(...)` or `Rows<T>(...)` unless you specifically need `DataTable` instances for every table. For string-typed `DataTable` compatibility across all tables, enumerate `ListTablesAsync()` and call `ReadTableAsStringsAsync(...)` per table.
 
 ```csharp
-Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
+IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
     new Progress<TableProgress>(p => Console.WriteLine($"Reading {p.TableName} ({p.TableIndex + 1}/{p.TableCount})...")),
     cancellationToken);
 ```

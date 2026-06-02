@@ -55,7 +55,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.Equal(meta.Count, dt.Columns.Count);
     }
@@ -68,7 +68,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         for (int i = 0; i < meta.Count; i++)
         {
@@ -169,9 +169,9 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     public async Task ReadAllTables_ContainsAllTableNames(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> expected = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> expected = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equivalent(expected, all.Keys);
     }
@@ -182,7 +182,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // At least one table must have a non-string column to prove typing
         bool anyTypedColumn = all.Values
@@ -209,7 +209,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable typed = await reader.ReadDataTableAsync(table, 100, cancellationToken: TestContext.Current.CancellationToken);
-        List<GenericRow> generic = await reader.ReadTableAsync<GenericRow>(table, 100, TestContext.Current.CancellationToken);
+        IReadOnlyList<GenericRow> generic = await reader.ReadTableAsync<GenericRow>(table, 100, TestContext.Current.CancellationToken);
 
         Assert.NotNull(typed);
         Assert.Equal(typed.Rows.Count, generic.Count);
@@ -222,7 +222,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 10, TestContext.Current.CancellationToken);
+        IReadOnlyList<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 10, TestContext.Current.CancellationToken);
 
         Assert.All(items, Assert.NotNull);
     }
@@ -234,7 +234,7 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 2, TestContext.Current.CancellationToken);
+        IReadOnlyList<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 2, TestContext.Current.CancellationToken);
 
         Assert.True(items.Count <= 2);
     }

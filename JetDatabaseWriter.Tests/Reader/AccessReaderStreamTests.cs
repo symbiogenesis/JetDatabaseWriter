@@ -67,10 +67,10 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         // Find first non-string, non-null column
-        int numericColIdx = meta.FindIndex(m => m.ClrType != typeof(string));
+        int numericColIdx = FindColumnIndex(meta, m => m.ClrType != typeof(string));
         if (numericColIdx < 0)
         {
             return; // all-string table — skip assertion
@@ -194,7 +194,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         }
 
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
 
@@ -237,7 +237,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_Jackcess_ReadsAllTablesWithoutException(string path)
     {
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
 
@@ -322,6 +322,19 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
+
+    private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> columns, Predicate<ColumnMetadata> match)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (match(columns[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 
     /// <summary>
     /// Synchronous IProgress&lt;T&gt; that invokes the callback directly on the reporting

@@ -51,7 +51,7 @@ public sealed class CatalogArtifactPlanTests
             leaveOpen: true,
             cancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(cancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken);
         Assert.Contains("PlanA", tables);
         Assert.Contains("PlanB", tables);
 

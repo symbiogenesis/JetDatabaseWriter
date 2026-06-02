@@ -44,7 +44,7 @@ public sealed class IndexFlagCombinationsTests
         var sb = new StringBuilder();
         int totalIndexes = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
@@ -95,7 +95,7 @@ public sealed class IndexFlagCombinationsTests
             ct);
 
         bool foundIgnoreNullsIndex = false;
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);

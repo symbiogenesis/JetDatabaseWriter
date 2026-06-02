@@ -44,7 +44,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Note", StringComparison.OrdinalIgnoreCase));
 
         DataTable raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
@@ -90,7 +90,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Title", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
     }
@@ -124,7 +124,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent column descriptor is gone.
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
 
         // Complex column metadata is gone for the parent.
@@ -184,7 +184,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Heading", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Title", StringComparison.OrdinalIgnoreCase));
     }
@@ -206,7 +206,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Parent column descriptor reflects the new name.
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Attachments", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(meta, m => string.Equals(m.Name, "Files", StringComparison.OrdinalIgnoreCase));
 

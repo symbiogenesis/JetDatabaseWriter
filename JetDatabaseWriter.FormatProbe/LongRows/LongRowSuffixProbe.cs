@@ -5074,10 +5074,10 @@ internal static class LongRowSuffixProbe
             var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string tableName in tables)
             {
-                List<ColumnMetadata> columns;
+                IReadOnlyList<ColumnMetadata> columns;
                 IReadOnlyList<IndexMetadata> indexes;
                 try
                 {

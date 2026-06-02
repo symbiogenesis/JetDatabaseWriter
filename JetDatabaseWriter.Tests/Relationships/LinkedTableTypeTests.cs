@@ -37,8 +37,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked =
-            await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo? table2 = linked.FirstOrDefault(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
@@ -64,8 +63,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked =
-            await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
@@ -89,8 +87,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked =
-            await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
@@ -114,8 +111,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked =
-            await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
@@ -138,8 +134,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.LinkerTestV2007, TestContext.Current.CancellationToken);
 
-        List<LinkedTableInfo> linked =
-            await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(linked);
         Assert.Equal("Table2", linked[0].Name);

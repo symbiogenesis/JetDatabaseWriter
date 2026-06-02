@@ -98,7 +98,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         // Try reading schema and columns
                         try
                         {
-                            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
+                            IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
                             output.WriteLine($"Schema columns: {columns?.Count}");
                         }
                         catch (Exception ex)

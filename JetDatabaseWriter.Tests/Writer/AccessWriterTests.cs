@@ -89,7 +89,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         object[] newRow = BuildDummyRow(columns);
 
         await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -126,7 +126,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         IEnumerable<object[]> rows = Enumerable.Range(0, 5).Select(i => BuildDummyRow(columns, seed: 1000 + (i * 100)));
 
@@ -144,7 +144,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         var rows = Enumerable.Range(0, 3).Select(i => BuildDummyRow(columns, seed: 2000 + (i * 100))).ToList();
 
@@ -275,7 +275,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         DataTable dt = await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         if (dt.Rows.Count == 0)
@@ -321,7 +321,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         DataTable originalDt = await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         if (originalDt.Rows.Count == 0)
@@ -400,7 +400,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(newTableName, tables);
         }
     }
@@ -426,7 +426,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, meta.Count);
         }
     }
@@ -544,7 +544,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Wide", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Wide", TestContext.Current.CancellationToken);
         Assert.Equal(varColCount + 1, meta.Count);
 
         var rows = new List<object[]>();
@@ -635,7 +635,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        List<string> originalTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> originalTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         string newTableName = $"TestTable_{Guid.NewGuid():N}"[..20];
         var columns = new List<ColumnDefinition>
@@ -655,7 +655,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader tempReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<string> tables = await tempReader.ListTablesAsync(TestContext.Current.CancellationToken);
+            IReadOnlyList<string> tables = await tempReader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Equivalent(originalTables, tables);
         }
     }
@@ -721,7 +721,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
             Assert.Equal(6, meta.Count);
             Assert.Equal(typeof(int), meta[0].ClrType);
             Assert.Equal(typeof(string), meta[1].ClrType);
@@ -794,7 +794,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(typeof(long), metadata[1].ClrType);
             Assert.Equal("Big Integer", metadata[1].TypeName);
             Assert.Equal(ColumnSize.FromBytes(8), metadata[1].Size);
@@ -991,7 +991,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<WriterPoco> items = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
+            IReadOnlyList<WriterPoco> items = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
             Assert.Single(items);
             Assert.Equal(42, items[0].Id);
             Assert.Equal("Roundtrip", items[0].Label);
@@ -1090,7 +1090,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<WriterPoco> readBack = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
+            IReadOnlyList<WriterPoco> readBack = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
             Assert.Equal(2, readBack.Count);
             Assert.Contains(readBack, p => p.Id == 10 && p.Label == "Alpha");
             Assert.Contains(readBack, p => p.Id == 20 && p.Label == "Beta");
@@ -1132,7 +1132,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        List<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         DataTable dt = await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         if (dt.Rows.Count == 0)
         {
@@ -1405,7 +1405,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<WriterOlePoco> items = await reader.ReadTableAsync<WriterOlePoco>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+            IReadOnlyList<WriterOlePoco> items = await reader.ReadTableAsync<WriterOlePoco>(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
             WriterOlePoco item = Assert.Single(items);
             Assert.Equal(1, item.Id);
@@ -1743,10 +1743,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(tableName, tables);
 
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, meta.Count);
         }
     }
@@ -1964,7 +1964,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="seed">The random seed.</param>
-    private static object[] BuildDummyRow(List<ColumnMetadata> columns, int seed = 0)
+    private static object[] BuildDummyRow(IReadOnlyList<ColumnMetadata> columns, int seed = 0)
     {
         object[] values = new object[columns.Count];
         for (int i = 0; i < columns.Count; i++)
@@ -2042,7 +2042,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     private static async ValueTask<long> GetStatsRowCountAsync(AccessReader reader, string tableName)
     {
-        List<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
         TableStat stat = stats.Single(s => string.Equals(s.Name, tableName, StringComparison.OrdinalIgnoreCase));
         return stat.RowCount;
     }

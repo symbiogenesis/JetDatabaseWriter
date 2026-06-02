@@ -34,7 +34,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
 
         // Establish ground-truth row counts via the shared cached reader.
         AccessReader baseline = await db.GetReaderAsync(path, ct);
-        List<string> tables = await baseline.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await baseline.ListTablesAsync(ct);
         Assert.NotEmpty(tables);
 
         var expected = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
@@ -106,7 +106,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             new AccessReaderOptions { UseLockFile = false },
             ct);
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         Assert.NotEmpty(tables);
 
         // Compute serial baseline row counts.
@@ -166,7 +166,7 @@ public sealed class AccessReaderConcurrencyTests(DatabaseCache db) : IClassFixtu
             ct);
 
         // Pick the largest table so the parallel reads have meaningful overlap.
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         string target = tables[0];
         long maxRows = 0;
         foreach (string t in tables)

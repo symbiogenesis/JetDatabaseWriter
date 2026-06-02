@@ -170,7 +170,7 @@ public sealed class AccessReaderFuzzRobustnessTests
                 leaveOpen: true,
                 cancellationToken: cancellationToken);
 
-            List<string> tables = await reader.ListTablesAsync(cancellationToken);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken);
             foreach (string t in tables)
             {
                 try

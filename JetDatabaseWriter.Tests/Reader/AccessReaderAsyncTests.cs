@@ -138,7 +138,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             }
         });
 
-        Task<Dictionary<string, DataTable>> readAllTask = Task.Run(
+        Task<IReadOnlyDictionary<string, DataTable>> readAllTask = Task.Run(
             () => reader.ReadAllTablesAsync(
                 progress,
                 TestContext.Current.CancellationToken).AsTask(),
@@ -152,7 +152,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         releaseOuterOperation.TrySetResult(null);
 
-        Dictionary<string, DataTable> tables = await readAllTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
+        IReadOnlyDictionary<string, DataTable> tables = await readAllTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
         await disposeTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
     }

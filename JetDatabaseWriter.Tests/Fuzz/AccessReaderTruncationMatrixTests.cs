@@ -84,7 +84,7 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
 
             // Best-effort table walk. Per-table failures are tolerated as
             // long as they surface as managed exceptions.
-            List<string> tables = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
             foreach (string t in tables)
             {
                 try

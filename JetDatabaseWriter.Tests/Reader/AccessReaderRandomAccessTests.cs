@@ -107,7 +107,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
 
     private static async ValueTask AssertReadableItemsTableAsync(AccessReader reader)
     {
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Single(tables);
         Assert.Equal("Items", tables[0]);
     }

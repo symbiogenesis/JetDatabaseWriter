@@ -60,7 +60,7 @@ public sealed class IndexChildTailPointerTests
         int intermediatesChecked = 0;
         int nonZeroTails = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
             IReadOnlyList<IndexMetadata> indexes;

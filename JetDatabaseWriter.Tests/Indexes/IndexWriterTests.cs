@@ -249,7 +249,7 @@ public sealed class IndexWriterTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, meta.Count);
         Assert.Equal("Id", meta[0].Name);
@@ -445,7 +445,7 @@ public sealed class IndexWriterTests
         await using AccessReader reader = await OpenReaderAsync(stream);
 
         // Every column survives.
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(columnCount, meta.Count);
         for (int i = 0; i < columnCount; i++)
         {
@@ -517,13 +517,13 @@ public sealed class IndexWriterTests
         long firstTdefPage;
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(tableName, tables);
 
             // Use the reader's internal stitched-bytes accessor (used by the
             // diagnostic tooling) to confirm the logical TDEF body exceeds
             // a single page.
-            List<ColumnMetadata> msys = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> msys = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(columnCount, msys.Count);
 
             IReadOnlyList<IndexMetadata> idxList = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);

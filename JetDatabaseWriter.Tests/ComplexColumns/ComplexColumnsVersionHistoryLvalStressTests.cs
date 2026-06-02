@@ -80,11 +80,12 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
         Assert.False(string.IsNullOrWhiteSpace(vhCol.FlatTableName));
 
         // Locate the Memo column inside the flat child table.
-        List<ColumnMetadata> flatCols = await reader.GetColumnMetadataAsync(
+        IReadOnlyList<ColumnMetadata> flatCols = await reader.GetColumnMetadataAsync(
             vhCol.FlatTableName,
             TestContext.Current.CancellationToken);
 
-        int memoOrdinal = flatCols.FindIndex(
+        int memoOrdinal = FindColumnIndex(
+            flatCols,
             c => string.Equals(c.TypeName, "Memo", StringComparison.OrdinalIgnoreCase));
         Assert.True(memoOrdinal >= 0, "Version-history flat table must expose a Memo column for the historical text.");
 
@@ -188,6 +189,19 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
         value.Replace("\\", "\\\\", StringComparison.Ordinal)
              .Replace("\n", "\\n", StringComparison.Ordinal)
              .Replace("\r", string.Empty, StringComparison.Ordinal);
+
+    private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> columns, Predicate<ColumnMetadata> match)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (match(columns[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 
     private static string GetSidecarDir(string dbPath) =>
         Path.GetDirectoryName(dbPath) ?? Path.GetTempPath();

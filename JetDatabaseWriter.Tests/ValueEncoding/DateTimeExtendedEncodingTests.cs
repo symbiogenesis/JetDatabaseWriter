@@ -50,7 +50,7 @@ public sealed class DateTimeExtendedEncodingTests
         DateTime value = Assert.IsType<DateTime>(row["ExtendedAt"]);
         Assert.Equal(expected, value);
 
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         ColumnMetadata extended = Assert.Single(metadata);
         Assert.Equal("Date/Time Extended", extended.TypeName);
         Assert.Equal(typeof(DateTime), extended.ClrType);
@@ -87,7 +87,7 @@ public sealed class DateTimeExtendedEncodingTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         ColumnMetadata extended = metadata.Single(column => column.Name == "ExtendedAt");
         Assert.Equal("Date/Time Extended", extended.TypeName);
         Assert.Equal(typeof(DateTime), extended.ClrType);

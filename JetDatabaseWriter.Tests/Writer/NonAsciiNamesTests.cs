@@ -58,10 +58,10 @@ public sealed class NonAsciiNamesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
         DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
@@ -103,10 +103,10 @@ public sealed class NonAsciiNamesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
         DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
@@ -149,10 +149,10 @@ public sealed class NonAsciiNamesTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(tableName, tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
         DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);

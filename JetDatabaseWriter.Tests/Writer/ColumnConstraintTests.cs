@@ -153,7 +153,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         Assert.True(meta[0].IsNullable);
         Assert.False(meta[1].IsNullable);
     }

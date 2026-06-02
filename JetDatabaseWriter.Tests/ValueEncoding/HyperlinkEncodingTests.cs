@@ -97,7 +97,7 @@ public sealed class HyperlinkEncodingTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.True(meta[1].IsHyperlink);
         Assert.Equal(typeof(Hyperlink), meta[1].ClrType);
         Assert.Equal("Hyperlink", meta[1].TypeName);
@@ -133,7 +133,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.True(meta[1].IsHyperlink);
 
         await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
@@ -185,10 +185,10 @@ public sealed class HyperlinkEncodingTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
 
-        List<HyperlinkRow> typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<HyperlinkRow> typed = await reader.ReadTableAsync<HyperlinkRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link, typed[0].Link);
 
-        List<StringRow> asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<StringRow> asStrings = await reader.ReadTableAsync<StringRow>(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(link.ToString(), asStrings[0].Link);
     }
 
@@ -337,7 +337,7 @@ public sealed class HyperlinkEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         ColumnMetadata urlCol = meta[2];
         Assert.Equal("Url", urlCol.Name);
         Assert.True(urlCol.IsHyperlink);
@@ -401,7 +401,7 @@ public sealed class HyperlinkEncodingTests
 
         Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(typeof(string), meta[1].ClrType);
         Assert.False(meta[1].IsHyperlink);
     }

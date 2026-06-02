@@ -38,12 +38,12 @@ public class AccessReaderBenchmarks
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        List<string> tableNames = await reader.ListTablesAsync();
+        IReadOnlyList<string> tableNames = await reader.ListTablesAsync();
         this.tableName = tableNames[0];
     }
 
     [Benchmark]
-    public async Task<List<string>> ListTables()
+    public async Task<IReadOnlyList<string>> ListTables()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
         return await reader.ListTablesAsync();
@@ -116,7 +116,7 @@ public class AccessReaderBenchmarks
     }
 
     [Benchmark]
-    public async Task<List<ColumnMetadata>> GetColumnMetadata()
+    public async Task<IReadOnlyList<ColumnMetadata>> GetColumnMetadata()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
         return await reader.GetColumnMetadataAsync(this.tableName);

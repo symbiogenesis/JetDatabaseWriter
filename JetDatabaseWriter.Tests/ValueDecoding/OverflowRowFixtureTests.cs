@@ -29,7 +29,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains("Table1", tables);
     }
@@ -96,7 +96,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             path,
             TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         foreach (string table in tables)

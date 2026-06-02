@@ -85,10 +85,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
         int indexesValidated = 0;
         int keysValidated = 0;
 
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         foreach (string tableName in tables)
         {
-            List<ColumnMetadata> cols;
+            IReadOnlyList<ColumnMetadata> cols;
             try
             {
                 cols = await reader.GetColumnMetadataAsync(tableName, ct);

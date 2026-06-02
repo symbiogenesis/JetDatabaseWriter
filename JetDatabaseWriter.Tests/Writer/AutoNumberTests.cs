@@ -102,7 +102,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         ColumnMetadata id = Assert.Single(meta);
         Assert.Equal(clrType, id.ClrType);

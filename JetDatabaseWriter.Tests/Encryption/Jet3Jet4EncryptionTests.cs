@@ -47,7 +47,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -75,7 +75,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -333,7 +333,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
         int rowCount = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -367,10 +367,10 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {
@@ -390,7 +390,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
         Assert.All(all.Values, Assert.NotNull);
     }

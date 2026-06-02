@@ -107,7 +107,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         {
             ms.Position = 0;
             await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
-            List<string> tableNames = await reader.ListTablesAsync(ct);
+            IReadOnlyList<string> tableNames = await reader.ListTablesAsync(ct);
             output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
             foreach (string tableName in tableNames)
             {

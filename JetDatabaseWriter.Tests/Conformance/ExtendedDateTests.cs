@@ -38,7 +38,7 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -56,12 +56,12 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool foundExtended = false;
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             if (meta.Any(c => c.TypeName == "Date/Time Extended"))
             {
                 foundExtended = true;
@@ -85,7 +85,7 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         foreach (string table in tables)
         {
@@ -110,7 +110,7 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ExtDateTestV2019, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
         ColumnMetadata extended = Assert.Single(metadata, column => column.Name == "DateExt");
         Assert.Equal("Date/Time Extended", extended.TypeName);
         Assert.Equal(typeof(DateTime), extended.ClrType);

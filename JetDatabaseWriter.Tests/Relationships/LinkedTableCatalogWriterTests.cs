@@ -398,7 +398,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         await using (AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct))
         {
-            List<LinkedTableInfo> links = await reader.ListLinkedTablesAsync(ct);
+            IReadOnlyList<LinkedTableInfo> links = await reader.ListLinkedTablesAsync(ct);
             LinkedTableInfo link = Assert.Single(links, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
             Assert.Equal("data.csv", link.SourceObjectName);
         }
@@ -529,7 +529,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        List<LinkedTableInfo> linkedTables = await reader.ListLinkedTablesAsync(ct);
+        IReadOnlyList<LinkedTableInfo> linkedTables = await reader.ListLinkedTablesAsync(ct);
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedAccess", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedOdbc", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));

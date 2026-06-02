@@ -142,13 +142,13 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
         LruCache<long, AccessBase.RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, RowBoundsCacheFieldName);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
         Assert.Contains(BetaRowsTable, tables);
         Assert.NotNull(ReadPrivateField(reader, CatalogCacheFieldName));
 
         long catalogMisses = pageCache.Misses;
-        List<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(tables, repeatedTables);
         Assert.Equal(catalogMisses, pageCache.Misses);
 
@@ -424,9 +424,9 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
     private static async ValueTask<long> ResolveTdefPageAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
-        int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
+        int idIndex = FindColumnIndex(metadata, static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int nameIndex = FindColumnIndex(metadata, static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
         Assert.True(idIndex >= 0);
         Assert.True(nameIndex >= 0);
 
@@ -488,6 +488,19 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             referencePageNumber);
 
         return fileBytes;
+    }
+
+    private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> columns, Predicate<ColumnMetadata> match)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (match(columns[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static int ReadUInt24(byte[] buffer, int offset)

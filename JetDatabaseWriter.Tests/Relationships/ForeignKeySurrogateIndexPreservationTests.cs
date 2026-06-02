@@ -118,7 +118,7 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         int fkCount = 0;
         foreach (string table in tables)
@@ -145,7 +145,7 @@ public sealed class ForeignKeySurrogateIndexPreservationTests(DatabaseCache db) 
 
     private static async Task<List<(string Table, string IndexName)>> CollectFkIndexesAsync(AccessReader reader, CancellationToken ct)
     {
-        List<string> tables = await reader.ListTablesAsync(ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
         var result = new List<(string, string)>();
         foreach (string table in tables)
         {

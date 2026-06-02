@@ -164,7 +164,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
 
-        List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
+        IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
         var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);

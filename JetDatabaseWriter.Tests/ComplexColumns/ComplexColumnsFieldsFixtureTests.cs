@@ -47,7 +47,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // The fixture contains a "Documents" table.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(DocumentsTable, tables, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -57,8 +57,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         // Access stores Attachment columns as type 0x12 (Complex) in the TDEF.
         // The specific subtype (attachment vs multi-value) is determined by MSysComplexColumns.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        ColumnMetadata? col = meta.FirstOrDefault(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
         Assert.Equal("Attachment", col.TypeName);
@@ -69,8 +69,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // Attachment columns must map to byte[], not string or object.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        ColumnMetadata? col = meta.FirstOrDefault(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
         Assert.Equal(typeof(byte[]), col.ClrType);
@@ -81,8 +81,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // Attachment (complex) columns have no fixed byte size — they report as LVAL.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        ColumnMetadata? col = meta.FirstOrDefault(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
         Assert.Equal("LVAL", col.Size.ToString());
@@ -117,8 +117,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // After decoding, row 1 has one attachment — its cell must not be DBNull.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
         Assert.True(attachIdx >= 0, $"Column '{AttachmentsColumn}' not found in {DocumentsTable}");
 
         object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
@@ -133,8 +133,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // Row 2 also has one attachment — the decoder must handle multiple rows.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         List<object[]> rows = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).Take(2).ToListAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Count);
@@ -151,8 +151,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // Every row in the Documents table has an attachment; all cells must be non-null.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         List<object[]> rows = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(rows);
@@ -167,8 +167,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         // When decoded, the attachment value must be a non-empty byte[] (raw LVAL data
         // for the attachment sub-record), OR a richer type that is non-null and non-empty.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
@@ -187,8 +187,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         // the bytes contain the UTF-16 or UTF-8 form of "hello.txt" as a proxy
         // for correct filename resolution.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
@@ -213,8 +213,8 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
         //   "Hello from attachment fixture!"
         // Once decoded, the raw bytes of that file must be present in the cell value.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
-        int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
+        int attachIdx = FindColumnIndex(meta, c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
@@ -266,7 +266,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     {
         // The Tags table created in the fixture must be visible in ListTables.
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("Tags", tables, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -279,7 +279,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             foreach (ColumnMetadata col in meta)
             {
                 Assert.False(
@@ -290,6 +290,19 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     }
 
     // ── Private helper ────────────────────────────────────────────────
+
+    private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> columns, Predicate<ColumnMetadata> match)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (match(columns[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 
     private static bool ContainsSequence(byte[] data, byte[] needle)
     {

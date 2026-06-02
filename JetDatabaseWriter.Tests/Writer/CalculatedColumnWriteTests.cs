@@ -60,7 +60,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcRoundTrip", TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcRoundTrip", TestContext.Current.CancellationToken);
 
         ColumnMetadata calcLabel = Assert.Single(metadata, c => c.Name == "CalcLabel");
         Assert.True(calcLabel.IsCalculated);
@@ -82,7 +82,7 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(11.25m, Convert.ToDecimal(row["Weighted"], CultureInfo.InvariantCulture));
         Assert.Equal(eventDate, Convert.ToDateTime(row["EventDate"], CultureInfo.InvariantCulture));
 
-        List<CalculatedProjection> typed = await reader.ReadTableAsync<CalculatedProjection>(
+        IReadOnlyList<CalculatedProjection> typed = await reader.ReadTableAsync<CalculatedProjection>(
             "CalcRoundTrip",
             maxRows: 10,
             TestContext.Current.CancellationToken);

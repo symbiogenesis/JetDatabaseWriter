@@ -38,12 +38,12 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         ColumnMetadata? oleColumn = null;
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             oleColumn = meta.FirstOrDefault(c => c.TypeName == "OLE Object");
             if (oleColumn is not null)
             {
@@ -69,13 +69,13 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyOleValue = false;
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((c, i) => (c, i))
                 .Where(t => t.c.TypeName == "OLE Object")
@@ -118,12 +118,12 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawAnyImagePayload = false;
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((column, index) => (column, index))
                 .Where(static entry => entry.column.TypeName == "OLE Object")
@@ -171,7 +171,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.TestOleV2007, TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         bool sawUnwrappedTextPayload = false;
         byte[] expectedPrefix =
@@ -182,7 +182,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
         foreach (string table in tables)
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int[] oleOrdinals = meta
                 .Select((column, index) => (column, index))
                 .Where(static entry => entry.column.TypeName == "OLE Object")

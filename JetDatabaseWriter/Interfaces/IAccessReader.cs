@@ -37,24 +37,24 @@ public interface IAccessReader : IAccessBase
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    public ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
+    /// <returns>A read-only snapshot of user table names.</returns>
+    public ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns metadata about linked tables (Access-file, text, and ODBC)
     /// found in the database catalog asynchronously.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A list of <see cref="LinkedTableInfo"/> with metadata for each linked table.</returns>
-    public ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
+    /// <returns>A read-only snapshot of <see cref="LinkedTableInfo"/> entries.</returns>
+    public ValueTask<IReadOnlyList<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns name, stored row-count, and column-count for every user table asynchronously.
     /// Calling this instead of <see cref="ListTablesAsync"/> avoids a duplicate catalog scan.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A list of <see cref="TableStat"/> with metadata for each user table.</returns>
-    public ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
+    /// <returns>A read-only snapshot of <see cref="TableStat"/> entries.</returns>
+    public ValueTask<IReadOnlyList<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount asynchronously.
@@ -95,8 +95,8 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    public ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    /// <returns>A read-only snapshot of mapped rows.</returns>
+    public ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -114,8 +114,8 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
-    /// <returns>A list of <see cref="ColumnMetadata"/> objects describing each column in the table.</returns>
-    public ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
+    /// <returns>A read-only snapshot of <see cref="ColumnMetadata"/> entries describing each column in the table.</returns>
+    public ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
@@ -249,8 +249,8 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    public ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
+    /// <returns>A read-only dictionary mapping table names to their corresponding <see cref="DataTable"/> snapshots.</returns>
+    public ValueTask<IReadOnlyDictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed

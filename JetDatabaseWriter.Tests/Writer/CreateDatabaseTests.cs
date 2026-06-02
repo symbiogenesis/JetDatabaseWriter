@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -74,7 +75,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(tables);
     }
@@ -129,12 +130,12 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(tables);
         Assert.Equal(tableName, tables[0]);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(3, meta.Count);
     }
 
@@ -186,7 +187,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, tables.Count);
         Assert.Contains("TableA", tables);
@@ -234,7 +235,7 @@ public sealed class CreateDatabaseTests
             }
 
             await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
-            List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Single(tables);
             Assert.Equal("T1", tables[0]);
         }
@@ -345,7 +346,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(8, meta.Count);
         Assert.Equal(1, await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken));
@@ -369,7 +370,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(tables);
     }
@@ -440,11 +441,11 @@ public sealed class CreateDatabaseTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(["People"], tables);
 
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
-        Assert.Equal(["Id", "Name"], meta.ConvertAll(c => c.Name));
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "Name"], meta.Select(c => c.Name));
 
         // None of the new property fields are populated yet.
         Assert.All(meta, m =>

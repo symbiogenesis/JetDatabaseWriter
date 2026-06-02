@@ -93,7 +93,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo entry = Assert.Single(linked, l =>
             string.Equals(l.Name, "LinkedCsvData", StringComparison.OrdinalIgnoreCase));
@@ -120,7 +120,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedCsvData", StringComparison.OrdinalIgnoreCase));
@@ -165,7 +165,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, linked.Count);
 
@@ -197,7 +197,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("LinkedCsv", tables);
     }
@@ -229,7 +229,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
 
         LinkedTableInfo entry = Assert.Single(linked, table =>
             string.Equals(table.Name, "LinkedOrdersCsv", StringComparison.OrdinalIgnoreCase));
@@ -238,7 +238,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Equal(sourceDirectory, entry.SourcePath);
         Assert.Equal(connect, entry.ConnectString);
 
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedOrdersCsv", ct);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedOrdersCsv", ct);
         Assert.Collection(
             metadata,
             column => Assert.Equal("OrderId", column.Name),
@@ -460,7 +460,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedRaggedRowsCsv", ct);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedRaggedRowsCsv", ct);
         Assert.Equal(["A", "B", "C"], metadata.Select(column => column.Name).ToArray());
 
         long realRowCount = await reader.GetRealRowCountAsync("LinkedRaggedRowsCsv", ct);
@@ -520,7 +520,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedEncodingCsv", ct);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedEncodingCsv", ct);
 
         Assert.Equal(["Name", "City", "Note"], metadata.Select(column => column.Name).ToArray());
 
@@ -720,7 +720,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         var options = new AccessReaderOptions { LinkedTextMaxColumnCount = 128 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
-        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedDuplicateHeadersCsv", ct);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedDuplicateHeadersCsv", ct);
 
         Assert.Equal(64, metadata.Count);
         Assert.Equal("A", metadata[0].Name);
@@ -885,7 +885,7 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        List<LinkedTextRow> preview = await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 1, ct);
+        IReadOnlyList<LinkedTextRow> preview = await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 1, ct);
         LinkedTextRow row = Assert.Single(preview);
         Assert.Equal("Ada", row.Name);
 
@@ -965,7 +965,7 @@ public sealed class LinkedTextTableTests : IDisposable
         DataTable table = await reader.ReadDataTableAsync("LinkedValidatorMutationCsv", cancellationToken: ct);
         Assert.Single(table.Rows);
 
-        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
+        IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
         LinkedTableInfo entry = Assert.Single(linked, link =>
             string.Equals(link.Name, "LinkedValidatorMutationCsv", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(sourceDirectory, entry.SourcePath);
