@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -19,6 +20,14 @@ public sealed class IndexCursorTests
     private const long FirstPageNumber = 50;
 
     private readonly CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+    public static TheoryData<bool, bool, int[]> RangeInclusivityCases => new()
+    {
+        { true, true, [5, 6, 7, 8, 9, 10] },
+        { false, true, [6, 7, 8, 9, 10] },
+        { true, false, [5, 6, 7, 8, 9] },
+        { false, false, [6, 7, 8, 9] },
+    };
 
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
@@ -83,6 +92,80 @@ public sealed class IndexCursorTests
         {
             Assert.Contains((dataPage, rowIndex), expected);
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(RangeInclusivityCases))]
+    public async Task FindRowLocationsInRangeAsync_BoundsHonorInclusivity(
+        bool lowerInclusive,
+        bool upperInclusive,
+        int[] expectedRowIndexes)
+    {
+        TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildIntEntries(20));
+        IndexCursor cursor = CreateCursor(tree);
+        var range = new EncodedIndexRange(
+            new EncodedIndexBound(EncodeIntKey(5), lowerInclusive, IsPrefix: false),
+            new EncodedIndexBound(EncodeIntKey(10), upperInclusive, IsPrefix: false));
+
+        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsInRangeAsync(
+            tree.RootPageNumber,
+            range,
+            this.cancellationToken);
+
+        Assert.Equal(expectedRowIndexes, matches.Select(match => match.RowIndex).ToArray());
+    }
+
+    [Fact]
+    public async Task FindRowLocationsInRangeAsync_ExclusiveLowerPrefix_SkipsMatchingPrefix()
+    {
+        TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
+        IndexCursor cursor = CreateCursor(tree);
+        var range = new EncodedIndexRange(
+            new EncodedIndexBound(EncodeIntKey(2), Inclusive: false, IsPrefix: true),
+            EncodedIndexBound.None);
+
+        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsInRangeAsync(
+            tree.RootPageNumber,
+            range,
+            this.cancellationToken);
+
+        Assert.Equal([3, 3, 3, 4, 4, 4], TenantIds(matches));
+    }
+
+    [Fact]
+    public async Task FindRowLocationsInRangeAsync_InclusiveUpperPrefix_IncludesMatchingPrefix()
+    {
+        TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
+        IndexCursor cursor = CreateCursor(tree);
+        var range = new EncodedIndexRange(
+            new EncodedIndexBound(EncodeIntKey(1), Inclusive: true, IsPrefix: true),
+            new EncodedIndexBound(EncodeIntKey(2), Inclusive: true, IsPrefix: true));
+
+        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsInRangeAsync(
+            tree.RootPageNumber,
+            range,
+            this.cancellationToken);
+
+        Assert.Equal([1, 1, 1, 2, 2, 2], TenantIds(matches));
+    }
+
+    [Fact]
+    public async Task FindRowLocationsInRangeAsync_RequiredPrefix_FiltersCompositeLeadingKey()
+    {
+        TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
+        IndexCursor cursor = CreateCursor(tree);
+        byte[] requiredPrefix = EncodeIntKey(2);
+        var range = new EncodedIndexRange(
+            new EncodedIndexBound(requiredPrefix, Inclusive: true, IsPrefix: false),
+            EncodedIndexBound.None,
+            requiredPrefix);
+
+        List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsInRangeAsync(
+            tree.RootPageNumber,
+            range,
+            this.cancellationToken);
+
+        Assert.Equal([2, 2, 2], TenantIds(matches));
     }
 
     [Theory]
@@ -182,6 +265,39 @@ public sealed class IndexCursorTests
 
         return entries;
     }
+
+    private static List<IndexEntry> BuildCompositeIntEntries(int tenantCount, int valuesPerTenant)
+    {
+        var entries = new List<IndexEntry>(tenantCount * valuesPerTenant);
+        for (int tenant = 0; tenant < tenantCount; tenant++)
+        {
+            for (int value = 0; value < valuesPerTenant; value++)
+            {
+                entries.Add(new IndexEntry(
+                    EncodeCompositeIntKey(tenant, value),
+                    DataPage: 1_000 + tenant,
+                    DataRow: (byte)value));
+            }
+        }
+
+        return entries;
+    }
+
+    private static byte[] EncodeCompositeIntKey(int first, int second)
+    {
+        byte[] firstKey = EncodeIntKey(first);
+        byte[] secondKey = EncodeIntKey(second);
+        byte[] composite = new byte[firstKey.Length + secondKey.Length];
+        Buffer.BlockCopy(firstKey, 0, composite, 0, firstKey.Length);
+        Buffer.BlockCopy(secondKey, 0, composite, firstKey.Length, secondKey.Length);
+        return composite;
+    }
+
+    private static byte[] EncodeIntKey(int value) =>
+        IndexKeyEncoder.EncodeEntry(LongIntegerType, value, ascending: true);
+
+    private static int[] TenantIds(List<(long DataPage, int RowIndex)> matches) =>
+        matches.Select(match => (int)(match.DataPage - 1_000)).ToArray();
 
     private static long FindTailLeafPage(TreeFixture tree)
     {

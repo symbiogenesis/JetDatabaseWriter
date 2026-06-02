@@ -163,6 +163,8 @@ JetDatabaseWriter/
 │       ├── ChildSeekIndex.cs
 │       ├── DecodedIntermediateEntry.cs
 │       ├── DescentStep.cs
+│       ├── EncodedIndexBound.cs
+│       ├── EncodedIndexRange.cs
 │       ├── IndexBTreeBuildResult.cs
 │       ├── IndexEntry.cs
 │       ├── IndexSectionAnchors.cs

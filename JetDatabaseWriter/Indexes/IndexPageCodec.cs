@@ -778,25 +778,13 @@ internal static class IndexPageCodec
     /// <param name="layout">The layout.</param>
     /// <param name="page">The page bytes.</param>
     /// <param name="pageSize">The page size.</param>
-    /// <param name="lowerKey">The encoded lower key, or <see langword="null"/>.</param>
-    /// <param name="lowerInclusive">Whether <paramref name="lowerKey"/> is inclusive.</param>
-    /// <param name="lowerIsPrefix">Whether <paramref name="lowerKey"/> represents a leading-key prefix.</param>
-    /// <param name="upperKey">The encoded upper key, or <see langword="null"/>.</param>
-    /// <param name="upperInclusive">Whether <paramref name="upperKey"/> is inclusive.</param>
-    /// <param name="upperIsPrefix">Whether <paramref name="upperKey"/> represents a leading-key prefix.</param>
-    /// <param name="requiredPrefix">An encoded key prefix every match must start with, or <see langword="null"/>.</param>
+    /// <param name="range">The encoded range.</param>
     /// <param name="matches">The matches.</param>
     public static bool CollectRangeLeafEntries(
         IndexPageLayout layout,
         byte[] page,
         int pageSize,
-        byte[]? lowerKey,
-        bool lowerInclusive,
-        bool lowerIsPrefix,
-        byte[]? upperKey,
-        bool upperInclusive,
-        bool upperIsPrefix,
-        byte[]? requiredPrefix,
+        in EncodedIndexRange range,
         List<(long DataPage, int RowIndex)> matches)
     {
         if (!IsLeaf(page)
@@ -813,21 +801,24 @@ internal static class IndexPageCodec
         bool isFirstEntry = true;
         bool hasEntries = false;
 
-        bool CurrentEntryMatchesRange(out bool continueScanning)
+        bool CurrentEntryMatchesRange(in EncodedIndexRange currentRange, out bool continueScanning)
         {
             continueScanning = true;
 
-            if (lowerKey != null)
+            EncodedIndexBound lowerBound = currentRange.Lower;
+            if (!lowerBound.IsUnbounded)
             {
+                byte[] lowerKey = lowerBound.Key!;
                 int lowerComparison = CompareCurrentEntry(lowerKey);
                 if (lowerComparison > 0
-                    || (!lowerInclusive && lowerComparison == 0)
-                    || (!lowerInclusive && lowerIsPrefix && CurrentEntryStartsWith(lowerKey)))
+                    || (!lowerBound.Inclusive && lowerComparison == 0)
+                    || (!lowerBound.Inclusive && lowerBound.IsPrefix && CurrentEntryStartsWith(lowerKey)))
                 {
                     return false;
                 }
             }
 
+            byte[]? requiredPrefix = currentRange.RequiredPrefix;
             if (requiredPrefix != null)
             {
                 int prefixComparison = CompareCurrentEntry(requiredPrefix);
@@ -843,16 +834,18 @@ internal static class IndexPageCodec
                 }
             }
 
-            if (upperKey != null)
+            EncodedIndexBound upperBound = currentRange.Upper;
+            if (!upperBound.IsUnbounded)
             {
+                byte[] upperKey = upperBound.Key!;
                 int upperComparison = CompareCurrentEntry(upperKey);
-                bool startsWithUpper = upperIsPrefix && CurrentEntryStartsWith(upperKey);
-                if (startsWithUpper && upperInclusive)
+                bool startsWithUpper = upperBound.IsPrefix && CurrentEntryStartsWith(upperKey);
+                if (startsWithUpper && upperBound.Inclusive)
                 {
                     return true;
                 }
 
-                if (upperComparison < 0 || (!upperInclusive && upperComparison == 0))
+                if (upperComparison < 0 || (!upperBound.Inclusive && upperComparison == 0))
                 {
                     continueScanning = false;
                     return false;
@@ -897,7 +890,7 @@ internal static class IndexPageCodec
                 return false;
             }
 
-            if (CurrentEntryMatchesRange(out bool continueScanning))
+            if (CurrentEntryMatchesRange(in range, out bool continueScanning))
             {
                 int pointerOffset = entryStart + suffixLength;
                 long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));

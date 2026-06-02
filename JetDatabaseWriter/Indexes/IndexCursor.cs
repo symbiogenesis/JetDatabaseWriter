@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -100,27 +101,15 @@ internal sealed class IndexCursor
     /// supplied encoded bounds.
     /// </summary>
     /// <param name="rootPageNumber">The root page number.</param>
-    /// <param name="lowerKey">The encoded lower key, or <see langword="null"/> for unbounded.</param>
-    /// <param name="lowerInclusive">Whether <paramref name="lowerKey"/> is inclusive.</param>
-    /// <param name="lowerIsPrefix">Whether <paramref name="lowerKey"/> represents a leading-key prefix.</param>
-    /// <param name="upperKey">The encoded upper key, or <see langword="null"/> for unbounded.</param>
-    /// <param name="upperInclusive">Whether <paramref name="upperKey"/> is inclusive.</param>
-    /// <param name="upperIsPrefix">Whether <paramref name="upperKey"/> represents a leading-key prefix.</param>
-    /// <param name="requiredPrefix">An encoded leading-key prefix every match must start with, or <see langword="null"/>.</param>
+    /// <param name="range">The encoded range.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsInRangeAsync(
         long rootPageNumber,
-        byte[]? lowerKey,
-        bool lowerInclusive,
-        bool lowerIsPrefix,
-        byte[]? upperKey,
-        bool upperInclusive,
-        bool upperIsPrefix,
-        byte[]? requiredPrefix,
+        EncodedIndexRange range,
         CancellationToken cancellationToken)
     {
         var matches = new List<(long DataPage, int RowIndex)>();
-        byte[]? startKey = lowerKey ?? requiredPrefix ?? [];
+        byte[]? startKey = range.Lower.Key ?? range.RequiredPrefix ?? [];
         byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, startKey, cancellationToken).ConfigureAwait(false);
         if (leafPage == null)
         {
@@ -129,13 +118,7 @@ internal sealed class IndexCursor
 
         await this.CollectRangeLeafChainAsync(
             leafPage,
-            lowerKey,
-            lowerInclusive,
-            lowerIsPrefix,
-            upperKey,
-            upperInclusive,
-            upperIsPrefix,
-            requiredPrefix,
+            range,
             matches,
             cancellationToken).ConfigureAwait(false);
         return matches;
@@ -242,13 +225,7 @@ internal sealed class IndexCursor
 
     private async ValueTask CollectRangeLeafChainAsync(
         byte[] leafPage,
-        byte[]? lowerKey,
-        bool lowerInclusive,
-        bool lowerIsPrefix,
-        byte[]? upperKey,
-        bool upperInclusive,
-        bool upperIsPrefix,
-        byte[]? requiredPrefix,
+        EncodedIndexRange range,
         List<(long DataPage, int RowIndex)> matches,
         CancellationToken cancellationToken)
     {
@@ -261,13 +238,7 @@ internal sealed class IndexCursor
                 this.layout,
                 page,
                 this.pageSize,
-                lowerKey,
-                lowerInclusive,
-                lowerIsPrefix,
-                upperKey,
-                upperInclusive,
-                upperIsPrefix,
-                requiredPrefix,
+                in range,
                 matches);
             if (!continueToNext)
             {

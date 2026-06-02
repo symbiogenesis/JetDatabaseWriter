@@ -1402,15 +1402,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IndexCursor cursor,
         CancellationToken cancellationToken)
     {
-        static bool IsEmptyRange(byte[]? lowerKey, bool lowerInclusive, byte[]? upperKey, bool upperInclusive)
+        static bool IsEmptyRange(in EncodedIndexRange range)
         {
-            if (lowerKey == null || upperKey == null)
+            if (range.Lower.IsUnbounded || range.Upper.IsUnbounded)
             {
                 return false;
             }
 
-            int comparison = IndexHelpers.CompareKeyBytes(lowerKey, upperKey);
-            return comparison > 0 || (comparison == 0 && (!lowerInclusive || !upperInclusive));
+            int comparison = IndexHelpers.CompareKeyBytes(range.Lower.Key!, range.Upper.Key!);
+            return comparison > 0 || (comparison == 0 && (!range.Lower.Inclusive || !range.Upper.Inclusive));
         }
 
         switch (criteria.Kind)
@@ -1418,13 +1418,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case IndexQueryKind.All:
                 return await cursor.FindRowLocationsInRangeAsync(
                     index.FirstDp,
-                    lowerKey: null,
-                    lowerInclusive: true,
-                    lowerIsPrefix: false,
-                    upperKey: null,
-                    upperInclusive: true,
-                    upperIsPrefix: false,
-                    requiredPrefix: null,
+                    new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None),
                     cancellationToken).ConfigureAwait(false);
 
             case IndexQueryKind.Exact:
@@ -1433,41 +1427,38 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             case IndexQueryKind.KeyPrefix:
                 byte[] prefixKey = this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Values!, nameof(criteria));
+                var prefixRange = new EncodedIndexRange(
+                    new EncodedIndexBound(prefixKey, Inclusive: true, IsPrefix: false),
+                    EncodedIndexBound.None,
+                    prefixKey);
                 return await cursor.FindRowLocationsInRangeAsync(
                     index.FirstDp,
-                    prefixKey,
-                    lowerInclusive: true,
-                    lowerIsPrefix: false,
-                    upperKey: null,
-                    upperInclusive: true,
-                    upperIsPrefix: false,
-                    requiredPrefix: prefixKey,
+                    prefixRange,
                     cancellationToken).ConfigureAwait(false);
 
             case IndexQueryKind.Range:
-                byte[]? lowerKey = criteria.Lower is null
-                    ? null
-                    : this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Lower.Values, nameof(criteria));
-                byte[]? upperKey = criteria.Upper is null
-                    ? null
-                    : this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Upper.Values, nameof(criteria));
-                bool lowerIsPrefix = criteria.Lower != null && criteria.Lower.Values.Count < index.Columns.Count;
-                bool upperIsPrefix = criteria.Upper != null && criteria.Upper.Values.Count < index.Columns.Count;
+                EncodedIndexBound lowerBound = criteria.Lower is null
+                    ? EncodedIndexBound.None
+                    : new EncodedIndexBound(
+                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
+                        criteria.Lower.IsInclusive,
+                        criteria.Lower.Values.Count < index.Columns.Count);
+                EncodedIndexBound upperBound = criteria.Upper is null
+                    ? EncodedIndexBound.None
+                    : new EncodedIndexBound(
+                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
+                        criteria.Upper.IsInclusive,
+                        criteria.Upper.Values.Count < index.Columns.Count);
+                var range = new EncodedIndexRange(lowerBound, upperBound);
 
-                if (IsEmptyRange(lowerKey, criteria.Lower?.IsInclusive ?? true, upperKey, criteria.Upper?.IsInclusive ?? true))
+                if (IsEmptyRange(in range))
                 {
                     return [];
                 }
 
                 return await cursor.FindRowLocationsInRangeAsync(
                     index.FirstDp,
-                    lowerKey,
-                    criteria.Lower?.IsInclusive ?? true,
-                    lowerIsPrefix,
-                    upperKey,
-                    criteria.Upper?.IsInclusive ?? true,
-                    upperIsPrefix,
-                    requiredPrefix: null,
+                    range,
                     cancellationToken).ConfigureAwait(false);
 
             default:

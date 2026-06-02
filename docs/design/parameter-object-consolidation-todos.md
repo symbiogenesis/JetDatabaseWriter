@@ -325,33 +325,55 @@ reader, cursor, and page codec.
 
 #### 7. Add an internal encoded index-range type
 
-- [ ] Introduce `EncodedIndexBound` as a `readonly record struct` with
+- [x] Introduce `EncodedIndexBound` as a `readonly record struct` with
   `byte[]? Key`, `bool Inclusive`, and `bool IsPrefix`. Expose a `None` static
   (default value) and an `IsUnbounded` helper so unbounded sides do not require
   `Nullable<EncodedIndexBound>`.
-- [ ] Introduce `EncodedIndexRange` as a `readonly record struct` holding the
+- [x] Introduce `EncodedIndexRange` as a `readonly record struct` holding the
   lower and upper `EncodedIndexBound` plus an optional `byte[]? RequiredPrefix`.
-- [ ] Do not copy `Key` or `RequiredPrefix` buffers in the constructor. The
+- [x] Do not copy `Key` or `RequiredPrefix` buffers in the constructor. The
   encoder already returns fresh single-use arrays; extra copies would regress
   the seek hot path.
-- [ ] Convert `AccessReader.FindIndexRowLocationsAsync` from the local
+- [x] Convert `AccessReader.FindIndexRowLocationsAsync` from the local
   `lowerKey` / `lowerInclusive` / `lowerIsPrefix` and upper-bound scalars into
   the encoded range type.
-- [ ] Update `IndexCursor.FindRowLocationsInRangeAsync` to accept the encoded
+- [x] Update `IndexCursor.FindRowLocationsInRangeAsync` to accept the encoded
   range instead of seven separate range/prefix parameters. Pass by value (the
   signature is `async ValueTask`, which forbids `in`).
-- [ ] Update `IndexPageCodec.CollectRangeLeafEntries` and any remaining range
+- [x] Update `IndexPageCodec.CollectRangeLeafEntries` and any remaining range
   matcher helpers to consume the encoded range. These are sync methods, so
   prefer `in EncodedIndexRange` where it avoids repeated struct copies.
-- [ ] Keep the public `IndexKeyBound` and `IAccessIndexQuery.WhereRange` API
+- [x] Keep the public `IndexKeyBound` and `IAccessIndexQuery.WhereRange` API
   unchanged unless a separate public-API review chooses otherwise.
-- [ ] Add or refresh focused index range tests covering inclusive/exclusive
+- [x] Add or refresh focused index range tests covering inclusive/exclusive
   lower bounds, inclusive/exclusive upper bounds, prefix bounds, and required
   prefix filtering.
-- [ ] Run a focused index-range/seek BenchmarkDotNet benchmark before and after
+- [x] Run a focused index-range/seek BenchmarkDotNet benchmark before and after
   and attach the deltas. If the benchmark suite still lacks one, add the
   benchmark or record an equivalent before/after allocation/perf probe. No
   statistically significant regression is acceptable for this refactor.
+
+Implementation notes (2026-06-01):
+
+- Added internal `EncodedIndexBound` and `EncodedIndexRange` structs under
+  `JetDatabaseWriter.Indexes.Models`. Constructors retain the supplied encoded
+  buffer references and do not copy `Key` or `RequiredPrefix`.
+- `AccessReader.FindIndexRowLocationsAsync` now constructs encoded ranges after
+  public `IndexKeyBound` values are encoded. The public `IndexKeyBound` and
+  `IAccessIndexQuery.WhereRange` APIs are unchanged.
+- `IndexCursor.FindRowLocationsInRangeAsync` now takes the encoded range by
+  value, and `IndexPageCodec.CollectRangeLeafEntries` takes it by
+  `in EncodedIndexRange` while continuing to compare against compressed page
+  bytes directly.
+- Added `IndexRangeSeekBenchmarks` because the suite did not have an index-range
+  seek target. Short-job BenchmarkDotNet before/after deltas:
+  `BoundedRange` 15.525 us / 8.20 KB -> 12.055 us / 8.20 KB;
+  `RequiredPrefix` 4.915 us / 4.18 KB -> 5.624 us / 4.18 KB. The
+  `RequiredPrefix` confidence intervals overlap, and allocations were unchanged,
+  so this run did not show a statistically significant regression.
+- Focused validation passed: 27 tests in `IndexCursorTests` and
+  `AccessReaderIndexSeekTests`, plus all 455 tests in the
+  `JetDatabaseWriter.Tests.Indexes` namespace.
 
 Payoff: public query callers already use `IndexKeyBound`, but the reader
 immediately explodes those bounds into repeated `byte[]?` plus boolean triples.
