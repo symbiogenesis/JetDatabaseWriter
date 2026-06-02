@@ -35,8 +35,10 @@ JetDatabaseWriter/
 │   ├── Hyperlink.cs
 │   ├── IndexColumnReference.cs
 │   ├── IndexDefinition.cs
+│   ├── IndexKeyBound.cs
 │   ├── IndexMetadata.cs
 │   ├── LinkedTableInfo.cs
+│   ├── MultiValueItem.cs
 │   ├── RelationshipDefinition.cs
 │   ├── TableProgress.cs
 │   └── TableStat.cs
@@ -66,6 +68,7 @@ JetDatabaseWriter/
 │       ├── CatalogTableArtifact.cs
 │       ├── CatalogEntry.cs
 │       ├── CatalogRow.cs
+│       ├── ResolvedTable.cs
 │       ├── TableDef.cs
 │       ├── UserTableCatalogDeletionArtifact.cs
 │       ├── UserTableCatalogDeletionResult.cs
@@ -83,12 +86,14 @@ JetDatabaseWriter/
 │   ├── LongValueEncoder.cs               (pre-encodes oversized MEMO/OLE/attachment values)
 │   ├── NumericEncoder.cs                  (BCD decimal encoding)
 │   └── Models/
+│       ├── FixedPointPayload.cs
 │       └── PreEncodedLongValue.cs
 │
 ├── LongValues/                            (shared LVAL storage codec)
 │   ├── LongValueStore.cs                  (descriptor/page helpers, chain traversal, deallocation)
 │   └── Models/
 │       ├── LongValueDescriptor.cs         (12-byte MEMO/OLE/attachment descriptor parser/serializer)
+│       ├── LvalRowLocation.cs
 │       └── LvalChainResult.cs             (bounded chain-read result)
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
@@ -97,7 +102,12 @@ JetDatabaseWriter/
 │   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues)
-│   └── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)
+│   ├── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)
+│   └── Models/
+│       ├── CalculatedLongValueRef.cs
+│       ├── ColumnSlice.cs
+│       ├── ColumnSliceKind.cs
+│       └── LongValueRef.cs
 │
 ├── Pages/                                 (page-level I/O & layout)
 │   ├── DataPageLayout.cs                  (byte offsets, page structure, format-version layouts)
@@ -107,7 +117,10 @@ JetDatabaseWriter/
 │   ├── PageJournal.cs                     (before-image journaling for rollback)
 │   └── Models/
 │       ├── PageInsertTarget.cs
-│       └── RowLocation.cs
+│       ├── RowBound.cs
+│       ├── RowLayout.cs
+│       ├── RowLocation.cs
+│       └── UsageMapPointer.cs
 │
 ├── Indexes/                               (all index concerns — B-tree, key encoding, maintenance)
 │   ├── IndexKeyEncoder.cs                 (column values → sort key bytes)
@@ -124,6 +137,7 @@ JetDatabaseWriter/
 │   ├── Helpers/
 │   │   └── IndexHelpers.cs
 │   ├── Collation/                         (sort-key generation for text indexes)
+│   │   ├── CharHandlerType.cs
 │   │   ├── GeneralTextIndexEncoder.cs
 │   │   ├── GeneralTextIndexEncoder.V2010LongRowSuffix.cs
 │   │   ├── GeneralLegacyTextIndexEncoder.cs
@@ -136,14 +150,22 @@ JetDatabaseWriter/
 │   │   ├── index_codes_gen_97.txt.gz
 │   │   └── index_mappings_ext_gen_97.txt.gz
 │   └── Models/
-│       ├── IndexEntry.cs
-│       ├── ResolvedIndex.cs
-│       ├── DescentStep.cs
 │       ├── ChildSeekIndex.cs
-│       ├── ParentSeekIndex.cs
 │       ├── DecodedIntermediateEntry.cs
+│       ├── DescentStep.cs
+│       ├── IndexBTreeBuildResult.cs
+│       ├── IndexEntry.cs
+│       ├── IndexSectionAnchors.cs
 │       ├── IntermediateOp.cs
-│       └── SplitPages.cs
+│       ├── KeyColumn.cs
+│       ├── KeyColumnInfo.cs
+│       ├── LogicalIdxEntry.cs
+│       ├── ParentSeekIndex.cs
+│       ├── RealIdxEntry.cs
+│       ├── RealIdxSlot.cs
+│       ├── ResolvedIndex.cs
+│       ├── SplitPages.cs
+│       └── UniqueIndexDescriptor.cs
 │
 ├── Schema/                                (DDL: table/column/index definition & type metadata)
 │   ├── TDefPageBuilder.cs                 (constructs Table Definition pages)
@@ -155,6 +177,8 @@ JetDatabaseWriter/
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
 │   ├── Expressions/
 │   │   ├── CalculatedExpressionEvaluator.cs        (entry point: applies calculated-expression plans to row values)
+│   │   ├── CalculatedExpressionEvaluationContext.cs
+│   │   ├── CalculatedExpressionPlan.cs
 │   │   ├── CalculatedExpressionNormalizer.cs       (Access syntax normalization: column brackets, date literals, word operators)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
 │   │   ├── CalculatedExpression*Node.cs            (AST nodes for values, names, unary/binary ops, functions, unsupported syntax)
@@ -168,7 +192,9 @@ JetDatabaseWriter/
 │       ├── ColumnInfo.cs
 │       ├── ColumnPropertyBlock.cs
 │       ├── ColumnPropertyEntry.cs
+│       ├── ColumnPropertyEntryBuilder.cs
 │       ├── ColumnPropertyTarget.cs
+│       ├── ColumnPropertyTargetBuilder.cs
 │       ├── ColumnPropertyChunkType.cs
 │       └── ColumnPropertyUnknownChunk.cs
 │
@@ -185,6 +211,7 @@ JetDatabaseWriter/
 │   ├── OfficeCryptoPrimitives.cs          (shared Office Crypto hashing, HMAC, AES helpers)
 │   ├── OfficeCryptoStandard.cs            (MS-OFFCRYPTO §2.3.6 Standard — AES-128-CBC, SHA-1)
 │   └── Models/
+│       ├── OfficeEncryptedPackage.cs
 │       └── PageDecryptionKeys.cs
 │
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
@@ -205,7 +232,8 @@ JetDatabaseWriter/
 │   ├── ComplexColumnReader.cs             (complex-column metadata and flat-table read APIs)
 │   ├── ComplexColumnManager.cs            (write/scaffold/cascade complex column data)
 │   └── Models/
-│       └── AttachmentWrapper.cs
+│       ├── AttachmentWrapper.cs
+│       └── ComplexColumnAllocation.cs
 │
 ├── CompoundFile/                          (MS-CFB OLE structured storage)
 │   ├── CompoundFileReader.cs              (read .accdb wrapped in CFB container)
@@ -252,8 +280,9 @@ DelimitedText/         → (nothing — leaf parser/codec module)
 Pages/                 → Infrastructure/, Catalog.Models/, AccessWriter context for writer-owned services
 Encryption/            → CompoundFile/, Infrastructure/, Pages/
 Transactions/          → Pages/, Infrastructure/, AccessWriter context for lifecycle orchestration
-ValueDecoding/         → Schema/, Catalog.Models/, AccessBase/AccessReader context for row/text/LVAL decoding
-ValueEncoding/         → Schema/, ValueEncoding.Models/   [never depends on ValueDecoding/]
+LongValues/            → Pages/
+ValueDecoding/         → Schema/, Catalog.Models/, LongValues/, AccessBase/AccessReader context for row/text/LVAL decoding
+ValueEncoding/         → Schema/, LongValues/, ValueEncoding.Models/   [never depends on ValueDecoding/]
 Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/, AccessWriter context for maintenance
 Catalog/               → Pages/, ValueDecoding/, Schema/, Indexes/, AccessWriter context for writes
 Schema/                → Models/, Indexes/, Pages/, AccessWriter context for writer-owned builders
@@ -262,7 +291,7 @@ ComplexColumns/        → Catalog/, Indexes/, Pages/, Schema/, ValueDecoding/, 
 AccessBase (root)      → Pages/, Encryption/, Infrastructure/
 AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/
 AccessWriter (root)    → ValueEncoding/, Catalog/, Indexes/, Transactions/, Schema/,
-                         Relationships/, ComplexColumns/, Pages/, Encryption/
+                         LongValues/, Relationships/, ComplexColumns/, Pages/, Encryption/
 ```
 
 No project-level circular dependencies exist. `Infrastructure/` and pure layout/value helpers remain stable dependencies. Some storage, schema, and decode service classes are not leaf packages; they are context-owned collaborators scoped by domain, so they may receive `AccessReader`, `AccessWriter`, or `AccessBase` context when they need coordinated page I/O, text decoding, LVAL resolution, transactions, or format-specific layouts.
@@ -283,9 +312,12 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `Catalog/` | `JetDatabaseWriter.Catalog` |
 | `Catalog/Models/` | `JetDatabaseWriter.Catalog.Models` |
 | `DelimitedText/` | `JetDatabaseWriter.DelimitedText` |
+| `LongValues/` | `JetDatabaseWriter.LongValues` |
+| `LongValues/Models/` | `JetDatabaseWriter.LongValues.Models` |
 | `ValueEncoding/` | `JetDatabaseWriter.ValueEncoding` |
 | `ValueEncoding/Models/` | `JetDatabaseWriter.ValueEncoding.Models` |
 | `ValueDecoding/` | `JetDatabaseWriter.ValueDecoding` |
+| `ValueDecoding/Models/` | `JetDatabaseWriter.ValueDecoding.Models` |
 | `Pages/` | `JetDatabaseWriter.Pages` |
 | `Pages/Models/` | `JetDatabaseWriter.Pages.Models` |
 | `Indexes/` | `JetDatabaseWriter.Indexes` |
@@ -427,7 +459,7 @@ Internal DTOs live in `{Domain}/Models/` subdirectories. This satisfies CRP — 
 
 ### 4. Public and domain DTOs get their own files
 
-Public API types and domain DTOs get their own files. Previously-nested reusable types (`ColumnConstraint`, `PreEncodedLongValue`, `LongValueDescriptor`, `PageDecryptionKeys`) are promoted to top-level internal types in their domain's folder. Small implementation details that are tightly coupled to one algorithm may remain nested inside that algorithm's file.
+Public API types and domain DTOs get their own files. Reusable shapes that are consumed across files are top-level internal types in their domain's folder, including the extracted index layout records, row-layout primitives, column slices, long-value references, property-block builders, numeric payloads, usage-map pointers, and complex-column allocations. Small implementation details that are private or tightly coupled to one algorithm may remain nested inside that algorithm's file.
 
 ### 5. Embedded resources follow their consumer
 
