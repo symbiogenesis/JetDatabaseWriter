@@ -57,11 +57,11 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - After: `RelationshipTablePair` with `PrimaryTable` and `ForeignTable` (or `Pk` / `Fk` if matching the surrounding shorthand is preferable).
   - File: `JetDatabaseWriter/Relationships/RelationshipManager.cs` around the relationship-pair helper code.
 
-- [ ] Add a public `MultiValueItem` model if changing the public API is acceptable.
+- [x] Add a public `MultiValueItem` model if changing the public API is acceptable.
   - Before: `IReadOnlyList<(int ConceptualTableId, object? Value)>` for multi-value complex-column readback.
   - After: `IReadOnlyList<MultiValueItem>` with `ConceptualTableId` and `Value` properties.
-  - Note: this is a public API decision; do it deliberately and update compatibility/release notes if needed.
-  - Files: `JetDatabaseWriter/Interfaces/IAccessReader.cs`, `JetDatabaseWriter/AccessReader.cs`, `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs`, and public API tests.
+  - Compatibility note: this is a deliberate public API change from tuple-field access to named DTO property access; README usage was updated.
+  - Files: `JetDatabaseWriter/Models/MultiValueItem.cs`, `JetDatabaseWriter/Interfaces/IAccessReader.cs`, `JetDatabaseWriter/AccessReader.cs`, `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs`, and public API tests.
 
 - [ ] Add an Office crypto package result type.
   - Before: `(byte[] EncryptionInfo, byte[] EncryptedPackage)` from Standard and Agile encryption helpers.
@@ -191,7 +191,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
 
 1. Replace the clear existing-type fits first: `ColumnInfo`, `RowLocation`, `IndexEntry`, and `IndexSectionAnchors`.
 2. Add `ResolvedTable`, `RowMutationHint` / `LocatedRowValues`, `AutoNumberCheckpoint`, and `RelationshipTablePair`; these remove the most repeated internal tuple contracts.
-3. Decide whether the public `MultiValueItem` API change is worth the compatibility cost.
+3. Public `MultiValueItem` API change is complete; account for the tuple-to-DTO compatibility cost in release communication.
 4. Add crypto result/key-material types when touching encryption code.
 5. Consider index, page-write, TDEF, relationship-planning, and other helper result types opportunistically when touching those modules next.
 6. Leave tests, benchmarks, FormatProbe, tuple swaps, callback state, and opportunistic module-local shapes alone unless local readability has already become a problem.

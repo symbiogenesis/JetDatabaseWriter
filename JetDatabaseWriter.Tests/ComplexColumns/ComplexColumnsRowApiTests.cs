@@ -317,11 +317,11 @@ public sealed class ComplexColumnsRowApiTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync("Tags", "Labels", TestContext.Current.CancellationToken);
+        IReadOnlyList<MultiValueItem> items = await reader.GetMultiValueItemsAsync("Tags", "Labels", TestContext.Current.CancellationToken);
 
         Assert.Equal(3, items.Count);
-        Assert.All(items, t => Assert.Equal(items[0].ConceptualTableId, t.ConceptualTableId));
-        int[] sortedValues = items.Select(t => Convert.ToInt32(t.Value, System.Globalization.CultureInfo.InvariantCulture)).Order().ToArray();
+        Assert.All(items, item => Assert.Equal(items[0].ConceptualTableId, item.ConceptualTableId));
+        int[] sortedValues = items.Select(item => Convert.ToInt32(item.Value, System.Globalization.CultureInfo.InvariantCulture)).Order().ToArray();
         Assert.Equal(100, sortedValues[0]);
         Assert.Equal(200, sortedValues[1]);
         Assert.Equal(300, sortedValues[2]);
@@ -460,7 +460,7 @@ public sealed class ComplexColumnsRowApiTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync(
+        IReadOnlyList<MultiValueItem> items = await reader.GetMultiValueItemsAsync(
             "Products",
             "Tags",
             TestContext.Current.CancellationToken);

@@ -139,13 +139,13 @@ public sealed class ComplexColumnsCascadeDeleteTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<(int ConceptualTableId, object? Value)> items = await reader.GetMultiValueItemsAsync(
+        IReadOnlyList<MultiValueItem> items = await reader.GetMultiValueItemsAsync(
             "Tags",
             "Labels",
             TestContext.Current.CancellationToken);
 
-        (int conceptualTableId, object? value) = Assert.Single(items);
-        Assert.Equal(21, Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
+        MultiValueItem item = Assert.Single(items);
+        Assert.Equal(21, Convert.ToInt32(item.Value, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]
@@ -394,8 +394,8 @@ public sealed class ComplexColumnsCascadeDeleteTests
         Assert.Equal("survivor.jpg", singleAttachment.FileName);
 
         // MultiValue flat table: only row 2's item survives.
-        IReadOnlyList<(int ConceptualTableId, object? Value)> mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
-        (int conceptualTableId, object? value) = Assert.Single(mvItems);
-        Assert.Equal(300, Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
+        IReadOnlyList<MultiValueItem> mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
+        MultiValueItem mvItem = Assert.Single(mvItems);
+        Assert.Equal(300, Convert.ToInt32(mvItem.Value, System.Globalization.CultureInfo.InvariantCulture));
     }
 }

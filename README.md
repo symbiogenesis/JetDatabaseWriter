@@ -275,7 +275,7 @@ await writer.AddMultiValueItemAsync("Tags", "Items", new Dictionary<string, obje
 
 // Read back
 IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", cancellationToken);
-IReadOnlyList<(int ConceptualTableId, object? Value)> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
+IReadOnlyList<MultiValueItem> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
 ```
 
 The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapper-encoded on disk (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly allocated Access-style LVAL pages (single-page or chained form with the `LVAL` page signature) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).

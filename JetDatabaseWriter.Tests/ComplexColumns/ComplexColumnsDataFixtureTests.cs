@@ -151,7 +151,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
             path,
             TestContext.Current.CancellationToken);
 
-        IReadOnlyList<(int ConceptualTableId, object? Value)> items =
+        IReadOnlyList<MultiValueItem> items =
             await reader.GetMultiValueItemsAsync(
                 "Table1",
                 "multi-value-data",

@@ -267,7 +267,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ComplexTable,
             ComplexAttachmentColumn,
             cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<(int ConceptualTableId, object? Value)> multiValueItems = await postReader.GetMultiValueItemsAsync(
+        IReadOnlyList<MultiValueItem> multiValueItems = await postReader.GetMultiValueItemsAsync(
             ComplexTable,
             ComplexTagsColumn,
             cancellationToken).ConfigureAwait(false);

@@ -221,8 +221,8 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Multi-Value column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
-    /// <returns>Tuples of (ConceptualTableId, value) where value is typed via the flat-table value column. Empty when the column is unknown or has no rows.</returns>
-    public ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+    /// <returns>One <see cref="MultiValueItem"/> per flat-table row. Empty when the column is unknown or has no rows.</returns>
+    public ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Compatibility alias for <see cref="ReadTableAsync(string?, uint?, IProgress{long}?, CancellationToken)"/>.

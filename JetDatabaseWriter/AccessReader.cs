@@ -1241,7 +1241,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
     {
         using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));

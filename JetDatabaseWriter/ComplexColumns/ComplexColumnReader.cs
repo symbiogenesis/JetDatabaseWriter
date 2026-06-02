@@ -173,7 +173,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         return result;
     }
 
-    internal async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    internal async ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (info == null || string.IsNullOrEmpty(info.FlatTableName))
@@ -201,12 +201,16 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             }
         }
 
-        var result = new List<(int, object?)>(flat.Rows.Count);
+        var result = new List<MultiValueItem>(flat.Rows.Count);
         foreach (DataRow row in flat.Rows)
         {
             int fk = idxFk >= 0 && row[idxFk] is not DBNull ? Convert.ToInt32(row[idxFk], CultureInfo.InvariantCulture) : 0;
             object? value = idxValue >= 0 && row[idxValue] is not DBNull ? row[idxValue] : null;
-            result.Add((fk, value));
+            result.Add(new MultiValueItem
+            {
+                ConceptualTableId = fk,
+                Value = value,
+            });
         }
 
         return result;
