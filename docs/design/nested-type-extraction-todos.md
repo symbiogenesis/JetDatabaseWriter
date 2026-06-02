@@ -1,0 +1,207 @@
+# Nested Type Extraction TODOs
+
+**Status:** Proposed backlog, created 2026-06-01.
+
+This document tracks nested types in `JetDatabaseWriter/` whose declaring class
+is **not** the only consumer in production library code. Each candidate is a
+good fit for extraction into its own file under the appropriate `Models/` (or
+peer) folder per [library-structure.md](library-structure.md).
+
+The scan excluded:
+
+- `private` nested types (cannot be referenced externally).
+- Types only referenced within their declaring file.
+- Public DTOs already in `Models/`.
+
+## Cross-Cutting Constraints
+
+- One type per file. Filename matches type name.
+- Preserve `internal` vs `public` visibility exactly. Do not widen access.
+- Preserve `readonly record struct` shape; do not convert to class
+  (per `parameter-object-consolidation-todos.md` allocation guidance).
+- Update the namespace to match the destination folder
+  (e.g. `JetDatabaseWriter.Pages.Models`).
+- Remove now-redundant `using TypeName = Outer.TypeName;` aliases at call
+  sites (notably [UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)).
+- Keep XML doc comments with the moved type.
+- Run the full test suite after each cluster; do not batch unrelated moves.
+
+## Priority Strategy
+
+- **P0: High cross-file usage clusters.** Most leverage; the `IndexLayout`
+  family and the `AccessBase` row primitives. These already show the smell —
+  call sites use long `Outer.Nested` paths or `using` aliases.
+- **P1: Two-to-three-callsite extractions.** Mechanical moves with low risk.
+- **P2: Single external caller.** Optional; nice for consistency but not
+  urgent.
+
+## P0. High-leverage cluster moves
+
+### 1. Extract the `IndexLayout` nested cluster
+
+[IndexLayout.cs](../../JetDatabaseWriter/Indexes/IndexLayout.cs) contains seven
+public nested types consumed across `AccessReader`, `AccessWriter`,
+`UniqueIndexChecker`, `TDefPageBuilder`, and `IndexCatalogReader`.
+[UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
+already aliases `IndexLayout.UniqueIndexDescriptor`, which is the canonical
+"should-be-its-own-file" signal.
+
+- [ ] Move `IndexLayout.KeyColumn` to `Indexes/Models/KeyColumn.cs`.
+- [ ] Move `IndexLayout.IndexSectionAnchors` to
+  `Indexes/Models/IndexSectionAnchors.cs`.
+- [ ] Move `IndexLayout.RealIdxSlot` to `Indexes/Models/RealIdxSlot.cs`.
+- [ ] Move `IndexLayout.LogicalIdxEntry` to `Indexes/Models/LogicalIdxEntry.cs`.
+- [ ] Move `IndexLayout.RealIdxEntry` to `Indexes/Models/RealIdxEntry.cs`.
+- [ ] Move `IndexLayout.KeyColumnInfo` to `Indexes/Models/KeyColumnInfo.cs`.
+- [ ] Move `IndexLayout.UniqueIndexDescriptor` to
+  `Indexes/Models/UniqueIndexDescriptor.cs`.
+- [ ] Delete the `using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;`
+  alias in `UniqueIndexChecker.cs`.
+- [ ] Update all `IndexLayout.X` references to bare `X`.
+- [ ] Keep the instance methods (`GetIndexSection`, `TryReadLogicalEntry`,
+  `TryReadRealIdxSlot`, etc.) on `IndexLayout`; only the data shapes move.
+- [ ] Run index, schema, catalog, and round-trip tests.
+
+### 2. Extract the `AccessBase` row primitives
+
+[AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs) is over 1800 lines and
+its nested row types are referenced from `Pages/`, `LongValues/`,
+`ValueDecoding/`, `Indexes/`, and `Relationships/`.
+
+- [ ] Move `AccessBase.RowBound` to `Pages/Models/RowBound.cs`
+  (siblings: `RowLocation.cs`, `PageInsertTarget.cs`).
+- [ ] Move `AccessBase.RowLayout` to `Pages/Models/RowLayout.cs`.
+- [ ] Move `AccessBase.ColumnSlice` to `ValueDecoding/Models/ColumnSlice.cs`
+  (its only external consumer is `RowDecodePlan`).
+- [ ] Move `AccessBase.ColumnSliceKind` to
+  `ValueDecoding/Models/ColumnSliceKind.cs`.
+- [ ] Leave `AccessBase.TableRow` nested — only used inside `AccessBase.cs`.
+- [ ] Leave `AccessBase.ParsedColumnDescriptor` nested — `private`.
+- [ ] Update all `AccessBase.X` references at call sites in
+  [RowDecodePlan.cs](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs),
+  [UsageMap.cs](../../JetDatabaseWriter/Pages/UsageMap.cs),
+  [LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs),
+  [LongValueStore.cs](../../JetDatabaseWriter/LongValues/LongValueStore.cs),
+  [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs),
+  [RelationshipChildRowLocator.cs](../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs).
+- [ ] Run reader, writer, long-value, and index-maintenance tests.
+
+## P1. Mechanical single-cluster moves
+
+### 3. Extract `CalculatedExpressionEvaluator` nested types
+
+Every `CalculatedExpression*Node.cs` file in
+`Schema/Expressions/` consumes `CalculatedExpressionEvaluator.Plan` and
+`EvaluationContext`. They are also referenced from
+[CalculatedFunctionInvocation.cs](../../JetDatabaseWriter/Schema/Expressions/CalculatedFunctionInvocation.cs)
+and [ColumnConstraint.cs](../../JetDatabaseWriter/Schema/Models/ColumnConstraint.cs).
+
+- [ ] Move `CalculatedExpressionEvaluator.Plan` to
+  `Schema/Expressions/CalculatedExpressionPlan.cs`.
+- [ ] Move `CalculatedExpressionEvaluator.EvaluationContext` to
+  `Schema/Expressions/CalculatedExpressionEvaluationContext.cs`.
+- [ ] Update `ColumnConstraint.CalculatedExpressionPlan` property type.
+- [ ] Run calculated-column expression tests.
+
+### 4. Extract `ColumnPropertyBlockBuilder` builder types
+
+[LinkedOdbcLvPropBuilder.cs](../../JetDatabaseWriter/Schema/LinkedOdbcLvPropBuilder.cs)
+has 10+ references to `ColumnPropertyBlockBuilder.TargetBuilder`; also used by
+[JetExpressionConverter.cs](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs).
+
+- [ ] Move `ColumnPropertyBlockBuilder.TargetBuilder` to
+  `Schema/Models/ColumnPropertyTargetBuilder.cs`.
+- [ ] Move `ColumnPropertyBlockBuilder.EntryBuilder` to
+  `Schema/Models/ColumnPropertyEntryBuilder.cs`.
+- [ ] Run schema/LvProp tests.
+
+### 5. Extract `IndexBTreeBuilder.BuildResult`
+
+Used from [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
+and [IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs).
+
+- [ ] Move to `Indexes/Models/IndexBTreeBuildResult.cs`
+  (rename to `IndexBTreeBuildResult` to disambiguate from any future
+  `BuildResult` types).
+- [ ] Run index build/edit tests.
+
+### 6. Extract `NumericEncoder.FixedPointPayload`
+
+Used from [RowEncoder.cs](../../JetDatabaseWriter/ValueEncoding/RowEncoder.cs)
+and [IndexKeyEncoder.cs](../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs).
+
+- [ ] Move to `ValueEncoding/Models/FixedPointPayload.cs`.
+- [ ] Run numeric/decimal encoding tests.
+
+### 7. Extract `LongValueStore.LvalRowLocation`
+
+Used from [LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs)
+(8 sites).
+
+- [ ] Move to `LongValues/Models/LvalRowLocation.cs`
+  (sibling of `LongValueDescriptor.cs`).
+- [ ] Run long-value decode tests.
+
+### 8. Extract `RowDecodePlan.LongValueRef` and `CalculatedLongValueRef`
+
+Used from [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
+sentinel-resolution code.
+
+- [ ] Move `LongValueRef` to `ValueDecoding/Models/LongValueRef.cs`.
+- [ ] Move `CalculatedLongValueRef` to
+  `ValueDecoding/Models/CalculatedLongValueRef.cs`.
+- [ ] Run reader projection tests including MEMO/OLE and calculated-column
+  columns.
+
+## P2. Optional single-consumer moves
+
+These each have one external caller. Extracting them improves consistency but
+adds no real discoverability win.
+
+### 9. `UsageMap.Pointer`
+
+- [ ] Used from [AccessBase.cs](../../JetDatabaseWriter/AccessBase.cs#L1251).
+  Optional move to `Pages/Models/UsageMapPointer.cs`.
+
+### 10. `ComplexColumnManager.ComplexColumnAllocation`
+
+- [ ] Used from [AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs#L431).
+  Optional move to `ComplexColumns/Models/ComplexColumnAllocation.cs`.
+
+### 11. `GeneralLegacyTextIndexEncoder.CharHandlerType`
+
+- [ ] Used from [General97TextIndexEncoder.cs](../../JetDatabaseWriter/Indexes/Collation/General97TextIndexEncoder.cs).
+  Optional move to `Indexes/Collation/CharHandlerType.cs`.
+
+## Explicit Non-Moves
+
+These nested types are referenced cross-file but should **stay nested** because
+their lifetime, disposal, or construction contract is fully owned by the
+declaring class:
+
+- `AsyncReentrantOperationGate.Lease` — disposal token tightly coupled to gate.
+- `AccessBase.TableRow` — only used inside `AccessBase.cs` (despite being
+  `internal`).
+- `RowMapper.Accessor` — only used inside `RowMapper.cs`.
+- Any `private` nested type (e.g. `AccessReader.TableScanPage`,
+  `IndexBTreeEditor.LeafGroup`, encoder handler hierarchies).
+
+## Validation Notes
+
+- `IndexLayout` cluster: run the full `Indexes/` test suite plus catalog and
+  schema round-trip tests; this touches the most files.
+- `AccessBase` row primitives: run reader, writer, long-value, index, and
+  relationship tests.
+- All other moves: run the test class(es) most directly exercising the
+  affected subsystem before running the full suite.
+- Every move must keep a clean Release build under the repo's strict analyzer
+  settings (StyleCop, Roslynator, banned APIs, warnings-as-errors).
+
+## Risks and Rejected Alternatives
+
+- **Partial-class splits instead of separate types.** Rejected. The goal is
+  one type per file under `Models/`, not splitting the declaring class.
+- **Promoting `internal` types to `public`.** Rejected. Visibility stays as-is;
+  this is a file-organization change, not an API change.
+- **Moving types that are only referenced inside their declaring file.**
+  Rejected. Nested types with no external consumer are correctly nested.
