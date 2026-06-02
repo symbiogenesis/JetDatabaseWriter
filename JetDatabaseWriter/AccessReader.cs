@@ -1300,9 +1300,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int realIdxDescStart = pos;
-        (int _, int logicalIdxStart, int logicalIdxNamesStart, int _, int _) = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        IndexLayout.IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
-        if (logicalIdxNamesStart > td.Length)
+        if (anchors.LogIdxNamesStart > td.Length)
         {
             return [];
         }
@@ -1316,7 +1316,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Pre-walk index names so we can pair each logical-idx entry with its name.
         string[] names = new string[numIdx];
-        int npos = logicalIdxNamesStart;
+        int npos = anchors.LogIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
             if (this.ReadColumnName(td, ref npos, out string n) < 0)
@@ -1332,7 +1332,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, logicalIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
+            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
             {
                 break;
             }

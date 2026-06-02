@@ -6,6 +6,7 @@ using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -283,8 +284,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            (int _, int logIdxStart, int logIdxNameStart, int _, int _) = writer.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
-            int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
+            IndexLayout.IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            int totalIdxBytesLowerBound = anchors.LogIdxNamesStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
                 throw new NotSupportedException(
@@ -346,7 +347,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
                 firstDpOffsets[i] = writer.IndexLayoutInfo.FirstDpAbsoluteOffset(phys);
 
-                int log = writer.IndexLayoutInfo.LogicalIdxFieldsOffset(logIdxStart, i);
+                int log = writer.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
                 if (jet4)
                 {
                     Wi32(page, log - writer.IndexLayoutInfo.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
@@ -366,7 +367,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 page[log + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
-            int npos = logIdxNameStart;
+            int npos = anchors.LogIdxNamesStart;
             for (int i = 0; i < numIdx; i++)
             {
                 byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : writer.AnsiEncoding.GetBytes(indexes[i].Name);

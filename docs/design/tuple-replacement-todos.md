@@ -29,7 +29,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - After: `List<IndexEntry> entries`; sort by `entry.Key` and pass the list onward without conversion.
   - File: `JetDatabaseWriter/Indexes/IndexMaintainer.cs` bulk index rebuild path.
 
-- [ ] Keep `IndexLayout.IndexSectionAnchors` as a named value instead of deconstructing it where both retained fields are meaningful.
+- [x] Keep `IndexLayout.IndexSectionAnchors` as a named value instead of deconstructing it where both retained fields are meaningful.
   - Before: `(int _, int logicalIdxStart, int logicalIdxNamesStart, int _, int _) = this.IndexLayoutInfo.GetIndexSection(...)`.
   - After: `IndexLayout.IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(...)`, then use `anchors.LogIdxStart` and `anchors.LogIdxNamesStart`.
   - Files: `JetDatabaseWriter/AccessReader.cs` and `JetDatabaseWriter/Schema/TDefPageBuilder.cs`.
