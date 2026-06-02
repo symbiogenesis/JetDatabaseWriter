@@ -16,13 +16,16 @@ The scan excluded:
 ## Cross-Cutting Constraints
 
 - One type per file. Filename matches type name.
-- Preserve `internal` vs `public` visibility exactly. Do not widen access.
+- Preserve effective visibility exactly. Do not widen access; nested `public`
+  types inside an `internal` declaring type should become `internal` top-level
+  types.
 - Preserve `readonly record struct` shape; do not convert to class
   (per `parameter-object-consolidation-todos.md` allocation guidance).
 - Update the namespace to match the destination folder
   (e.g. `JetDatabaseWriter.Pages.Models`).
 - Remove now-redundant `using TypeName = Outer.TypeName;` aliases at call
-  sites (notably [UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)).
+  sites (notably [UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
+  and [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)).
 - Keep XML doc comments with the moved type.
 - Run the full test suite after each cluster; do not batch unrelated moves.
 
@@ -40,8 +43,10 @@ The scan excluded:
 ### 1. Extract the `IndexLayout` nested cluster
 
 [IndexLayout.cs](../../JetDatabaseWriter/Indexes/IndexLayout.cs) contains seven
-public nested types consumed across `AccessReader`, `AccessWriter`,
-`UniqueIndexChecker`, `TDefPageBuilder`, and `IndexCatalogReader`.
+nested data shapes consumed across `AccessReader`, `AccessWriter`,
+`UniqueIndexChecker`, `TDefPageBuilder`, and `IndexCatalogReader`. Their
+declarations are `public`, but `IndexLayout` itself is `internal`; extract
+them as `internal` top-level types to avoid expanding the public API.
 [UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
 already aliases `IndexLayout.UniqueIndexDescriptor`, which is the canonical
 "should-be-its-own-file" signal.
@@ -57,6 +62,9 @@ already aliases `IndexLayout.UniqueIndexDescriptor`, which is the canonical
   `Indexes/Models/UniqueIndexDescriptor.cs`.
 - [ ] Delete the `using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;`
   alias in `UniqueIndexChecker.cs`.
+- [ ] Delete the `using KeyColumnInfo = IndexLayout.KeyColumnInfo;` and
+  `using RealIdxEntry = IndexLayout.RealIdxEntry;` aliases in
+  `IndexMaintainer.cs`.
 - [ ] Update all `IndexLayout.X` references to bare `X`.
 - [ ] Keep the instance methods (`GetIndexSection`, `TryReadLogicalEntry`,
   `TryReadRealIdxSlot`, etc.) on `IndexLayout`; only the data shapes move.
@@ -69,13 +77,16 @@ its nested row types are referenced from `Pages/`, `LongValues/`,
 `ValueDecoding/`, `Indexes/`, and `Relationships/`.
 
 - [ ] Move `AccessBase.RowBound` to `Pages/Models/RowBound.cs`
-  (siblings: `RowLocation.cs`, `PageInsertTarget.cs`).
+  (siblings: `RowLocation.cs`, `PageInsertTarget.cs`; even though its current
+  external consumer is `LongValueStore`, it describes data-page row bounds).
 - [ ] Move `AccessBase.RowLayout` to `Pages/Models/RowLayout.cs`.
 - [ ] Move `AccessBase.ColumnSlice` to `ValueDecoding/Models/ColumnSlice.cs`
   (its only external consumer is `RowDecodePlan`).
 - [ ] Move `AccessBase.ColumnSliceKind` to
   `ValueDecoding/Models/ColumnSliceKind.cs`.
 - [ ] Leave `AccessBase.TableRow` nested — only used inside `AccessBase.cs`.
+- [ ] Leave `AccessBase.TableRowVisitor` nested — only used inside
+  `AccessBase.cs` and tied to the nested `TableRow` shape.
 - [ ] Leave `AccessBase.ParsedColumnDescriptor` nested — `private`.
 - [ ] Update all `AccessBase.X` references at call sites in
   [RowDecodePlan.cs](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs),
@@ -121,8 +132,8 @@ Used from [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.c
 and [IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs).
 
 - [ ] Move to `Indexes/Models/IndexBTreeBuildResult.cs`
-  (rename to `IndexBTreeBuildResult` to disambiguate from any future
-  `BuildResult` types).
+  (rename to `IndexBTreeBuildResult` to prevent any future ambiguity; there is
+  no current `BuildResult` name collision).
 - [ ] Run index build/edit tests.
 
 ### 6. Extract `NumericEncoder.FixedPointPayload`
@@ -182,6 +193,8 @@ declaring class:
 - `AsyncReentrantOperationGate.Lease` — disposal token tightly coupled to gate.
 - `AccessBase.TableRow` — only used inside `AccessBase.cs` (despite being
   `internal`).
+- `AccessBase.TableRowVisitor` — only used inside `AccessBase.cs` and coupled
+  to `AccessBase.TableRow`.
 - `RowMapper.Accessor` — only used inside `RowMapper.cs`.
 - Any `private` nested type (e.g. `AccessReader.TableScanPage`,
   `IndexBTreeEditor.LeafGroup`, encoder handler hierarchies).
@@ -201,7 +214,8 @@ declaring class:
 
 - **Partial-class splits instead of separate types.** Rejected. The goal is
   one type per file under `Models/`, not splitting the declaring class.
-- **Promoting `internal` types to `public`.** Rejected. Visibility stays as-is;
-  this is a file-organization change, not an API change.
+- **Promoting effectively internal types to `public`.** Rejected. A `public`
+  nested type inside an `internal` container is not public API; extract it as
+  `internal`.
 - **Moving types that are only referenced inside their declaring file.**
   Rejected. Nested types with no external consumer are correctly nested.
