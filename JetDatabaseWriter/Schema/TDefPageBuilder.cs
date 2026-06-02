@@ -604,7 +604,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int colSzOff = isJet3 ? 16 : 23;
         int textColSize = isJet3 ? 255 : 510;
 
-        (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
+        BootstrapColumnDescriptor[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
 
         int numCols = columns.Length;
         int numVarCols = 0;
@@ -629,7 +629,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         for (int i = 0; i < numCols; i++)
         {
-            (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags) col = columns[i];
+            BootstrapColumnDescriptor col = columns[i];
             int o = colStart + (i * colDescSz);
 
             db[o + colTypeOff] = (byte)col.Type;
@@ -678,39 +678,48 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         }
     }
 
-    private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
+    private static BootstrapColumnDescriptor[] BuildSlimCatalogColumns(int textColSize) =>
     [
-        ("Id",          LongIntegerType,     0, 0, 0,  4,           0x03),
-        ("ParentId",    LongIntegerType,     1, 0, 4,  4,           0x03),
-        ("Name",        TextType,     2, 0, 0,  textColSize, 0x02),
-        ("Type",        IntegerType,      3, 0, 8,  2,           0x03),
-        ("DateCreate",  DateTimeType, 4, 0, 10, 8,           0x03),
-        ("DateUpdate",  DateTimeType, 5, 0, 18, 8,           0x03),
-        ("Flags",       LongIntegerType,     6, 0, 26, 4,           0x03),
-        ("ForeignName", TextType,     7, 1, 0,  textColSize, 0x02),
-        ("Database",    TextType,     8, 2, 0,  textColSize, 0x02),
+        new("Id",          LongIntegerType, 0, 0, 0,  4,           0x03),
+        new("ParentId",    LongIntegerType, 1, 0, 4,  4,           0x03),
+        new("Name",        TextType,        2, 0, 0,  textColSize, 0x02),
+        new("Type",        IntegerType,     3, 0, 8,  2,           0x03),
+        new("DateCreate",  DateTimeType,    4, 0, 10, 8,           0x03),
+        new("DateUpdate",  DateTimeType,    5, 0, 18, 8,           0x03),
+        new("Flags",       LongIntegerType, 6, 0, 26, 4,           0x03),
+        new("ForeignName", TextType,        7, 1, 0,  textColSize, 0x02),
+        new("Database",    TextType,        8, 2, 0,  textColSize, 0x02),
     ];
 
-    private static (string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildFullCatalogColumns(int textColSize) =>
+    private static BootstrapColumnDescriptor[] BuildFullCatalogColumns(int textColSize) =>
     [
-        ("Id",           LongIntegerType,     0,  0, 0,  4,           0x13),
-        ("ParentId",     LongIntegerType,     1,  0, 4,  4,           0x13),
-        ("Name",         TextType,     2,  0, 0,  textColSize, 0x12),
-        ("Type",         IntegerType,      3,  0, 8,  2,           0x13),
-        ("DateCreate",   DateTimeType, 4,  0, 10, 8,           0x13),
-        ("DateUpdate",   DateTimeType, 5,  0, 18, 8,           0x13),
-        ("Owner",        BinaryType,   6,  1, 0,  textColSize, 0x32),
-        ("Flags",        LongIntegerType,     7,  0, 26, 4,           0x13),
-        ("Database",     MemoType,     8,  2, 0,  0,           0x12),
-        ("Connect",      MemoType,     9,  3, 0,  0,           0x12),
-        ("ForeignName",  TextType,     10, 4, 0,  textColSize, 0x12),
-        ("RmtInfoShort", BinaryType,   11, 5, 0,  textColSize, 0x12),
-        ("RmtInfoLong",  OleType,      12, 6, 0,  0,           0x12),
-        ("Lv",           OleType,      13, 7, 0,  0,           0x12),
-        ("LvProp",       OleType,      14, 8, 0,  0,           0x12),
-        ("LvModule",     OleType,      15, 9, 0,  0,           0x12),
-        ("LvExtra",      OleType,      16, 10, 0, 0,           0x12),
+        new("Id",           LongIntegerType, 0,  0,  0,  4,           0x13),
+        new("ParentId",     LongIntegerType, 1,  0,  4,  4,           0x13),
+        new("Name",         TextType,        2,  0,  0,  textColSize, 0x12),
+        new("Type",         IntegerType,     3,  0,  8,  2,           0x13),
+        new("DateCreate",   DateTimeType,    4,  0,  10, 8,           0x13),
+        new("DateUpdate",   DateTimeType,    5,  0,  18, 8,           0x13),
+        new("Owner",        BinaryType,      6,  1,  0,  textColSize, 0x32),
+        new("Flags",        LongIntegerType, 7,  0,  26, 4,           0x13),
+        new("Database",     MemoType,        8,  2,  0,  0,           0x12),
+        new("Connect",      MemoType,        9,  3,  0,  0,           0x12),
+        new("ForeignName",  TextType,        10, 4,  0,  textColSize, 0x12),
+        new("RmtInfoShort", BinaryType,      11, 5,  0,  textColSize, 0x12),
+        new("RmtInfoLong",  OleType,         12, 6,  0,  0,           0x12),
+        new("Lv",           OleType,         13, 7,  0,  0,           0x12),
+        new("LvProp",       OleType,         14, 8,  0,  0,           0x12),
+        new("LvModule",     OleType,         15, 9,  0,  0,           0x12),
+        new("LvExtra",      OleType,         16, 10, 0,  0,           0x12),
     ];
+
+    private readonly record struct BootstrapColumnDescriptor(
+        string Name,
+        ColumnType Type,
+        int ColNum,
+        int VarIdx,
+        int FixedOff,
+        int Size,
+        byte Flags);
 
     private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
         => (LogicalTDefChain.MaterializePages(logical, usedLength, writer.PageSizeBytes), firstDpLogicalOffsets);
