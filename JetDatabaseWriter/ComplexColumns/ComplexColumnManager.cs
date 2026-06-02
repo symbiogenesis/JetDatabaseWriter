@@ -1460,7 +1460,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
+        var matched = new List<(RowLocation Loc, object[] Values)>();
         await this.writer.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
@@ -1485,17 +1485,17 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 }
 
                 msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
-                matched.Add((row.Location.PageNumber, row.Location.RowIndex, values));
+                matched.Add((row.Location, values));
                 return new ValueTask<bool>(true);
             },
             cancellationToken).ConfigureAwait(false);
 
-        foreach ((long pg, int ri, object[] _) in matched)
+        foreach ((RowLocation loc, object[] _) in matched)
         {
-            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
-        foreach ((long _, int _, object[] values) in matched)
+        foreach ((RowLocation _, object[] values) in matched)
         {
             await this.writer.InsertSystemRowAndMaintainAsync(
                 msysCxPg,
@@ -1522,7 +1522,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             return;
         }
 
-        var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
+        var matched = new List<(RowLocation Loc, object[] Values)>();
         await this.writer.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
@@ -1541,17 +1541,17 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 }
 
                 msysCxDef.SetValueByName(values, "ConceptualTableID", parentTdefPage);
-                matched.Add((row.Location.PageNumber, row.Location.RowIndex, values));
+                matched.Add((row.Location, values));
                 return new ValueTask<bool>(true);
             },
             cancellationToken).ConfigureAwait(false);
 
-        foreach ((long pg, int ri, object[] _) in matched)
+        foreach ((RowLocation loc, object[] _) in matched)
         {
-            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
-        foreach ((long _, int _, object[] values) in matched)
+        foreach ((RowLocation _, object[] values) in matched)
         {
             await this.writer.InsertSystemRowAndMaintainAsync(
                 msysCxPg,

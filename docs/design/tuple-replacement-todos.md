@@ -18,7 +18,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - After: `ValueTask<RowLocation> FindUniqueParentRowAsync(...)` and assign `match = row.Location`.
   - File: `JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs`.
 
-- [ ] Store `RowLocation` in complex-column catalog rewrite match lists.
+- [x] Store `RowLocation` in complex-column catalog rewrite match lists.
   - Before: `List<(long PageNumber, int RowIndex, object[] Values)>` and tuple adds from `row.Location.PageNumber` / `row.Location.RowIndex`.
   - After: `List<(RowLocation Loc, object[] Values)>` as an incremental cleanup, or the `RowMutationHint` / `LocatedRowValues` wrapper below as the final shape.
   - Note: this overlaps with the row-values wrapper task. If that wrapper is implemented first, skip this intermediate tuple shape.
