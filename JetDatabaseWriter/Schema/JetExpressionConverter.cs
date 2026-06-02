@@ -6,6 +6,7 @@ using System.Globalization;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Conversions from CLR literal default values to the string a Jet expression engine
@@ -52,7 +53,7 @@ internal static class JetExpressionConverter
 
     /// <summary>
     /// Builds a property blob from the supplied <paramref name="columns"/> by emitting
-    /// a per-column <see cref="ColumnPropertyBlockBuilder.TargetBuilder"/> for every
+    /// a per-column <see cref="ColumnPropertyTargetBuilder"/> for every
     /// column that declares any persisted property — <c>Required</c> (NOT NULL),
     /// text-column <c>AllowZeroLength</c>, <c>DefaultValueExpression</c> /
     /// <c>DefaultValue</c>, <c>ValidationRuleExpression</c>, <c>ValidationText</c>,
@@ -112,7 +113,7 @@ internal static class JetExpressionConverter
             return;
         }
 
-        ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(col.Name);
+        ColumnPropertyTargetBuilder target = builder.GetOrAddTarget(col.Name);
         if (emitAllowZeroLength)
         {
             target.AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, false);

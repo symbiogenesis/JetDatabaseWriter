@@ -49,7 +49,7 @@ public sealed class ConstraintRegistryTests
         string expression)
     {
         var builder = new ColumnPropertyBlockBuilder();
-        ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(columnName);
+        ColumnPropertyTargetBuilder target = builder.GetOrAddTarget(columnName);
         target.AddMemoText(Constants.ColumnPropertyNames.Expression, expression, DatabaseFormat.AceAccdb);
         target.AddByte(Constants.ColumnPropertyNames.ResultType, (byte)resultType);
 

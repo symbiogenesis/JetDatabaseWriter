@@ -121,11 +121,11 @@ and [ColumnConstraint.cs](../../JetDatabaseWriter/Schema/Models/ColumnConstraint
 has 10+ references to `ColumnPropertyBlockBuilder.TargetBuilder`; also used by
 [JetExpressionConverter.cs](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs).
 
-- [ ] Move `ColumnPropertyBlockBuilder.TargetBuilder` to
+- [x] Move `ColumnPropertyBlockBuilder.TargetBuilder` to
   `Schema/Models/ColumnPropertyTargetBuilder.cs`.
-- [ ] Move `ColumnPropertyBlockBuilder.EntryBuilder` to
+- [x] Move `ColumnPropertyBlockBuilder.EntryBuilder` to
   `Schema/Models/ColumnPropertyEntryBuilder.cs`.
-- [ ] Run schema/LvProp tests.
+- [x] Run schema/LvProp tests.
 
 ### 5. Extract `IndexBTreeBuilder.BuildResult`
 

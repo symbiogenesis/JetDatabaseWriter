@@ -68,7 +68,7 @@ public sealed class PersistedColumnPropertiesTests
     public void Builder_RoundTrips_Via_Parser_SingleColumn()
     {
         var b = new ColumnPropertyBlockBuilder();
-        ColumnPropertyBlockBuilder.TargetBuilder t = b.GetOrAddTarget("Qty");
+        ColumnPropertyTargetBuilder t = b.GetOrAddTarget("Qty");
         t.AddText(Constants.ColumnPropertyNames.DefaultValue, "0", DatabaseFormat.Jet4Mdb);
         t.AddText(Constants.ColumnPropertyNames.ValidationRule, ">=0", DatabaseFormat.Jet4Mdb);
         t.AddText(Constants.ColumnPropertyNames.ValidationText, "must be non-negative", DatabaseFormat.Jet4Mdb);

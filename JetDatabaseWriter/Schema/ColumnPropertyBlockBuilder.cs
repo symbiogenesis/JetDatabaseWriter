@@ -36,7 +36,7 @@ internal sealed class ColumnPropertyBlockBuilder
     private const int PropertyEntryHeaderLength = sizeof(ushort) + sizeof(byte) + sizeof(byte) + sizeof(ushort) + sizeof(ushort);
 
     /// <summary>Gets the mutable list of property targets in emission order. The first target is conventionally the table itself.</summary>
-    public List<TargetBuilder> Targets { get; } = [];
+    public List<ColumnPropertyTargetBuilder> Targets { get; } = [];
 
     /// <summary>Gets the mutable list of opaque chunks to re-emit verbatim (forward-compat).</summary>
     public List<ColumnPropertyUnknownChunk> UnknownChunks { get; } = [];
@@ -59,14 +59,14 @@ internal sealed class ColumnPropertyBlockBuilder
         var b = new ColumnPropertyBlockBuilder();
         foreach (ColumnPropertyTarget t in block.Targets)
         {
-            var tb = new TargetBuilder
+            var tb = new ColumnPropertyTargetBuilder
             {
                 Name = t.Name,
                 ChunkType = t.ChunkType,
             };
             foreach (ColumnPropertyEntry e in t.Entries)
             {
-                tb.Entries.Add(new EntryBuilder
+                tb.Entries.Add(new ColumnPropertyEntryBuilder
                 {
                     Name = e.Name,
                     DataType = e.DataType,
@@ -91,10 +91,10 @@ internal sealed class ColumnPropertyBlockBuilder
     /// default to chunk-type <c>0x01</c> (the property-block subtype DAO emits for new columns).
     /// </summary>
     /// <param name="name">The name.</param>
-    public TargetBuilder GetOrAddTarget(string name)
+    public ColumnPropertyTargetBuilder GetOrAddTarget(string name)
     {
         Guard.NotNullOrEmpty(name, nameof(name));
-        foreach (TargetBuilder t in this.Targets)
+        foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
             if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {
@@ -102,7 +102,7 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        var nt = new TargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
+        var nt = new ColumnPropertyTargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
         this.Targets.Add(nt);
         return nt;
     }
@@ -135,7 +135,7 @@ internal sealed class ColumnPropertyBlockBuilder
     public void RenameTarget(string oldName, string newName)
     {
         Guard.NotNullOrEmpty(newName, nameof(newName));
-        foreach (TargetBuilder t in this.Targets)
+        foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
             if (string.Equals(t.Name, oldName, StringComparison.OrdinalIgnoreCase))
             {
@@ -165,9 +165,9 @@ internal sealed class ColumnPropertyBlockBuilder
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
         var nameToIndex = new Dictionary<string, ushort>(StringComparer.Ordinal);
         var nameOrder = new List<string>();
-        foreach (TargetBuilder t in this.Targets)
+        foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
-            foreach (EntryBuilder e in t.Entries)
+            foreach (ColumnPropertyEntryBuilder e in t.Entries)
             {
                 if (!nameToIndex.ContainsKey(e.Name))
                 {
@@ -245,7 +245,7 @@ internal sealed class ColumnPropertyBlockBuilder
     }
 
     private static byte[] BuildPropertyBlockPayload(
-        TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         Dictionary<string, ushort> nameToIndex,
         Encoding encoding)
     {
@@ -254,7 +254,7 @@ internal sealed class ColumnPropertyBlockBuilder
         int[] entryLengths = new int[target.Entries.Count];
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            EntryBuilder entry = target.Entries[entryIndex];
+            ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
             int valueLength = entry.Value.Length;
             int entryLength = PropertyEntryHeaderLength + valueLength;
             if (entryLength > ushort.MaxValue)
@@ -277,7 +277,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            EntryBuilder entry = target.Entries[entryIndex];
+            ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
             if (!nameToIndex.TryGetValue(entry.Name, out ushort nameIndex))
             {
                 throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
@@ -377,104 +377,5 @@ internal sealed class ColumnPropertyBlockBuilder
     {
         value.CopyTo(buffer.AsSpan(offset));
         offset += value.Length;
-    }
-
-    /// <summary>Mutable builder for a single property target (table or column).</summary>
-    internal sealed class TargetBuilder
-    {
-        /// <summary>Gets or sets the target name (column name, or table name for the table-level target).</summary>
-        public string Name { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets the chunk-type code. Defaults to <see cref="ColumnPropertyChunkType.PropertyBlock"/> (<c>0x0000</c>), the subtype this library emits for new targets.</summary>
-        public ColumnPropertyChunkType ChunkType { get; set; }
-
-        /// <summary>Gets the mutable list of property entries in emission order.</summary>
-        public List<EntryBuilder> Entries { get; } = [];
-
-        /// <summary>Adds a Text-typed (<c>0x0A</c>) string property using the supplied database format's encoding.</summary>
-        /// <param name="propertyName">The property name.</param>
-        /// <param name="value">The value.</param>
-        /// <param name="format">The format.</param>
-        public void AddText(string propertyName, string value, DatabaseFormat format)
-        {
-            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            Guard.NotNull(value, nameof(value));
-            Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
-            this.Entries.Add(new EntryBuilder
-            {
-                Name = propertyName,
-                DataType = ColumnType.TextType,
-                DdlFlag = 0x00,
-                Value = enc.GetBytes(value),
-            });
-        }
-
-        /// <summary>Adds a Memo-typed (<c>0x0C</c>) string property using the supplied database format's encoding.</summary>
-        /// <param name="propertyName">The property name.</param>
-        /// <param name="value">The value.</param>
-        /// <param name="format">The format.</param>
-        public void AddMemoText(string propertyName, string value, DatabaseFormat format)
-        {
-            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            Guard.NotNull(value, nameof(value));
-            Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
-            this.Entries.Add(new EntryBuilder
-            {
-                Name = propertyName,
-                DataType = ColumnType.MemoType,
-                DdlFlag = 0x00,
-                Value = enc.GetBytes(value),
-            });
-        }
-
-        /// <summary>Adds a Byte-typed (<c>0x02</c>) property.</summary>
-        /// <param name="propertyName">The property name.</param>
-        /// <param name="value">The value.</param>
-        public void AddByte(string propertyName, byte value)
-        {
-            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            this.Entries.Add(new EntryBuilder
-            {
-                Name = propertyName,
-                DataType = ColumnType.ByteType,
-                DdlFlag = 0x01,
-                Value = [value],
-            });
-        }
-
-        /// <summary>
-        /// Adds a Boolean-typed (<c>0x01</c>) property. Stored on disk as a single
-        /// byte: <c>0xFF</c> = true, <c>0x00</c> = false. Matches the wire format
-        /// DAO/Access emit for Boolean column properties such as <c>Required</c>.
-        /// </summary>
-        /// <param name="propertyName">The property name.</param>
-        /// <param name="value">The value.</param>
-        public void AddBoolean(string propertyName, bool value)
-        {
-            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
-            this.Entries.Add(new EntryBuilder
-            {
-                Name = propertyName,
-                DataType = ColumnType.BooleanType,
-                DdlFlag = 0x01,
-                Value = [value ? (byte)0xFF : (byte)0x00],
-            });
-        }
-    }
-
-    /// <summary>Mutable builder for a single property entry within a target.</summary>
-    internal sealed class EntryBuilder
-    {
-        /// <summary>Gets or sets the property name (e.g. <c>"DefaultValue"</c>).</summary>
-        public string Name { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets the Jet column-type code (see <see cref="ColumnType"/>).</summary>
-        public ColumnType DataType { get; set; }
-
-        /// <summary>Gets or sets the flag byte at entry offset 2.</summary>
-        public byte DdlFlag { get; set; }
-
-        /// <summary>Gets or sets the raw value bytes per <see cref="DataType"/>'s encoding.</summary>
-        public byte[] Value { get; set; } = [];
     }
 }

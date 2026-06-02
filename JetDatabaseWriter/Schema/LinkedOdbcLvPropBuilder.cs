@@ -42,7 +42,7 @@ internal static class LinkedOdbcLvPropBuilder
         var tableGuid = Guid.NewGuid();
 
         var builder = new ColumnPropertyBlockBuilder();
-        var tableTarget = new ColumnPropertyBlockBuilder.TargetBuilder
+        var tableTarget = new ColumnPropertyTargetBuilder
         {
             Name = string.Empty,
             ChunkType = ColumnPropertyChunkType.PropertyBlock,
@@ -108,7 +108,7 @@ internal static class LinkedOdbcLvPropBuilder
     private static void AddColumnTarget(ColumnPropertyBlockBuilder builder, ColumnIdentity identity, int ordinal)
     {
         ColumnDefinition column = identity.Column;
-        var target = new ColumnPropertyBlockBuilder.TargetBuilder
+        var target = new ColumnPropertyTargetBuilder
         {
             Name = column.Name,
             ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1,
@@ -210,7 +210,7 @@ internal static class LinkedOdbcLvPropBuilder
         column.ClrType == typeof(string) || column.ClrType == typeof(Hyperlink);
 
     private static void AddBoolean(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         bool value,
         byte ddlFlag) =>
@@ -222,14 +222,14 @@ internal static class LinkedOdbcLvPropBuilder
             [value ? (byte)0xFF : (byte)0x00]);
 
     private static void AddByte(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         byte value,
         byte ddlFlag) =>
         AddEntry(target, propertyName, ColumnType.ByteType, ddlFlag, [value]);
 
     private static void AddInteger16(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         short value,
         byte ddlFlag)
@@ -240,7 +240,7 @@ internal static class LinkedOdbcLvPropBuilder
     }
 
     private static void AddInteger32(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         int value,
         byte ddlFlag)
@@ -251,7 +251,7 @@ internal static class LinkedOdbcLvPropBuilder
     }
 
     private static void AddLong(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         int value,
         byte ddlFlag)
@@ -262,26 +262,26 @@ internal static class LinkedOdbcLvPropBuilder
     }
 
     private static void AddBinary(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
         AddEntry(target, propertyName, ColumnType.BinaryType, ddlFlag, value);
 
     private static void AddOle(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         byte[] value,
         byte ddlFlag) =>
         AddEntry(target, propertyName, ColumnType.OleType, ddlFlag, value);
 
     private static void AddEntry(
-        ColumnPropertyBlockBuilder.TargetBuilder target,
+        ColumnPropertyTargetBuilder target,
         string propertyName,
         ColumnType dataType,
         byte ddlFlag,
         byte[] value) =>
-        target.Entries.Add(new ColumnPropertyBlockBuilder.EntryBuilder
+        target.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,
             DataType = dataType,
