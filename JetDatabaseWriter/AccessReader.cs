@@ -1063,20 +1063,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <inheritdoc/>
     public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(indexName, nameof(indexName));
-        return new AccessObjectIndexQuery(this, tableName, indexName);
-    }
+        => new AccessObjectIndexQuery(this, tableName, indexName);
 
     /// <inheritdoc/>
     public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
         where T : class, new()
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(indexName, nameof(indexName));
-        return new AccessTypedIndexQuery<T>(this, tableName, indexName);
-    }
+            => new AccessTypedIndexQuery<T>(this, tableName, indexName);
 
     /// <inheritdoc/>
     public async IAsyncEnumerable<object[]> SeekRowsAsync(
