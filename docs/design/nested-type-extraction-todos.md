@@ -150,9 +150,9 @@ and [IndexKeyEncoder.cs](../../JetDatabaseWriter/Indexes/IndexKeyEncoder.cs).
 Used from [LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs)
 (8 sites).
 
-- [ ] Move to `LongValues/Models/LvalRowLocation.cs`
+- [x] Move to `LongValues/Models/LvalRowLocation.cs`
   (sibling of `LongValueDescriptor.cs`).
-- [ ] Run long-value decode tests.
+- [x] Run long-value decode tests.
 
 ### 8. Extract `RowDecodePlan.LongValueRef` and `CalculatedLongValueRef`
 

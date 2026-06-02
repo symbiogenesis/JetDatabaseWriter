@@ -15,29 +15,29 @@ using JetDatabaseWriter.Pages.Models;
 /// <param name="reader">The reader.</param>
 internal sealed class LongValueDecoder(AccessReader reader)
 {
-    internal ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
+    internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
         int lvalPage = LongValueStore.PageNumber(lvalDp);
         if (lvalPage <= 0)
         {
-            return new ValueTask<LongValueStore.LvalRowLocation>(new LongValueStore.LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
+            return new ValueTask<LvalRowLocation>(new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
         }
 
         if (reader.TryGetCachedPage(lvalPage, out byte[] page))
         {
-            return new ValueTask<LongValueStore.LvalRowLocation>(this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), page));
+            return new ValueTask<LvalRowLocation>(this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), page));
         }
 
         return this.LocateLvalRowSlowAsync(lvalPage, LongValueStore.RowIndex(lvalDp), cancellationToken);
     }
 
-    private async ValueTask<LongValueStore.LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
+    private async ValueTask<LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
     {
         byte[] page = await reader.ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
         return this.LocateLvalRow(lvalPage, lvalRow, page);
     }
 
-    private LongValueStore.LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
+    private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
         RowBound[] liveRows = reader.GetLiveRowBoundsCached(lvalPage, page);
         return LongValueStore.LocateRow(lvalPage, lvalRow, page, reader.DataPage, reader.PageSizeBytes, liveRows);
@@ -61,7 +61,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return inlineLen <= 0 ? string.Empty : this.DecodeLongValue(row, memoStart, inlineLen, isOle);
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, descriptor.Length);
                 if (!memoLoc.Failed && memoSize > 0)
                 {
@@ -101,7 +101,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return BinaryBuffer.CopySlice(row, memoStart, inlineLen);
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LvalRowLocation memoLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int memoSize = Math.Min(memoLoc.Size, descriptor.Length);
                 if (memoLoc.Failed || memoSize <= 0)
                 {
@@ -131,7 +131,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 return inlineLen <= 0 ? [] : AccessReader.DecodeOleValueBytes(row, memoStart, inlineLen);
 
             case Constants.LongValue.SinglePageStorageMode:
-                LongValueStore.LvalRowLocation oleLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                LvalRowLocation oleLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int oleSize = Math.Min(oleLoc.Size, descriptor.Length);
                 return !oleLoc.Failed && oleSize > 0
                     ? AccessReader.DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)

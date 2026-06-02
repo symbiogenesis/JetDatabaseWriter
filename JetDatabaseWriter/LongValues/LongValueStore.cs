@@ -254,11 +254,6 @@ internal static class LongValueStore
         Wu16(page, 2, rowStart - 16);
     }
 
-    internal readonly record struct LvalRowLocation(byte[] Page, int Start, int Size, string? Error)
-    {
-        public bool Failed => this.Error is not null;
-    }
-
     private struct SmallLvalDpSet
     {
         private const int InlineCapacity = 8;

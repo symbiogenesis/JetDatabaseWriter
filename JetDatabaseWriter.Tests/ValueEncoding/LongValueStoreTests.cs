@@ -47,7 +47,7 @@ public sealed class LongValueStoreTests
         const int pageSize = 64;
         uint firstDp = LongValueStore.MakeRowPointer(4, rowIndex: 0);
         uint secondDp = LongValueStore.MakeRowPointer(5, rowIndex: 0);
-        var rows = new Dictionary<uint, LongValueStore.LvalRowLocation>
+        var rows = new Dictionary<uint, LvalRowLocation>
         {
             [firstDp] = CreateChainedRow(secondDp, [0x41, 0x42, 0x43], pageSize),
             [secondDp] = CreateChainedRow(firstDp, [0x44, 0x45, 0x46], pageSize),
@@ -57,7 +57,7 @@ public sealed class LongValueStoreTests
             firstDp,
             maxLength: 10,
             pageSize,
-            (lvalDp, _) => new ValueTask<LongValueStore.LvalRowLocation>(rows[lvalDp]),
+            (lvalDp, _) => new ValueTask<LvalRowLocation>(rows[lvalDp]),
             CancellationToken.None);
 
         Assert.NotNull(result.Data);
@@ -74,7 +74,7 @@ public sealed class LongValueStoreTests
         Wu16(page, dataPage.NumRows, 2);
         RowBound[] liveRows = [new(RowIndex: 1, RowStart: 48, RowSize: 11)];
 
-        LongValueStore.LvalRowLocation location = LongValueStore.LocateRow(
+        LvalRowLocation location = LongValueStore.LocateRow(
             lvalPage: 7,
             lvalRow: 1,
             page,
@@ -113,11 +113,11 @@ public sealed class LongValueStoreTests
         Assert.Equal([7L, 8L], deallocatedPages);
     }
 
-    private static LongValueStore.LvalRowLocation CreateChainedRow(uint nextDp, byte[] payload, int pageSize)
+    private static LvalRowLocation CreateChainedRow(uint nextDp, byte[] payload, int pageSize)
     {
         byte[] page = new byte[pageSize];
         Wi32(page, 0, unchecked((int)nextDp));
         payload.CopyTo(page.AsSpan(4));
-        return new LongValueStore.LvalRowLocation(page, 0, payload.Length + 4, null);
+        return new LvalRowLocation(page, 0, payload.Length + 4, null);
     }
 }
