@@ -107,15 +107,15 @@ Relevant code:
 
 #### 2. Use existing `FkSidePlan` in FK logical-index emission
 
-- [ ] Replace the four scalar plan parameters on `EmitFkLogicalIdxAsync`
+- [x] Replace the four scalar plan parameters on `EmitFkLogicalIdxAsync`
   (`realIdxNumThisSide`, `logicalIdxNumThisSide`, `allocateNewRealIdx`, and
   `preAllocatedLeafPage`) with the existing `FkSidePlan` value.
-- [ ] Keep `tdefPage`, `columnNumbers`, `indexName`, relationship-side bytes,
+- [x] Keep `tdefPage`, `columnNumbers`, `indexName`, relationship-side bytes,
   and `CancellationToken` separate in this first pass.
-- [ ] Update the two call sites to pass `pkPlan` and `fkPlan` directly.
-- [ ] Do not introduce `FkLogicalIdxSideSpec` in this pass. Reassess after the
+- [x] Update the two call sites to pass `pkPlan` and `fkPlan` directly.
+- [x] Do not introduce `FkLogicalIdxSideSpec` in this pass. Reassess after the
   existing plan struct has removed the most mechanical arity.
-- [ ] Run or add relationship tests covering same-table relationships, shared
+- [x] Run or add relationship tests covering same-table relationships, shared
   existing real indexes, newly allocated real indexes, and cascade flags.
 
 Payoff: this reduces the 13-parameter method using an existing domain value and

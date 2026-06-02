@@ -299,10 +299,7 @@ internal sealed class RelationshipManager
             primaryTdefPage,
             pkColNums,
             pkName,
-            realIdxNumThisSide: pkPlan.RealIdxNum,
-            logicalIdxNumThisSide: pkPlan.LogicalIdxNum,
-            allocateNewRealIdx: pkPlan.AllocatesNewRealIdx,
-            preAllocatedLeafPage: pkPlan.NewLeafPageNumber,
+            pkPlan,
             relTblTypeThisSide: Constants.TableDefinition.ParentRelationshipTableType,
             relIdxNumOtherSide: fkPlan.LogicalIdxNum,
             relTblPageOther: foreignTdefPage,
@@ -314,10 +311,7 @@ internal sealed class RelationshipManager
             foreignTdefPage,
             fkColNums,
             fkName,
-            realIdxNumThisSide: fkPlan.RealIdxNum,
-            logicalIdxNumThisSide: fkPlan.LogicalIdxNum,
-            allocateNewRealIdx: fkPlan.AllocatesNewRealIdx,
-            preAllocatedLeafPage: fkPlan.NewLeafPageNumber,
+            fkPlan,
             relTblTypeThisSide: Constants.TableDefinition.ChildRelationshipTableType,
             relIdxNumOtherSide: pkPlan.LogicalIdxNum,
             relTblPageOther: primaryTdefPage,
@@ -428,10 +422,7 @@ internal sealed class RelationshipManager
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
     /// <param name="indexName">The index name.</param>
-    /// <param name="realIdxNumThisSide">The real index number of this side.</param>
-    /// <param name="logicalIdxNumThisSide">The logical index number of this side.</param>
-    /// <param name="allocateNewRealIdx">The allocate new real index.</param>
-    /// <param name="preAllocatedLeafPage">The pre allocated leaf page.</param>
+    /// <param name="sidePlan">The pre-computed real/logical index plan for this side.</param>
     /// <param name="relTblTypeThisSide">The relationship table type this side.</param>
     /// <param name="relIdxNumOtherSide">The relationship index number of other side.</param>
     /// <param name="relTblPageOther">The relationship table page other.</param>
@@ -443,10 +434,7 @@ internal sealed class RelationshipManager
         long tdefPage,
         int[] columnNumbers,
         string indexName,
-        int realIdxNumThisSide,
-        int logicalIdxNumThisSide,
-        bool allocateNewRealIdx,
-        long preAllocatedLeafPage,
+        FkSidePlan sidePlan,
         byte relTblTypeThisSide,
         int relIdxNumOtherSide,
         long relTblPageOther,
@@ -477,8 +465,8 @@ internal sealed class RelationshipManager
         byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
         int nameRecordSize = 2 + nameBytes.Length;
 
-        int deltaRealIdxSkip = allocateNewRealIdx ? this.writer.TDef.RealIdxEntrySz : 0;
-        int deltaRealIdxPhys = allocateNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
+        int deltaRealIdxSkip = sidePlan.AllocatesNewRealIdx ? this.writer.TDef.RealIdxEntrySz : 0;
+        int deltaRealIdxPhys = sidePlan.AllocatesNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         // Build the rewritten page.
@@ -507,7 +495,7 @@ internal sealed class RelationshipManager
         Buffer.BlockCopy(td, realIdxDescStart, newTd, newRealIdxDescStart, oldRealIdxPhysLen);
 
         // Append a new real-idx physical descriptor when allocating a new slot.
-        if (allocateNewRealIdx)
+        if (sidePlan.AllocatesNewRealIdx)
         {
             int phys = newRealIdxDescStart + oldRealIdxPhysLen;
 
@@ -541,8 +529,8 @@ internal sealed class RelationshipManager
 
             // bytes 34..37 used_pages = 0 initially; MaintainIndexesAsync
             // patches the DAO-shaped index usage-map pointer after rebuilding.
-            // bytes 38..41 first_dp = preAllocatedLeafPage
-            Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)preAllocatedLeafPage));
+            // bytes 38..41 first_dp = sidePlan.NewLeafPageNumber
+            Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)sidePlan.NewLeafPageNumber));
 
             // bytes 42..45 unknown(4) = 0
             // byte  46     flags: 0x80 (unknown-flag bit always set per Jackcess)
@@ -563,8 +551,8 @@ internal sealed class RelationshipManager
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart;
         Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, logicalIdxNumThisSide);
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, realIdxNumThisSide);
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, sidePlan.LogicalIdxNum);
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, sidePlan.RealIdxNum);
         newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblTypeOffset] = relTblTypeThisSide;
         Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset, relIdxNumOtherSide);
         Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset, checked((int)relTblPageOther));
@@ -592,7 +580,7 @@ internal sealed class RelationshipManager
 
         // Update header counts.
         Wi32(newTd, this.writer.TDef.NumCols + 2, numIdx + 1);
-        if (allocateNewRealIdx)
+        if (sidePlan.AllocatesNewRealIdx)
         {
             Wi32(newTd, this.writer.TDef.NumRealIdx, numRealIdx + 1);
         }
