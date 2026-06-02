@@ -214,29 +214,41 @@ Relevant code:
 
 #### 5. Trim `AccessWriter.CreateTableInternalAsync` and pass through `CatalogTableArtifact`
 
-- [ ] Confirm by code search that the only call site of
+- [x] Confirm by code search that the only call site of
   `CreateTableInternalAsync` is `AccessWriter.CreateTableAsync`, which passes
   exactly the four required arguments (`tableName`, `columns`, `indexes`,
   `catalogFlags`) plus `CancellationToken`.
-- [ ] If no internal caller actually overrides `reservedTdefPageNumber`,
+- [x] If no internal caller actually overrides `reservedTdefPageNumber`,
   `emitLvProp`, `markSystemTableTdef`, or `emitAceRows`, **delete those
   defaulted parameters outright**. They are dead options today, and removing
   them drops the arity from 9 to 5 with no behavior change and no new type.
-- [ ] After the dead-default removal, fold the remaining four scalars into a
+- [x] After the dead-default removal, fold the remaining four scalars into a
   `CatalogTableArtifact` built at the caller, so the helper signature becomes
   `(CatalogTableArtifact artifact, CancellationToken cancellationToken)`. The
   artifact already exists, has the right shape, and is what the helper
   constructs internally today.
-- [ ] If any of the defaulted options does have a legitimate (current or near-
+- [x] If any of the defaulted options does have a legitimate (current or near-
   term) caller, keep that option on the artifact only; do not retain it as a
   separate scalar parameter.
-- [ ] Keep complex-column code on its existing catalog-artifact path; it
+- [x] Keep complex-column code on its existing catalog-artifact path; it
   already constructs `CatalogTableArtifact` values directly.
-- [ ] Preserve validation and cache invalidation behavior exactly; this is a
+- [x] Preserve validation and cache invalidation behavior exactly; this is a
   signature cleanup around an already-existing artifact model, not a catalog
   pipeline rewrite.
-- [ ] Run table-creation, complex-column template-table, and catalog round-trip
+- [x] Run table-creation, complex-column template-table, and catalog round-trip
   tests.
+
+Implementation notes (2026-06-01):
+
+- Verified the sole call site of `CreateTableInternalAsync` was
+  `AccessWriter.CreateTableAsync`, which passed only the four required
+  arguments. The four defaulted scalars (`reservedTdefPageNumber`,
+  `emitLvProp`, `markSystemTableTdef`, `emitAceRows`) had no callers.
+- Replaced the 9-parameter signature with
+  `CreateTableInternalAsync(CatalogTableArtifact tableArtifact, CancellationToken cancellationToken)`.
+  The caller now constructs the artifact inline with the four required
+  fields; the artifact's other options retain their existing defaults.
+- All 3594 non-fuzz tests pass.
 
 Payoff: `CreateTableInternalAsync` is a 9-parameter helper that immediately
 constructs a `CatalogTableArtifact`, and most of those parameters appear to be

@@ -456,7 +456,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        long tdefPageNumber = await this.CreateTableInternalAsync(tableName, columns, indexes, catalogFlags, cancellationToken).ConfigureAwait(false);
+        var tableArtifact = new CatalogTableArtifact(tableName, columns, indexes, catalogFlags);
+        long tdefPageNumber = await this.CreateTableInternalAsync(tableArtifact, cancellationToken).ConfigureAwait(false);
 
         // Emit the hidden flat child table + MSysComplexColumns row for every
         // user-declared complex column. Done after the parent table is on disk so the
@@ -557,41 +558,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Internal table-creation helper that drives the same TDEF + leaf + catalog-row
     /// pipeline as <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>
-    /// but accepts an explicit <paramref name="catalogFlags"/> value so it can also
+    /// but accepts a pre-built <see cref="CatalogTableArtifact"/> so it can also
     /// emit hidden system tables (e.g. complex-column flat tables that need
     /// <c>MSysObjects.Flags = 0x800A0000</c>). Returns the new TDEF page number.
     /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="columns">The columns.</param>
-    /// <param name="indexes">The indexes.</param>
-    /// <param name="catalogFlags">The catalog flags.</param>
+    /// <param name="tableArtifact">The catalog table artifact describing the table to create.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <param name="reservedTdefPageNumber">The reserved TDEF page number.</param>
-    /// <param name="emitLvProp">Whether to emit LvProp metadata.</param>
-    /// <param name="markSystemTableTdef">The mark system table TDEF.</param>
-    /// <param name="emitAceRows">The ACE-row emission override.</param>
     /// <exception cref="InvalidDataException">Thrown when a reserved TDEF page is requested for a multi-page table definition.</exception>
     internal async ValueTask<long> CreateTableInternalAsync(
-        string tableName,
-        IReadOnlyList<ColumnDefinition> columns,
-        IReadOnlyList<IndexDefinition> indexes,
-        uint catalogFlags,
-        CancellationToken cancellationToken,
-        long reservedTdefPageNumber = 0,
-        bool emitLvProp = true,
-        bool markSystemTableTdef = true,
-        bool? emitAceRows = null)
+        CatalogTableArtifact tableArtifact,
+        CancellationToken cancellationToken)
     {
-        var tableArtifact = new CatalogTableArtifact(
-            tableName,
-            columns,
-            indexes,
-            catalogFlags,
-            ReservedTdefPageNumber: reservedTdefPageNumber,
-            EmitLvProp: emitLvProp,
-            MarkSystemTableTdef: markSystemTableTdef,
-            EmitAceRows: emitAceRows);
-
         long[] tablePages = await this.ExecuteCatalogArtifactPlanAsync(
             new CatalogArtifactPlan([tableArtifact], []),
             cancellationToken).ConfigureAwait(false);
