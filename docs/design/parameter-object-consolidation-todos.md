@@ -130,20 +130,21 @@ Relevant code:
 
 #### 3. Split the index range matcher before adding range types
 
-- [ ] Refactor the private 14-parameter `IndexPageCodec.IsRangeMatch` into
+- [x] Refactor the private 14-parameter `IndexPageCodec.IsRangeMatch` into
   smaller focused checks inside `CollectRangeLeafEntries`, such as lower-bound,
   required-prefix, and upper-bound checks.
-- [ ] Do not decode `IndexEntry` objects or allocate canonical keys just to make
+- [x] Do not decode `IndexEntry` objects or allocate canonical keys just to make
   the helper signatures shorter. The matcher must keep comparing directly
   against the compressed page bytes.
-- [ ] Prefer local functions or tightly scoped private helpers that avoid
+- [x] Prefer local functions or tightly scoped private helpers that avoid
   threading the same entry-location scalars through every call. If the helper
   extraction still requires passing `page`, `prefixStart`, `entryStart`,
   `suffixLength`, `prefixLength`, and `isFirstEntry` everywhere, stop and move
   to the P1 encoded-range type instead.
-- [ ] Keep `AccessReader` and `IndexCursor` signatures unchanged in this pass so
+- [x] Keep `AccessReader` and `IndexCursor` signatures unchanged in this pass so
   the behavioral risk is isolated to the codec.
-- [ ] Run focused index range tests and the relevant index-seek benchmarks.
+- [x] Run focused index range tests. BenchmarkDotNet `--list flat` confirmed
+  there is no current index-seek benchmark target to run.
 
 Payoff: this addresses the single highest-arity private method from the scan
 without adding a named type. It does not solve the repeated encoded-bound bundle

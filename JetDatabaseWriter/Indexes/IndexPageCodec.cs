@@ -779,13 +779,84 @@ internal static class IndexPageCodec
         int prefixLength = Ru16(page, layout.PrefLenOffset);
         int entryStart = layout.FirstEntryOffset;
         int prefixStart = layout.FirstEntryOffset;
+        int suffixLength;
         bool isFirstEntry = true;
         bool hasEntries = false;
+
+        bool CurrentEntryMatchesRange(out bool continueScanning)
+        {
+            continueScanning = true;
+
+            if (lowerKey != null)
+            {
+                int lowerComparison = CompareCurrentEntry(lowerKey);
+                if (lowerComparison > 0
+                    || (!lowerInclusive && lowerComparison == 0)
+                    || (!lowerInclusive && lowerIsPrefix && CurrentEntryStartsWith(lowerKey)))
+                {
+                    return false;
+                }
+            }
+
+            if (requiredPrefix != null)
+            {
+                int prefixComparison = CompareCurrentEntry(requiredPrefix);
+                if (prefixComparison > 0)
+                {
+                    return false;
+                }
+
+                if (!CurrentEntryStartsWith(requiredPrefix))
+                {
+                    continueScanning = false;
+                    return false;
+                }
+            }
+
+            if (upperKey != null)
+            {
+                int upperComparison = CompareCurrentEntry(upperKey);
+                bool startsWithUpper = upperIsPrefix && CurrentEntryStartsWith(upperKey);
+                if (startsWithUpper && upperInclusive)
+                {
+                    return true;
+                }
+
+                if (upperComparison < 0 || (!upperInclusive && upperComparison == 0))
+                {
+                    continueScanning = false;
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        int CompareCurrentEntry(byte[] key)
+            => CompareSearchKeyToEntry(
+                key,
+                page,
+                prefixStart,
+                entryStart,
+                suffixLength,
+                prefixLength,
+                isFirstEntry);
+
+        bool CurrentEntryStartsWith(byte[] key)
+            => EntryStartsWithKey(
+                page,
+                prefixStart,
+                entryStart,
+                suffixLength,
+                prefixLength,
+                isFirstEntry,
+                key);
+
         while (entryStart < payloadEnd)
         {
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
-            int suffixLength = entryEnd - entryStart - LeafTrailerSize;
+            suffixLength = entryEnd - entryStart - LeafTrailerSize;
             if (!IsEntryReadable(page, entryStart, suffixLength, LeafTrailerSize))
             {
                 return false;
@@ -796,28 +867,14 @@ internal static class IndexPageCodec
                 return false;
             }
 
-            if (IsRangeMatch(
-                page,
-                prefixStart,
-                entryStart,
-                suffixLength,
-                prefixLength,
-                isFirstEntry,
-                lowerKey,
-                lowerInclusive,
-                lowerIsPrefix,
-                upperKey,
-                upperInclusive,
-                upperIsPrefix,
-                requiredPrefix,
-                out bool stopScanning))
+            if (CurrentEntryMatchesRange(out bool continueScanning))
             {
                 int pointerOffset = entryStart + suffixLength;
                 long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
                 matches.Add((dataPage, page[pointerOffset + 3]));
             }
 
-            if (stopScanning)
+            if (!continueScanning)
             {
                 return false;
             }
@@ -1137,73 +1194,6 @@ internal static class IndexPageCodec
         }
 
         return searchKey.Length - canonicalLength;
-    }
-
-    private static bool IsRangeMatch(
-        byte[] page,
-        int prefixStart,
-        int entryStart,
-        int suffixLength,
-        int prefixLength,
-        bool isFirstEntry,
-        byte[]? lowerKey,
-        bool lowerInclusive,
-        bool lowerIsPrefix,
-        byte[]? upperKey,
-        bool upperInclusive,
-        bool upperIsPrefix,
-        byte[]? requiredPrefix,
-        out bool stopScanning)
-    {
-        stopScanning = false;
-
-        if (lowerKey != null)
-        {
-            int lowerComparison = CompareSearchKeyToEntry(lowerKey, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
-            if (lowerComparison > 0 || (!lowerInclusive && lowerComparison == 0))
-            {
-                return false;
-            }
-
-            if (!lowerInclusive && lowerIsPrefix && EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, lowerKey))
-            {
-                return false;
-            }
-        }
-
-        if (requiredPrefix != null)
-        {
-            int prefixComparison = CompareSearchKeyToEntry(requiredPrefix, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
-            if (prefixComparison > 0)
-            {
-                return false;
-            }
-
-            if (!EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, requiredPrefix))
-            {
-                stopScanning = true;
-                return false;
-            }
-        }
-
-        if (upperKey != null)
-        {
-            int upperComparison = CompareSearchKeyToEntry(upperKey, page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry);
-            bool startsWithUpper = upperIsPrefix
-                && EntryStartsWithKey(page, prefixStart, entryStart, suffixLength, prefixLength, isFirstEntry, upperKey);
-            if (startsWithUpper && upperInclusive)
-            {
-                return true;
-            }
-
-            if (upperComparison < 0 || (!upperInclusive && upperComparison == 0))
-            {
-                stopScanning = true;
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static bool EntryStartsWithKey(
