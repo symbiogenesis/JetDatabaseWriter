@@ -16,9 +16,12 @@ JetDatabaseWriter/
 ├── JetTransaction.cs
 ├── Constants.cs                           (format constants, magic numbers, page offsets)
 ├── IsExternalInit.cs                      (compiler shim for init-only properties)
+├── JetDatabaseWriter.csproj                (library project and NuGet packaging metadata)
+├── packages.lock.json                      (locked NuGet dependency graph)
 │
 ├── Interfaces/
 │   ├── IAccessBase.cs
+│   ├── IAccessIndexQuery.cs               (fluent exact/prefix/range read queries over a named index)
 │   ├── IAccessOptions.cs
 │   ├── IAccessReader.cs
 │   ├── IAccessSchema.cs                   (DDL: CreateTable, AddColumn, linked tables, relationships)
@@ -46,12 +49,16 @@ JetDatabaseWriter/
 ├── Enums/
 │   ├── AccessEncryptionFormat.cs
 │   ├── ColumnSizeUnit.cs
+│   ├── ColumnType.cs                      (public JET column-type discriminator enum)
 │   ├── ComplexColumnKind.cs
 │   ├── DatabaseFormat.cs
 │   ├── IndexKind.cs
+│   ├── IndexQueryKind.cs                  (internal index-query predicate kind)
 │   ├── IntermediateOpType.cs
 │   ├── LinkedTableKind.cs
+│   ├── PageReadOptimizationMode.cs        (reader random-access/read-ahead optimization policy)
 │   ├── SecureEraseMode.cs
+│   ├── SystemTableIndexMaintenancePath.cs (last system-table index-maintenance path used by writer)
 │   └── TdefPreambleStatus.cs
 │
 ├── Exceptions/
@@ -123,12 +130,15 @@ JetDatabaseWriter/
 │       └── UsageMapPointer.cs
 │
 ├── Indexes/                               (all index concerns — B-tree, key encoding, maintenance)
+│   ├── AccessObjectIndexQuery.cs          (fluent object-array index query implementation)
+│   ├── AccessTypedIndexQuery.cs           (fluent POCO index query implementation)
 │   ├── IndexKeyEncoder.cs                 (column values → sort key bytes)
 │   ├── IndexBTreeBuilder.cs               (constructs index B-tree pages)
 │   ├── IndexBTreeEditor.cs                (plans/applies in-place B-tree mutations)
 │   ├── IndexCursor.cs                     (read-only B-tree descent and exact-key lookups)
 │   ├── IndexPageCodec.cs                  (index page build/decode, pointers, entry bitmasks)
 │   ├── IndexPageLayout.cs                 (Jet3 / Jet4 index page layout selection)
+│   ├── IndexQueryCriteria.cs              (exact, key-prefix, and range predicate descriptor)
 │   ├── IndexCatalogReader.cs              (reads index definitions from system tables)
 │   ├── IndexEntrySplicer.cs               (stable in-memory index entry add/remove splicing)
 │   ├── IndexMaintainer.cs                 (TDEF/catalog orchestration for index maintenance)
@@ -175,18 +185,34 @@ JetDatabaseWriter/
 │   ├── JetExpressionConverter.cs          (expression parsing for calculated columns)
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
+│   ├── LogicalTDefChain.cs                (logical TDEF bytes spanning chained table-definition pages)
 │   ├── Expressions/
-│   │   ├── CalculatedExpressionEvaluator.cs        (entry point: applies calculated-expression plans to row values)
-│   │   ├── CalculatedExpressionEvaluationContext.cs
-│   │   ├── CalculatedExpressionPlan.cs
-│   │   ├── CalculatedExpressionNormalizer.cs       (Access syntax normalization: column brackets, date literals, word operators)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
-│   │   ├── CalculatedExpression*Node.cs            (AST nodes for values, names, unary/binary ops, functions, unsupported syntax)
+│   │   ├── CalculatedExpressionBinaryNode.cs       (binary operator AST node)
 │   │   ├── CalculatedExpressionCoercion.cs         (central Access null/date/number/text coercion semantics)
-│   │   ├── CalculatedExpressionLimits.cs           (expression safety caps and generated-text limits)
+│   │   ├── CalculatedExpressionDateTimeFunctions.cs (date/time function catalog)
+│   │   ├── CalculatedExpressionEvaluationContext.cs
+│   │   ├── CalculatedExpressionEvaluator.cs        (entry point: applies calculated-expression plans to row values)
+│   │   ├── CalculatedExpressionFinancialFunctions.cs (financial function catalog)
+│   │   ├── CalculatedExpressionFormattingFunctions.cs (formatting function catalog)
+│   │   ├── CalculatedExpressionFunctionNode.cs     (function-call AST node)
 │   │   ├── CalculatedExpressionFunctionRegistry.cs (descriptor-based function lookup and argument validation)
-│   │   ├── CalculatedFunction*.cs                  (function descriptor, domain, evaluator delegate, invocation context)
-│   │   └── CalculatedExpression*Functions.cs       (domain function catalogs: logical, text, date/time, numeric, formatting, financial, metadata)
+│   │   ├── CalculatedExpressionLimits.cs           (expression safety caps and generated-text limits)
+│   │   ├── CalculatedExpressionLogicalFunctions.cs (logical function catalog)
+│   │   ├── CalculatedExpressionMetadataFunctions.cs (metadata function catalog)
+│   │   ├── CalculatedExpressionNameNode.cs         (column/name AST node)
+│   │   ├── CalculatedExpressionNode.cs             (base calculated-expression AST node)
+│   │   ├── CalculatedExpressionNormalizer.cs       (Access syntax normalization: column brackets, date literals, word operators)
+│   │   ├── CalculatedExpressionNumericFunctions.cs (numeric function catalog)
+│   │   ├── CalculatedExpressionPlan.cs
+│   │   ├── CalculatedExpressionTextFunctions.cs    (text function catalog)
+│   │   ├── CalculatedExpressionUnaryNode.cs        (unary operator AST node)
+│   │   ├── CalculatedExpressionUnsupportedNode.cs  (unsupported syntax AST sentinel)
+│   │   ├── CalculatedExpressionValueNode.cs        (literal value AST node)
+│   │   ├── CalculatedFunctionDescriptor.cs         (function alias, domain, and argument metadata)
+│   │   ├── CalculatedFunctionDomain.cs             (calculated-function domain enum)
+│   │   ├── CalculatedFunctionEvaluator.cs          (function evaluator delegate)
+│   │   └── CalculatedFunctionInvocation.cs         (bound function invocation context)
 │   └── Models/
 │       ├── ColumnConstraint.cs
 │       ├── ColumnInfo.cs
