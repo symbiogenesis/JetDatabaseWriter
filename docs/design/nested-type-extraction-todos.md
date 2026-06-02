@@ -176,7 +176,7 @@ adds no real discoverability win.
 
 ### 10. `ComplexColumnManager.ComplexColumnAllocation`
 
-- [ ] Used from [AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs#L431).
+- [x] Used from [AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs#L433).
   Optional move to `ComplexColumns/Models/ComplexColumnAllocation.cs`.
 
 ### 11. `GeneralLegacyTextIndexEncoder.CharHandlerType`

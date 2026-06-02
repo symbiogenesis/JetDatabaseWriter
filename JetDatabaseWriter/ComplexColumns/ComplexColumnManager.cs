@@ -377,14 +377,6 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     }
 
     /// <summary>
-    /// Per-column scratch state captured by <see cref="PrepareComplexColumnAllocationsAsync"/>
-    /// and consumed by <see cref="EmitComplexColumnArtifactsAsync"/>.
-    /// </summary>
-    /// <param name="ColumnIndex">The column index.</param>
-    /// <param name="ComplexId">The complex id.</param>
-    internal readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId);
-
-    /// <summary>
     /// pre-flight for table creation. Walks <paramref name="columns"/> for
     /// user-declared complex columns
     /// (<see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>

@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
@@ -429,7 +430,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // flat child table + MSysComplexColumns row per column AFTER the parent TDEF
         // is on disk. The round-trip preservation path on RewriteTableAsync supplies a
         // non-zero ComplexId from the original TDEF and is left untouched here.
-        IReadOnlyList<ComplexColumnManager.ComplexColumnAllocation>? complexAllocs =
+        IReadOnlyList<ComplexColumnAllocation>? complexAllocs =
             await this.ComplexColumns.PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
         if (complexAllocs is { Count: > 0 })
         {
@@ -438,7 +439,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             var rewritten = new List<ColumnDefinition>(columns);
             for (int i = 0; i < complexAllocs.Count; i++)
             {
-                ComplexColumnManager.ComplexColumnAllocation a = complexAllocs[i];
+                ComplexColumnAllocation a = complexAllocs[i];
                 rewritten[a.ColumnIndex] = rewritten[a.ColumnIndex] with { ComplexId = a.ComplexId };
             }
 
