@@ -327,7 +327,7 @@ internal sealed class PageAllocator(AccessWriter writer)
                     return;
                 }
 
-                await this.PromoteInlineToReferenceAsync(globalPage, rowBound.RowStart, rowBound.RowSize, cancellationToken).ConfigureAwait(false);
+                await this.PromoteInlineToReferenceAsync(globalPage, rowBound, cancellationToken).ConfigureAwait(false);
                 await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -343,25 +343,24 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
     }
 
-    private async ValueTask PromoteInlineToReferenceAsync(byte[] globalPage, int rowStart, int rowSize, CancellationToken cancellationToken)
+    private async ValueTask PromoteInlineToReferenceAsync(byte[] globalPage, RowBound rowBound, CancellationToken cancellationToken)
     {
         var existingFreePages = new List<long>();
         _ = UsageMap.TryEnumerateInlinePages(
             globalPage,
-            rowStart,
-            rowSize,
+            rowBound,
             writer.PageSizeBytes,
             writer.LogicalPageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
             existingFreePages);
-        Array.Clear(globalPage, rowStart, rowSize);
-        globalPage[rowStart] = Constants.UsageMap.ReferenceMapType;
+        Array.Clear(globalPage, rowBound.RowStart, rowBound.RowSize);
+        globalPage[rowBound.RowStart] = Constants.UsageMap.ReferenceMapType;
         await writer.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
 
         foreach (long freePageNumber in existingFreePages)
         {
-            await this.SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, freePageNumber, free: true, cancellationToken).ConfigureAwait(false);
+            await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, freePageNumber, free: true, cancellationToken).ConfigureAwait(false);
         }
     }
 

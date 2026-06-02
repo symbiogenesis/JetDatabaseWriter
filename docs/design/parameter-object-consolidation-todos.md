@@ -80,19 +80,19 @@ reusing types and helpers that already exist.
 
 #### 1. Push `RowBound` through usage-map helpers
 
-- [ ] Update `UsageMap.TryEnumerateInlinePages` to take
+- [x] Update `UsageMap.TryEnumerateInlinePages` to take
   `AccessBase.RowBound rowBound` instead of separate `rowStart` and `rowSize`
   parameters.
-- [ ] Update `UsageMap.TryEnumerateReferencePagesAsync` the same way.
-- [ ] Keep `UsageMap.TryEnumeratePagesAsync` as the top-level entry point; it
+- [x] Update `UsageMap.TryEnumerateReferencePagesAsync` the same way.
+- [x] Keep `UsageMap.TryEnumeratePagesAsync` as the top-level entry point; it
   already receives `RowBound`, so this change should mostly pass the existing
   value deeper instead of unpacking it.
-- [ ] Keep `List<long> pageNumbers` as a separate output parameter so callers
+- [x] Keep `List<long> pageNumbers` as a separate output parameter so callers
   continue to control ownership and capacity.
-- [ ] Preserve the current strict/non-strict behavior for corrupt or unfamiliar
+- [x] Preserve the current strict/non-strict behavior for corrupt or unfamiliar
   maps. Strict mode is a parser-hardening contract; it must not be relaxed by
   the signature cleanup.
-- [ ] Run owned-data-page discovery tests and any usage-map/reference-map tests.
+- [x] Run owned-data-page discovery tests and any usage-map/reference-map tests.
 
 Payoff: this removes a repeated row-slice pair from two helper signatures
 without adding any type. It is localized to the usage-map parser and reuses

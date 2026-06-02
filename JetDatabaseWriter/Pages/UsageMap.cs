@@ -126,8 +126,7 @@ internal static class UsageMap
         {
             Constants.UsageMap.InlineMapType => TryEnumerateInlinePages(
                 usageMapPage,
-                rowBound.RowStart,
-                rowBound.RowSize,
+                rowBound,
                 pageSize,
                 totalPages,
                 minimumPageNumber,
@@ -135,8 +134,7 @@ internal static class UsageMap
                 pageNumbers),
             Constants.UsageMap.ReferenceMapType => await TryEnumerateReferencePagesAsync(
                 usageMapPage,
-                rowBound.RowStart,
-                rowBound.RowSize,
+                rowBound,
                 pageSize,
                 totalPages,
                 minimumPageNumber,
@@ -151,28 +149,27 @@ internal static class UsageMap
 
     internal static bool TryEnumerateInlinePages(
         byte[] usageMapPage,
-        int rowStart,
-        int rowSize,
+        AccessBase.RowBound rowBound,
         int pageSize,
         long totalPages,
         long minimumPageNumber,
         bool strict,
         List<long> pageNumbers)
     {
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
+        if (rowBound.RowSize <= Constants.UsageMap.InlineMapHeaderSize)
         {
             return false;
         }
 
-        int basePage = Ri32(usageMapPage, rowStart + Constants.UsageMap.ReferenceMapPointerOffset);
+        int basePage = Ri32(usageMapPage, rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset);
         if (strict && basePage < 0)
         {
             return false;
         }
 
         int bitmapBytes = Math.Min(
-            rowSize - Constants.UsageMap.InlineBitmapOffset,
-            pageSize - rowStart - Constants.UsageMap.InlineBitmapOffset);
+            rowBound.RowSize - Constants.UsageMap.InlineBitmapOffset,
+            pageSize - rowBound.RowStart - Constants.UsageMap.InlineBitmapOffset);
         if (bitmapBytes <= 0)
         {
             return false;
@@ -181,7 +178,7 @@ internal static class UsageMap
         int bitCapacity = bitmapBytes * 8;
         for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
         {
-            int byteOffset = rowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
+            int byteOffset = rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
             byte bitMask = (byte)(1 << (bitIndex % 8));
             if ((usageMapPage[byteOffset] & bitMask) == 0)
             {
@@ -207,8 +204,7 @@ internal static class UsageMap
 
     internal static async ValueTask<bool> TryEnumerateReferencePagesAsync(
         byte[] usageMapPage,
-        int rowStart,
-        int rowSize,
+        AccessBase.RowBound rowBound,
         int pageSize,
         long totalPages,
         long minimumPageNumber,
@@ -218,13 +214,13 @@ internal static class UsageMap
         List<long> pageNumbers,
         CancellationToken cancellationToken)
     {
-        int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
+        int pointerCount = (rowBound.RowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         int pagesPerMapPage = PagesPerReferenceMapPage(pageSize);
         for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
+            int pointerOffset = rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
             int referencePageNumber = Ri32(usageMapPage, pointerOffset);
             if (referencePageNumber == 0)
             {
