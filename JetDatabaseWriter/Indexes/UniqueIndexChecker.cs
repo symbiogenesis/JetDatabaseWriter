@@ -364,7 +364,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
                 }
                 else
                 {
-                    effectiveRow = snapshot.Rows[r].ItemArray;
+                    effectiveRow = AccessWriter.GetDbNullNormalizedItemArray(snapshot.Rows[r]);
                 }
 
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);

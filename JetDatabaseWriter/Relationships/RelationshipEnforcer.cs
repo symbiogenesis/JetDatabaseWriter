@@ -414,7 +414,7 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
             {
                 int rowIndex = affectedIndices[affectedIndex];
                 object[] newPkSubset = movingChanges[affectedOldKeys[affectedIndex]].NewPkSubset;
-                object[] rowValues = childSnap.Rows[rowIndex].ItemArray;
+                object[] rowValues = AccessWriter.GetDbNullNormalizedItemArray(childSnap.Rows[rowIndex]);
 
                 for (int column = 0; column < rel.ForeignColumns.Count; column++)
                 {

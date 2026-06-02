@@ -1179,7 +1179,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            object[] rowValues = snapshot.Rows[i].ItemArray;
+            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
             foreach (KeyValuePair<int, object?> update in updateIndexes)
             {
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
@@ -1260,7 +1260,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         foreach ((int i, object[] rowValues) in pendingNewRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = snapshot.Rows[i].ItemArray;
+            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
             await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((locations[i], oldRow));
             RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1367,7 +1367,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         foreach (int i in matchingIndices)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = snapshot.Rows[i].ItemArray;
+            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
             await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             deleteHints.Add((locations[i], oldRow));
             deleted++;
@@ -1930,12 +1930,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(values, paramName);
 
         object[] normalized = new object[values.Length];
+        Array.Copy(values, normalized, values.Length);
+        NormalizeRowInPlace(normalized);
+        return normalized;
+    }
+
+    internal static object[] GetDbNullNormalizedItemArray(DataRow row)
+    {
+        Guard.NotNull(row, nameof(row));
+
+        object?[] values = row.ItemArray;
+        NormalizeRowInPlace(values);
+        return (object[])values;
+    }
+
+    private static void NormalizeRowInPlace(object?[] values)
+    {
         for (int i = 0; i < values.Length; i++)
         {
-            normalized[i] = values[i] ?? DBNull.Value;
+            values[i] ??= DBNull.Value;
         }
-
-        return normalized;
     }
 
     private static IEnumerable<TItem> SingleItem<TItem>(TItem item)
