@@ -5,32 +5,32 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class ColumnInfo
 {
-    public ColumnType Type { get; set; }
+    public ColumnType Type { get; init; }
 
     /// <summary>
-    /// Gets or sets col_num: absolute column number (includes deleted cols).
+    /// Gets col_num: absolute column number (includes deleted cols).
     /// </summary>
-    public int ColNum { get; set; }
+    public int ColNum { get; init; }
 
     /// <summary>
-    /// Gets or sets offset_V: 0-based index in var_table.
+    /// Gets offset_V: 0-based index in var_table.
     /// </summary>
-    public int VarIdx { get; set; }
+    public int VarIdx { get; init; }
 
     /// <summary>
-    /// Gets or sets offset_F: byte offset within the fixed area.
+    /// Gets offset_F: byte offset within the fixed area.
     /// </summary>
-    public int FixedOff { get; set; }
+    public int FixedOff { get; init; }
 
     /// <summary>
-    /// Gets or sets col_len (0 for MEMO/OLE/variable).
+    /// Gets col_len (0 for MEMO/OLE/variable).
     /// </summary>
-    public int Size { get; set; }
+    public int Size { get; init; }
 
-    public byte Flags { get; set; }
+    public byte Flags { get; init; }
 
     /// <summary>
-    /// Gets or sets the byte at descriptor-relative offset 16 in the 25-byte
+    /// Gets the byte at descriptor-relative offset 16 in the 25-byte
     /// ACE column descriptor (Jackcess <c>OFFSET_COLUMN_EXT_FLAGS</c>). Only
     /// populated for Jet4 / ACE files — the 18-byte Jet3 column descriptor has
     /// no equivalent slot, so this stays at <c>0</c>. The high two bits
@@ -38,15 +38,15 @@ internal sealed class ColumnInfo
     /// calculated (expression) columns; the low bit (<c>0x01</c>) is
     /// Jackcess <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>.
     /// </summary>
-    public byte ExtraFlags { get; set; }
+    public byte ExtraFlags { get; init; }
 
     /// <summary>
-    /// Gets or sets the logical JET type code stored in the calculated
+    /// Gets the logical JET type code stored in the calculated
     /// column's <c>ResultType</c> LvProp property. The descriptor
     /// <see cref="Type"/> still controls row storage layout, but the wrapped
     /// cached payload is encoded as this type when present.
     /// </summary>
-    public ColumnType CalculatedResultType { get; set; }
+    public ColumnType CalculatedResultType { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the column is an Access 2010+ calculated
@@ -69,10 +69,10 @@ internal sealed class ColumnInfo
     /// </summary>
     public bool IsCompressedUnicode => (this.ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
 
-    public string Name { get; set; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the 4-byte value at descriptor-relative offset 11 (Jet4/ACE)
+    /// Gets the 4-byte value at descriptor-relative offset 11 (Jet4/ACE)
     /// of the TDEF column descriptor — the <c>misc</c> / <c>misc_ext</c> slot.
     /// For complex columns (<c>Attachment</c> / <c>Complex</c>) this carries
     /// the <c>ComplexID</c> that joins the parent column to its
@@ -80,18 +80,18 @@ internal sealed class ColumnInfo
     /// table. Zero for non-complex columns.
     /// See <see href="docs/design/complex-columns-format-notes.md" /> §2.1.
     /// </summary>
-    public int Misc { get; set; }
+    public int Misc { get; init; }
 
     /// <summary>
-    /// Gets or sets the declared precision (total significant digits, 1..28)
+    /// Gets the declared precision (total significant digits, 1..28)
     /// for a <c>Numeric</c> column. Persisted at descriptor-relative offset
     /// 11 (the first byte of <see cref="Misc"/> for Jet4 / ACE column
     /// descriptors). Zero for non-numeric columns.
     /// </summary>
-    public byte NumericPrecision { get; set; }
+    public byte NumericPrecision { get; init; }
 
     /// <summary>
-    /// Gets or sets the declared scale (decimal places, 0..28) for a
+    /// Gets the declared scale (decimal places, 0..28) for a
     /// <c>Numeric</c> column. Persisted at descriptor-relative offset 12
     /// (the second byte of <see cref="Misc"/>). The incremental fast paths
     /// use this value as the canonical index scale, rescaling every cell
@@ -99,7 +99,23 @@ internal sealed class ColumnInfo
     /// before the encoder runs — matching Access semantics that every
     /// <c>Numeric</c> cell sorts at the column's declared scale.
     /// </summary>
-    public byte NumericScale { get; set; }
+    public byte NumericScale { get; init; }
+
+    public ColumnInfo WithCalculatedResultType(ColumnType calculatedResultType) => new()
+    {
+        Type = this.Type,
+        ColNum = this.ColNum,
+        VarIdx = this.VarIdx,
+        FixedOff = this.FixedOff,
+        Size = this.Size,
+        Flags = this.Flags,
+        ExtraFlags = this.ExtraFlags,
+        CalculatedResultType = calculatedResultType,
+        Name = this.Name,
+        Misc = this.Misc,
+        NumericPrecision = this.NumericPrecision,
+        NumericScale = this.NumericScale,
+    };
 
     /// <summary>
     /// Gets a value indicating whether a column's data is stored in the fixed or variable

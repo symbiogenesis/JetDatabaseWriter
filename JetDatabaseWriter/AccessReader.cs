@@ -2938,8 +2938,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         bool changed = false;
-        foreach (ColumnInfo col in tableDef.Columns)
+        for (int i = 0; i < tableDef.Columns.Count; i++)
         {
+            ColumnInfo col = tableDef.Columns[i];
             if (!col.IsCalculated)
             {
                 continue;
@@ -2948,7 +2949,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnType resultType = ResolveCalculatedResultType(properties.FindTarget(col.Name));
             if (resultType != default && resultType != col.CalculatedResultType)
             {
-                col.CalculatedResultType = resultType;
+                tableDef.Columns[i] = col.WithCalculatedResultType(resultType);
                 changed = true;
             }
         }

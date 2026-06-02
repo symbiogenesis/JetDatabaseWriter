@@ -127,7 +127,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
 
 - [ ] Add a catalog-bootstrap column descriptor type only if that code changes again.
   - Before: `(string Name, ColumnType Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)` arrays for slim/full MSysObjects bootstrap columns.
-  - After: `CatalogColumnDescriptor` or `BootstrapColumnDescriptor`. Do not use `ColumnInfo`; that is parsed mutable metadata, not a write-template descriptor.
+  - After: `CatalogColumnDescriptor` or `BootstrapColumnDescriptor`. Do not use `ColumnInfo`; that is parsed/effective `TableDef` metadata, not a bootstrap write-template descriptor.
   - File: `JetDatabaseWriter/Schema/TDefPageBuilder.cs`.
 
 - [ ] Add complex-column schema/template types if template generation grows.

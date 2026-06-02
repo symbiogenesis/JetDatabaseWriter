@@ -804,7 +804,7 @@ public abstract class AccessBase : IAccessBase
             return null;
         }
 
-        var cols = new List<ColumnInfo>(numCols);
+        var descriptors = new List<ParsedColumnDescriptor>(numCols);
         for (int i = 0; i < numCols; i++)
         {
             int o = colStart + (i * this.ColumnDescriptor.Size);
@@ -815,45 +815,57 @@ public abstract class AccessBase : IAccessBase
 
             var type = (ColumnType)td[o + this.ColumnDescriptor.TypeOff];
 
-            cols.Add(new ColumnInfo
-            {
-                Type = type,
-                ColNum = Ru16(td, o + this.ColumnDescriptor.NumOff),
-                VarIdx = Ru16(td, o + this.ColumnDescriptor.VarOff),
-                FixedOff = Ru16(td, o + this.ColumnDescriptor.FixedOff),
-                Size = Ru16(td, o + this.ColumnDescriptor.SzOff),
-                Flags = td[o + this.ColumnDescriptor.FlagsOff],
+            // Extra flags byte at descriptor offset 16 (Jet4/ACE only — the
+            // Jet3 18-byte descriptor has no such slot). Carries the Access
+            // 2010+ calculated-column marker (Jackcess CALCULATED_EXT_FLAG_MASK
+            // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
+            // round-trip through the schema-rewrite path; harmless for cols
+            // Access wrote with the slot at zero.
+            byte extraFlags = this.Format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0;
+            int misc = Ri32(td, o + this.ColumnDescriptor.MiscOff);
 
-                // Extra flags byte at descriptor offset 16 (Jet4/ACE only \u2014 the
-                // Jet3 18-byte descriptor has no such slot). Carries the Access
-                // 2010+ calculated-column marker (Jackcess CALCULATED_EXT_FLAG_MASK
-                // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
-                // round-trip through the schema-rewrite path; harmless for cols
-                // Access wrote with the slot at zero.
-                ExtraFlags = this.Format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0,
-                Misc = Ri32(td, o + this.ColumnDescriptor.MiscOff),
+            // For Numeric the misc 4-byte slot reuses bytes 11/12
+            // (descriptor-relative) to carry the declared precision and
+            // scale Access shows in Design View. Same byte positions as
+            // the Jackcess `FixedPointColumnDescriptor` parser. Other
+            // column types leave these at 0.
+            byte numericPrecision = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff] : (byte)0;
+            byte numericScale = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff + 1] : (byte)0;
 
-                // For Numeric the misc 4-byte slot reuses bytes 11/12
-                // (descriptor-relative) to carry the declared precision and
-                // scale Access shows in Design View. Same byte positions as
-                // the Jackcess `FixedPointColumnDescriptor` parser. Other
-                // column types leave these at 0.
-                NumericPrecision = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff] : (byte)0,
-                NumericScale = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff + 1] : (byte)0,
-            });
+            descriptors.Add(new ParsedColumnDescriptor(
+                type,
+                Ru16(td, o + this.ColumnDescriptor.NumOff),
+                Ru16(td, o + this.ColumnDescriptor.VarOff),
+                Ru16(td, o + this.ColumnDescriptor.FixedOff),
+                Ru16(td, o + this.ColumnDescriptor.SzOff),
+                td[o + this.ColumnDescriptor.FlagsOff],
+                extraFlags,
+                misc,
+                numericPrecision,
+                numericScale));
         }
 
         // Column names follow directly after all descriptors (in TDEF / descriptor order).
         // Names MUST be read before sorting so each name maps to the correct descriptor.
-        for (int i = 0; i < cols.Count; i++)
+        var cols = new List<ColumnInfo>(descriptors.Count);
+        bool readNames = true;
+        for (int i = 0; i < descriptors.Count; i++)
         {
-            int nameLen = this.ReadColumnName(td, ref namePos, out string name);
-            if (nameLen < 0)
+            string name = string.Empty;
+            if (readNames)
             {
-                break;
+                int nameLen = this.ReadColumnName(td, ref namePos, out string parsedName);
+                if (nameLen >= 0)
+                {
+                    name = parsedName;
+                }
+                else
+                {
+                    readNames = false;
+                }
             }
 
-            cols[i].Name = name;
+            cols.Add(descriptors[i].ToColumnInfo(name));
         }
 
         // Sort by col_num AFTER names are assigned.
@@ -1821,6 +1833,34 @@ public abstract class AccessBase : IAccessBase
     internal readonly record struct TableRow(byte[] Page, RowLocation Location);
 
     internal readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
+
+    private readonly record struct ParsedColumnDescriptor(
+        ColumnType Type,
+        int ColNum,
+        int VarIdx,
+        int FixedOff,
+        int Size,
+        byte Flags,
+        byte ExtraFlags,
+        int Misc,
+        byte NumericPrecision,
+        byte NumericScale)
+    {
+        internal ColumnInfo ToColumnInfo(string name) => new()
+        {
+            Name = name,
+            Type = this.Type,
+            ColNum = this.ColNum,
+            VarIdx = this.VarIdx,
+            FixedOff = this.FixedOff,
+            Size = this.Size,
+            Flags = this.Flags,
+            ExtraFlags = this.ExtraFlags,
+            Misc = this.Misc,
+            NumericPrecision = this.NumericPrecision,
+            NumericScale = this.NumericScale,
+        };
+    }
 
     /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
     /// <param name="NumCols">The number of cols.</param>
