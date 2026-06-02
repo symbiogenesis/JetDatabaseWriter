@@ -36,7 +36,7 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
 
 ## New Types: Clear Wins
 
-- [ ] Add an internal `ResolvedTable` or `TableResolution` type.
+- [x] Add an internal `ResolvedTable` or `TableResolution` type.
   - Before: `(CatalogEntry Entry, TableDef Td)?` returned by `ResolveTableAsync` and repeated at many call sites.
   - After: `ResolvedTable?` with `CatalogEntry Entry` and `TableDef Definition` (or `TableDef Td`, if preserving local naming matters more).
   - Files: `JetDatabaseWriter/AccessReader.cs`, `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs`, and related call sites.

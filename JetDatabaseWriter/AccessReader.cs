@@ -435,7 +435,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             long? linkedCount = await this.TryGetLinkedTableRowCountAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -443,7 +443,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         long count = 0;
-        long tdefPage = resolved.Value.Entry.TDefPage;
+        long tdefPage = resolved.Entry.TDefPage;
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         foreach (long pageNumber in pageNumbers)
@@ -478,7 +478,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             await foreach (object[] row in this.EnumerateLinkedRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
@@ -489,7 +489,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
         await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return (object[])row;
@@ -507,7 +508,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             await foreach (T? row in this.EnumerateLinkedRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
@@ -518,7 +519,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
 
         // Bind the compiled mapper directly against the per-table column
         // headers + ClrTypes; avoids the GetColumnMetadataAsync round-trip
@@ -890,7 +892,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             await foreach (string[] row in this.EnumerateLinkedRowsAsStringsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
@@ -901,7 +903,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
         long rowCount = 0;
         IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, this.strictParsing);
@@ -927,7 +930,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             IReadOnlyList<ColumnMetadata>? linkedMetadata = await this.TryReadLinkedTableAsync(
@@ -939,16 +942,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
-        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type is ComplexType or AttachmentType);
+        bool hasComplex = resolved.Definition.Columns.Any(c => c.Type is ComplexType or AttachmentType);
         if (hasComplex)
         {
             complexSubtypes = await this.complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
         ColumnPropertyBlock? properties = await this.ReadLvPropForTableAsync(
-            resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        return resolved.Value.Td.Columns.Select((col, index) =>
+        return resolved.Definition.Columns.Select((col, index) =>
         {
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
@@ -1043,19 +1046,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             return [];
         }
 
-        byte[]? td = await this.ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await this.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null || td.Length < this.TDef.BlockEnd)
         {
             return [];
         }
 
-        return this.ParseIndexMetadata(td, resolved.Value.Td.Columns);
+        return this.ParseIndexMetadata(td, resolved.Definition.Columns);
     }
 
     /// <inheritdoc/>
@@ -1145,7 +1148,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNull(createProjection, nameof(createProjection));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             yield break;
@@ -1156,7 +1159,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             throw new NotSupportedException("Index seeks are currently supported for Jet4/ACE databases only.");
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
         byte[]? tdefBytes = await this.ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (tdefBytes == null || tdefBytes.Length < this.TDef.BlockEnd)
         {
@@ -1649,7 +1653,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             tableName = tables[0].Name;
         }
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             DataTable? linkedTable = await this.TryReadLinkedTableAsync(
@@ -1663,7 +1667,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
         DataTable? dt = null;
         bool dataLoadStarted = false;
         try
@@ -1882,10 +1887,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved != null)
         {
-            List<string> resolvedHeaders = resolved.Value.Td.Columns.ConvertAll(column => column.Name);
+            List<string> resolvedHeaders = resolved.Definition.Columns.ConvertAll(column => column.Name);
             var projectedColumns = new List<ColumnInfo>(resolvedHeaders.Count);
             RowMapper<T>.Accessor?[] fullIndex = RowMapper<T>.BuildIndex(resolvedHeaders);
 
@@ -1893,7 +1898,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 if (fullIndex[i] != null)
                 {
-                    projectedColumns.Add(resolved.Value.Td.Columns[i]);
+                    projectedColumns.Add(resolved.Definition.Columns[i]);
                 }
             }
 
@@ -1901,10 +1906,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {
-                Func<object?[], T> fullFactory = RowMapper<T>.Build(resolved.Value.Td);
+                Func<object?[], T> fullFactory = RowMapper<T>.Build(resolved.Definition);
                 return await this.ReadMappedTableAsync(
-                    resolved.Value.Entry.TDefPage,
-                    resolved.Value.Td,
+                    resolved.Entry.TDefPage,
+                    resolved.Definition,
                     fullFactory,
                     maxRows,
                     cancellationToken).ConfigureAwait(false);
@@ -1915,8 +1920,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (canProject)
             {
                 return await this.ReadProjectedTableAsync<T>(
-                    resolved.Value.Entry.TDefPage,
-                    resolved.Value.Td,
+                    resolved.Entry.TDefPage,
+                    resolved.Definition,
                     projectedColumns,
                     maxRows,
                     cancellationToken).ConfigureAwait(false);
@@ -2065,7 +2070,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             DataTable? linkedTable = await this.TryReadLinkedTableAsync(
@@ -2079,7 +2084,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
         }
 
-        (CatalogEntry? entry, TableDef? td) = resolved.Value;
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
         DataTable? dt = null;
         try
         {
@@ -2892,7 +2898,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return bounds;
     }
 
-    internal async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
+    internal async ValueTask<ResolvedTable?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<CatalogEntry> tables = await this.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -2903,7 +2909,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (td?.Columns.Count > 0)
             {
                 await this.HydrateCalculatedResultTypesAsync(entry.TDefPage, td, cancellationToken).ConfigureAwait(false);
-                return (entry, td);
+                return new ResolvedTable(entry, td);
             }
         }
 
@@ -2919,7 +2925,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (sysTd?.Columns.Count > 0)
             {
                 await this.HydrateCalculatedResultTypesAsync(sysPage, sysTd, cancellationToken).ConfigureAwait(false);
-                return (new CatalogEntry(tableName, sysPage), sysTd);
+                return new ResolvedTable(new CatalogEntry(tableName, sysPage), sysTd);
             }
         }
 

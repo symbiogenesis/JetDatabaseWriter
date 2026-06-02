@@ -68,13 +68,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        (CatalogEntry Entry, TableDef Td)? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             return [];
         }
 
-        byte[]? td = await reader.GetRawTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await reader.GetRawTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null)
         {
             return [];
@@ -112,7 +112,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
             int colNum = Ru16(td, offset + reader.ColumnDescriptor.NumOff);
 
-            ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
+            ColumnInfo? info = resolved.Definition.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
             byComplexId[complexId] = (name, type);
         }
@@ -241,8 +241,8 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return result;
             }
 
-            (CatalogEntry Entry, TableDef Td)? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            long targetTdefPage = resolved is { } resolvedValue ? resolvedValue.Entry.TDefPage : 0;
+            ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
 
             await foreach (string[] row in reader.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
@@ -604,7 +604,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return 0;
             }
 
-            (CatalogEntry Entry, TableDef Td)? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
 
             await foreach (string[] row in reader.EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
