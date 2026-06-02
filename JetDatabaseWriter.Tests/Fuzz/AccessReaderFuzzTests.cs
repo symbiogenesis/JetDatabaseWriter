@@ -7,12 +7,11 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using SharpFuzz;
 using Xunit;
-
-#pragma warning disable CA1031 // Catching all exceptions is intentional for fuzz testing.
 
 /// <summary>
 /// Fuzz test for AccessReader. This test is designed to find crashes and robustness issues by exploring random input data.
@@ -31,7 +30,6 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
         {
             output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
             byte[]? fuzzedBytes = null;
-            FuzzRandom? random = null;
             try
             {
                 // Read fuzzed input for logging and saving on crash
@@ -39,7 +37,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 await stream.ReadExactlyAsync(fuzzedBytes);
                 stream.Position = 0;
 
-                random = FuzzRandom.Create(fuzzedBytes);
+                var random = FuzzRandom.Create(fuzzedBytes);
                 output.WriteLine($"[Fuzzing] FuzzRandom bytes: {fuzzedBytes.Length}");
 
                 // Preprocess fuzzed input: overlay onto a valid MDB file if needed
@@ -47,112 +45,52 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 var options = new AccessReaderOptions();
                 await using AccessReader reader = await AccessReader.OpenAsync(processedStream, options, cancellationToken: ct);
 
-                // Try accessing more properties/methods for broader coverage
-                try
-                {
-                    output.WriteLine($"CodePage: {reader.CodePage}");
-                    output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
-                    output.WriteLine($"PageReadOptimizationMode: {reader.PageReadOptimizationMode}");
-                    output.WriteLine($"PageCacheSize: {reader.PageCacheSize}");
-                    output.WriteLine($"PageSize: {reader.PageSize}");
-                    output.WriteLine($"DiagnosticsEnabled: {reader.DiagnosticsEnabled}");
-                    output.WriteLine($"HostDatabasePath: {reader.HostDatabasePath}");
-                    output.WriteLine($"IoGate: {reader.IoGate}");
-                    output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
-                    output.WriteLine($"LastDiagnostics: {reader.LastDiagnostics}");
-                    output.WriteLine($"LinkedSourceOpenOptions: {reader.LinkedSourceOpenOptions}");
-                }
-                catch (Exception ex)
-                {
-                    output.WriteLine($"""
-                        Exception accessing properties: {ex.GetType().Name}
-                        {ex}
-                        """);
-                }
-
-                // Try reading all tables
-                DataTable tables = await reader.GetTablesAsDataTableAsync(ct);
-                foreach (DataRow row in tables.Rows)
-                {
-                    string? tableName = row["TableName"] as string;
-                    if (string.IsNullOrEmpty(tableName))
-                    {
-                        continue;
-                    }
-
-                    output.WriteLine($"Reading table: {tableName}");
-                    try
-                    {
-                        // Randomize the number of rows to read (1-10)
-                        int maxRows = random.Next(1, 11);
-                        int count = 0;
-                        await foreach (object[] dataRow in reader.Rows(tableName, cancellationToken: ct))
-                        {
-                            count++;
-                            if (count > maxRows)
-                            {
-                                break;
-                            }
-                        }
-
-                        // Try reading schema and columns
-                        try
-                        {
-                            IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
-                            output.WriteLine($"Schema columns: {columns?.Count}");
-                        }
-                        catch (Exception ex)
-                        {
-                            output.WriteLine($"""
-                                Exception reading schema for {tableName}: {ex.GetType().Name}
-                                {ex}
-                                """);
-                        }
-
-                        // Try reading indexes
-                        try
-                        {
-                            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-                            output.WriteLine($"Index count: {indexes?.Count}");
-                        }
-                        catch (Exception ex)
-                        {
-                            output.WriteLine($"""
-                                Exception reading indexes for {tableName}: {ex.GetType().Name}
-                                {ex}
-                                """);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        output.WriteLine($"""
-                            Exception reading table {tableName}: {ex.GetType().Name}
-                            {ex}
-                            """);
-                    }
-                }
+                LogReaderState(output, reader);
+                await ReadDiscoveredTablesAsync(output, reader, random, ct);
             }
-            catch (Exception ex)
+            catch (IOException ex)
             {
-                output.WriteLine($"""
-                    [Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}
-                    {ex}
-                    """);
-                if (fuzzedBytes != null)
-                {
-                    try
-                    {
-                        string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
-                        Directory.CreateDirectory(crashDir);
-                        string filePath = Path.Combine(crashDir, $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin");
-                        File.WriteAllBytes(filePath, fuzzedBytes);
-                        output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
-                    }
-                    catch (Exception saveEx)
-                    {
-                        output.WriteLine($"[Fuzzing] Failed to save crashing input: {saveEx}");
-                    }
-                }
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (InvalidDataException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (InvalidOperationException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (NotSupportedException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (ArgumentException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (FormatException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (OverflowException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (IndexOutOfRangeException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (JetLimitationException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
             }
 
             output.WriteLine($"""
@@ -160,6 +98,160 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
 
                 """);
         });
+    }
+
+    private static void LogReaderState(ITestOutputHelper output, AccessReader reader)
+    {
+        output.WriteLine($"CodePage: {reader.CodePage}");
+        output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
+        output.WriteLine($"PageReadOptimizationMode: {reader.PageReadOptimizationMode}");
+        output.WriteLine($"PageCacheSize: {reader.PageCacheSize}");
+        output.WriteLine($"PageSize: {reader.PageSize}");
+        output.WriteLine($"DiagnosticsEnabled: {reader.DiagnosticsEnabled}");
+        output.WriteLine($"HostDatabasePath: {reader.HostDatabasePath}");
+        output.WriteLine($"IoGate: {reader.IoGate}");
+        output.WriteLine($"LastDiagnostics: {reader.LastDiagnostics}");
+        output.WriteLine($"LinkedSourceOpenOptions: {reader.LinkedSourceOpenOptions}");
+    }
+
+    private static async Task ReadDiscoveredTablesAsync(ITestOutputHelper output, AccessReader reader, FuzzRandom random, CancellationToken cancellationToken)
+    {
+        DataTable tables = await reader.GetTablesAsDataTableAsync(cancellationToken);
+        foreach (DataRow row in tables.Rows)
+        {
+            string? tableName = row["TableName"] as string;
+            if (string.IsNullOrEmpty(tableName))
+            {
+                continue;
+            }
+
+            output.WriteLine($"Reading table: {tableName}");
+            await RunExpectedReaderOperationAsync(output, $"reading table {tableName}", async () =>
+            {
+                int maxRows = random.Next(1, 11);
+                int count = 0;
+                await foreach (object[] dataRow in reader.Rows(tableName, cancellationToken: cancellationToken))
+                {
+                    _ = dataRow;
+                    count++;
+                    if (count > maxRows)
+                    {
+                        break;
+                    }
+                }
+            });
+
+            await RunExpectedReaderOperationAsync(output, $"reading schema for {tableName}", async () =>
+            {
+                IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken);
+                output.WriteLine($"Schema columns: {columns.Count}");
+            });
+
+            await RunExpectedReaderOperationAsync(output, $"reading indexes for {tableName}", async () =>
+            {
+                IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, cancellationToken);
+                output.WriteLine($"Index count: {indexes.Count}");
+            });
+        }
+    }
+
+    private static async Task RunExpectedReaderOperationAsync(ITestOutputHelper output, string operation, Func<Task> action)
+    {
+        try
+        {
+            await action().ConfigureAwait(false);
+        }
+        catch (IOException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (InvalidDataException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (NotSupportedException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (ArgumentException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (FormatException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (OverflowException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (IndexOutOfRangeException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+        catch (JetLimitationException ex)
+        {
+            LogExpectedException(output, operation, ex);
+        }
+    }
+
+    private static void LogExpectedException(ITestOutputHelper output, string operation, Exception ex) =>
+        output.WriteLine($"""
+            [Fuzzing] Expected exception while {operation}: {ex.GetType().Name}
+            {ex}
+            """);
+
+    private static void LogExpectedIterationException(ITestOutputHelper output, byte[]? fuzzedBytes, Exception ex)
+    {
+        output.WriteLine($"""
+            [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
+            {ex}
+            """);
+
+        if (fuzzedBytes != null)
+        {
+            SaveCrashInput(output, fuzzedBytes);
+        }
+    }
+
+    private static void SaveCrashInput(ITestOutputHelper output, byte[] fuzzedBytes)
+    {
+        try
+        {
+            string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
+            Directory.CreateDirectory(crashDir);
+            string filePath = Path.Combine(crashDir, $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin");
+            File.WriteAllBytes(filePath, fuzzedBytes);
+            output.WriteLine($"[Fuzzing] Saved expected-failure input to: {filePath}");
+        }
+        catch (IOException ex)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {ex}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {ex}");
+        }
+        catch (NotSupportedException ex)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {ex}");
+        }
+        catch (ArgumentException ex)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {ex}");
+        }
     }
 
     /// <summary>
@@ -226,7 +318,19 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
             string chosen = files[idx];
             return await File.ReadAllBytesAsync(chosen);
         }
-        catch
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+        catch (ArgumentException)
         {
             return null;
         }

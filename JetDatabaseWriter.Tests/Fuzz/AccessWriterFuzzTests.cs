@@ -6,12 +6,11 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using SharpFuzz;
 using Xunit;
-
-#pragma warning disable CA1031 // Catching all exceptions is intentional for fuzz testing.
 
 /// <summary>
 /// Fuzz test for AccessWriter. This test is designed to find crashes and robustness issues by exploring random combinations of options and data.
@@ -40,16 +39,41 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
 
                 await FuzzIterationAsync(output, fuzzedBytes, ct);
             }
-            catch (Exception ex)
+            catch (IOException ex)
             {
-                output.WriteLine($"""
-                    [Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}
-                    {ex}
-                    """);
-                if (fuzzedBytes != null)
-                {
-                    SaveCrashInput(output, fuzzedBytes);
-                }
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (InvalidDataException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (InvalidOperationException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (NotSupportedException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (ArgumentException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (FormatException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (OverflowException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
+            }
+            catch (JetLimitationException ex)
+            {
+                LogExpectedIterationException(output, fuzzedBytes, ex);
             }
 
             output.WriteLine($"""
@@ -58,6 +82,22 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
                 """);
         });
     }
+
+    private static void LogExpectedIterationException(ITestOutputHelper output, byte[]? fuzzedBytes, Exception ex)
+    {
+        output.WriteLine($"""
+            [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
+            {ex}
+            """);
+
+        if (fuzzedBytes != null)
+        {
+            SaveCrashInput(output, fuzzedBytes);
+        }
+    }
+
+    private static void LogExpectedOperationException(ITestOutputHelper output, string operation, Exception ex) =>
+        output.WriteLine($"[Fuzzing] Expected {operation} failure: {ex.GetType().Name}");
 
     private static void SaveCrashInput(ITestOutputHelper output, byte[] fuzzedBytes)
     {
@@ -70,9 +110,21 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             File.WriteAllBytes(filePath, fuzzedBytes);
             output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
         }
-        catch (Exception saveEx)
+        catch (IOException saveEx)
         {
-            output.WriteLine($"[Fuzzing] Failed to save crashing input: {saveEx}");
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
+        }
+        catch (UnauthorizedAccessException saveEx)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
+        }
+        catch (NotSupportedException saveEx)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
+        }
+        catch (ArgumentException saveEx)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
         }
     }
 
@@ -124,12 +176,37 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
                 output.WriteLine($"[RoundTrip] Read {count} rows from {tableName}");
             }
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
-            output.WriteLine($"""
-                [RoundTrip] Exception reading written DB: {ex.GetType().Name}
-                {ex}
-                """);
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (InvalidDataException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (NotSupportedException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (ArgumentException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (FormatException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (OverflowException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
+        }
+        catch (JetLimitationException ex)
+        {
+            LogExpectedOperationException(output, "round-trip read", ex);
         }
     }
 
@@ -173,9 +250,25 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             output.WriteLine($"Attempting update on {tableName} where {predicateColumn} = {predicateValue}");
             await writer.UpdateRowsAsync(tableName, predicateColumn, predicateValue, updatedValues, TestContext.Current.CancellationToken);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            output.WriteLine($"Update failed: {ex.GetType().Name}");
+            LogExpectedOperationException(output, "update", ex);
+        }
+        catch (ArgumentException ex)
+        {
+            LogExpectedOperationException(output, "update", ex);
+        }
+        catch (FormatException ex)
+        {
+            LogExpectedOperationException(output, "update", ex);
+        }
+        catch (OverflowException ex)
+        {
+            LogExpectedOperationException(output, "update", ex);
+        }
+        catch (JetLimitationException ex)
+        {
+            LogExpectedOperationException(output, "update", ex);
         }
 
         try
@@ -183,9 +276,25 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             output.WriteLine($"Attempting delete on {tableName} where {predicateColumn} = {predicateValue}");
             await writer.DeleteRowsAsync(tableName, predicateColumn, predicateValue, TestContext.Current.CancellationToken);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            output.WriteLine($"Delete failed: {ex.GetType().Name}");
+            LogExpectedOperationException(output, "delete", ex);
+        }
+        catch (ArgumentException ex)
+        {
+            LogExpectedOperationException(output, "delete", ex);
+        }
+        catch (FormatException ex)
+        {
+            LogExpectedOperationException(output, "delete", ex);
+        }
+        catch (OverflowException ex)
+        {
+            LogExpectedOperationException(output, "delete", ex);
+        }
+        catch (JetLimitationException ex)
+        {
+            LogExpectedOperationException(output, "delete", ex);
         }
     }
 

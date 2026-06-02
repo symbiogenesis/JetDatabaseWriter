@@ -9,8 +9,6 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1031 // Catching all exceptions is intentional for robustness fuzz.
-
 /// <summary>
 /// Deterministic truncation-matrix robustness coverage. Lops the last
 /// <c>N</c> bytes off a real database file and asserts that
@@ -99,38 +97,87 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
                         }
                     }
                 }
-                catch (Exception ex) when (IsExpectedRobustnessException(ex))
+                catch (IOException)
                 {
-                    // Tolerated — see helper for the allow-list.
+                }
+                catch (InvalidDataException)
+                {
+                }
+                catch (InvalidOperationException)
+                {
+                }
+                catch (NotSupportedException)
+                {
+                }
+                catch (ArgumentException)
+                {
+                }
+                catch (FormatException)
+                {
+                }
+                catch (OverflowException)
+                {
+                }
+                catch (IndexOutOfRangeException)
+                {
+                }
+                catch (KeyNotFoundException)
+                {
+                }
+                catch (JetLimitationException)
+                {
                 }
             }
         }
-        catch (Exception ex) when (IsExpectedRobustnessException(ex))
+        catch (IOException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (InvalidDataException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (InvalidOperationException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (NotSupportedException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (ArgumentException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (FormatException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (OverflowException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (IndexOutOfRangeException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (KeyNotFoundException)
+        {
+            // Open-time failure on a heavily-truncated file is acceptable
+            // as long as the exception type is managed and well-known.
+        }
+        catch (JetLimitationException)
         {
             // Open-time failure on a heavily-truncated file is acceptable
             // as long as the exception type is managed and well-known.
         }
     }
-
-    /// <summary>
-    /// Allow-list of exception types that the reader is permitted to raise
-    /// against malformed / truncated input. Anything outside this set is
-    /// re-thrown by the test, which xUnit reports as a failure — so an
-    /// <see cref="OutOfMemoryException"/>, <see cref="StackOverflowException"/>,
-    /// <see cref="AccessViolationException"/>, or unmanaged crash will
-    /// always fail the test.
-    /// </summary>
-    /// <param name="ex">The exception instance.</param>
-    private static bool IsExpectedRobustnessException(Exception ex) =>
-        ex is IOException
-            or EndOfStreamException
-            or InvalidDataException
-            or InvalidOperationException
-            or NotSupportedException
-            or ArgumentException
-            or FormatException
-            or OverflowException
-            or IndexOutOfRangeException
-            or KeyNotFoundException
-            or JetLimitationException;
 }
