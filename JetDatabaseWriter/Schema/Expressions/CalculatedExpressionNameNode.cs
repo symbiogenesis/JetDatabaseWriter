@@ -6,7 +6,7 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionNameNode(string name) : CalculatedExpressionNode
 {
-    public override object Evaluate(CalculatedExpressionEvaluator.EvaluationContext context, CalculatedExpressionEvaluator.Plan plan)
+    public override object Evaluate(CalculatedExpressionEvaluationContext context, CalculatedExpressionPlan plan)
     {
         if (TryGetBuiltinConstant(name, out object constantValue))
         {

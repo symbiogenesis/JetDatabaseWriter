@@ -4,5 +4,5 @@ using System;
 
 internal sealed class CalculatedExpressionValueNode(object? value) : CalculatedExpressionNode
 {
-    public override object Evaluate(CalculatedExpressionEvaluator.EvaluationContext context, CalculatedExpressionEvaluator.Plan plan) => value ?? DBNull.Value;
+    public override object Evaluate(CalculatedExpressionEvaluationContext context, CalculatedExpressionPlan plan) => value ?? DBNull.Value;
 }

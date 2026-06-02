@@ -2,5 +2,5 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 internal abstract class CalculatedExpressionNode
 {
-    public abstract object Evaluate(CalculatedExpressionEvaluator.EvaluationContext context, CalculatedExpressionEvaluator.Plan plan);
+    public abstract object Evaluate(CalculatedExpressionEvaluationContext context, CalculatedExpressionPlan plan);
 }

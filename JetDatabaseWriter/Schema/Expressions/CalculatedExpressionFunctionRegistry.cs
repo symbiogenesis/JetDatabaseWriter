@@ -13,8 +13,8 @@ internal static class CalculatedExpressionFunctionRegistry
     public static object Evaluate(
         string name,
         IReadOnlyList<CalculatedExpressionNode> args,
-        CalculatedExpressionEvaluator.EvaluationContext context,
-        CalculatedExpressionEvaluator.Plan plan)
+        CalculatedExpressionEvaluationContext context,
+        CalculatedExpressionPlan plan)
     {
         string normalizedName = NormalizeFunctionName(name);
         ValidateFunctionArgumentCount(normalizedName, args.Count);

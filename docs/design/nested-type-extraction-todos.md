@@ -108,12 +108,12 @@ Every `CalculatedExpression*Node.cs` file in
 [CalculatedFunctionInvocation.cs](../../JetDatabaseWriter/Schema/Expressions/CalculatedFunctionInvocation.cs)
 and [ColumnConstraint.cs](../../JetDatabaseWriter/Schema/Models/ColumnConstraint.cs).
 
-- [ ] Move `CalculatedExpressionEvaluator.Plan` to
+- [x] Move `CalculatedExpressionEvaluator.Plan` to
   `Schema/Expressions/CalculatedExpressionPlan.cs`.
-- [ ] Move `CalculatedExpressionEvaluator.EvaluationContext` to
+- [x] Move `CalculatedExpressionEvaluator.EvaluationContext` to
   `Schema/Expressions/CalculatedExpressionEvaluationContext.cs`.
-- [ ] Update `ColumnConstraint.CalculatedExpressionPlan` property type.
-- [ ] Run calculated-column expression tests.
+- [x] Update `ColumnConstraint.CalculatedExpressionPlan` property type.
+- [x] Run calculated-column expression tests.
 
 ### 4. Extract `ColumnPropertyBlockBuilder` builder types
 

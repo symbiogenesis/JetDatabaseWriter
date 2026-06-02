@@ -7,7 +7,7 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionBinaryNode(BinaryOperation operation, CalculatedExpressionNode left, CalculatedExpressionNode right) : CalculatedExpressionNode
 {
-    public override object Evaluate(CalculatedExpressionEvaluator.EvaluationContext context, CalculatedExpressionEvaluator.Plan plan)
+    public override object Evaluate(CalculatedExpressionEvaluationContext context, CalculatedExpressionPlan plan)
     {
         object leftValue = left.Evaluate(context, plan);
         object rightValue = right.Evaluate(context, plan);

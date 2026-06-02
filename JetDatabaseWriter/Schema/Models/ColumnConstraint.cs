@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Schema.Expressions;
 
 /// <summary>
 /// Per-column constraint metadata used at insert time to apply default values,
@@ -32,7 +33,7 @@ internal sealed class ColumnConstraint
     /// </summary>
     public long? NextAutoValue { get; set; }
 
-    internal Expressions.CalculatedExpressionEvaluator.Plan? CalculatedExpressionPlan { get; set; }
+    internal CalculatedExpressionPlan? CalculatedExpressionPlan { get; set; }
 
     public bool HasAnyConstraint =>
         !this.IsNullable || this.DefaultValue != null || this.IsAutoIncrement || this.ValidationRule != null || this.IsCalculated;
