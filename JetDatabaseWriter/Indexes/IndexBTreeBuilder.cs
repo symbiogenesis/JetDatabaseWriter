@@ -36,29 +36,6 @@ using JetDatabaseWriter.Infrastructure;
 internal static class IndexBTreeBuilder
 {
     /// <summary>
-    /// Result of <c>Build</c>: the rendered pages (in the order they
-    /// should be appended to the database) and the absolute page number of
-    /// the root, which the caller writes into the real-index
-    /// <c>first_dp</c> field on the TDEF.
-    /// </summary>
-    /// <param name="pages">The pages.</param>
-    /// <param name="rootPageNumber">The root page number.</param>
-    /// <param name="firstPageNumber">The first page number.</param>
-    internal readonly struct BuildResult(IReadOnlyList<byte[]> pages, long rootPageNumber, long firstPageNumber)
-    {
-        /// <summary>Gets the rendered pages, indexed [0..N-1]. Page i lives at
-        /// absolute database page number <see cref="FirstPageNumber"/> + i.</summary>
-        public IReadOnlyList<byte[]> Pages { get; } = pages;
-
-        /// <summary>Gets the absolute page number of the root (leaf for a
-        /// single-page tree, otherwise the topmost intermediate).</summary>
-        public long RootPageNumber { get; } = rootPageNumber;
-
-        /// <summary>Gets the absolute page number assigned to <c>Pages[0]</c>.</summary>
-        public long FirstPageNumber { get; } = firstPageNumber;
-    }
-
-    /// <summary>
     /// Builds a complete index B-tree. <paramref name="entries"/> must already be
     /// sorted by encoded key. <paramref name="firstPageNumber"/> is the next free
     /// page number in the database; the builder allocates contiguous pages
@@ -71,7 +48,7 @@ internal static class IndexBTreeBuilder
     /// <param name="entries">Sorted leaf entries. Empty input produces a single
     /// empty leaf page (the leaf-page emission placeholder behaviour).</param>
     /// <param name="firstPageNumber">First absolute page number to allocate.</param>
-    public static BuildResult Build(
+    public static IndexBTreeBuildResult Build(
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<IndexEntry> entries,
@@ -89,7 +66,7 @@ internal static class IndexBTreeBuilder
     /// <param name="entries">The entries.</param>
     /// <param name="firstPageNumber">The first page number.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry size, or allocated page range cannot fit the B-tree format.</exception>
-    public static BuildResult Build(
+    public static IndexBTreeBuildResult Build(
         IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
@@ -193,7 +170,7 @@ internal static class IndexBTreeBuilder
         // Single split page is its own root — no intermediates needed.
         if (splitPageCount == 1)
         {
-            return new BuildResult(pages, firstPageNumber, firstPageNumber);
+            return new IndexBTreeBuildResult(pages, firstPageNumber, firstPageNumber);
         }
 
         // Step 4: Build intermediate levels until we reach a single root.
@@ -245,7 +222,7 @@ internal static class IndexBTreeBuilder
             nextFreePage += levelCount;
         }
 
-        return new BuildResult(pages, childPageBase, firstPageNumber);
+        return new IndexBTreeBuildResult(pages, childPageBase, firstPageNumber);
     }
 
     /// <summary>

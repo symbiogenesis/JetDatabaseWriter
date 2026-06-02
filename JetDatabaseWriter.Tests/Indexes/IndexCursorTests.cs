@@ -139,7 +139,7 @@ public sealed class IndexCursorTests
     {
         int pageSize = PageSizeOf(format);
         var layout = IndexPageLayout.ForFormat(format);
-        IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(
+        IndexBTreeBuildResult build = IndexBTreeBuilder.Build(
             layout,
             pageSize,
             ParentTdefPage,

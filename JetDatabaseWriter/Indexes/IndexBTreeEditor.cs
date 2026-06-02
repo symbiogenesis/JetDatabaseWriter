@@ -1999,7 +1999,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        IndexBTreeBuilder.BuildResult build;
+        IndexBTreeBuildResult build;
         try
         {
             long provisionalFirstPage = writer.PhysicalPageCount;

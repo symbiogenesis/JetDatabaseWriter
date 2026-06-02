@@ -27,7 +27,7 @@ public sealed class IndexBTreeBuilderTests
         int pageSize = PageSizeOf(format);
         var layout = IndexPageLayout.ForFormat(format);
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, [], FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, [], FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
@@ -48,7 +48,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
@@ -79,7 +79,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         // Compute expected leaf count from layout capacity.
         int payloadArea = pageSize - layout.FirstEntryOffset;
@@ -136,7 +136,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         int rootIdx = (int)(r.RootPageNumber - r.FirstPageNumber);
         byte[] intermediate = r.Pages[rootIdx];
@@ -178,7 +178,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         byte[] leaf = r.Pages[0];
@@ -213,7 +213,7 @@ public sealed class IndexBTreeBuilderTests
             new(k2, 1, 1),
         ];
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(0, ReadU16(r.Pages[0], 20));
@@ -240,7 +240,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, 0));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
         // All leaf pages come first, then all intermediate pages (incl. root).
         int leafCount = 0;

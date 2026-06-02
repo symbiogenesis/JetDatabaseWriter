@@ -309,7 +309,7 @@ public sealed class IndexPageCodecAndEntrySplicerTests
                 IndexKeyEncoder.EncodeEntry(LongIntegerType, i, true), 100 + (i / 10), (byte)(i % 10)));
         }
 
-        IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, firstPageNumber: 50);
+        IndexBTreeBuildResult build = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, firstPageNumber: 50);
         Assert.True(build.RootPageNumber > build.FirstPageNumber, "Expected the multi-level tree to root at an intermediate page above its leaves.");
 
         int rootIdx = (int)(build.RootPageNumber - build.FirstPageNumber);

@@ -134,7 +134,7 @@ public sealed class IndexTailPageAppendTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         // Layout assumed by IndexBTreeBuilderTests: 3 leaves at pages 50..52,
         // 1 intermediate root at page 53.
@@ -160,7 +160,7 @@ public sealed class IndexTailPageAppendTests
             new([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
         };
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
+        IndexBTreeBuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, r.Pages[0][0]);

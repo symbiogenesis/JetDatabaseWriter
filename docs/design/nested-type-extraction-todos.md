@@ -132,10 +132,10 @@ has 10+ references to `ColumnPropertyBlockBuilder.TargetBuilder`; also used by
 Used from [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
 and [IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs).
 
-- [ ] Move to `Indexes/Models/IndexBTreeBuildResult.cs`
+- [x] Move to `Indexes/Models/IndexBTreeBuildResult.cs`
   (rename to `IndexBTreeBuildResult` to prevent any future ambiguity; there is
   no current `BuildResult` name collision).
-- [ ] Run index build/edit tests.
+- [x] Run index build/edit tests.
 
 ### 6. Extract `NumericEncoder.FixedPointPayload`
 

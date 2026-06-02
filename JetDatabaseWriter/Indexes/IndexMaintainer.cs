@@ -265,7 +265,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             long firstPageNumber = writer.PhysicalPageCount;
-            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, entries, firstPageNumber);
+            IndexBTreeBuildResult build = IndexBTreeBuilder.Build(leafLayout, writer.PageSizeBytes, tdefPage, entries, firstPageNumber);
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
 
@@ -972,7 +972,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
 
                 long firstNewPage = writer.PhysicalPageCount;
-                IndexBTreeBuilder.BuildResult mlBuild;
+                IndexBTreeBuildResult mlBuild;
                 try
                 {
                     mlBuild = IndexBTreeBuilder.Build(layout, writer.PageSizeBytes, tdefPage, splicedAll, firstNewPage);
