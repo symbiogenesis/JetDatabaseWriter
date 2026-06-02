@@ -181,7 +181,7 @@ adds no real discoverability win.
 
 ### 11. `GeneralLegacyTextIndexEncoder.CharHandlerType`
 
-- [ ] Used from [General97TextIndexEncoder.cs](../../JetDatabaseWriter/Indexes/Collation/General97TextIndexEncoder.cs).
+- [x] Used from [General97TextIndexEncoder.cs](../../JetDatabaseWriter/Indexes/Collation/General97TextIndexEncoder.cs).
   Optional move to `Indexes/Collation/CharHandlerType.cs`.
 
 ## Explicit Non-Moves

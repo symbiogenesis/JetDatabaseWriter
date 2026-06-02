@@ -97,12 +97,12 @@ internal static class General97TextIndexEncoder
                 AppendBytes(bytes, inline);
             }
 
-            if (handler.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Simple)
+            if (handler.Type == CharHandlerType.Simple)
             {
                 continue;
             }
 
-            if (handler.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Significant)
+            if (handler.Type == CharHandlerType.Significant)
             {
                 significantCharCount++;
                 continue;
