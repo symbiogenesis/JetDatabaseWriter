@@ -264,33 +264,50 @@ Relevant code:
 
 #### 6. Hoist `RowDecodePlan` out of `MaterializeSeekRowAsync`
 
-- [ ] In the index seek path, build `RowDecodePlan.CreateTyped(td, wantedColumns,
+- [x] In the index seek path, build `RowDecodePlan.CreateTyped(td, wantedColumns,
   strictParsing)` once before the hit loop and pass the prebuilt plan into
   `MaterializeSeekRowAsync` instead of recreating it for every matched row.
-- [ ] Drop the redundant `CatalogEntry entry` parameter on
+- [x] Drop the redundant `CatalogEntry entry` parameter on
   `MaterializeSeekRowAsync`. The method only uses `entry.TDefPage`; pass
   `long expectedTDefPage` directly, which is more truthful and one parameter
   shorter.
-- [ ] Drop the `wantedColumns` parameter on `MaterializeSeekRowAsync`. With the
+- [x] Drop the `wantedColumns` parameter on `MaterializeSeekRowAsync`. With the
   decode plan hoisted to the caller, `wantedColumns` is already baked into
   `RowDecodePlan` and is not needed by the materializer.
-- [ ] Keep `td` on `MaterializeSeekRowAsync` because the complex-column and
+- [x] Keep `td` on `MaterializeSeekRowAsync` because the complex-column and
   hyperlink passes still consume `td.Columns` and `td.ClrTypes`.
-- [ ] Do **not** introduce a `ResolvedTable` parameter here. `MaterializeSeekRowAsync`
+- [x] Do **not** introduce a `ResolvedTable` parameter here. `MaterializeSeekRowAsync`
   only needs the TDEF page number plus the table definition, and a
   `ResolvedTable` would carry more than the helper actually consumes.
-- [ ] Leave `EnumerateMappedRowsPooledAsync` as-is for this pass. `tableName`,
+- [x] Leave `EnumerateMappedRowsPooledAsync` as-is for this pass. `tableName`,
   `entry`, and `td` are all genuinely used (complex data lookup,
   owned-data-page lookup, and decoding respectively), so there is no honest
   no-new-type arity reduction available there.
-- [ ] Keep the index-hit `(long DataPage, int RowIndex)` tuple unchanged; there
+- [x] Keep the index-hit `(long DataPage, int RowIndex)` tuple unchanged; there
   is no existing row-pointer type for an index hit that lacks `RowStart` /
   `RowSize`.
-- [ ] Run typed/untyped reader projection tests, index seek tests, hyperlink
+- [x] Run typed/untyped reader projection tests, index seek tests, hyperlink
   projection tests, and complex-column read tests.
-- [ ] Spot-check seek-path allocations on a multi-hit query (for example with
+- [x] Spot-check seek-path allocations on a multi-hit query (for example with
   `dotnet-counters` or a quick BenchmarkDotNet allocation sample) to confirm
   the per-hit `RowDecodePlan` allocation has disappeared.
+
+Implementation notes (2026-06-01):
+
+- Hoisted the seek-path typed `RowDecodePlan` construction in
+  `EnumerateIndexRowsAsync` so it is built once after the projection is known
+  and reused for every index hit.
+- Replaced `MaterializeSeekRowAsync(CatalogEntry entry, ..., bool[]? wantedColumns, ...)`
+  with `MaterializeSeekRowAsync(long expectedTDefPage, ..., RowDecodePlan decodePlan, ...)`.
+  The helper still receives `td` because complex-column resolution and
+  hyperlink wrapping consume `td.Columns` and `td.ClrTypes`.
+- Left `EnumerateMappedRowsPooledAsync` and the index-hit tuple unchanged.
+- Focused validation passed: 158 tests covering index seeks, typed/untyped
+  projection, hyperlink projection, and complex-column reads.
+- Temporary allocation probe on a 2,000-hit duplicate-key seek showed the
+  old per-additional-hit allocation at about 208.67 bytes and the hoisted-plan
+  path at about 160.49 bytes, a reduction of roughly 48 bytes per additional
+  hit in that sample.
 
 Payoff: the largest concrete reader win is per-hit allocation removal in the
 seek path, not the parameter count itself. The signature shrink falls out of

@@ -1192,17 +1192,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
             ? await this.complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, this.strictParsing);
 
         foreach ((long dataPage, int rowIndex) in hits)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             object?[]? row = await this.MaterializeSeekRowAsync(
-                entry,
+                entry.TDefPage,
                 td,
                 dataPage,
                 rowIndex,
-                wantedColumns,
+                decodePlan,
                 complexData,
                 needsComplexPass,
                 needsHyperlinkPass,
@@ -1534,18 +1535,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private async ValueTask<object?[]?> MaterializeSeekRowAsync(
-        CatalogEntry entry,
+        long expectedTDefPage,
         TableDef td,
         long dataPage,
         int rowIndex,
-        bool[]? wantedColumns,
+        RowDecodePlan decodePlan,
         Dictionary<int, Dictionary<int, byte[]>>? complexData,
         bool needsComplexPass,
         bool needsHyperlinkPass,
         CancellationToken cancellationToken)
     {
         byte[] page = await this.ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != entry.TDefPage)
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != expectedTDefPage)
         {
             return null;
         }
@@ -1555,7 +1556,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, this.strictParsing);
         object?[]? row = await this.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
         if (row == null)
         {
