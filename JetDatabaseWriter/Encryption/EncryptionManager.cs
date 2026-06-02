@@ -116,19 +116,118 @@ internal static class EncryptionManager
 
     private const int HeaderPasswordNormalizedLength = HeaderPasswordLengthPrefixLength + HeaderPasswordLength;
 
-    /// <summary>Builds the page-decryption key holder for a database header and password context.</summary>
-    /// <param name="hdr">The database header bytes.</param>
+    /// <summary>
+    /// Inspects the database header for Jet3 / Jet4 / ACCDB page-encryption or
+    /// password flags, verifies the supplied password where required, and returns
+    /// the owned page-decryption keys for the database header and password context.
+    /// </summary>
+    /// <param name="header">The database header bytes.</param>
     /// <param name="format">The format.</param>
     /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
     /// <param name="password">The password.</param>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
     internal static PageDecryptionKeys CreatePageDecryptionKeys(
-        byte[] hdr,
+        byte[] header,
         DatabaseFormat format,
         bool isLegacyAesCfb,
         ReadOnlyMemory<char> password)
     {
-        (uint? rc4DbKey, byte[]? aesPageKey) = ResolveReaderPageKeys(hdr, format, isLegacyAesCfb, password);
-        return new PageDecryptionKeys(GetJet3PageMask(format, hdr), rc4DbKey, aesPageKey);
+        uint? rc4DbKey = null;
+        byte[]? aesPageKey = null;
+
+        // Offset 0x14: Jet/ACE format version byte.
+        byte ver = header[0x14];
+
+        // Jet4 .mdb (Access 2000 – 2003) — flag at 0x62 governs encryption.
+        // ACCDB format (ver >= 2, Access 2007+) reuses this offset for unrelated
+        // bits, so the Jet4 detection only applies to ver == 1.
+        if (format == DatabaseFormat.Jet4Mdb && header.Length > 0x62)
+        {
+            byte encFlag = header[0x62];
+
+            // Jet4 encryption flag values:
+            //   0x01 = Office97 password only (no page encryption)
+            //   0x02 = RC4 page encryption
+            //   0x03 = RC4 + password
+            if (encFlag is >= 0x01 and <= 0x03)
+            {
+                if (password.IsEmpty)
+                {
+                    throw new UnauthorizedAccessException(
+                        "This database is encrypted or password-protected. " +
+                        "Provide a password via AccessReaderOptions.Password, or " +
+                        "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
+                }
+
+                if (!HeaderPasswordMatches(header, Jet4PasswordMask, password.Span))
+                {
+                    throw new UnauthorizedAccessException(
+                        "The provided password is incorrect for this database.");
+                }
+
+                if ((encFlag & 0x02) != 0)
+                {
+                    rc4DbKey = Ru32(header, 0x3E);
+                }
+            }
+        }
+
+        // ACCDB legacy password-only mode (standard ACCDB header, ver >= 3).
+        // Many normal ACCDB files reuse overlapping bits at 0x62, so we only
+        // enforce password verification for the known legacy-password signature
+        // emitted by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
+        if (format == DatabaseFormat.AceAccdb && ver >= 3 && !isLegacyAesCfb && header.Length > 0x62)
+        {
+            byte encFlag = header[0x62];
+            if (encFlag == 0x07)
+            {
+                if (password.IsEmpty)
+                {
+                    throw new UnauthorizedAccessException(
+                        "This database is password-protected. " +
+                        "Provide a password via AccessReaderOptions.Password.");
+                }
+
+                if (!HeaderPasswordMatches(header, AccdbLegacyPasswordMask, password.Span))
+                {
+                    throw new UnauthorizedAccessException(
+                        "The provided password is incorrect for this database.");
+                }
+            }
+        }
+
+        // ACCDB genuine AES encryption (CFB-wrapped file presented as a raw
+        // header by the synthetic legacy path).
+        if (isLegacyAesCfb)
+        {
+            if (password.IsEmpty)
+            {
+                throw new UnauthorizedAccessException(
+                    "This .accdb file is encrypted with Access 2007+ AES encryption. " +
+                    "Provide the database password via AccessReaderOptions.Password to open it, " +
+                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
+            }
+
+            // ACCDB uses the same XOR scheme as Jet4 for the header password area.
+            if (!HeaderPasswordMatches(header, Jet4PasswordMask, password.Span))
+            {
+                throw new UnauthorizedAccessException(
+                    "The provided password is incorrect for this database.");
+            }
+
+            aesPageKey = DeriveAesPageKey(password.Span);
+        }
+
+        try
+        {
+            PageDecryptionKeys keys = new(GetJet3PageMask(format, header), rc4DbKey, aesPageKey);
+            aesPageKey = null;
+            return keys;
+        }
+        finally
+        {
+            OfficeCryptoPrimitives.ZeroIfNotNull(aesPageKey);
+        }
     }
 
     /// <summary>
@@ -425,113 +524,6 @@ internal static class EncryptionManager
             targetFormat: AccessEncryptionFormat.None,
             requireSourceEncrypted: true,
             cancellationToken);
-    }
-
-    /// <summary>
-    /// Inspects the database header for Jet4 / ACCDB-legacy / ACCDB-AES encryption
-    /// flags, verifies the supplied password where required, and returns the
-    /// derived per-page keys (RC4 database key and / or AES-128 page key).
-    /// Throws <see cref="UnauthorizedAccessException"/> when the database is
-    /// encrypted but no / wrong password was supplied.
-    /// </summary>
-    /// <param name="hdr">The database header bytes.</param>
-    /// <param name="format">The format.</param>
-    /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
-    /// <param name="password">The password.</param>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
-    private static (uint? Rc4DbKey, byte[]? AesPageKey) ResolveReaderPageKeys(
-        byte[] hdr,
-        DatabaseFormat format,
-        bool isLegacyAesCfb,
-        ReadOnlyMemory<char> password)
-    {
-        uint? rc4DbKey = null;
-        byte[]? aesPageKey = null;
-
-        // Offset 0x14: Jet/ACE format version byte.
-        byte ver = hdr[0x14];
-
-        // Jet4 .mdb (Access 2000 – 2003) — flag at 0x62 governs encryption.
-        // ACCDB format (ver >= 2, Access 2007+) reuses this offset for unrelated
-        // bits, so the Jet4 detection only applies to ver == 1.
-        if (format == DatabaseFormat.Jet4Mdb && hdr.Length > 0x62)
-        {
-            byte encFlag = hdr[0x62];
-
-            // Jet4 encryption flag values:
-            //   0x01 = Office97 password only (no page encryption)
-            //   0x02 = RC4 page encryption
-            //   0x03 = RC4 + password
-            if (encFlag is >= 0x01 and <= 0x03)
-            {
-                if (password.IsEmpty)
-                {
-                    throw new UnauthorizedAccessException(
-                        "This database is encrypted or password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password, or " +
-                        "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
-                }
-
-                if (!HeaderPasswordMatches(hdr, Jet4PasswordMask, password.Span))
-                {
-                    throw new UnauthorizedAccessException(
-                        "The provided password is incorrect for this database.");
-                }
-
-                if ((encFlag & 0x02) != 0)
-                {
-                    rc4DbKey = Ru32(hdr, 0x3E);
-                }
-            }
-        }
-
-        // ACCDB legacy password-only mode (standard ACCDB header, ver >= 3).
-        // Many normal ACCDB files reuse overlapping bits at 0x62, so we only
-        // enforce password verification for the known legacy-password signature
-        // emitted by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
-        if (format == DatabaseFormat.AceAccdb && ver >= 3 && !isLegacyAesCfb && hdr.Length > 0x62)
-        {
-            byte encFlag = hdr[0x62];
-            if (encFlag == 0x07)
-            {
-                if (password.IsEmpty)
-                {
-                    throw new UnauthorizedAccessException(
-                        "This database is password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password.");
-                }
-
-                if (!HeaderPasswordMatches(hdr, AccdbLegacyPasswordMask, password.Span))
-                {
-                    throw new UnauthorizedAccessException(
-                        "The provided password is incorrect for this database.");
-                }
-            }
-        }
-
-        // ACCDB genuine AES encryption (CFB-wrapped file presented as a raw
-        // header by the synthetic legacy path).
-        if (isLegacyAesCfb)
-        {
-            if (password.IsEmpty)
-            {
-                throw new UnauthorizedAccessException(
-                    "This .accdb file is encrypted with Access 2007+ AES encryption. " +
-                    "Provide the database password via AccessReaderOptions.Password to open it, " +
-                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
-            }
-
-            // ACCDB uses the same XOR scheme as Jet4 for the header password area.
-            if (!HeaderPasswordMatches(hdr, Jet4PasswordMask, password.Span))
-            {
-                throw new UnauthorizedAccessException(
-                    "The provided password is incorrect for this database.");
-            }
-
-            aesPageKey = DeriveAesPageKey(password.Span);
-        }
-
-        return (rc4DbKey, aesPageKey);
     }
 
     /// <summary>

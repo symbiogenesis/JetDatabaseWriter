@@ -80,9 +80,9 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
 
 ## New Types: Optional / Opportunistic
 
-- [ ] Consider returning `PageDecryptionKeys` directly from the reader key-resolution path.
+- [x] Return `PageDecryptionKeys` directly from the reader key-resolution path.
   - Before: `ResolveReaderPageKeys(...)` returns `(uint? Rc4DbKey, byte[]? AesPageKey)`, and `CreatePageDecryptionKeys(...)` immediately wraps those values in `PageDecryptionKeys` with the Jet3 mask.
-  - After: either keep the tuple because it is only a partial input, or move Jet3 mask resolution into the helper and return `PageDecryptionKeys` directly.
+  - After: Jet3 mask resolution moved into the helper, which returns `PageDecryptionKeys` directly and preserves AES key ownership cleanup on construction failure.
   - File: `JetDatabaseWriter/Encryption/EncryptionManager.cs`.
 
 - [ ] Add a decryption result type only if encryption conversion APIs grow further.
