@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -1913,11 +1914,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         byte[] inner = memory.ToArray();
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) = this.outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
+        OfficeEncryptedPackage package = this.outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
             ? OfficeCryptoStandard.Encrypt(inner, this.Options.Password.Span)
             : OfficeCryptoAgile.Encrypt(inner, this.Options.Password.Span);
 
-        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
+        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(package);
 
         _ = this.outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
         await this.outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);

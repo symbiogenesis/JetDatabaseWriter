@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -423,15 +424,14 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] plaintext = new byte[256];
         System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext);
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
         // Tamper a byte in the ciphertext (past the 8-byte size header).
-        encryptedPackage[16] ^= 0xFF;
+        package.EncryptedPackage[16] ^= 0xFF;
 
         // Decryption still succeeds (no integrity check) but produces
         // different output due to corrupted AES-CBC ciphertext.
-        byte[] decrypted = OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, TestPassword);
+        byte[] decrypted = OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword);
         Assert.NotEqual(plaintext, decrypted);
     }
 
@@ -506,10 +506,9 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] plaintext = new byte[8192];
         System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext);
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
-        byte[] decrypted = OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, TestPassword);
+        byte[] decrypted = OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword);
 
         Assert.Equal(plaintext, decrypted);
     }
@@ -520,11 +519,10 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] plaintext = new byte[4096];
         System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext);
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
         Assert.Throws<UnauthorizedAccessException>(
-            () => OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, WrongPassword));
+            () => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, WrongPassword));
     }
 
     [Fact]
@@ -533,10 +531,9 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         // Test with data smaller than one AES block (16 bytes).
         byte[] plaintext = [0x01, 0x02, 0x03, 0x04, 0x05];
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
-        byte[] decrypted = OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, TestPassword);
+        byte[] decrypted = OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword);
 
         Assert.Equal(plaintext, decrypted);
     }
@@ -548,10 +545,9 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] plaintext = new byte[256];
         System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext);
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
-        byte[] decrypted = OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, TestPassword);
+        byte[] decrypted = OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword);
 
         Assert.Equal(plaintext, decrypted);
     }
@@ -561,13 +557,13 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         byte[] plaintext = new byte[128];
 
-        (byte[] encryptionInfo, _) = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
         // Verify the version header identifies this as Standard encryption.
-        Assert.True(OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo));
+        Assert.True(OfficeCryptoAgile.IsStandardEncryptionInfo(package.EncryptionInfo));
 
-        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(0, 2));
-        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(2, 2));
+        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(package.EncryptionInfo.AsSpan(0, 2));
+        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(package.EncryptionInfo.AsSpan(2, 2));
         Assert.Equal(4, major);
         Assert.Equal(2, minor);
     }
@@ -579,17 +575,17 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         byte[] plaintext = new byte[128];
         System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext);
 
-        (byte[] info1, byte[] pkg1) = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
-        (byte[] info2, byte[] pkg2) = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package1 = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        OfficeEncryptedPackage package2 = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
         // The encrypted packages must differ because the salt is random.
         Assert.False(
-            pkg1.AsSpan().SequenceEqual(pkg2.AsSpan()),
+            package1.EncryptedPackage.AsSpan().SequenceEqual(package2.EncryptedPackage.AsSpan()),
             "Two encryptions of the same data should produce different ciphertext (different salts).");
 
         // But both must decrypt back to the same plaintext.
-        Assert.Equal(plaintext, OfficeCryptoStandard.Decrypt(info1, pkg1, TestPassword));
-        Assert.Equal(plaintext, OfficeCryptoStandard.Decrypt(info2, pkg2, TestPassword));
+        Assert.Equal(plaintext, OfficeCryptoStandard.Decrypt(package1.EncryptionInfo, package1.EncryptedPackage, TestPassword));
+        Assert.Equal(plaintext, OfficeCryptoStandard.Decrypt(package2.EncryptionInfo, package2.EncryptedPackage, TestPassword));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -816,8 +812,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     {
         // Encrypt a dummy plaintext to get a real, valid EncryptionInfo.
         byte[] plaintext = new byte[128];
-        (byte[] encryptionInfo, _) = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
-        return encryptionInfo;
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
+        return package.EncryptionInfo;
     }
 
     private async Task<byte[]> BuildStandardEncryptedFixtureAsync()
@@ -827,13 +823,12 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
         // Use the production OfficeCryptoStandard.Encrypt to build the fixture,
         // then wrap it in a CFB compound document — matching the format the
         // reader expects for Standard-encrypted .accdb files.
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(inner, TestPassword);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(inner, TestPassword);
 
         return CompoundFileWriter.Build(
         [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
+            new KeyValuePair<string, byte[]>("EncryptionInfo", package.EncryptionInfo),
+            new KeyValuePair<string, byte[]>("EncryptedPackage", package.EncryptedPackage),
         ]);
     }
 

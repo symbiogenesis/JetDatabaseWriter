@@ -5,6 +5,7 @@ using System.Buffers;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -68,7 +69,7 @@ internal static class OfficeCryptoStandard
     /// </summary>
     /// <param name="innerPackage">The inner package.</param>
     /// <param name="password">The password.</param>
-    public static (byte[] EncryptionInfo, byte[] EncryptedPackage) Encrypt(
+    public static OfficeEncryptedPackage Encrypt(
         byte[] innerPackage,
         ReadOnlySpan<char> password)
     {
@@ -105,7 +106,7 @@ internal static class OfficeCryptoStandard
             // Build EncryptedPackage: 8-byte LE size prefix + AES-CBC encrypted data.
             byte[] encryptedPackage = EncryptPackage(innerPackage, key);
 
-            return (encryptionInfo, encryptedPackage);
+            return new OfficeEncryptedPackage(encryptionInfo, encryptedPackage);
         }
         finally
         {

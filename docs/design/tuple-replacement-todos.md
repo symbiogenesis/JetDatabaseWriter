@@ -63,17 +63,17 @@ Use this as a prioritized cleanup list, not as a mandate to replace every tuple.
   - Compatibility note: this is a deliberate public API change from tuple-field access to named DTO property access; README usage was updated.
   - Files: `JetDatabaseWriter/Models/MultiValueItem.cs`, `JetDatabaseWriter/Interfaces/IAccessReader.cs`, `JetDatabaseWriter/AccessReader.cs`, `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs`, and public API tests.
 
-- [ ] Add an Office crypto package result type.
+- [x] Add an Office crypto package result type.
   - Before: `(byte[] EncryptionInfo, byte[] EncryptedPackage)` from Standard and Agile encryption helpers.
   - After: `OfficeEncryptedPackage` or `EncryptedPackageStreams` with `EncryptionInfo` and `EncryptedPackage`.
   - Files: `JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs`, `JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs`, `JetDatabaseWriter/Encryption/EncryptionConverter.cs`, and encryption tests.
 
-- [ ] Add an Agile password-key material type.
+- [x] Add an Agile password-key material type.
   - Before: `(byte[] VerifierInput, byte[] VerifierHash, byte[] KeyValue, byte[] HmacKey, byte[] HmacValue)` from `DeriveAllPasswordKeys`.
   - After: `AgilePasswordKeys` or `AgileEncryptionKeyMaterial` with named properties for each derived key.
   - File: `JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs`.
 
-- [ ] Add a flat Agile encryption-info result type.
+- [x] Add a flat Agile encryption-info result type.
   - Before: `(byte[] EncryptionInfo, byte[] IntermediateKey, byte[] KeyDataSalt)` from flat Agile encryption setup.
   - After: `FlatAgileEncryptionInfo` or `FlatAgileArtifacts`.
   - File: `JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs`.

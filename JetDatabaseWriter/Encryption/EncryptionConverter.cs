@@ -200,15 +200,15 @@ internal static class EncryptionConverter
         return DetectFlatFormat(rawFile, fmt);
     }
 
-    internal static byte[] BuildOfficeCryptoCompoundFile(byte[] encryptionInfo, byte[] encryptedPackage)
+    internal static byte[] BuildOfficeCryptoCompoundFile(OfficeEncryptedPackage package)
     {
-        Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
-        Guard.NotNull(encryptedPackage, nameof(encryptedPackage));
+        Guard.NotNull(package.EncryptionInfo, nameof(package.EncryptionInfo));
+        Guard.NotNull(package.EncryptedPackage, nameof(package.EncryptedPackage));
 
         return CompoundFileWriter.BuildOfficeCrypto(
         [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", PadEncryptionInfoForRegularFat(encryptionInfo)),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
+            new KeyValuePair<string, byte[]>("EncryptionInfo", PadEncryptionInfoForRegularFat(package.EncryptionInfo)),
+            new KeyValuePair<string, byte[]>("EncryptedPackage", package.EncryptedPackage),
         ]);
     }
 
@@ -333,10 +333,9 @@ internal static class EncryptionConverter
 
     private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
     {
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoAgile.Encrypt(plaintext, password);
+        OfficeEncryptedPackage package = OfficeCryptoAgile.Encrypt(plaintext, password);
 
-        return BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
+        return BuildOfficeCryptoCompoundFile(package);
     }
 
     private static byte[] BuildAccdbStandard(byte[] plaintext, ReadOnlySpan<char> password)
@@ -344,10 +343,9 @@ internal static class EncryptionConverter
         // Standard wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
         // we have are already in that shape — pass them through
         // OfficeCryptoStandard.Encrypt and emit the resulting CFB document.
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoStandard.Encrypt(plaintext, password);
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, password);
 
-        return BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
+        return BuildOfficeCryptoCompoundFile(package);
     }
 
     private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
