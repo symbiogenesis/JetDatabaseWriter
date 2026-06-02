@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
-using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Threading;
@@ -21,7 +20,7 @@ public sealed class NumericRowEncodingTests
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -32,7 +31,7 @@ public sealed class NumericRowEncodingTests
             await writer.InsertRowAsync("T", [1.255m], TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, table.Rows.Count);
@@ -45,7 +44,7 @@ public sealed class NumericRowEncodingTests
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("N", typeof(decimal)) { NumericPrecision = 3, NumericScale = 2 }],

@@ -344,8 +344,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
 
-            IndexPageLayout layout =
-                IndexPageLayout.ForFormat(reader.DatabaseFormat);
+            var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
 
             DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);

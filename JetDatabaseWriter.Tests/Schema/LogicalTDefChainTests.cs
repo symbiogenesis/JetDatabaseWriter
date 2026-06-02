@@ -33,7 +33,7 @@ public sealed class LogicalTDefChainTests
             retainPageNumbers: true,
             this.ct);
 
-        int usedLength = PageSize + 9;
+        const int usedLength = PageSize + 9;
         byte[] logicalBytes = chain.EnsureCapacity(usedLength);
         for (int offset = PageSize; offset < usedLength; offset++)
         {
@@ -101,7 +101,7 @@ public sealed class LogicalTDefChainTests
 
         Assert.Equal(3, chain.PageNumbers.Count);
 
-        int usedLength = PageSize - 7;
+        const int usedLength = PageSize - 7;
         byte[] logicalBytes = chain.Bytes;
         logicalBytes[usedLength - 1] = 0x7E;
 
