@@ -42,33 +42,33 @@ The scan excluded:
 
 ### 1. Extract the `IndexLayout` nested cluster
 
-[IndexLayout.cs](../../JetDatabaseWriter/Indexes/IndexLayout.cs) contains seven
+[IndexLayout.cs](../../JetDatabaseWriter/Indexes/IndexLayout.cs) previously contained seven
 nested data shapes consumed across `AccessReader`, `AccessWriter`,
 `UniqueIndexChecker`, `TDefPageBuilder`, and `IndexCatalogReader`. Their
-declarations are `public`, but `IndexLayout` itself is `internal`; extract
-them as `internal` top-level types to avoid expanding the public API.
+declarations were `public`, but `IndexLayout` itself is `internal`; they were
+extracted as `internal` top-level types to avoid expanding the public API.
 [UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
-already aliases `IndexLayout.UniqueIndexDescriptor`, which is the canonical
+previously aliased `IndexLayout.UniqueIndexDescriptor`, which was the canonical
 "should-be-its-own-file" signal.
 
-- [ ] Move `IndexLayout.KeyColumn` to `Indexes/Models/KeyColumn.cs`.
-- [ ] Move `IndexLayout.IndexSectionAnchors` to
+- [x] Move `IndexLayout.KeyColumn` to `Indexes/Models/KeyColumn.cs`.
+- [x] Move `IndexLayout.IndexSectionAnchors` to
   `Indexes/Models/IndexSectionAnchors.cs`.
-- [ ] Move `IndexLayout.RealIdxSlot` to `Indexes/Models/RealIdxSlot.cs`.
-- [ ] Move `IndexLayout.LogicalIdxEntry` to `Indexes/Models/LogicalIdxEntry.cs`.
-- [ ] Move `IndexLayout.RealIdxEntry` to `Indexes/Models/RealIdxEntry.cs`.
-- [ ] Move `IndexLayout.KeyColumnInfo` to `Indexes/Models/KeyColumnInfo.cs`.
-- [ ] Move `IndexLayout.UniqueIndexDescriptor` to
+- [x] Move `IndexLayout.RealIdxSlot` to `Indexes/Models/RealIdxSlot.cs`.
+- [x] Move `IndexLayout.LogicalIdxEntry` to `Indexes/Models/LogicalIdxEntry.cs`.
+- [x] Move `IndexLayout.RealIdxEntry` to `Indexes/Models/RealIdxEntry.cs`.
+- [x] Move `IndexLayout.KeyColumnInfo` to `Indexes/Models/KeyColumnInfo.cs`.
+- [x] Move `IndexLayout.UniqueIndexDescriptor` to
   `Indexes/Models/UniqueIndexDescriptor.cs`.
-- [ ] Delete the `using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;`
+- [x] Delete the `using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;`
   alias in `UniqueIndexChecker.cs`.
-- [ ] Delete the `using KeyColumnInfo = IndexLayout.KeyColumnInfo;` and
+- [x] Delete the `using KeyColumnInfo = IndexLayout.KeyColumnInfo;` and
   `using RealIdxEntry = IndexLayout.RealIdxEntry;` aliases in
   `IndexMaintainer.cs`.
-- [ ] Update all `IndexLayout.X` references to bare `X`.
-- [ ] Keep the instance methods (`GetIndexSection`, `TryReadLogicalEntry`,
+- [x] Update all `IndexLayout.X` references to bare `X`.
+- [x] Keep the instance methods (`GetIndexSection`, `TryReadLogicalEntry`,
   `TryReadRealIdxSlot`, etc.) on `IndexLayout`; only the data shapes move.
-- [ ] Run index, schema, catalog, and round-trip tests.
+- [x] Run index, schema, catalog, and round-trip tests.
 
 ### 2. Extract the `AccessBase` row primitives
 

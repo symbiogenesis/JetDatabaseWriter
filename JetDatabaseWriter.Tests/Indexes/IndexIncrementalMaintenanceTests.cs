@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -433,8 +434,8 @@ public sealed class IndexIncrementalMaintenanceTests
                     tdef,
                     realIdxDescStart,
                     ri,
-                    out IndexLayout.RealIdxSlot slot,
-                    out List<IndexLayout.KeyColumn>? keyCols);
+                    out RealIdxSlot slot,
+                    out List<KeyColumn> keyCols);
                 Assert.True(decoded, $"Failed to decode real-idx slot {ri}.");
                 Assert.NotEmpty(keyCols);
 

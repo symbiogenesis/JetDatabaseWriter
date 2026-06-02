@@ -3463,7 +3463,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
-                if (!this.IndexLayoutInfo.TryReadRealIdxSlot(page, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot))
+                if (!this.IndexLayoutInfo.TryReadRealIdxSlot(page, realIdxDescStart, ri, out RealIdxSlot slot))
                 {
                     return false;
                 }

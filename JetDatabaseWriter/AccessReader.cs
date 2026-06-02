@@ -18,6 +18,7 @@ using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -1296,7 +1297,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int realIdxDescStart = pos;
-        IndexLayout.IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (anchors.LogIdxNamesStart > td.Length)
         {
@@ -1328,7 +1329,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
+            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
             {
                 break;
             }
@@ -1340,7 +1341,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte flags = 0x00;
             int firstDp = 0;
             if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && this.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? kcs))
+                && this.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot, out List<KeyColumn>? kcs))
             {
                 foreach ((int cn, bool ascending) in kcs)
                 {

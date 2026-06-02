@@ -6,7 +6,6 @@ using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -284,7 +283,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            IndexLayout.IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
             int totalIdxBytesLowerBound = anchors.LogIdxNamesStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes;
 
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
@@ -26,7 +27,7 @@ internal static class IndexCatalogReader
     /// Reads every populated real-idx slot, then walks logical-idx entries to
     /// (a) collect the set of real-idx slots backing a primary-key
     /// (<c>index_type = 0x01</c>) logical-idx — those slots are also marked
-    /// unique on the returned <see cref="IndexLayout.RealIdxEntry"/> values
+    /// unique on the returned <see cref="RealIdxEntry"/> values
     /// even when their physical <c>flags &amp; 0x01</c> bit is clear — and
     /// (b) when <paramref name="logIdxNames"/> is supplied, capture a
     /// best-effort name per real-idx (first logical-idx referencing that
@@ -34,23 +35,23 @@ internal static class IndexCatalogReader
     /// </summary>
     /// <param name="tdefBuffer">Full decoded TDEF buffer.</param>
     /// <param name="layout">Per-format real-idx / logical-idx layout descriptor.</param>
-    /// <param name="anchors">Index-section anchors + slot counts (typically obtained via <see cref="IndexLayout.GetIndexSection"/> after the caller has walked the column-name block to compute <see cref="IndexLayout.IndexSectionAnchors.RealIdxDescStart"/>).</param>
+    /// <param name="anchors">Index-section anchors + slot counts (typically obtained via <see cref="IndexLayout.GetIndexSection"/> after the caller has walked the column-name block to compute <see cref="IndexSectionAnchors.RealIdxDescStart"/>).</param>
     /// <param name="logIdxNames">Optional pre-decoded logical-idx names list (one per logical entry, in order); pass <see langword="null"/> to skip name capture.</param>
     public static IndexCatalog Read(
         byte[] tdefBuffer,
         IndexLayout layout,
-        IndexLayout.IndexSectionAnchors anchors,
+        IndexSectionAnchors anchors,
         IReadOnlyList<string>? logIdxNames = null)
     {
-        var realIdxByNum = new Dictionary<int, IndexLayout.RealIdxEntry>(anchors.NumRealIdx);
+        var realIdxByNum = new Dictionary<int, RealIdxEntry>(anchors.NumRealIdx);
         for (int ri = 0; ri < anchors.NumRealIdx; ri++)
         {
             if (!layout.TryReadRealIdxSlotWithKeyColumns(
                     tdefBuffer,
                     anchors.RealIdxDescStart,
                     ri,
-                    out IndexLayout.RealIdxSlot slot,
-                    out List<IndexLayout.KeyColumn>? keyCols))
+                    out RealIdxSlot slot,
+                    out List<KeyColumn>? keyCols))
             {
                 break;
             }
@@ -67,7 +68,7 @@ internal static class IndexCatalogReader
         var nameByRealIdx = new Dictionary<int, string>();
         for (int li = 0; li < anchors.NumIdx; li++)
         {
-            if (!layout.TryReadLogicalEntry(tdefBuffer, anchors.LogIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
+            if (!layout.TryReadLogicalEntry(tdefBuffer, anchors.LogIdxStart, li, out LogicalIdxEntry entry))
             {
                 break;
             }
@@ -76,7 +77,7 @@ internal static class IndexCatalogReader
             if (entry.IndexType == IndexKind.PrimaryKey)
             {
                 pkRealIdxNums.Add(realIdxNum);
-                if (realIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie))
+                if (realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rie))
                 {
                     realIdxByNum[realIdxNum] = rie with { IsUnique = true };
                 }
@@ -131,20 +132,20 @@ internal static class IndexCatalogReader
     public static ResolvedIndexCatalog ReadResolved(
         byte[] tdefBuffer,
         IndexLayout layout,
-        IndexLayout.IndexSectionAnchors anchors,
+        IndexSectionAnchors anchors,
         IReadOnlyList<ColumnInfo> tableColumns,
         IReadOnlyList<string>? logIdxNames = null)
     {
         IndexCatalog catalog = Read(tdefBuffer, layout, anchors, logIdxNames);
         Dictionary<int, int> snapshotIndexByColNum = BuildColumnNumberToSnapshotIndex(tableColumns);
-        var keyColInfosByRealIdx = new Dictionary<int, List<IndexLayout.KeyColumnInfo>>(catalog.RealIdxByNum.Count);
-        foreach ((int realIdxNum, IndexLayout.RealIdxEntry rie) in catalog.RealIdxByNum)
+        var keyColInfosByRealIdx = new Dictionary<int, List<KeyColumnInfo>>(catalog.RealIdxByNum.Count);
+        foreach ((int realIdxNum, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
             if (IndexLayout.TryResolveKeyColumnInfos(
                     rie.IndexKeyColumns,
                     tableColumns,
                     snapshotIndexByColNum,
-                    out List<IndexLayout.KeyColumnInfo>? infos))
+                    out List<KeyColumnInfo>? infos))
             {
                 keyColInfosByRealIdx[realIdxNum] = infos;
             }
@@ -156,11 +157,11 @@ internal static class IndexCatalogReader
     /// <summary>
     /// Decoded TDEF index catalog returned by <see cref="Read"/>.
     /// </summary>
-    /// <param name="RealIdxByNum">Real-idx slot number → decoded entry. <see cref="IndexLayout.RealIdxEntry.IsUnique"/> reflects the physical <c>flags &amp; 0x01</c> bit OR a PK promotion (any logical-idx with <c>index_type = 0x01</c> referencing this slot via <c>index_num2</c>).</param>
+    /// <param name="RealIdxByNum">Real-idx slot number → decoded entry. <see cref="RealIdxEntry.IsUnique"/> reflects the physical <c>flags &amp; 0x01</c> bit OR a PK promotion (any logical-idx with <c>index_type = 0x01</c> referencing this slot via <c>index_num2</c>).</param>
     /// <param name="PkRealIdxNums">Set of real-idx slot numbers backing a primary-key logical-idx.</param>
     /// <param name="NameByRealIdx">Best-effort logical-idx name per real-idx slot (first logical-idx referencing that slot wins). Empty when <c>logIdxNames</c> was not supplied to <see cref="Read"/>.</param>
     public sealed record IndexCatalog(
-        Dictionary<int, IndexLayout.RealIdxEntry> RealIdxByNum,
+        Dictionary<int, RealIdxEntry> RealIdxByNum,
         HashSet<int> PkRealIdxNums,
         Dictionary<int, string> NameByRealIdx)
     {
@@ -181,7 +182,7 @@ internal static class IndexCatalogReader
         /// </summary>
         /// <param name="realIdxNum">The real index number of.</param>
         public bool IsUniqueOrPk(int realIdxNum)
-            => (this.RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
+            => (this.RealIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rie) && rie.IsUnique)
                 || this.PkRealIdxNums.Contains(realIdxNum);
     }
 
@@ -200,10 +201,10 @@ internal static class IndexCatalogReader
     public sealed record ResolvedIndexCatalog(
         IndexCatalog Catalog,
         Dictionary<int, int> SnapshotIndexByColNum,
-        Dictionary<int, List<IndexLayout.KeyColumnInfo>> KeyColumnInfosByRealIdx)
+        Dictionary<int, List<KeyColumnInfo>> KeyColumnInfosByRealIdx)
     {
         /// <summary>Gets the decoded real-idx slots; shortcut for <c>Catalog.RealIdxByNum</c>.</summary>
-        public Dictionary<int, IndexLayout.RealIdxEntry> RealIdxByNum => this.Catalog.RealIdxByNum;
+        public Dictionary<int, RealIdxEntry> RealIdxByNum => this.Catalog.RealIdxByNum;
 
         /// <summary>
         /// Returns the pre-resolved key columns for <paramref name="realIdxNum"/>,
@@ -212,9 +213,9 @@ internal static class IndexCatalogReader
         /// </summary>
         /// <param name="realIdxNum">The real index number of.</param>
         /// <param name="keyColInfos">The key col infos.</param>
-        public bool TryGetKeyColumnInfos(int realIdxNum, out List<IndexLayout.KeyColumnInfo> keyColInfos)
+        public bool TryGetKeyColumnInfos(int realIdxNum, out List<KeyColumnInfo> keyColInfos)
         {
-            if (this.KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))
+            if (this.KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<KeyColumnInfo>? infos))
             {
                 keyColInfos = infos;
                 return true;

@@ -6,11 +6,11 @@ using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
-using UniqueIndexDescriptor = IndexLayout.UniqueIndexDescriptor;
 
 /// <summary>
 /// Pre-write unique-index enforcement: detects duplicate keys before any
@@ -64,20 +64,20 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         int realIdxDescStart = namePos;
-        IndexLayout.IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         List<string> logIdxNames = writer.Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuffer, writer.IndexLayoutInfo, anchors, tableDef.Columns, logIdxNames);
 
-        foreach ((int realIdxNum, IndexLayout.RealIdxEntry slot) in catalog.RealIdxByNum)
+        foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
             if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
             {
                 continue;
             }
 
-            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<IndexLayout.KeyColumnInfo>? keyColInfos))
+            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo>? keyColInfos))
             {
                 continue;
             }
@@ -285,7 +285,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     {
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
-            foreach (IndexLayout.KeyColumnInfo keyColumn in descriptor.KeyColumns)
+            foreach (KeyColumnInfo keyColumn in descriptor.KeyColumns)
             {
                 if (keyColumn.Col.Type is NumericType or MemoType)
                 {

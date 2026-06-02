@@ -14,8 +14,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
-using KeyColumnInfo = IndexLayout.KeyColumnInfo;
-using RealIdxEntry = IndexLayout.RealIdxEntry;
 
 #pragma warning disable SA1202, SA1204
 
@@ -750,7 +748,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         // against Access-authored repair output.
         for (int li = 0; li < numIdx; li++)
         {
-            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
+            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out LogicalIdxEntry entry))
             {
                 this.LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
                 return false;
@@ -767,7 +765,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         var slots = new List<(int RealIdxNum, RealIdxEntry Entry)>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn>? keyCols))
+            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out RealIdxSlot slot, out List<KeyColumn>? keyCols))
             {
                 this.LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
                 return false;
