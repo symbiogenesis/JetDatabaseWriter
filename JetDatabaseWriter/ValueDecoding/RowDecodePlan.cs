@@ -642,8 +642,4 @@ internal sealed class RowDecodePlan
             return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
         }
     }
-
-    internal readonly record struct LongValueRef(int Start, int Len, bool IsOle);
-
-    internal readonly record struct CalculatedLongValueRef(int Start, int Len, bool IsOle);
 }

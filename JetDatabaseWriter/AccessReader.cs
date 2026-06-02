@@ -28,6 +28,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -3084,13 +3085,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         for (int i = 0; i < validLength; i++)
         {
-            if (buffer[i] is RowDecodePlan.LongValueRef lvr)
+            if (buffer[i] is LongValueRef lvr)
             {
                 buffer[i] = lvr.IsOle
                     ? await this.longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                     : await this.longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
-            else if (buffer[i] is RowDecodePlan.CalculatedLongValueRef clvr)
+            else if (buffer[i] is CalculatedLongValueRef clvr)
             {
                 buffer[i] = await this.ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
             }
@@ -3101,7 +3102,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Async slow-path that walks the LVAL chain for any
-    /// <see cref="RowDecodePlan.LongValueRef"/> sentinels left in <paramref name="row"/>
+    /// <see cref="LongValueRef"/> sentinels left in <paramref name="row"/>
     /// by <c>TryCrackRowSync</c>. Only invoked when at least one
     /// such sentinel was emitted — fixed-only / inline-only rows skip this
     /// entirely and never allocate an async state machine.
@@ -3115,7 +3116,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return row;
     }
 
-    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, RowDecodePlan.CalculatedLongValueRef reference, CancellationToken cancellationToken)
+    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, CancellationToken cancellationToken)
     {
         byte[] raw = await this.longValueDecoder.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);
@@ -3130,7 +3131,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// schema sanity-check rejects the row (caller should skip).
     /// <paramref name="needsLongValue"/> is set when one or more
     /// <c>Memo</c>/<c>Ole</c> slots require an LVAL-chain walk; those
-    /// slots are filled with a <see cref="RowDecodePlan.LongValueRef"/> sentinel that the
+    /// slots are filled with a <see cref="LongValueRef"/> sentinel that the
     /// async wrapper (<c>CrackRowTypedAsync</c>) replaces.
     /// </summary>
     /// <param name="page">The page bytes.</param>

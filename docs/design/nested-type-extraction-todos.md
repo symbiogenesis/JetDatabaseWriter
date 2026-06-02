@@ -159,10 +159,10 @@ Used from [LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueD
 Used from [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)
 sentinel-resolution code.
 
-- [ ] Move `LongValueRef` to `ValueDecoding/Models/LongValueRef.cs`.
-- [ ] Move `CalculatedLongValueRef` to
+- [x] Move `LongValueRef` to `ValueDecoding/Models/LongValueRef.cs`.
+- [x] Move `CalculatedLongValueRef` to
   `ValueDecoding/Models/CalculatedLongValueRef.cs`.
-- [ ] Run reader projection tests including MEMO/OLE and calculated-column
+- [x] Run reader projection tests including MEMO/OLE and calculated-column
   columns.
 
 ## P2. Optional single-consumer moves
