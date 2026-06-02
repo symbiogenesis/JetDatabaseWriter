@@ -76,26 +76,27 @@ previously aliased `IndexLayout.UniqueIndexDescriptor`, which was the canonical
 its nested row types are referenced from `Pages/`, `LongValues/`,
 `ValueDecoding/`, `Indexes/`, and `Relationships/`.
 
-- [ ] Move `AccessBase.RowBound` to `Pages/Models/RowBound.cs`
+- [x] Move `AccessBase.RowBound` to `Pages/Models/RowBound.cs`
   (siblings: `RowLocation.cs`, `PageInsertTarget.cs`; even though its current
   external consumer is `LongValueStore`, it describes data-page row bounds).
-- [ ] Move `AccessBase.RowLayout` to `Pages/Models/RowLayout.cs`.
-- [ ] Move `AccessBase.ColumnSlice` to `ValueDecoding/Models/ColumnSlice.cs`
-  (its only external consumer is `RowDecodePlan`).
-- [ ] Move `AccessBase.ColumnSliceKind` to
+- [x] Move `AccessBase.RowLayout` to `Pages/Models/RowLayout.cs`.
+- [x] Move `AccessBase.ColumnSlice` to `ValueDecoding/Models/ColumnSlice.cs`
+  (its external consumers are `RowDecodePlan` and `DirectRowDecoderBuilder`).
+- [x] Move `AccessBase.ColumnSliceKind` to
   `ValueDecoding/Models/ColumnSliceKind.cs`.
-- [ ] Leave `AccessBase.TableRow` nested — only used inside `AccessBase.cs`.
-- [ ] Leave `AccessBase.TableRowVisitor` nested — only used inside
+- [x] Leave `AccessBase.TableRow` nested — only used inside `AccessBase.cs`.
+- [x] Leave `AccessBase.TableRowVisitor` nested — only used inside
   `AccessBase.cs` and tied to the nested `TableRow` shape.
-- [ ] Leave `AccessBase.ParsedColumnDescriptor` nested — `private`.
-- [ ] Update all `AccessBase.X` references at call sites in
+- [x] Leave `AccessBase.ParsedColumnDescriptor` nested — `private`.
+- [x] Update all `AccessBase.X` references at call sites in
   [RowDecodePlan.cs](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs),
+  [DirectRowDecoderBuilder.cs](../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs),
   [UsageMap.cs](../../JetDatabaseWriter/Pages/UsageMap.cs),
   [LongValueDecoder.cs](../../JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs),
   [LongValueStore.cs](../../JetDatabaseWriter/LongValues/LongValueStore.cs),
   [IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs),
   [RelationshipChildRowLocator.cs](../../JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs).
-- [ ] Run reader, writer, long-value, and index-maintenance tests.
+- [x] Run reader, writer, long-value, and index-maintenance tests.
 
 ## P1. Mechanical single-cluster moves
 

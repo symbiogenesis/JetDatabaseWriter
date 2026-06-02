@@ -29,6 +29,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;

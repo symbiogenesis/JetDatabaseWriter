@@ -22,6 +22,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;

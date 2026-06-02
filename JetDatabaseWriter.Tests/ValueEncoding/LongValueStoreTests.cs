@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -71,7 +72,7 @@ public sealed class LongValueStoreTests
         byte[] page = new byte[pageSize];
         page[0] = Constants.PageTypes.Data;
         Wu16(page, dataPage.NumRows, 2);
-        AccessBase.RowBound[] liveRows = [new(RowIndex: 1, RowStart: 48, RowSize: 11)];
+        RowBound[] liveRows = [new(RowIndex: 1, RowStart: 48, RowSize: 11)];
 
         LongValueStore.LvalRowLocation location = LongValueStore.LocateRow(
             lvalPage: 7,

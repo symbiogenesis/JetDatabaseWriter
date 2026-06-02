@@ -75,7 +75,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
                     return null;
                 }
 
-                foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
+                foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(page))
                 {
                     if (!pageRows.Value.Contains(rowBound.RowIndex))
                     {

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -48,10 +49,10 @@ internal static class UsageMap
         page[offset + 3] = (byte)((checkedPageNumber >> 16) & 0xFF);
     }
 
-    internal static bool TryGetFirstRowBound(byte[] page, DataPageLayout layout, int pageSize, out AccessBase.RowBound rowBound)
+    internal static bool TryGetFirstRowBound(byte[] page, DataPageLayout layout, int pageSize, out RowBound rowBound)
         => TryGetRowBound(page, layout, pageSize, rowIndex: 0, out rowBound);
 
-    internal static bool TryGetRowBound(byte[] page, DataPageLayout layout, int pageSize, int rowIndex, out AccessBase.RowBound rowBound)
+    internal static bool TryGetRowBound(byte[] page, DataPageLayout layout, int pageSize, int rowIndex, out RowBound rowBound)
     {
         rowBound = default;
         if (rowIndex < 0)
@@ -99,13 +100,13 @@ internal static class UsageMap
             }
         }
 
-        rowBound = new AccessBase.RowBound(rowIndex, rowStart, rowEnd - rowStart);
+        rowBound = new RowBound(rowIndex, rowStart, rowEnd - rowStart);
         return rowBound.RowSize > 0;
     }
 
     internal static async ValueTask<bool> TryEnumeratePagesAsync(
         byte[] usageMapPage,
-        AccessBase.RowBound rowBound,
+        RowBound rowBound,
         int pageSize,
         long totalPages,
         long minimumPageNumber,
@@ -149,7 +150,7 @@ internal static class UsageMap
 
     internal static bool TryEnumerateInlinePages(
         byte[] usageMapPage,
-        AccessBase.RowBound rowBound,
+        RowBound rowBound,
         int pageSize,
         long totalPages,
         long minimumPageNumber,
@@ -204,7 +205,7 @@ internal static class UsageMap
 
     internal static async ValueTask<bool> TryEnumerateReferencePagesAsync(
         byte[] usageMapPage,
-        AccessBase.RowBound rowBound,
+        RowBound rowBound,
         int pageSize,
         long totalPages,
         long minimumPageNumber,

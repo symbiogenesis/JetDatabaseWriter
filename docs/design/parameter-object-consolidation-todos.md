@@ -81,7 +81,7 @@ reusing types and helpers that already exist.
 #### 1. Push `RowBound` through usage-map helpers
 
 - [x] Update `UsageMap.TryEnumerateInlinePages` to take
-  `AccessBase.RowBound rowBound` instead of separate `rowStart` and `rowSize`
+  `RowBound rowBound` instead of separate `rowStart` and `rowSize`
   parameters.
 - [x] Update `UsageMap.TryEnumerateReferencePagesAsync` the same way.
 - [x] Keep `UsageMap.TryEnumeratePagesAsync` as the top-level entry point; it
@@ -103,7 +103,7 @@ Relevant code:
 - [`UsageMap.TryEnumeratePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
 - [`UsageMap.TryEnumerateInlinePages`](../../JetDatabaseWriter/Pages/UsageMap.cs)
 - [`UsageMap.TryEnumerateReferencePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
-- [`AccessBase.RowBound`](../../JetDatabaseWriter/AccessBase.cs)
+- [`RowBound`](../../JetDatabaseWriter/Pages/Models/RowBound.cs)
 
 #### 2. Use existing `FkSidePlan` in FK logical-index emission
 
@@ -364,7 +364,7 @@ Relevant code:
 - [`UsageMap.TryEnumeratePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
 - [`UsageMap.TryEnumerateReferencePagesAsync`](../../JetDatabaseWriter/Pages/UsageMap.cs)
 - [`AccessBase.TryReadMappedOwnedDataPagesAsync`](../../JetDatabaseWriter/AccessBase.cs)
-- [`AccessBase.RowBound`](../../JetDatabaseWriter/AccessBase.cs)
+- [`RowBound`](../../JetDatabaseWriter/Pages/Models/RowBound.cs)
 
 ### P2. Evaluate additive public API ergonomics last
 

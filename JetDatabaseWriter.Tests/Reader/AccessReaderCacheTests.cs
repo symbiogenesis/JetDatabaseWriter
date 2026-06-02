@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -108,7 +109,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
         LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
-        LruCache<long, AccessBase.RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, RowBoundsCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader, RowBoundsCacheFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.Equal(options.PageCacheSize, pageCache.Count);
         Assert.True(pageCache.Misses > pageCache.Count);
@@ -140,7 +141,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken);
         LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
-        LruCache<long, AccessBase.RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, AccessBase.RowBound[]>>(reader, RowBoundsCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader, RowBoundsCacheFieldName);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);

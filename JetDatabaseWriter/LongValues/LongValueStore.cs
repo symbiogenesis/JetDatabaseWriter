@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -96,7 +97,7 @@ internal static class LongValueStore
         byte[] page,
         DataPageLayout dataPage,
         int pageSize,
-        ReadOnlySpan<AccessBase.RowBound> liveRows)
+        ReadOnlySpan<RowBound> liveRows)
     {
         if (lvalPage <= 0)
         {
@@ -114,7 +115,7 @@ internal static class LongValueStore
             return new LvalRowLocation(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
 
-        foreach (AccessBase.RowBound rowBound in liveRows)
+        foreach (RowBound rowBound in liveRows)
         {
             if (rowBound.RowIndex != lvalRow)
             {

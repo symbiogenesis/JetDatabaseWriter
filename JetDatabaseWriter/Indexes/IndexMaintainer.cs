@@ -391,7 +391,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 result[i] = [];
             }
 
-            foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(page))
             {
                 int realIdxNum = rowBound.RowIndex - 2;
                 if (realIdxNum < 0 || realIdxNum >= numRealIdx)

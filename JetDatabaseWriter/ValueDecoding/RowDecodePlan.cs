@@ -7,8 +7,10 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class RowDecodePlan
@@ -47,12 +49,12 @@ internal sealed class RowDecodePlan
         return new RowDecodePlan(tableDef, wantedColumns: null, columnOrdinals, strictParsing: true);
     }
 
-    internal static AccessBase.ColumnSlice ResolveColumnSliceForDirectDecode(
+    internal static ColumnSlice ResolveColumnSliceForDirectDecode(
         AccessBase source,
         byte[] page,
         int rowStart,
         int rowSize,
-        AccessBase.RowLayout layout,
+        RowLayout layout,
         ColumnInfo column)
         => source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
 
@@ -178,7 +180,7 @@ internal sealed class RowDecodePlan
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!this.TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
+        if (!this.TryParseLayout(source, page, rowStart, rowSize, out RowLayout layout))
         {
             return null;
         }
@@ -189,7 +191,7 @@ internal sealed class RowDecodePlan
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo column = this.columns[columnIndex];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             result[columnIndex] = await this.DecodeStringValueAsync(
                 source,
                 page,
@@ -213,7 +215,7 @@ internal sealed class RowDecodePlan
         out bool needsLongValue)
     {
         needsLongValue = false;
-        if (!this.TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
+        if (!this.TryParseLayout(source, page, rowStart, rowSize, out RowLayout layout))
         {
             return false;
         }
@@ -227,7 +229,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnIndex];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             buffer[columnIndex] = this.DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -241,7 +243,7 @@ internal sealed class RowDecodePlan
             throw new InvalidOperationException("Partial row decoding requires a partial-column plan and a result buffer large enough for every ordinal.");
         }
 
-        if (!this.TryParseLayout(source, page, rowStart, rowSize, out AccessBase.RowLayout layout))
+        if (!this.TryParseLayout(source, page, rowStart, rowSize, out RowLayout layout))
         {
             return false;
         }
@@ -255,20 +257,20 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnOrdinal];
-            AccessBase.ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = source.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
             switch (slice.Kind)
             {
-                case AccessBase.ColumnSliceKind.Bool:
+                case ColumnSliceKind.Bool:
                     result[resultIndex] = slice.BoolValue;
                     break;
 
-                case AccessBase.ColumnSliceKind.Null:
-                case AccessBase.ColumnSliceKind.Empty:
+                case ColumnSliceKind.Null:
+                case ColumnSliceKind.Empty:
                     result[resultIndex] = null;
                     break;
 
-                case AccessBase.ColumnSliceKind.Fixed:
-                case AccessBase.ColumnSliceKind.Var:
+                case ColumnSliceKind.Fixed:
+                case ColumnSliceKind.Var:
                     if (column.IsCalculated
                         || !TryDecodeInlineColumnValue(source, page, rowStart + slice.DataStart, column, slice.DataLen, out object? value))
                     {
@@ -291,7 +293,7 @@ internal sealed class RowDecodePlan
         byte[] page,
         int rowStart,
         int rowSize,
-        out AccessBase.RowLayout layout)
+        out RowLayout layout)
         => this.TryParseLayout(source, page, rowStart, rowSize, out layout);
 
     private bool TryParseLayout(
@@ -299,7 +301,7 @@ internal sealed class RowDecodePlan
         byte[] page,
         int rowStart,
         int rowSize,
-        out AccessBase.RowLayout layout)
+        out RowLayout layout)
     {
         layout = default;
         if (rowSize < source.RowColumnCountFieldSize)
@@ -321,15 +323,15 @@ internal sealed class RowDecodePlan
         AccessBase source,
         byte[] page,
         int rowStart,
-        AccessBase.ColumnSlice slice,
+        ColumnSlice slice,
         ColumnInfo column,
         LongValueDecoder longValueDecoder,
         CancellationToken cancellationToken) => slice.Kind switch
         {
-            AccessBase.ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
-            AccessBase.ColumnSliceKind.Null or AccessBase.ColumnSliceKind.Empty => string.Empty,
-            AccessBase.ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, strictNumeric: true),
-            AccessBase.ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
+            ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+            ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
+            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, strictNumeric: true),
+            ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
                 source,
                 page,
                 rowStart + slice.DataStart,
@@ -492,15 +494,15 @@ internal sealed class RowDecodePlan
         AccessBase source,
         byte[] page,
         int rowStart,
-        AccessBase.ColumnSlice slice,
+        ColumnSlice slice,
         ColumnInfo column,
         LongValueDecoder longValueDecoder,
         ref bool needsLongValue) => slice.Kind switch
         {
-            AccessBase.ColumnSliceKind.Bool => slice.BoolValue,
-            AccessBase.ColumnSliceKind.Null or AccessBase.ColumnSliceKind.Empty => DBNull.Value,
-            AccessBase.ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
-            AccessBase.ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
+            ColumnSliceKind.Bool => slice.BoolValue,
+            ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
+            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
+            ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
             _ => DBNull.Value,
         };
 

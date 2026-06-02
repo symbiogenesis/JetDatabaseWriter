@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -157,7 +158,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
                 continue;
             }
 
-            foreach (AccessBase.RowBound rowBound in reader.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in reader.EnumerateLiveRowBounds(page))
             {
                 Assert.True(
                     TryParseRawRowLayout(page, rowBound.RowStart, rowBound.RowSize, tableDef.HasVarColumns, rowSizes, out RawRowLayout layout),

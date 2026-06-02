@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages.Models;
 
 /// <summary>
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and
@@ -38,7 +39,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     private LongValueStore.LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
-        AccessBase.RowBound[] liveRows = reader.GetLiveRowBoundsCached(lvalPage, page);
+        RowBound[] liveRows = reader.GetLiveRowBoundsCached(lvalPage, page);
         return LongValueStore.LocateRow(lvalPage, lvalRow, page, reader.DataPage, reader.PageSizeBytes, liveRows);
     }
 

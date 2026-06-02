@@ -21,6 +21,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -1832,8 +1833,6 @@ public abstract class AccessBase : IAccessBase
 
     internal readonly record struct TableRow(byte[] Page, RowLocation Location);
 
-    internal readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
-
     private readonly record struct ParsedColumnDescriptor(
         ColumnType Type,
         int ColNum,
@@ -1861,49 +1860,4 @@ public abstract class AccessBase : IAccessBase
             NumericScale = this.NumericScale,
         };
     }
-
-    /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
-    /// <param name="NumCols">The number of cols.</param>
-    /// <param name="NullMaskPos">The null mask pos.</param>
-    /// <param name="VarLen">The var len.</param>
-    /// <param name="VarTableStart">The var table start.</param>
-    /// <param name="Eod">The end-of-data marker size.</param>
-    internal readonly record struct RowLayout(
-        int NumCols,
-        int NullMaskPos,
-        int VarLen,
-        int VarTableStart,
-        int Eod);
-
-    /// <summary>Classification returned by <see cref="ResolveColumnSlice"/>.</summary>
-    internal enum ColumnSliceKind
-    {
-        /// <summary>Column is missing/empty/out-of-bounds — caller should emit empty/default.</summary>
-        Empty = 0,
-
-        /// <summary>Column is null (null-mask bit unset, or column index ≥ row's numCols).</summary>
-        Null = 1,
-
-        /// <summary>Boolean column: <see cref="ColumnSlice.BoolValue"/> holds the null-mask bit.</summary>
-        Bool = 2,
-
-        /// <summary>Fixed-width column: <see cref="ColumnSlice.DataStart"/>/<see cref="ColumnSlice.DataLen"/>
-        /// are valid (relative to the row start).</summary>
-        Fixed = 3,
-
-        /// <summary>Variable-width column: <see cref="ColumnSlice.DataStart"/>/<see cref="ColumnSlice.DataLen"/>
-        /// are valid (relative to the row start); <c>DataLen</c> may be 0.</summary>
-        Var = 4,
-    }
-
-    /// <summary>Per-column slice produced by <see cref="ResolveColumnSlice"/>.</summary>
-    /// <param name="Kind">The table name kind.</param>
-    /// <param name="DataStart">The data start.</param>
-    /// <param name="DataLen">The data len.</param>
-    /// <param name="BoolValue">The bool value.</param>
-    internal readonly record struct ColumnSlice(
-        ColumnSliceKind Kind,
-        int DataStart,
-        int DataLen,
-        bool BoolValue);
 }

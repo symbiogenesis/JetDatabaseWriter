@@ -7,8 +7,10 @@ using System.Reflection;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
@@ -41,16 +43,16 @@ internal static class DirectRowDecoderBuilder
         GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeExtendedAt), StaticNonPublic);
 
     private static readonly PropertyInfo ColumnSliceKindProperty =
-        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.Kind));
+        GetRequiredProperty(typeof(ColumnSlice), nameof(ColumnSlice.Kind));
 
     private static readonly PropertyInfo ColumnSliceDataStartProperty =
-        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.DataStart));
+        GetRequiredProperty(typeof(ColumnSlice), nameof(ColumnSlice.DataStart));
 
     private static readonly PropertyInfo ColumnSliceDataLenProperty =
-        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.DataLen));
+        GetRequiredProperty(typeof(ColumnSlice), nameof(ColumnSlice.DataLen));
 
     private static readonly PropertyInfo ColumnSliceBoolValueProperty =
-        GetRequiredProperty(typeof(AccessBase.ColumnSlice), nameof(AccessBase.ColumnSlice.BoolValue));
+        GetRequiredProperty(typeof(ColumnSlice), nameof(ColumnSlice.BoolValue));
 
     /// <summary>
     /// Builds a direct decoder for <typeparamref name="T"/> bound against
@@ -128,8 +130,8 @@ internal static class DirectRowDecoderBuilder
         ParameterExpression rowSizeParam = Expression.Parameter(typeof(int), "rowSize");
         ParameterExpression targetParam = Expression.Parameter(typeof(T), "target");
 
-        ParameterExpression layoutLocal = Expression.Variable(typeof(AccessBase.RowLayout), "layout");
-        ParameterExpression sliceLocal = Expression.Variable(typeof(AccessBase.ColumnSlice), "slice");
+        ParameterExpression layoutLocal = Expression.Variable(typeof(RowLayout), "layout");
+        ParameterExpression sliceLocal = Expression.Variable(typeof(ColumnSlice), "slice");
         LabelTarget returnLabel = Expression.Label(typeof(bool), "ret");
 
         var statements = new List<Expression>(8 + (bound.Count * 3))
@@ -228,18 +230,18 @@ internal static class DirectRowDecoderBuilder
     {
         if (colType == BooleanType)
         {
-            return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Bool));
+            return Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Bool));
         }
 
         if (colType is TextType or BinaryType)
         {
-            return Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Var));
+            return Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Var));
         }
 
         int expectedSize = JetTypeInfo.GetFixedSize(colType);
         BinaryExpression fixedOrVariableKind = Expression.OrElse(
-            Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Fixed)),
-            Expression.Equal(kindExpr, Expression.Constant(AccessBase.ColumnSliceKind.Var)));
+            Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Fixed)),
+            Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Var)));
 
         return Expression.AndAlso(
             fixedOrVariableKind,
