@@ -38,17 +38,9 @@ internal sealed class AsyncReentrantOperationGate
             return new Lease(this, isRoot: false);
         }
 
-        if (Volatile.Read(ref this.state) != StateOpen)
+        if (!this.TryEnterRootOperation())
         {
-            throw new ObjectDisposedException(owner?.GetType().FullName);
-        }
-
-        _ = Interlocked.Increment(ref this.activeOperations);
-
-        if (Volatile.Read(ref this.state) != StateOpen)
-        {
-            this.ReleaseActiveOperation();
-            throw new ObjectDisposedException(owner?.GetType().FullName);
+            Guard.ThrowIfDisposed(disposed: true, owner);
         }
 
         this.operationDepth.Value = 1;
@@ -101,6 +93,24 @@ internal sealed class AsyncReentrantOperationGate
         }
 
         this.ReleaseActiveOperation();
+    }
+
+    private bool TryEnterRootOperation()
+    {
+        if (Volatile.Read(ref this.state) != StateOpen)
+        {
+            return false;
+        }
+
+        _ = Interlocked.Increment(ref this.activeOperations);
+
+        if (Volatile.Read(ref this.state) == StateOpen)
+        {
+            return true;
+        }
+
+        this.ReleaseActiveOperation();
+        return false;
     }
 
     private void ReleaseActiveOperation()
