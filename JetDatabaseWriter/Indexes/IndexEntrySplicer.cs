@@ -26,10 +26,7 @@ internal static class IndexEntrySplicer
         var working = new List<IndexEntry>(existing.Count + adds.Count);
         if (removes.Count == 0)
         {
-            foreach (IndexEntry entry in existing)
-            {
-                working.Add(new IndexEntry(entry.Key, entry.DataPage, entry.DataRow));
-            }
+            working.AddRange(existing);
         }
         else
         {
@@ -48,7 +45,7 @@ internal static class IndexEntrySplicer
                     continue;
                 }
 
-                working.Add(new IndexEntry(entry.Key, entry.DataPage, entry.DataRow));
+                working.Add(entry);
             }
 
             if (removed != removes.Count)
@@ -57,10 +54,7 @@ internal static class IndexEntrySplicer
             }
         }
 
-        foreach ((byte[] key, long dataPage, byte dataRow) in adds)
-        {
-            working.Add(new IndexEntry(key, dataPage, dataRow));
-        }
+        working.AddRange(adds);
 
         var indexed = new (IndexEntry Entry, int Order)[working.Count];
         for (int i = 0; i < working.Count; i++)
