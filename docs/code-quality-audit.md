@@ -56,7 +56,7 @@ so each is a single, monolithic, hard-to-navigate file.
 - owns **~15 collaborator fields** (lock coordinator, index maintainer, TDEF builder, long-value
   encoder, unique-index checker, transaction lifecycle, catalog writer, row encoder, data-page
   inserter, page allocator, relationship manager, complex-column manager, constraint registry, …);
-- and still hosts table DDL, row DML, linked-table creation, schema evolution, catalog
+- and still hosts table DDL, row DML, schema evolution, catalog
   bootstrap, AutoNumber bookkeeping, and disposal logic directly in its own body.
 
 It is already a *facade over* well-factored managers — but it never finished delegating, so it is
@@ -67,9 +67,13 @@ in the facade is the smell.
 merge conflicts, and make it impossible to unit-test slices in isolation.
 
 **Remediation:** push the remaining inline logic into the collaborators it already owns (e.g. move
-AutoNumber high-water maintenance into a small `AutoNumberMaintainer`, linked-table creation entirely
-into `LinkedTableManager`), and split the facades into `partial` files grouped by concern (DDL / DML /
-catalog / disposal) as an interim step.
+AutoNumber high-water maintenance into a small `AutoNumberMaintainer`;
+~~move linked-table creation entirely into `LinkedTableManager`~~ **Done** — the five public
+`CreateLinked*Async` entry points are now thin forwarders to
+[LinkedTableManager](JetDatabaseWriter/Relationships/LinkedTableManager.cs), which owns the
+`RunAutoCommitAsync` wrap, the `*CoreAsync` workers, and cached-schema `LvProp` validation), and
+split the facades into `partial` files grouped by concern (DDL / DML / catalog / disposal) as an
+interim step.
 
 ---
 
@@ -385,7 +389,8 @@ analyzers on) so the bar is enforced before merge.
 
 1. Decompose the two ~400-line `IndexBTreeEditor` methods (#2) — highest defect risk per line.
 2. Finish delegating `AccessWriter`/`AccessReader` into their existing collaborators and split into
-   `partial` files (#1), which also clears #9.
+   `partial` files (#1), which also clears #9. *In progress* — linked-table creation now delegates
+   entirely to `LinkedTableManager`; AutoNumber bookkeeping and the `partial` split remain.
 3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
 5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters. ~~Tidy the sync-over-async lock (#6)~~ **Done** — single async primitive + one boundary bridge + exponential backoff.

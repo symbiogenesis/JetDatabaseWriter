@@ -1426,26 +1426,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.CreateLinkedTableCoreAsync(linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
-
-    private async ValueTask CreateLinkedTableCoreAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken)
-    {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
-        Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
-        Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        this.ThrowIfDisposedOrCancelled(cancellationToken);
-
-        await this.ExecuteCatalogArtifactPlanAsync(
-            new CatalogArtifactPlan(
-                [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDatabasePath,
-                    foreignTableName,
-                    connectString: null,
-                    objectType: Constants.SystemObjects.LinkedTableType)]),
-            cancellationToken).ConfigureAwait(false);
-    }
+        => LinkedTableManager.CreateLinkedTableAsync(this, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
@@ -1462,15 +1443,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(
-            _ => this.CreateLinkedOdbcTableCoreAsync(
-                linkedTableName,
-                connectionString,
-                foreignTableName,
-                cachedSchemaLvProp: null,
-                sourceColumns: null,
-                cancellationToken),
-            cancellationToken);
+        => LinkedTableManager.CreateLinkedOdbcTableAsync(this, linkedTableName, connectionString, foreignTableName, sourceColumns: null, cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
@@ -1488,15 +1461,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string connectionString,
         string foreignTableName,
         IReadOnlyList<ColumnDefinition> sourceColumns,
-        CancellationToken cancellationToken = default) => this.RunAutoCommitAsync(
-            _ => this.CreateLinkedOdbcTableCoreAsync(
-                linkedTableName,
-                connectionString,
-                foreignTableName,
-                cachedSchemaLvProp: null,
-                sourceColumns,
-                cancellationToken),
-            cancellationToken);
+        CancellationToken cancellationToken = default)
+        => LinkedTableManager.CreateLinkedOdbcTableAsync(this, linkedTableName, connectionString, foreignTableName, sourceColumns, cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) using
@@ -1517,83 +1483,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string foreignTableName,
         ReadOnlyMemory<byte> cachedSchemaLvProp,
         CancellationToken cancellationToken = default)
-    {
-        byte[] validatedLvProp = this.CopyValidatedCachedSchemaLvProp(cachedSchemaLvProp, nameof(cachedSchemaLvProp));
-        return this.RunAutoCommitAsync(
-            _ => this.CreateLinkedOdbcTableCoreAsync(
-                linkedTableName,
-                connectionString,
-                foreignTableName,
-                cachedSchemaLvProp: validatedLvProp,
-                sourceColumns: null,
-                cancellationToken),
-            cancellationToken);
-    }
-
-    private async ValueTask CreateLinkedOdbcTableCoreAsync(
-        string linkedTableName,
-        string connectionString,
-        string foreignTableName,
-        byte[]? cachedSchemaLvProp,
-        IReadOnlyList<ColumnDefinition>? sourceColumns,
-        CancellationToken cancellationToken)
-    {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
-        Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
-        Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        this.ThrowIfDisposedOrCancelled(cancellationToken);
-
-        string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
-            ? connectionString
-            : "ODBC;" + connectionString;
-
-        if (sourceColumns is not null)
-        {
-            LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
-        }
-
-        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, this.Format);
-
-        await this.ExecuteCatalogArtifactPlanAsync(
-            new CatalogArtifactPlan(
-                [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDatabasePath: null,
-                    foreignName: foreignTableName,
-                    connectString: normalizedConnect,
-                    objectType: Constants.SystemObjects.LinkedOdbcType,
-                    cachedSchemaLvProp: lvProp)]),
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private byte[] CopyValidatedCachedSchemaLvProp(ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
-    {
-        if (cachedSchemaLvProp.IsEmpty)
-        {
-            throw new ArgumentException("Cached schema LvProp cannot be empty.", paramName);
-        }
-
-        byte[] copy = cachedSchemaLvProp.ToArray();
-        if (copy.AsSpan().SequenceEqual(Constants.SystemObjects.DefaultLvPropPlaceholder))
-        {
-            throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
-        }
-
-        uint expectedMagic = this.Format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
-        if (copy.Length < sizeof(uint) || Ru32(copy, 0) != expectedMagic)
-        {
-            throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
-        }
-
-        var block = ColumnPropertyBlock.Parse(copy, this.Format);
-        if (block is null || block.Targets.Count == 0)
-        {
-            throw new ArgumentException("Cached schema LvProp must contain at least one property target.", paramName);
-        }
-
-        return copy;
-    }
+        => LinkedTableManager.CreateLinkedOdbcTableAsync(this, linkedTableName, connectionString, foreignTableName, cachedSchemaLvProp, cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6) that references
@@ -1610,27 +1500,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.CreateLinkedTextTableCoreAsync(linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
-
-    private async ValueTask CreateLinkedTextTableCoreAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken)
-    {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
-        Guard.NotNullOrEmpty(sourceDirectoryPath, nameof(sourceDirectoryPath));
-        Guard.NotNullOrEmpty(foreignFileName, nameof(foreignFileName));
-        Guard.NotNullOrEmpty(connectString, nameof(connectString));
-        this.ThrowIfDisposedOrCancelled(cancellationToken);
-
-        await this.ExecuteCatalogArtifactPlanAsync(
-            new CatalogArtifactPlan(
-                [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDirectoryPath,
-                    foreignFileName,
-                    connectString,
-                    Constants.SystemObjects.LinkedTableType)]),
-            cancellationToken).ConfigureAwait(false);
-    }
+        => LinkedTableManager.CreateLinkedTextTableAsync(this, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken);
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — thin forwarders to RelationshipManager
