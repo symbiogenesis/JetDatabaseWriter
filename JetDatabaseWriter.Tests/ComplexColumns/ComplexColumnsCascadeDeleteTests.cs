@@ -12,7 +12,7 @@ using Xunit;
 
 /// <summary>
 /// Cascade-on-delete for complex (Attachment / MultiValue) columns. When a
-/// parent row is removed via <see cref="IAccessWriter.DeleteRowsAsync"/>
+/// parent row is removed via <see cref="IAccessWriter.DeleteRowsAsync(string, string, object?, System.Threading.CancellationToken)"/>
 /// (directly or through an FK cascade), its associated rows in the hidden
 /// flat child table must also be removed. See
 /// <see href="docs/design/complex-columns-format-notes.md" /> §4.3.

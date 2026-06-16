@@ -79,8 +79,52 @@ public interface IAccessWriter : IAccessBase
         where T : class, new();
 
     /// <summary>
+    /// Asynchronously inserts a single row described by named columns. Column identity
+    /// is by name rather than position, removing the silent-corruption risk of a
+    /// positional <c>object?[]</c> whose order drifts from the schema. Columns not named
+    /// are left to the engine's default (an AutoNumber column generates its next value;
+    /// any other omitted column stores database null).
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="row">The named-column values to insert.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when <paramref name="row"/> names a column that does not exist on the table.</exception>
+    public ValueTask InsertRowAsync(string tableName, RowValues row, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously inserts multiple named-column rows in a single operation. See
+    /// <see cref="InsertRowAsync(string, RowValues, CancellationToken)"/> for column-resolution semantics.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="rows">Collection of named-column rows to insert.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that yields the number of rows inserted.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when any row names a column that does not exist on the table.</exception>
+    public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously updates rows that satisfy a multi-column filter. The
+    /// <see cref="RowCriteria"/> combines one or more column predicates with logical
+    /// AND, so filters such as <c>WHERE a = 1 AND b &gt; 2</c>, set membership, and
+    /// ranges are expressible directly.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="criteria">The row filter. An empty criteria matches every row.</param>
+    /// <param name="updatedValues">The named columns to assign on each matching row.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that yields the number of rows updated.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when the criteria or updated values name a column that does not exist on the table.</exception>
+    public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously updates rows in the specified table where the predicate column matches the given value.
     /// </summary>
+    /// <remarks>
+    /// This is a single-column convenience over
+    /// <see cref="UpdateRowsAsync(string, RowCriteria, RowValues, CancellationToken)"/>. Use the
+    /// <see cref="RowCriteria"/> overload for multi-column and range filters.
+    /// </remarks>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
     /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
@@ -90,8 +134,26 @@ public interface IAccessWriter : IAccessBase
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously deletes rows that satisfy a multi-column filter. The
+    /// <see cref="RowCriteria"/> combines one or more column predicates with logical
+    /// AND, so filters such as <c>WHERE a = 1 AND b &gt; 2</c>, set membership, and
+    /// ranges are expressible directly.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="criteria">The row filter. An empty criteria matches (and deletes) every row.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that yields the number of rows deleted.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when the criteria names a column that does not exist on the table.</exception>
+    public ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously deletes rows from the specified table where the predicate column matches the given value.
     /// </summary>
+    /// <remarks>
+    /// This is a single-column convenience over
+    /// <see cref="DeleteRowsAsync(string, RowCriteria, CancellationToken)"/>. Use the
+    /// <see cref="RowCriteria"/> overload for multi-column and range filters.
+    /// </remarks>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
     /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>

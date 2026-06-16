@@ -492,7 +492,33 @@ await writer.InsertRowsAsync("Contacts", new[]
 });
 ```
 
+### Insert rows — named columns (`RowValues`)
+
+Positional object arrays match columns by position, so a reordered array silently
+corrupts data. `RowValues` matches by **column name** (case-insensitive) instead.
+Omitted columns default to database null (an AutoNumber column still generates its
+next value), so the order you assign columns is irrelevant:
+
+```csharp
+await writer.InsertRowAsync("Contacts", new RowValues
+{
+    ["Email"] = "grace@example.com",
+    ["Name"]  = "Grace",
+    ["ContactID"] = 7,
+    // Score omitted -> stored as null
+});
+
+// Fluent form and bulk insert
+await writer.InsertRowsAsync("Contacts", new[]
+{
+    RowValues.Create().Set("ContactID", 8).Set("Name", "Heidi"),
+    RowValues.Create().Set("ContactID", 9).Set("Name", "Ivan"),
+});
+```
+
 ### Update & delete
+
+Single-column convenience overloads cover the common case:
 
 ```csharp
 int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
@@ -500,6 +526,34 @@ int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
 
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
+
+For multi-column, range, and set filters, build a `RowCriteria` from one or more
+`ColumnPredicate` conditions combined with logical AND. The new values are supplied
+as a `RowValues`:
+
+```csharp
+// WHERE Region = 'West' AND Score > 80
+int promoted = await writer.UpdateRowsAsync(
+    "Contacts",
+    RowCriteria.Where("Region", "West").And(ColumnPredicate.GreaterThan("Score", 80m)),
+    new RowValues { ["Tier"] = "Gold" });
+
+// DELETE WHERE Score BETWEEN 50 AND 90
+await writer.DeleteRowsAsync("Contacts",
+    RowCriteria.Where(ColumnPredicate.Between("Score", 50m, 90m)));
+
+// DELETE WHERE ContactID IN (1, 3, 5) AND Region IS NULL
+await writer.DeleteRowsAsync("Contacts", new RowCriteria
+{
+    ColumnPredicate.In("ContactID", 1, 3, 5),
+    ColumnPredicate.IsNull("Region"),
+});
+```
+
+`ColumnPredicate` supports `EqualTo`, `NotEqualTo`, `GreaterThan`,
+`GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `In`, `IsNull`, and
+`IsNotNull`. Ordered comparisons coerce the operand to the column's runtime type, so
+passing an `int` operand against a `decimal` column compares correctly.
 
 > By default, update and delete are logical row mutations, not secure erase operations. Old row payload bytes and external LVAL payload pages can remain in the file unless secure erase is enabled.
 

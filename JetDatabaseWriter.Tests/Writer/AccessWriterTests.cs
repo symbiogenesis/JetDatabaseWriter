@@ -114,7 +114,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.InsertRowAsync(tableName, null!, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.InsertRowAsync(tableName, (object?[])null!, TestContext.Current.CancellationToken));
     }
 
     // ── InsertRows (bulk) ─────────────────────────────────────────────
@@ -1790,7 +1790,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-            await writer.InsertRowsAsync(tableName, null!, TestContext.Current.CancellationToken));
+            await writer.InsertRowsAsync(tableName, (IEnumerable<object?[]>)null!, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRows after dispose ─────────────────────

@@ -1096,13 +1096,63 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <inheritdoc/>
-    public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.UpdateRowsCoreAsync(tableName, predicateColumn, predicateValue, updatedValues, cancellationToken), cancellationToken);
+    public ValueTask InsertRowAsync(string tableName, RowValues row, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.InsertNamedRowEntryAsync(tableName, row, cancellationToken), cancellationToken);
 
-    private async ValueTask<int> UpdateRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken)
+    private async ValueTask InsertNamedRowEntryAsync(string tableName, RowValues row, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(row, nameof(row));
+        this.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(row),
+            (tableDef, named) => ResolveNamedRow(tableDef, tableName, named, nameof(row)),
+            nameof(row),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.InsertNamedRowsCoreAsync(tableName, rows, cancellationToken), cancellationToken);
+
+    private async ValueTask<int> InsertNamedRowsCoreAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(rows, nameof(rows));
+        this.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            rows,
+            (tableDef, named) => ResolveNamedRow(tableDef, tableName, named, nameof(rows)),
+            nameof(rows),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.UpdateRowsCoreAsync(tableName, criteria, updatedValues, cancellationToken), cancellationToken);
+
+    /// <inheritdoc/>
+    public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default)
+    {
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
+        Guard.NotNull(updatedValues, nameof(updatedValues));
+        return this.RunAutoCommitAsync(
+            _ => this.UpdateRowsCoreAsync(
+                tableName,
+                RowCriteria.Where(predicateColumn, predicateValue),
+                new RowValues(updatedValues),
+                cancellationToken),
+            cancellationToken);
+    }
+
+    private async ValueTask<int> UpdateRowsCoreAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(criteria, nameof(criteria));
         Guard.NotNull(updatedValues, nameof(updatedValues));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
@@ -1113,11 +1163,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        int predicateIndex = tableDef.FindColumnIndex(predicateColumn);
-        if (predicateIndex < 0)
-        {
-            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
-        }
+        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
         var updateIndexes = new Dictionary<int, object?>();
         foreach (KeyValuePair<string, object?> kvp in updatedValues)
@@ -1147,13 +1193,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            object currentValue = snapshot.Rows[i][predicateIndex];
-            if (!ValuesEqual(currentValue, predicateValue))
+            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (!predicate.Matches(rowValues))
             {
                 continue;
             }
 
-            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
             foreach (KeyValuePair<int, object?> update in updateIndexes)
             {
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
@@ -1260,22 +1305,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <inheritdoc/>
-    public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.DeleteRowsCoreAsync(tableName, predicateColumn, predicateValue, cancellationToken), cancellationToken);
+    public ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.DeleteRowsCoreAsync(tableName, criteria, cancellationToken), cancellationToken);
 
-    private async ValueTask<int> DeleteRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
+        return this.RunAutoCommitAsync(
+            _ => this.DeleteRowsCoreAsync(tableName, RowCriteria.Where(predicateColumn, predicateValue), cancellationToken),
+            cancellationToken);
+    }
+
+    private async ValueTask<int> DeleteRowsCoreAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
+        Guard.NotNull(criteria, nameof(criteria));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        int predicateIndex = tableDef.FindColumnIndex(predicateColumn);
-        if (predicateIndex < 0)
-        {
-            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
-        }
+        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
         using DataTable snapshot = await this.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
@@ -1291,8 +1341,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object currentValue = snapshot.Rows[i][predicateIndex];
-            if (ValuesEqual(currentValue, predicateValue))
+            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (predicate.Matches(rowValues))
             {
                 matchingIndices.Add(i);
             }
@@ -1909,6 +1959,44 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return normalized;
     }
 
+    /// <summary>
+    /// Projects a named-column <see cref="RowValues"/> onto a positional
+    /// <c>object[]</c> in table-column order. Columns not named in the row are
+    /// left as <see cref="DBNull.Value"/> so AutoNumber columns generate and any
+    /// other omitted column stores database null. Unknown column names throw.
+    /// </summary>
+    /// <param name="tableDef">The target table definition.</param>
+    /// <param name="tableName">The table name, for error messages.</param>
+    /// <param name="row">The named-column values.</param>
+    /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
+    /// <returns>The positional row values.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="row"/> names a column not in the table.</exception>
+    private static object[] ResolveNamedRow(TableDef tableDef, string tableName, RowValues row, string paramName)
+    {
+        Guard.NotNull(row, paramName);
+
+        object[] values = new object[tableDef.Columns.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        foreach (KeyValuePair<string, object?> pair in row)
+        {
+            int columnIndex = tableDef.FindColumnIndex(pair.Key);
+            if (columnIndex < 0)
+            {
+                throw new ArgumentException(
+                    $"Column '{pair.Key}' was not found in table '{tableName}'.",
+                    paramName);
+            }
+
+            values[columnIndex] = pair.Value ?? DBNull.Value;
+        }
+
+        return values;
+    }
+
     internal static object[] GetDbNullNormalizedItemArray(DataRow row)
     {
         Guard.NotNull(row, nameof(row));
@@ -2163,18 +2251,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         await this.AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool ValuesEqual(object? left, object? right)
-    {
-        bool leftDbNull = left is null or DBNull;
-        bool rightDbNull = right is null or DBNull;
-        if (leftDbNull || rightDbNull)
-        {
-            return leftDbNull && rightDbNull;
-        }
-
-        return Equals(left, right);
     }
 
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)

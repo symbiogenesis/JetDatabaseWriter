@@ -22,7 +22,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 |---|---------|----------|----------|
 | 1 | God classes / monolithic types | Structure / cohesion | **High** |
 | 2 | Monster methods (200–450 lines) | Complexity | **High** |
-| 3 | Weak, primitive-obsessed public API | API design | **High** |
+| 3 | Weak, primitive-obsessed public API | API design | **Resolved** |
 | 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Resolved** |
 | 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Medium** |
 | 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Medium** |
@@ -100,7 +100,22 @@ tested directly.
 
 ---
 
-## 3. Weak, Primitive-Obsessed Public API — **High**
+## 3. Weak, Primitive-Obsessed Public API — **Resolved**
+
+> **Resolved.** A named-column row type
+> ([RowValues](JetDatabaseWriter/Models/RowValues.cs)) and a multi-column
+> predicate type ([RowCriteria](JetDatabaseWriter/Models/RowCriteria.cs) +
+> [ColumnPredicate](JetDatabaseWriter/Models/ColumnPredicate.cs)) were added.
+> `InsertRowAsync`/`InsertRowsAsync` now accept `RowValues` so column identity is
+> by name rather than position (omitted columns default to null/AutoNumber);
+> `UpdateRowsAsync`/`DeleteRowsAsync` accept a `RowCriteria` that expresses
+> `WHERE a = 1 AND b > 2`, `IN` sets, ranges, and null checks. Predicate
+> resolution/evaluation lives in
+> [RowCriteriaEvaluator](JetDatabaseWriter/ValueDecoding/RowCriteriaEvaluator.cs),
+> which compiles column names to indices once per call. The single-column
+> `UpdateRowsAsync`/`DeleteRowsAsync` overloads remain as thin convenience wrappers
+> over the same criteria core, and positional `object?[]` inserts remain as the
+> low-level primitive. The original finding follows for context.
 
 The row and query surface leans heavily on untyped primitives:
 
@@ -126,6 +141,10 @@ so nullability is enforced by convention rather than by the type system.
 **Remediation:** offer a typed/named-column row abstraction (the generic `InsertRowAsync<T>` overload
 is a good model — lean into it) and a small predicate/criteria type so multi-column and range filters
 are first-class instead of requiring manual read-filter-write loops.
+
+**Resolution:** implemented as described above — `RowValues` for named-column inserts and
+`RowCriteria`/`ColumnPredicate` for first-class multi-column, range, set, and null filters on
+update/delete.
 
 ---
 
@@ -319,6 +338,6 @@ analyzers on) so the bar is enforced before merge.
 1. Decompose the two ~400-line `IndexBTreeEditor` methods (#2) — highest defect risk per line.
 2. Finish delegating `AccessWriter`/`AccessReader` into their existing collaborators and split into
    `partial` files (#1), which also clears #9.
-3. Add a typed row + multi-column predicate API (#3) — biggest external/usability win.
+3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
 5. Tidy the swallow-to-sentinel decode paths and the sync-over-async lock (#5, #6) opportunistically.
