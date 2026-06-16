@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.RoundTrip;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -358,20 +359,20 @@ public sealed class AccessRoundTripTests
                 fileBytes[off] == 0x02 && fileBytes[off + 1] == 0x01,
                 $"{tableName}: page {tdefPage} is not a TDEF (type=0x{fileBytes[off]:X2}{fileBytes[off + 1]:X2}).");
 
-            int headerMagic = BitConverter.ToInt32(fileBytes, off + 0x0C);
+            int headerMagic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(off + 0x0C));
             Assert.True(
                 headerMagic == Constants.TableDefinition.Jet4.FormatMagic,
                 $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");
 
-            int numCols = BitConverter.ToUInt16(fileBytes, off + 45);
-            int numRealIdx = BitConverter.ToInt32(fileBytes, off + 51);
-            int numIdx = BitConverter.ToInt32(fileBytes, off + 47);
+            int numCols = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(off + 45));
+            int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(off + 51));
+            int numIdx = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(off + 47));
             int colStart = off + 63 + (numRealIdx * 12);
 
             for (int c = 0; c < numCols; c++)
             {
                 int o = colStart + (c * 25);
-                int colMagic = BitConverter.ToInt32(fileBytes, o + 1);
+                int colMagic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(o + 1));
                 Assert.True(
                     colMagic == Constants.TableDefinition.Jet4.FormatMagic,
                     $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");
@@ -381,14 +382,14 @@ public sealed class AccessRoundTripTests
             int namePos = colStart + (numCols * 25);
             for (int c = 0; c < numCols; c++)
             {
-                int nameLen = BitConverter.ToUInt16(fileBytes, namePos);
+                int nameLen = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(namePos));
                 namePos += 2 + nameLen;
             }
 
             for (int i = 0; i < numRealIdx; i++)
             {
                 int phys = namePos + (i * 52);
-                int idxMagic = BitConverter.ToInt32(fileBytes, phys);
+                int idxMagic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(phys));
                 Assert.True(
                     idxMagic == Constants.TableDefinition.Jet4.RealIdx.LeadingMagic,
                     $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.RealIdx.LeadingMagic:X8}.");
@@ -399,7 +400,7 @@ public sealed class AccessRoundTripTests
             for (int i = 0; i < numIdx; i++)
             {
                 int logEntry = logStart + (i * 28);
-                int logMagic = BitConverter.ToInt32(fileBytes, logEntry);
+                int logMagic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(logEntry));
                 Assert.True(
                     logMagic == Constants.TableDefinition.Jet4.FormatMagic,
                     $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x{Constants.TableDefinition.Jet4.FormatMagic:X8}.");

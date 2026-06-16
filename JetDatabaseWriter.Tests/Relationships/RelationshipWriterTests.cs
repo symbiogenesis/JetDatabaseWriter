@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -561,14 +562,14 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     private static RawLogicalIdxEntry ReadSingleFkLogicalEntry(byte[] fileBytes, long tdefPage, long relatedTdefPage)
     {
         int pageStart = checked((int)tdefPage * Constants.PageSizes.Jet4);
-        int numCols = BitConverter.ToUInt16(fileBytes, pageStart + 0x2D);
-        int numIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x2F);
-        int numRealIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x33);
+        int numCols = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(pageStart + 0x2D));
+        int numIdx = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(pageStart + 0x2F));
+        int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(pageStart + 0x33));
         int colStart = pageStart + 63 + (numRealIdx * 12);
         int namePos = colStart + (numCols * 25);
         for (int i = 0; i < numCols; i++)
         {
-            int nameLen = BitConverter.ToUInt16(fileBytes, namePos);
+            int nameLen = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(namePos));
             namePos += 2 + nameLen;
         }
 
@@ -582,20 +583,20 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 continue;
             }
 
-            if (BitConverter.ToInt32(fileBytes, entry + 17) != relatedTdefPage)
+            if (BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(entry + 17)) != relatedTdefPage)
             {
                 continue;
             }
 
-            int realIdxNum = BitConverter.ToInt32(fileBytes, entry + 8);
+            int realIdxNum = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(entry + 8));
             int realIdxStart = logIdxStart - (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize) + (realIdxNum * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
             entries.Add(new RawLogicalIdxEntry(
-                BitConverter.ToInt32(fileBytes, entry + 4),
+                BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(entry + 4)),
                 realIdxNum,
                 fileBytes[entry + 12],
-                BitConverter.ToInt32(fileBytes, entry + 13),
-                BitConverter.ToInt32(fileBytes, realIdxStart + 34)));
+                BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(entry + 13)),
+                BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(realIdxStart + 34))));
         }
 
         return Assert.Single(entries);

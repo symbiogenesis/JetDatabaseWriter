@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.RoundTrip;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -810,8 +811,8 @@ public sealed class DaoStorageMaintenanceTests
     private static Guid BuildAdvancedGuid(int id)
     {
         byte[] bytes = new byte[16];
-        BitConverter.GetBytes(id).CopyTo(bytes, 0);
-        BitConverter.GetBytes(id * 17).CopyTo(bytes, 4);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0), id);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(4), id * 17);
         bytes[8] = unchecked((byte)id);
         bytes[9] = unchecked((byte)(id >> 8));
         bytes[10] = unchecked((byte)(id * 29));
@@ -993,7 +994,7 @@ public sealed class DaoStorageMaintenanceTests
             }
 
             count++;
-            pageNumber = BitConverter.ToInt32(bytes, offset + 4);
+            pageNumber = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset + 4));
         }
 
         return count;

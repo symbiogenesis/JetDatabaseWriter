@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.FormatProbe.Dao;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -289,14 +290,14 @@ internal static class FkDaoBaselineProbe
         int ownedPage = ReadUInt24(page, 0x38);
         int freeRow = page[0x3B];
         int freePage = ReadUInt24(page, 0x3C);
-        int numCols = BitConverter.ToUInt16(page, 0x2D);
-        int numIdx = BitConverter.ToInt32(page, 0x2F);
-        int numRealIdx = BitConverter.ToInt32(page, 0x33);
+        int numCols = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(0x2D));
+        int numIdx = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(0x2F));
+        int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(0x33));
         int colStart = 63 + (numRealIdx * 12);
         int namePos = colStart + (numCols * 25);
         for (int i = 0; i < numCols; i++)
         {
-            int nameLen = BitConverter.ToUInt16(page, namePos);
+            int nameLen = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(namePos));
             namePos += 2 + nameLen;
         }
 
@@ -312,28 +313,28 @@ internal static class FkDaoBaselineProbe
         {
             int skip = 63 + (i * 12);
             Console.WriteLine(FormattableString.Invariant(
-                $"  realSkip[{i}] unk0={BitConverter.ToInt32(page, skip)} rows={BitConverter.ToInt32(page, skip + 4)} unk8={BitConverter.ToInt32(page, skip + 8)}"));
+                $"  realSkip[{i}] unk0={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(skip))} rows={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(skip + 4))} unk8={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(skip + 8))}"));
         }
 
         for (int i = 0; i < numRealIdx; i++)
         {
             int phys = realStart + (i * 52);
             string line = FormattableString.Invariant(
-                $"  real[{i}] cols={ReadColMap(page, phys)} used={BitConverter.ToInt32(page, phys + 34)} firstDp={BitConverter.ToInt32(page, phys + 38)} flags=0x{page[phys + 46]:X2}");
-            int used = BitConverter.ToInt32(page, phys + 34);
+                $"  real[{i}] cols={ReadColMap(page, phys)} used={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(phys + 34))} firstDp={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(phys + 38))} flags=0x{page[phys + 46]:X2}");
+            int used = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(phys + 34));
             int usedRow = used & 0xFF;
             int usedPage = (used >> 8) & 0x00FFFFFF;
             Console.WriteLine(line);
-            Console.WriteLine(FormattableString.Invariant($"  real[{i}] cols={ReadColMap(page, phys)} used={used} firstDp={BitConverter.ToInt32(page, phys + 38)} flags=0x{page[phys + 46]:X2} usedMap row={usedRow} page={usedPage} {await UsageMapRowSummaryAsync(reader, usedPage, usedRow)}"));
+            Console.WriteLine(FormattableString.Invariant($"  real[{i}] cols={ReadColMap(page, phys)} used={used} firstDp={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(phys + 38))} flags=0x{page[phys + 46]:X2} usedMap row={usedRow} page={usedPage} {await UsageMapRowSummaryAsync(reader, usedPage, usedRow)}"));
         }
 
         for (int i = 0; i < numIdx; i++)
         {
             int logical = logStart + (i * 28);
             string line =
-                $"  log[{i}] name={names[i]} index_num={BitConverter.ToInt32(page, logical + 4)} index_num2={BitConverter.ToInt32(page, logical + 8)} " +
-                $"rel_tbl_type=0x{page[logical + 12]:X2} rel_idx_num={BitConverter.ToInt32(page, logical + 13)} " +
-                $"rel_tbl_page={BitConverter.ToInt32(page, logical + 17)} cascade=0x{page[logical + 21]:X2}/0x{page[logical + 22]:X2} type=0x{page[logical + 23]:X2}";
+                $"  log[{i}] name={names[i]} index_num={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(logical + 4))} index_num2={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(logical + 8))} " +
+                $"rel_tbl_type=0x{page[logical + 12]:X2} rel_idx_num={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(logical + 13))} " +
+                $"rel_tbl_page={BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(logical + 17))} cascade=0x{page[logical + 21]:X2}/0x{page[logical + 22]:X2} type=0x{page[logical + 23]:X2}";
             Console.WriteLine(line);
         }
     }
@@ -348,20 +349,20 @@ internal static class FkDaoBaselineProbe
         byte[] page = await reader.ReadPageAsync(pageNumber);
         const int rowsStart = 14;
         const int numRowsOffset = 12;
-        int rowCount = BitConverter.ToUInt16(page, numRowsOffset);
+        int rowCount = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(numRowsOffset));
         if (rowIndex < 0 || rowIndex >= rowCount)
         {
             return FormattableString.Invariant($"<row outside count={rowCount}>");
         }
 
-        int rowStart = BitConverter.ToUInt16(page, rowsStart + (rowIndex * 2)) & 0x1FFF;
+        int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(rowsStart + (rowIndex * 2))) & 0x1FFF;
         if (rowStart <= 0 || rowStart + 69 > page.Length)
         {
             return FormattableString.Invariant($"<bad rowStart={rowStart} count={rowCount}>");
         }
 
         byte type = page[rowStart];
-        int basePage = BitConverter.ToInt32(page, rowStart + 1);
+        int basePage = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(rowStart + 1));
         var setPages = new List<int>();
         for (int bit = 0; bit < 512; bit++)
         {
@@ -389,7 +390,7 @@ internal static class FkDaoBaselineProbe
         int pos = start;
         for (int i = 0; i < count; i++)
         {
-            int len = BitConverter.ToUInt16(page, pos);
+            int len = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(pos));
             names.Add(Encoding.Unicode.GetString(page, pos + 2, len));
             pos += 2 + len;
         }
@@ -403,7 +404,7 @@ internal static class FkDaoBaselineProbe
         for (int slot = 0; slot < 10; slot++)
         {
             int offset = phys + 4 + (slot * 3);
-            int col = BitConverter.ToUInt16(page, offset);
+            int col = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(offset));
             if (col == 0xFFFF)
             {
                 continue;

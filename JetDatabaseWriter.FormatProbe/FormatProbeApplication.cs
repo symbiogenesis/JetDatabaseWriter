@@ -5,6 +5,7 @@
 
 namespace JetDatabaseWriter.FormatProbe;
 
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.Globalization;
@@ -360,9 +361,9 @@ internal static class FormatProbeApplication
         Console.WriteLine($"TDEF page = {entry.TdefPage}");
         byte[] tdefPage = await rdr.ReadPageAsync(entry.TdefPage);
         Console.WriteLine($"TDEF[0]={tdefPage[0]:X2} (0x02 expected)");
-        int tdefLen = BitConverter.ToInt32(tdefPage, 8);
-        int rowCount = BitConverter.ToInt32(tdefPage, 16);
-        _ = BitConverter.ToInt32(tdefPage, 36); // data-page hint retained for debugger inspection.
+        int tdefLen = BinaryPrimitives.ReadInt32LittleEndian(tdefPage.AsSpan(8));
+        int rowCount = BinaryPrimitives.ReadInt32LittleEndian(tdefPage.AsSpan(16));
+        _ = BinaryPrimitives.ReadInt32LittleEndian(tdefPage.AsSpan(36)); // data-page hint retained for debugger inspection.
         Console.WriteLine($"TDEF tdef_len={tdefLen} row_count={rowCount}");
 
         var hex = new StringBuilder("TDEF[0..96] = ");
@@ -373,7 +374,7 @@ internal static class FormatProbeApplication
         }
 
         Console.WriteLine(hex.ToString());
-        Console.WriteLine($"first 4 bytes after position 36 (data page hint): {BitConverter.ToInt32(tdefPage, 36)}");
+        Console.WriteLine($"first 4 bytes after position 36 (data page hint): {BinaryPrimitives.ReadInt32LittleEndian(tdefPage.AsSpan(36))}");
 
         int ownedRow = tdefPage[0x37];
         int ownedPage = tdefPage[0x38] | (tdefPage[0x39] << 8) | (tdefPage[0x3A] << 16);
@@ -385,7 +386,7 @@ internal static class FormatProbeApplication
         if (ownedPage is > 0 and < 100000)
         {
             byte[] usageMap = await rdr.ReadPageAsync(ownedPage);
-            Console.WriteLine($"usage-map page {ownedPage}: tag={usageMap[0]:X2}{usageMap[1]:X2} numRows={BitConverter.ToUInt16(usageMap, 12)}");
+            Console.WriteLine($"usage-map page {ownedPage}: tag={usageMap[0]:X2}{usageMap[1]:X2} numRows={BinaryPrimitives.ReadUInt16LittleEndian(usageMap.AsSpan(12))}");
             var usageMapHex = new StringBuilder($"page[{ownedPage}][0..160] = ");
             for (int index = 0; index < 160; index++)
             {
@@ -433,14 +434,14 @@ internal static class FormatProbeApplication
                 continue;
             }
 
-            int parentTdef = BitConverter.ToInt32(page, 4);
+            int parentTdef = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(4));
             if (parentTdef != entry.TdefPage)
             {
                 continue;
             }
 
-            int numRows = BitConverter.ToUInt16(page, 12);
-            int freeSpace = BitConverter.ToUInt16(page, 2);
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(12));
+            int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2));
             Console.WriteLine($"data page {pageNumber}: numRows={numRows} freeSpace={freeSpace} parentTdef={parentTdef}");
             int rowOffsetWord = page[14] | (page[15] << 8);
             int rowStart = rowOffsetWord & 0x1FFF;

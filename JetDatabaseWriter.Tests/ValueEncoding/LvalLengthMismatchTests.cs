@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Buffers.Binary;
 using System.Data;
 using System.IO;
 using System.Threading.Tasks;
@@ -167,7 +168,7 @@ public sealed class LvalLengthMismatchTests
                 // Sanity: bytes 4-7 should be a non-zero LVAL page pointer
                 if (i + 7 < data.Length)
                 {
-                    uint lvalDp = BitConverter.ToUInt32(data, i + 4);
+                    uint lvalDp = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(i + 4));
                     if (lvalDp != 0)
                     {
                         return i;

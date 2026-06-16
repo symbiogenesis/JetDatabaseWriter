@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -471,7 +472,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         // encrypt each data page (pages 1+). The key for each page is:
         //   RC4Key = MD5(DatabaseKey + PageNumber)
         // where PageNumber is a 4-byte little-endian integer.
-        uint dbKey = BitConverter.ToUInt32(data, 0x3E);
+        uint dbKey = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x3E));
 
         const int pageSize = Constants.PageSizes.Jet4;
         for (int pageNum = 1; pageNum * pageSize < data.Length; pageNum++)
@@ -516,8 +517,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     private static byte[] DeriveJet4PageKey(uint dbKey, uint pageNumber)
     {
         byte[] input = new byte[8];
-        BitConverter.GetBytes(dbKey).CopyTo(input, 0);
-        BitConverter.GetBytes(pageNumber).CopyTo(input, 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(0), dbKey);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), pageNumber);
 
         byte[] hash = MD5.HashData(input);
 
