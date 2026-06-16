@@ -22,9 +22,9 @@
       },
       "SharpFuzz": {
         "type": "Direct",
-        "requested": "[2.2.0, )",
-        "resolved": "2.2.0",
-        "contentHash": "xQQAMmdiY5AKNPVyjtABwXKrEyWcEaExvyxeAbraJsfthNl5YSM3E//Hipz2jMSe9tQ1fa1Fh/KEm2SKAbXpOQ==",
+        "requested": "[2.3.0, )",
+        "resolved": "2.3.0",
+        "contentHash": "5f11toR82RVCIBTr5XuuauJgesGVXIAO6vBCvLThNbrcer9NN6qB2HCA/Q122BvH2qRPsLx14O6QVtCbgRQhog==",
         "dependencies": {
           "SharpFuzz.Common": "2.2.0",
           "dnlib": "4.4.0"
@@ -199,7 +199,7 @@
         "dependencies": {
           "JetDatabaseWriter": "[4.0.0, )",
           "Microsoft.CodeAnalysis.CSharp": "[5.3.0, )",
-          "System.CommandLine": "[2.0.8, )"
+          "System.CommandLine": "[2.0.9, )"
         }
       },
       "ClosedXML.Parser": {
@@ -220,9 +220,9 @@
       },
       "System.CommandLine": {
         "type": "CentralTransitive",
-        "requested": "[2.0.8, )",
-        "resolved": "2.0.8",
-        "contentHash": "FbpgF8p/ClXnoXEWLjQB34kNh5rsLewEgIgLyVzLDucAOQ4cNs7ec9Cam7gdKPruSb6zp4Mx8htZGTL4/5PJPg=="
+        "requested": "[2.0.9, )",
+        "resolved": "2.0.9",
+        "contentHash": "SW0WhEk4NFVZ4lOnsLrHQOV/7s0eTidezNybHQWXfqhuXWB17X3RXbrifeWBbUx1iu+NcYchVSufmW7svjUEnA=="
       }
     }
   }
