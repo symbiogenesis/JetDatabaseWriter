@@ -488,7 +488,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
-        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns: null, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return (object[])row;
         }
@@ -649,34 +649,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Shared typed-row enumerator used by <see cref="Rows(string, IProgress{long}?, CancellationToken)"/>
-    /// and <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>. Walks every
-    /// owned data page for <paramref name="entry"/>, emitting per-row
+    /// Shared typed-row enumerator used by <see cref="Rows(string, IProgress{long}?, CancellationToken)"/>.
+    /// Walks every owned data page for <paramref name="entry"/>, emitting per-row
     /// <c>object?[]</c> buffers with complex-attachment and Hyperlink
     /// post-processing applied (gated by the per-table flags). Centralising
-    /// the page scan here keeps the typed and projected entry points on a
-    /// single iterator (one C# async state machine instead of two).
-    /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="entry">Catalog entry for the table.</param>
-    /// <param name="td">Parsed table definition.</param>
-    /// <param name="progress">Optional row-count progress sink.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
-        string tableName,
-        CatalogEntry entry,
-        TableDef td,
-        IProgress<long>? progress,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns: null, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return row;
-        }
-    }
-
-    /// <summary>
-    /// Projection-aware overload of <c>EnumerateTypedRowsAsync</c>.
+    /// the page scan here keeps the entry point on a single iterator
+    /// (one C# async state machine instead of two).
     /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
     /// flagged column indices are decoded and the complex-attachment / Hyperlink
     /// post-processing passes are skipped when no wanted column is affected by them.

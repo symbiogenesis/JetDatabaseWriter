@@ -246,17 +246,19 @@ Extend `IsDirectlyDecodable` and the expression emitter to accept:
 
 ## 4. Collapse the redundant async-iterator forwarding in untyped `Rows()`
 
-Untyped `Rows()` calls a 4-argument `EnumerateTypedRowsAsync`
-([AccessReader.cs#L671](../../JetDatabaseWriter/AccessReader.cs#L671)) that does
+**Status: implemented (2026-06-16).**
+
+Untyped `Rows()` called a 4-argument `EnumerateTypedRowsAsync` that did
 nothing but `await foreach` over the 5-argument overload and re-`yield return`
-each row. It has exactly one caller and adds a second async state machine and an
+each row. It had exactly one caller and added a second async state machine and an
 extra `MoveNextAsync` + yield hop **per row** for no functional purpose.
 
-### Proposed change
+### Change
 
-Delete the 4-arg pass-through and have untyped `Rows()` call the 5-arg overload
-with `wantedColumns: null` directly (the string and typed paths already drive
-their enumerators without this extra layer).
+Deleted the 4-arg pass-through; untyped `Rows()` now calls the 5-arg overload
+with `wantedColumns: null` directly (the string and typed paths already drove
+their enumerators without this extra layer). Validated by the Reader and
+RoundTrip test namespaces with no behavior change.
 
 ### Impact and risk
 
@@ -352,8 +354,8 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 ## Recommended order
 
 1. **#1 box interning** — no API change, broad benefit, lowest risk. Do first.
-2. **#4 collapse forwarding** and **#5 scratch pooling** — small, safe, land
-   alongside #1.
+2. **#4 collapse forwarding** (done) and **#5 scratch pooling** — small, safe;
+   land #5 alongside #1.
 3. **#2 public projection** — highest wide-table leverage; additive API.
 4. **#3 widen direct decoder** — extends the zero-box path; needs per-conversion
    tests.
