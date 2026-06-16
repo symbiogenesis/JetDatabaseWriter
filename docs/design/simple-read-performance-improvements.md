@@ -244,7 +244,7 @@ Extend `IsDirectlyDecodable` and the expression emitter to accept:
 
 ---
 
-## 4. Collapse the redundant async-iterator forwarding in untyped `Rows()`
+## 4. Collapse the redundant async-iterator forwarding in untyped `Rows()` (DONE)
 
 **Status: implemented (2026-06-16).**
 
@@ -268,25 +268,30 @@ RoundTrip test namespaces with no behavior change.
 
 ---
 
-## 5. Pool the cold-scan row-bounds scratch arrays
+## 5. Pool the cold-scan row-bounds scratch arrays (DONE)
 
-`ComputeLiveRowBoundsArray` allocates **two** `int[numRows]` scratch arrays for
-every page on the cold (cache-miss) pass:
+**Status: implemented (2026-06-16).**
 
-```csharp
-int[] rawOffsets = new int[numRows];
-int[] positions  = new int[numRows];
-```
+`ComputeLiveRowBoundsArray` allocated **two** `int[numRows]` scratch arrays for
+every page on the cold (cache-miss) pass. Warm rescans already skip this via
+`rowBoundsCache`, so it only affected the cold first scan, but `numRows` is
+bounded (≤ `pageSize/2` offset entries — a few hundred).
 
-[AccessBase.cs#L1504](../../JetDatabaseWriter/AccessBase.cs#L1504). Warm rescans
-already skip this via `rowBoundsCache`, so this only targets the cold first
-scan, but `numRows` is bounded (≤ `pageSize/2` offset entries — a few hundred),
-which makes it a good `ArrayPool<int>` rent/return or a `stackalloc` for small
-counts.
+### Change
+
+Both scratch buffers are now rented from `ArrayPool<int>.Shared` and returned in
+a `finally`, removing the per-page cold-scan allocation. The existing
+clamp/sort/binary-search logic is preserved verbatim — `Array.Sort` and
+`Array.BinarySearch` are kept rather than switching to `Span<int>.Sort`, which is
+unavailable on the `netstandard2.1` target. Validated by the Reader, Pages, and
+RoundTrip test namespaces with no behavior change.
+
+### Impact and risk
 
 - **Impact:** removes the cold-scan scratch allocation (part of the 11 MB seen
   in `Decode_Numeric_ColdOpen_FirstScan`); modest but free.
-- **Risk:** low; keep the existing clamp/sort logic.
+- **Risk:** low — the clamp/sort logic is unchanged; only the buffer source moved
+  from `new int[]` to the shared pool.
 - **Where:** [AccessBase.cs#L1483](../../JetDatabaseWriter/AccessBase.cs#L1483).
 
 ---
@@ -354,8 +359,8 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 ## Recommended order
 
 1. **#1 box interning** — no API change, broad benefit, lowest risk. Do first.
-2. **#4 collapse forwarding** (done) and **#5 scratch pooling** — small, safe;
-   land #5 alongside #1.
+2. **#4 collapse forwarding** (done) and **#5 scratch pooling** (done) — small,
+   safe.
 3. **#2 public projection** — highest wide-table leverage; additive API.
 4. **#3 widen direct decoder** — extends the zero-box path; needs per-conversion
    tests.

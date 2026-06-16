@@ -1501,58 +1501,70 @@ public abstract class AccessBase : IAccessBase
             return [];
         }
 
-        int[] rawOffsets = new int[numRows];
-        int[] positions = new int[numRows];
-
-        int posCount = 0;
-        int liveCount = 0;
-        for (int r = 0; r < numRows; r++)
+        // Cold (cache-miss) scan only: warm rescans are served from the
+        // row-bounds cache. Rent the two scratch buffers from the shared pool
+        // instead of allocating int[numRows] per page; numRows is bounded by the
+        // page's row-offset table size. The existing Array.Sort/Array.BinarySearch
+        // logic is preserved (Span<int>.Sort is unavailable on netstandard2.1).
+        int[] rawOffsets = ArrayPool<int>.Shared.Rent(numRows);
+        int[] positions = ArrayPool<int>.Shared.Rent(numRows);
+        try
         {
-            int raw = Ru16(page, this.DataPage.RowsStart + (r * 2));
-            rawOffsets[r] = raw;
-
-            int pos = raw & Constants.DataPage.RowOffsetMask;
-            if (pos > 0 && pos < this.PageSizeBytes)
+            int posCount = 0;
+            int liveCount = 0;
+            for (int r = 0; r < numRows; r++)
             {
-                positions[posCount++] = pos;
+                int raw = Ru16(page, this.DataPage.RowsStart + (r * 2));
+                rawOffsets[r] = raw;
+
+                int pos = raw & Constants.DataPage.RowOffsetMask;
+                if (pos > 0 && pos < this.PageSizeBytes)
+                {
+                    positions[posCount++] = pos;
+                }
+
+                if ((raw & Constants.DataPage.NonLiveRowFlags) == 0)
+                {
+                    liveCount++;
+                }
             }
 
-            if ((raw & Constants.DataPage.NonLiveRowFlags) == 0)
+            if (liveCount == 0)
             {
-                liveCount++;
+                return [];
             }
+
+            Array.Sort(positions, 0, posCount);
+
+            var result = new RowBound[liveCount];
+            int idx = 0;
+            for (int r = 0; r < numRows; r++)
+            {
+                int raw = rawOffsets[r];
+                if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
+                {
+                    continue;
+                }
+
+                int rowStart = raw & Constants.DataPage.RowOffsetMask;
+                int rowEnd = this.PageSizeBytes - 1;
+                int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
+                int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
+                if (nextIdx < posCount)
+                {
+                    rowEnd = positions[nextIdx] - 1;
+                }
+
+                result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart + 1);
+            }
+
+            return result;
         }
-
-        if (liveCount == 0)
+        finally
         {
-            return [];
+            ArrayPool<int>.Shared.Return(rawOffsets);
+            ArrayPool<int>.Shared.Return(positions);
         }
-
-        Array.Sort(positions, 0, posCount);
-
-        var result = new RowBound[liveCount];
-        int idx = 0;
-        for (int r = 0; r < numRows; r++)
-        {
-            int raw = rawOffsets[r];
-            if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
-            {
-                continue;
-            }
-
-            int rowStart = raw & Constants.DataPage.RowOffsetMask;
-            int rowEnd = this.PageSizeBytes - 1;
-            int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
-            int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
-            if (nextIdx < posCount)
-            {
-                rowEnd = positions[nextIdx] - 1;
-            }
-
-            result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart + 1);
-        }
-
-        return result;
     }
 
     // ── Row layout decoding (shared by RowDecodePlan and writer column reads) ────
