@@ -205,42 +205,64 @@ the full width with unwanted slots left `null`, decided by the chosen shape).
 
 ---
 
-## 3. Widen the zero-box direct-decoder coverage
+## 3. Widen the zero-box direct-decoder coverage (DONE)
+
+**Status: implemented (2026-06-16).**
 
 `Rows<T>()` can compile a direct page→`T` decoder that writes straight into
 typed fields with **no `object?[]` and no boxing**
 ([DirectRowDecoderBuilder.cs](../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs)).
-That path is why typed numeric decode allocates less than half of untyped. But
-it engages only on an **exact** CLR-type match:
+That path is why typed numeric decode allocates less than half of untyped. It
+previously engaged only on an **exact** CLR-type match
+(`JetTypeInfo.GetClrType(colType) == targetUnderlying`), so any mismatch dropped
+the whole table to the boxing fallback.
 
-```csharp
-// DirectRowDecoderBuilder.IsDirectlyDecodable
-return JetTypeInfo.GetClrType(colType) == targetUnderlying;
-```
+### Finding
 
-[DirectRowDecoderBuilder.cs#L286](../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs#L286).
-Any mismatch drops the whole table to the boxing fallback. Common DTO shapes
-that miss the fast path today:
+The two shapes the proposal flagged turned out to need different handling:
 
-- **Nullable targets** (`int?`, `DateTime?`, `decimal?`) — extremely common, yet
-  not matched.
-- **Widening** (`Integer`→`long`, `Float`→`double`, integer→`decimal`).
+- **Nullable targets with an exact underlying type** (`int?`←LongInteger,
+  `DateTime?`←DateTime) *already* took the fast path. `RowMapper.Accessor`
+  stores `TargetType` as the `Nullable`-unwrapped type
+  ([RowMapper.cs#L388](../../JetDatabaseWriter/ValueDecoding/RowMapper.cs#L388)),
+  so `IsDirectlyDecodable` already matched, and the emitter's
+  `Expression.Convert` to the declared property type already lifted `T`→`T?`.
+- **Widening** (`Integer`→`long`, `Float`→`double`, integer→`decimal`) was the
+  real gap, including its combination with nullable (`long?`←Integer), which
+  failed because the unwrapped target (`long`) still did not equal the natural
+  type (`short`).
 
-### Proposed change
+### Change
 
-Extend `IsDirectlyDecodable` and the expression emitter to accept:
-
-- a `Nullable<TUnderlying>` target whenever `TUnderlying` is already directly
-  decodable (wrap the decoded value, map null/empty slice to `null`); and
-- a small set of safe widening conversions that cannot lose information.
+- `IsDirectlyDecodable` now accepts a target that is a **lossless numeric
+  widening** of the column's natural CLR type via a new `IsLosslessWidening`
+  table: `byte`→`short`/`int`/`long`/`float`/`double`/`decimal`,
+  `short`→`int`/`long`/`float`/`double`/`decimal`,
+  `int`→`long`/`double`/`decimal`, `long`→`decimal`, `float`→`double`. The
+  precision-losing implicit conversions C# otherwise allows (`int`→`float`,
+  `long`→`float`, `long`→`double`) are deliberately **excluded** so the direct
+  decoder never yields a value the boxing fallback would not.
+- The emitter composes the raw read up to the property type in two steps —
+  widen to the `Nullable`-unwrapped target type, then lift to the declared
+  property type when it differs — so a widening and a nullable lift combine
+  cleanly (`short`→`long`→`long?`). Exact-match columns still emit neither
+  `Convert`.
 
 ### Impact and risk
 
-- **Impact:** moves a large class of real DTOs (anything with a nullable or
-  widened field) from the boxing fallback to the zero-allocation path — the same
-  <½ allocation already demonstrated by `Decode_Numeric_Typed`.
-- **Risk:** medium. Must preserve the fallback's overflow and null-to-`DBNull`
-  semantics. Gate behind focused round-trip tests per added conversion.
+- **Impact:** moves nullable-widened and widened DTOs (anything with an
+  `Integer`-as-`long`, `Float`-as-`double`, integer-as-`decimal`, or nullable
+  thereof field) from the boxing fallback onto the zero-allocation path — the
+  same <½ allocation already demonstrated by `Decode_Numeric_Typed`.
+- **Risk:** low as shipped. Only lossless widenings are admitted, so no overflow
+  is possible and the fallback's null-to-default semantics are preserved (a null
+  or empty slice leaves the property at its CLR default, which is `null` for a
+  nullable target). Covered by per-conversion unit tests in
+  [DirectRowDecoderBuilderTests.cs](../../JetDatabaseWriter.Tests/ValueDecoding/DirectRowDecoderBuilderTests.cs)
+  (accepts each widening, rejects each precision-losing/narrowing source) and
+  round-trip value tests in
+  [DirectDecoderWideningTests.cs](../../JetDatabaseWriter.Tests/Reader/DirectDecoderWideningTests.cs).
+- **Where:** [DirectRowDecoderBuilder.cs](../../JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs).
 
 ---
 
@@ -380,7 +402,8 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 2. **#4 collapse forwarding** (done) and **#5 scratch pooling** (done) — small,
    safe.
 3. **#2 public projection** — highest wide-table leverage; additive API.
-4. **#3 widen direct decoder** — extends the zero-box path; needs per-conversion
+4. **#3 widen direct decoder** (done) — extends the zero-box path with lossless
+   widening + nullable lift; covered by per-conversion unit and round-trip
    tests.
 5. **#6 LruCache shared-read** (done) and **#7 sync enumeration** — the former
    is implemented; the latter only with an in-memory-scan profile that justifies

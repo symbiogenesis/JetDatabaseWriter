@@ -185,12 +185,29 @@ internal static class DirectRowDecoderBuilder
                 readerParam);
 
             // target.Prop = (PropType)readExpr;
+            // Compose the raw read — which yields the column's natural CLR type —
+            // up to the property type in two steps so a lossless widening
+            // (e.g. short→long) and a nullable lift (e.g. long→long?) combine
+            // cleanly: first widen to the nullable-unwrapped target type, then
+            // lift to the declared property type when it differs (Nullable<T>).
+            // Exact-match columns skip both Convert nodes.
+            Type propertyType = entry.Accessor.Property.PropertyType;
+            Type targetUnderlying = entry.Accessor.TargetType;
+
+            Expression widened = readExpr.Type == targetUnderlying
+                ? readExpr
+                : Expression.Convert(readExpr, targetUnderlying);
+
+            Expression assignValue = propertyType == targetUnderlying
+                ? widened
+                : Expression.Convert(widened, propertyType);
+
             // Wrap with try/catch to swallow ArgumentException / OverflowException /
             // IndexOutOfRangeException — matches ReadFixedTyped's safety contract
             // (bad row → DBNull → mapper-skip → property keeps default).
             Expression assign = Expression.Assign(
                 Expression.Property(targetParam, entry.Accessor.Property),
-                Expression.Convert(readExpr, entry.Accessor.Property.PropertyType));
+                assignValue);
 
             Expression safeAssign = Expression.TryCatch(
                 Expression.Block(typeof(void), assign),
@@ -290,7 +307,65 @@ internal static class DirectRowDecoderBuilder
             return false;
         }
 
-        return JetTypeInfo.GetClrType(colType) == targetUnderlying;
+        Type? naturalType = JetTypeInfo.GetClrType(colType);
+        if (naturalType is null)
+        {
+            return false;
+        }
+
+        return naturalType == targetUnderlying || IsLosslessWidening(naturalType, targetUnderlying);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="target"/> is a
+    /// lossless numeric widening of <paramref name="source"/> — a conversion
+    /// that can never drop range or precision, so it is safe to emit on the
+    /// zero-box direct path. The precision-losing implicit conversions C#
+    /// otherwise permits (<c>int→float</c>, <c>long→float</c>,
+    /// <c>long→double</c>) are deliberately excluded so the direct decoder
+    /// never produces a value the boxing fallback would not.
+    /// </summary>
+    /// <param name="source">The column's natural CLR type.</param>
+    /// <param name="target">The nullable-unwrapped target property type.</param>
+    private static bool IsLosslessWidening(Type source, Type target)
+    {
+        if (source == typeof(byte))
+        {
+            return target == typeof(short)
+                || target == typeof(int)
+                || target == typeof(long)
+                || target == typeof(float)
+                || target == typeof(double)
+                || target == typeof(decimal);
+        }
+
+        if (source == typeof(short))
+        {
+            return target == typeof(int)
+                || target == typeof(long)
+                || target == typeof(float)
+                || target == typeof(double)
+                || target == typeof(decimal);
+        }
+
+        if (source == typeof(int))
+        {
+            return target == typeof(long)
+                || target == typeof(double)
+                || target == typeof(decimal);
+        }
+
+        if (source == typeof(long))
+        {
+            return target == typeof(decimal);
+        }
+
+        if (source == typeof(float))
+        {
+            return target == typeof(double);
+        }
+
+        return false;
     }
 }
 
