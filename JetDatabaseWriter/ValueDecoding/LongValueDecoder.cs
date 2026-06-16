@@ -128,19 +128,19 @@ internal sealed class LongValueDecoder(AccessReader reader)
             case Constants.LongValue.InlineStorageMode:
                 int memoStart = start + Constants.LongValue.HeaderSize;
                 int inlineLen = Math.Min(descriptor.Length, row.Length - memoStart);
-                return inlineLen <= 0 ? [] : AccessReader.DecodeOleValueBytes(row, memoStart, inlineLen);
+                return inlineLen <= 0 ? [] : OleObjectDecoder.DecodeOleValueBytes(row, memoStart, inlineLen);
 
             case Constants.LongValue.SinglePageStorageMode:
                 LvalRowLocation oleLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
                 int oleSize = Math.Min(oleLoc.Size, descriptor.Length);
                 return !oleLoc.Failed && oleSize > 0
-                    ? AccessReader.DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)
+                    ? OleObjectDecoder.DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)
                     : [];
 
             default:
                 LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
                 return chain.Data != null
-                    ? AccessReader.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length, allowInputReuse: true)
+                    ? OleObjectDecoder.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length, allowInputReuse: true)
                     : [];
         }
     }
@@ -149,7 +149,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
     {
         if (isOle)
         {
-            return AccessReader.TryDecodeOleObject(buffer, offset, length)
+            return OleObjectDecoder.TryDecodeOleObject(buffer, offset, length)
                 ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length));
         }
 

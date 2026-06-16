@@ -89,7 +89,7 @@ internal sealed class RowDecodePlan
             }
 
             return isOle
-                ? AccessReader.DecodeOleValueBytes(page, valueStart, inlineLength)
+                ? OleObjectDecoder.DecodeOleValueBytes(page, valueStart, inlineLength)
                 : longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
         }
 

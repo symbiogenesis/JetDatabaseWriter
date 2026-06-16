@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
@@ -365,7 +366,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
     private static string? InvokeTryDecodeOleObject(byte[] bytes)
     {
-        MethodInfo? method = typeof(AccessReader).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
+        MethodInfo? method = typeof(OleObjectDecoder).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
         return (string?)method.Invoke(null, [bytes, 0, bytes.Length]);
     }

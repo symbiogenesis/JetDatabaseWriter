@@ -23,7 +23,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 | 1 | God classes / monolithic types | Structure / cohesion | **High** |
 | 2 | Monster methods (200–450 lines) | Complexity | **High** |
 | 3 | Weak, primitive-obsessed public API | API design | **High** |
-| 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Medium-High** |
+| 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Resolved** |
 | 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Medium** |
 | 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Medium** |
 | 7 | Sprawling, overlapping concurrency model | Concurrency | **Medium** |
@@ -129,7 +129,15 @@ are first-class instead of requiring manual read-filter-write loops.
 
 ---
 
-## 4. Reader Doubles as a MIME Sniffer and Base64 Data-URI Generator — **Medium-High**
+## 4. Reader Doubles as a MIME Sniffer and Base64 Data-URI Generator — **Resolved**
+
+> **Resolved.** The OLE payload-detection, MIME-magic matching, raw-byte
+> extraction, and `data:`-URI synthesis were extracted out of `AccessReader`
+> into a dedicated [OleObjectDecoder](JetDatabaseWriter/ValueDecoding/OleObjectDecoder.cs).
+> The typed/`Rows()` hot path projects OLE columns as raw `byte[]` via
+> `OleObjectDecoder.DecodeOleValueBytes` and never base64-encodes; the
+> `data:`-URI convenience (`OleObjectDecoder.TryDecodeOleObject`) is only invoked
+> by the explicit string projection. The original finding follows for context.
 
 [AccessReader.cs](JetDatabaseWriter/AccessReader.cs) is a low-level JET/ACE *database* reader, yet it
 also embeds content-type detection for OLE blobs and synthesizes `data:` URIs:
@@ -312,5 +320,5 @@ analyzers on) so the bar is enforced before merge.
 2. Finish delegating `AccessWriter`/`AccessReader` into their existing collaborators and split into
    `partial` files (#1), which also clears #9.
 3. Add a typed row + multi-column predicate API (#3) — biggest external/usability win.
-4. Move OLE MIME/data-URI synthesis out of the reader hot path (#4).
+4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
 5. Tidy the swallow-to-sentinel decode paths and the sync-over-async lock (#5, #6) opportunistically.
