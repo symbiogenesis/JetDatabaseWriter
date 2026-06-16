@@ -108,7 +108,7 @@ public abstract class AccessBase : IAccessBase
     internal PageJournal? ActiveJournal { get; set; }
 
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
-#if NET8_0_OR_GREATER
+#if NET9_0_OR_GREATER
     private readonly Lock ownedDataPagesCacheLock = new();
 #else
     private readonly object ownedDataPagesCacheLock = new();
