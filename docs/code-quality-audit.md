@@ -24,7 +24,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 | 2 | Monster methods (200–450 lines) | Complexity | **High** |
 | 3 | Weak, primitive-obsessed public API | API design | **Resolved** |
 | 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Resolved** |
-| 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Medium** |
+| 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Resolved** |
 | 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Medium** |
 | 7 | Sprawling, overlapping concurrency model | Concurrency | **Medium** |
 | 8 | Large parameter lists & boolean-flag parameters | API ergonomics | **Low-Medium** |
@@ -182,7 +182,22 @@ never base64-encodes unless explicitly asked.
 
 ---
 
-## 5. Silent Exception Swallowing & Exceptions-as-Control-Flow — **Medium**
+## 5. Silent Exception Swallowing & Exceptions-as-Control-Flow — **Resolved**
+
+> **Resolved.** The three empty `catch { }` blocks in the AutoNumber high-water
+> scan were replaced with a non-throwing `TryGetAutoNumberCandidate` type switch in
+> [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs), so an unexpected boxed
+> value is skipped deterministically instead of being silently swallowed from a
+> throwing `Convert.ToInt64`. The fixed-column decoders
+> [JetTypeInfo.ReadFixedString / ReadFixedTyped](JetDatabaseWriter/Schema/JetTypeInfo.cs)
+> now validate the read up front with a shared `FixedReadInBounds` guard (Numeric
+> still self-validates with strict-mode `JetLimitationException` semantics) and
+> collapse their three stacked `catch` clauses into a single `when`-filtered catch
+> that no longer catches `IndexOutOfRangeException` — an out-of-range index now
+> surfaces as the slicing bug it indicates rather than collapsing to an empty
+> value. [RowDecodePlan.cs](JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs)
+> likewise collapses its four stacked catches into one `when` filter and stops
+> swallowing `IndexOutOfRangeException`. The original finding follows for context.
 
 Most catches in the codebase are disciplined (typed filters such as
 `catch (Exception ex) when (ex is A or B or C)`). A few, however, swallow exceptions into empty bodies
@@ -340,4 +355,4 @@ analyzers on) so the bar is enforced before merge.
    `partial` files (#1), which also clears #9.
 3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
-5. Tidy the swallow-to-sentinel decode paths and the sync-over-async lock (#5, #6) opportunistically.
+5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters; tidy the sync-over-async lock (#6) opportunistically.

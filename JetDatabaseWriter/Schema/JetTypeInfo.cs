@@ -191,6 +191,24 @@ internal static class JetTypeInfo
     // legacy lossy/diagnostic path; ReadFixedTyped is the typed-reader
     // hot path.
 
+    private static bool FixedReadInBounds(ColumnType type, int start, int size, int rowLength)
+    {
+        // Up-front bounds guard shared by ReadFixedString/ReadFixedTyped so the
+        // per-type decoders never index or slice past the row buffer, replacing the
+        // previous reliance on catching IndexOutOfRangeException / ArgumentException
+        // for out-of-range offsets. Numeric is excluded because it self-validates
+        // inside TryReadNumericDecimal with strict-mode JetLimitationException
+        // semantics that must still propagate.
+        if (type == NumericType)
+        {
+            return true;
+        }
+
+        int fixedSize = GetFixedSize(type);
+        int required = fixedSize > 0 ? fixedSize : Math.Min(size, 8);
+        return start >= 0 && required <= rowLength - start;
+    }
+
     /// <summary>
     /// Formats a fixed-width JET column value as a culture-invariant string.
     /// When <paramref name="strictNumeric"/> is <see langword="true"/>, Numeric values
@@ -205,6 +223,11 @@ internal static class JetTypeInfo
     /// <param name="strictNumeric">The strict numeric.</param>
     internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, ColumnType type, int size, bool strictNumeric = false)
     {
+        if (!FixedReadInBounds(type, start, size, row.Length))
+        {
+            return string.Empty;
+        }
+
         try
         {
             return type switch
@@ -229,16 +252,15 @@ internal static class JetTypeInfo
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or OverflowException)
         {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-        catch (OverflowException)
-        {
+            // Bounds are validated up front by FixedReadInBounds, so the only
+            // failures that reach here are genuinely invalid on-disk values: a bad
+            // OA date (DateTime.FromOADate) or a malformed 42-byte Date/Time
+            // Extended payload. Surface those as the diagnostic empty string.
+            // Strict Numeric limits propagate as JetLimitationException, and an
+            // IndexOutOfRangeException would signal a real slicing bug, so neither
+            // is caught here.
             return string.Empty;
         }
     }
@@ -286,6 +308,11 @@ internal static class JetTypeInfo
     /// <param name="strictNumeric">The strict numeric.</param>
     internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, ColumnType type, int size, bool strictNumeric = false)
     {
+        if (!FixedReadInBounds(type, start, size, row.Length))
+        {
+            return DBNull.Value;
+        }
+
         try
         {
             return type switch
@@ -317,16 +344,12 @@ internal static class JetTypeInfo
                 _ => ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8))),
             };
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or OverflowException)
         {
-            return DBNull.Value;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return DBNull.Value;
-        }
-        catch (OverflowException)
-        {
+            // See ReadFixedString: bounds are pre-validated by FixedReadInBounds,
+            // so only invalid OA dates and malformed Date/Time Extended payloads
+            // reach here. Strict Numeric limits propagate as JetLimitationException
+            // and an IndexOutOfRangeException would signal a real slicing bug.
             return DBNull.Value;
         }
     }

@@ -152,20 +152,13 @@ internal sealed class RowDecodePlan
                     throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
             }
         }
-        catch (JetLimitationException)
+        catch (Exception ex) when (ex is JetLimitationException or ArgumentException or OverflowException)
         {
-            return false;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return false;
-        }
-        catch (OverflowException)
-        {
+            // Corrupt row offsets surface as ArgumentException from the text/binary
+            // slicers, and strict Numeric limits surface as JetLimitationException;
+            // both mean "this inline value cannot be decoded". An out-of-range
+            // *index* would indicate a real slicing bug, so IndexOutOfRangeException
+            // is intentionally left to propagate rather than collapsing to false.
             return false;
         }
     }
