@@ -9,6 +9,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -224,7 +225,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
     private async ValueTask RemoveUnindexedCatalogRowAsync(RowLocation loc, CancellationToken cancellationToken)
     {
-        await writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+        await writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         await writer.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
     }
 
@@ -370,7 +371,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
             deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
 
-            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedCatalogRows.Count == 0)

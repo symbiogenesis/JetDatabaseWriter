@@ -3268,7 +3268,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach ((RowLocation row, _) in deletedRows)
         {
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
@@ -3738,15 +3738,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
-        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, clearRowData: false, cancellationToken);
+        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, DeletedRowDataMode.Default, cancellationToken);
 
-    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, bool clearRowData, CancellationToken cancellationToken)
-        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, clearRowData, cancellationToken);
+    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, dataMode, cancellationToken);
 
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, CancellationToken cancellationToken)
-        => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, clearRowData: false, cancellationToken).ConfigureAwait(false);
+        => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, DeletedRowDataMode.Default, cancellationToken).ConfigureAwait(false);
 
-    private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, bool clearRowData, CancellationToken cancellationToken)
+    private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
         byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
@@ -3758,7 +3758,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        if (clearRowData || this.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+        if (dataMode == DeletedRowDataMode.Clear || this.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
             foreach (RowBound rowBound in this.EnumerateLiveRowBounds(page))
             {

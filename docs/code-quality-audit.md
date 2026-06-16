@@ -27,7 +27,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 | 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Resolved** |
 | 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Resolved** |
 | 7 | Sprawling, overlapping concurrency model | Concurrency | **Resolved** |
-| 8 | Large parameter lists & boolean-flag parameters | API ergonomics | **Low-Medium** |
+| 8 | Large parameter lists & boolean-flag parameters | API ergonomics | **Resolved** |
 | 9 | Member-ordering suppressions hiding organic accretion | Maintainability | **Low** |
 | 10 | `Public`/`Core` method-pair duplication | Boilerplate | **Low** |
 | 11 | Tests held to a lower analyzer bar than production | Consistency | **Low** |
@@ -309,7 +309,30 @@ regressions as the code evolves, and it makes the concurrency invariants hard to
 
 ---
 
-## 8. Large Parameter Lists & Boolean-Flag Parameters — **Low-Medium**
+## 8. Large Parameter Lists & Boolean-Flag Parameters — **Resolved**
+
+> **Resolved.** The boolean-flag smell was removed: the `MarkRowDeletedAsync`
+> overload family now threads an explicit internal
+> [DeletedRowDataMode](JetDatabaseWriter/Enums/DeletedRowDataMode.cs) enum
+> (`Default` / `Clear`) instead of `bool clearRowData`, so every scrub call site
+> reads `DeletedRowDataMode.Clear` rather than a positional boolean. The
+> page-builder parameter lists were already addressed by the parameter-object
+> consolidation backlog
+> ([docs/design/parameter-object-consolidation-todos.md](design/parameter-object-consolidation-todos.md),
+> item #4): zero-pointer callers use the 4-argument convenience overloads, and
+> the sibling-preserving long-form `BuildLeafPage` / `BuildIntermediatePage`
+> overloads keep **named** `prevPage:` / `nextPage:` / `tailPage:` arguments.
+> That backlog deliberately **rejected** a sibling-pointer struct or tuple
+> because it would drop the named-argument transposition guard at the call
+> site — the exact hazard this finding is about.
+> [InsertPreparedBatchAsync](JetDatabaseWriter/AccessWriter.cs#L2094)'s six
+> parameters are all distinct types (`string`, `long`, `TableDef`,
+> `List<object[]>`, the nullable AutoNumber-checkpoint list, and a nullable
+> `FkContext`), so there is no adjacent same-type transposition risk; its only
+> coherent bundle (table identity) would route the caller-supplied `tableName`
+> through `CatalogEntry.Name` and risk subtle casing/identity changes in FK
+> enforcement and error messages, so it is left as-is per the backlog's
+> "prefer no-new-type" guidance. The original finding follows for context.
 
 Several APIs have parameter lists long enough to invite call-site mistakes (positional `bool`/`long`
 arguments are easy to transpose):

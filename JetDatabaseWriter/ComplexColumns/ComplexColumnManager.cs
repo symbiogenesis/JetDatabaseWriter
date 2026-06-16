@@ -1386,7 +1386,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri) in deletedRows)
         {
-            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
@@ -1418,7 +1418,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
             if (row.TDefPage == flatTdefPage)
             {
-                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1484,7 +1484,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((RowLocation loc, object[] _) in matched)
         {
-            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((RowLocation _, object[] values) in matched)
@@ -1540,7 +1540,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((RowLocation loc, object[] _) in matched)
         {
-            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((RowLocation _, object[] values) in matched)
@@ -1647,7 +1647,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
         foreach ((long pg, int ri) in cxRowsToDelete)
         {
-            await this.writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            await this.writer.MarkRowDeletedAsync(pg, ri, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (cxRowsToDelete.Count > 0)
@@ -1678,7 +1678,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
             if (flatTdefPages.Contains(row.TDefPage))
             {
-                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+                await this.writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
             }
         }
     }
