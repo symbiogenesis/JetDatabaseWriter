@@ -26,7 +26,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 | 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Resolved** |
 | 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Resolved** |
 | 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Resolved** |
-| 7 | Sprawling, overlapping concurrency model | Concurrency | **Medium** |
+| 7 | Sprawling, overlapping concurrency model | Concurrency | **Resolved** |
 | 8 | Large parameter lists & boolean-flag parameters | API ergonomics | **Low-Medium** |
 | 9 | Member-ordering suppressions hiding organic accretion | Maintainability | **Low** |
 | 10 | `Public`/`Core` method-pair duplication | Boilerplate | **Low** |
@@ -266,7 +266,23 @@ proper wait handle) to reduce wasted wakeups and latency.
 
 ---
 
-## 7. Sprawling, Overlapping Concurrency Model — **Medium**
+## 7. Sprawling, Overlapping Concurrency Model — **Resolved**
+
+> **Resolved.** The intended lock hierarchy and acquisition order are now
+> documented in one place:
+> [docs/design/concurrency-and-lock-ordering.md](design/concurrency-and-lock-ordering.md).
+> That note enumerates the coordination primitives, gives the single
+> outermost→innermost acquisition order, traces the write / commit / read /
+> dispose call paths, lists the reentrancy rules, and records a deliberate
+> decision **not** to merge the in-process gates. Verifying the code against the
+> audit's "conceptual overlap" showed the overlap does not hold: `IoGate`
+> serializes backing-stream I/O, `operationGate` is a reader-disposal drain that
+> intentionally allows concurrent reentrant reads, and the writer's `stateLock`
+> guards only a two-field insert-page hint cache — not transaction state.
+> Consolidating them would conflate three distinct responsibilities and add
+> contention; the only genuine (optional) simplification — downgrading the
+> insert-page-cache `ReaderWriterLockSlim` to a plain lock — is noted in the doc,
+> not done. The original finding follows for context.
 
 Mutual exclusion in the writer is spread across an unusually large set of mechanisms, each with its own
 ordering rules:
@@ -373,3 +389,4 @@ analyzers on) so the bar is enforced before merge.
 3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
 5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters. ~~Tidy the sync-over-async lock (#6)~~ **Done** — single async primitive + one boundary bridge + exponential backoff.
+6. ~~Document the lock-ordering hierarchy (#7)~~ **Done** — [docs/design/concurrency-and-lock-ordering.md](design/concurrency-and-lock-ordering.md); in-process gates kept separate by design.
