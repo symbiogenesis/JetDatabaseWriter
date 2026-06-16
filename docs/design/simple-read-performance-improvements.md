@@ -296,35 +296,53 @@ RoundTrip test namespaces with no behavior change.
 
 ---
 
-## 6. Give `LruCache` a real shared-read lookup
+## 6. Give `LruCache` a real shared-read lookup (DONE)
 
-`LruCache.TryGetValue` always takes the **write** lock, even though its own XML
-comment claims "concurrent readers (cache hits that don't MoveToFront) pay only
-the shared-lock cost":
+**Status: implemented (2026-06-16).**
 
-```csharp
-public bool TryGetValue(TKey key, out TValue value)
-{
-    this.rwLock.EnterWriteLock();   // always exclusive
-```
+`LruCache.TryGetValue` previously always took the **write** lock, even though its
+own XML comment claimed "concurrent readers (cache hits that don't MoveToFront)
+pay only the shared-lock cost". Because the lookup serialized every cache hit, it
+both blocked concurrent scans on a shared reader and made the documentation
+inaccurate. The cache is consulted per *page*, not per row, so single-threaded
+impact was small, but the operation gate
+([AsyncReentrantOperationGate.cs](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs))
+permits concurrent top-level reader operations, so the serialization was real.
 
-[LruCache.cs#L100](../../JetDatabaseWriter/Infrastructure/LruCache.cs#L100). The
-cache is consulted per *page*, not per row, so single-threaded impact is small —
-but it serializes concurrent scans on the same reader and the documentation is
-currently inaccurate.
+### Change
 
-### Proposed change
+Converted the cache to a CLOCK (second-chance) approximate-LRU so the hit path
+runs under the shared **read** lock (option (a) from the original proposal):
 
-Make the hit path use a shared read lock. Because `MoveToFront` mutates the
-recency list, either (a) approximate LRU by skipping the reorder on a read-locked
-hit (clock-style), or (b) record recency with an atomic counter and reorder
-lazily under the write lock only on insert/evict.
+- `TryGetValue` now takes `EnterReadLock`. On a hit it records the access by
+  setting a per-entry reference bit instead of calling `MoveToFront`, so it never
+  mutates the recency list. The reference bit is only ever written to the constant
+  `true` by concurrent readers (benign) and is read/cleared exclusively under the
+  write lock, which cannot overlap a read-lock holder.
+- The deferred reorder happens during eviction: `Add` now selects its victim via
+  a `SelectEvictionVictim` CLOCK scan that walks from the LRU end, giving any
+  referenced entry a second chance (clear bit + promote to MRU) and evicting the
+  first entry whose bit is clear. The scan terminates within a single pass because
+  every promotion clears exactly one bit.
+- `hits`/`misses` moved from plain `++` to `Interlocked.Increment` (and the
+  getters to `Interlocked.Read`) because they are now updated under the shared
+  read lock by concurrent readers.
 
-- **Impact:** concurrency throughput for shared readers; corrects the doc.
-- **Risk:** medium — cache-locking change; must preserve eviction correctness.
-  The operation gate
-  ([AsyncReentrantOperationGate.cs](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs))
-  permits concurrent top-level operations, so the lock cannot simply be removed.
+The six existing eviction tests still pass unchanged (the scenarios they cover
+produce identical victims under CLOCK), and a new
+`Concurrent_TryGetValue_Returns_Correct_Values_And_Counts_Hits_Exactly` test
+exercises 8 concurrent readers and asserts both value correctness and an exact
+hit count, which the previous lost-update `hits++` could not guarantee.
+
+### Impact and risk
+
+- **Impact:** concurrent cache hits on a shared reader now run in parallel under
+  the read lock instead of serializing on the write lock; corrects the XML doc.
+- **Risk:** medium (realized) — eviction switched from exact LRU to CLOCK
+  approximation. Validated by the full Reader and RoundTrip namespaces plus the
+  `LruCache`/reader-cache tests with no behavior change.
+- **Where:** [LruCache.cs#L77](../../JetDatabaseWriter/Infrastructure/LruCache.cs#L77),
+  [LruCache.cs#L199](../../JetDatabaseWriter/Infrastructure/LruCache.cs#L199).
 
 ---
 
@@ -364,8 +382,9 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 3. **#2 public projection** — highest wide-table leverage; additive API.
 4. **#3 widen direct decoder** — extends the zero-box path; needs per-conversion
    tests.
-5. **#6 LruCache shared-read** and **#7 sync enumeration** — only with a
-   concurrency or in-memory-scan profile that justifies the locking/API change.
+5. **#6 LruCache shared-read** (done) and **#7 sync enumeration** — the former
+   is implemented; the latter only with an in-memory-scan profile that justifies
+   the new API surface.
 
 ## Validation plan
 

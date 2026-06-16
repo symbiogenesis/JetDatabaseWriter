@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
+using System.Threading;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using Xunit;
 
@@ -179,5 +181,57 @@ public class LruCacheTests
         Assert.True(cache.TryGetValue("a", out _));
         Assert.True(cache.TryGetValue("b", out _));
         Assert.True(cache.TryGetValue("d", out _));
+    }
+
+    [Fact]
+    public async Task Concurrent_TryGetValue_Returns_Correct_Values_And_Counts_Hits_Exactly()
+    {
+        const int entryCount = 64;
+        const int workerCount = 8;
+        const int lookupsPerWorker = 5_000;
+
+        // Capacity equals the entry count and nothing is added during the read
+        // phase, so every key stays resident and every lookup is a hit.
+        using var cache = new LruCache<int, int>(entryCount);
+        for (int i = 0; i < entryCount; i++)
+        {
+            cache.Add(i, i * 7);
+        }
+
+        int mismatches = 0;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task RunWorkerAsync()
+        {
+            // Gate every worker on a single signal so the lookups overlap and
+            // genuinely contend on the shared read lock.
+            await release.Task.ConfigureAwait(false);
+            for (int n = 0; n < lookupsPerWorker; n++)
+            {
+                int key = n % entryCount;
+                if (!cache.TryGetValue(key, out int value) || value != key * 7)
+                {
+                    Interlocked.Increment(ref mismatches);
+                }
+            }
+        }
+
+        var workers = new Task[workerCount];
+        for (int w = 0; w < workerCount; w++)
+        {
+            workers[w] = Task.Run(RunWorkerAsync, TestContext.Current.CancellationToken);
+        }
+
+        release.SetResult();
+        await Task.WhenAll(workers);
+
+        // Shared-read lookups under contention must always return the right value...
+        Assert.Equal(0, mismatches);
+
+        // ...and Interlocked hit counting must not lose any increments (plain
+        // hits++ under the old write lock would have, but reads are now shared).
+        Assert.Equal((long)workerCount * lookupsPerWorker, cache.Hits);
+        Assert.Equal(0, cache.Misses);
+        Assert.Equal(entryCount, cache.Count);
     }
 }

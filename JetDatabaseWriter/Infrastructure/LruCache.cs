@@ -6,11 +6,13 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 
 /// <summary>
-/// Thread-safe LRU (Least Recently Used) cache implementation.
+/// Thread-safe cache with CLOCK (second-chance) approximate-LRU eviction.
 /// Uses an array-backed doubly-linked list with a sentinel node to eliminate
 /// per-entry heap allocations and improve CPU cache locality.
-/// Uses <see cref="ReaderWriterLockSlim"/> so concurrent readers (cache hits
-/// that don't MoveToFront) pay only the shared-lock cost.
+/// Uses <see cref="ReaderWriterLockSlim"/> so concurrent cache hits run under
+/// the shared read lock: a hit only sets a per-entry reference bit instead of
+/// reordering the recency list, and the deferred reorder is applied under the
+/// write lock during eviction.
 /// </summary>
 /// <typeparam name="TKey">The type of keys in the cache.</typeparam>
 /// <typeparam name="TValue">The type of values in the cache.</typeparam>
@@ -31,12 +33,12 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     private int nextSlot = 1;
 
     /// <summary>
-    /// Cache hit counter for monitoring effectiveness. Updated under the write lock for simplicity, since hits are only recorded on entries that need to be moved to the front of the list.
+    /// Cache hit counter for monitoring effectiveness. Updated with <see cref="Interlocked"/> because hits are recorded under the shared read lock, where concurrent readers may increment it simultaneously.
     /// </summary>
     private long hits;
 
     /// <summary>
-    /// Cache miss counter for monitoring effectiveness. Updated under the write lock for simplicity, since misses are only recorded on entries that need to be moved to the front of the list.
+    /// Cache miss counter for monitoring effectiveness. Updated with <see cref="Interlocked"/> because misses are recorded under the shared read lock, where concurrent readers may increment it simultaneously.
     /// </summary>
     private long misses;
 
@@ -67,63 +69,39 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     }
 
     /// <summary>Gets the number of successful <see cref="TryGetValue"/> lookups since construction.</summary>
-    public long Hits
-    {
-        get
-        {
-            this.rwLock.EnterReadLock();
-            try
-            {
-                return this.hits;
-            }
-            finally
-            {
-                this.rwLock.ExitReadLock();
-            }
-        }
-    }
+    public long Hits => Interlocked.Read(ref this.hits);
 
     /// <summary>Gets the number of failed <see cref="TryGetValue"/> lookups since construction.</summary>
-    public long Misses
-    {
-        get
-        {
-            this.rwLock.EnterReadLock();
-            try
-            {
-                return this.misses;
-            }
-            finally
-            {
-                this.rwLock.ExitReadLock();
-            }
-        }
-    }
+    public long Misses => Interlocked.Read(ref this.misses);
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        this.rwLock.EnterWriteLock();
+        this.rwLock.EnterReadLock();
         try
         {
             if (this.map.TryGetValue(key, out int idx))
             {
-                if (this.nodes[Sentinel].Next != idx)
-                {
-                    this.MoveToFront(idx);
-                }
-
                 value = this.nodes[idx].Value;
-                this.hits++;
+
+                // CLOCK second-chance: record the access by setting the entry's
+                // reference bit instead of reordering the recency list, so cache
+                // hits stay on the shared read lock. The deferred reorder runs
+                // under the write lock during eviction. Concurrent readers only
+                // ever write the constant true here, so the unsynchronized write
+                // is benign; the bit is read and cleared exclusively under the
+                // write lock, which cannot overlap a read-lock holder.
+                this.nodes[idx].Referenced = true;
+                Interlocked.Increment(ref this.hits);
                 return true;
             }
 
             value = default!;
-            this.misses++;
+            Interlocked.Increment(ref this.misses);
             return false;
         }
         finally
         {
-            this.rwLock.ExitWriteLock();
+            this.rwLock.ExitReadLock();
         }
     }
 
@@ -140,14 +118,17 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                 }
 
                 this.nodes[existingIdx].Value = value;
+
+                // Now most-recently used by position, so drop any pending second chance.
+                this.nodes[existingIdx].Referenced = false;
                 return;
             }
 
             int nodeIdx;
             if (this.map.Count >= this.capacity)
             {
-                // Evict LRU entry and reuse its slot in-place (zero allocation).
-                nodeIdx = this.nodes[Sentinel].Prev;
+                // Pick a victim via the CLOCK second-chance scan and reuse its slot in-place (zero allocation).
+                nodeIdx = this.SelectEvictionVictim();
                 this.Detach(nodeIdx);
                 ref Node evicted = ref this.nodes[nodeIdx];
                 this.map.Remove(evicted.Key);
@@ -165,6 +146,9 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
 
             this.nodes[nodeIdx].Key = key;
             this.nodes[nodeIdx].Value = value;
+
+            // New entries start unreferenced (also resets a reused evicted slot's stale bit).
+            this.nodes[nodeIdx].Referenced = false;
             this.Prepend(nodeIdx);
             this.map[key] = nodeIdx;
         }
@@ -204,6 +188,27 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         }
     }
 
+    /// <summary>
+    /// Selects the slot to evict using the CLOCK (second-chance) algorithm: walk
+    /// from the LRU end and give every entry whose reference bit is set a second
+    /// chance by clearing the bit and promoting it to most-recently-used. The
+    /// first entry found with a clear bit is returned. Always called under the
+    /// write lock. Terminates within a single pass because each promotion clears
+    /// exactly one bit, so the tail bit is guaranteed clear after one full cycle.
+    /// </summary>
+    private int SelectEvictionVictim()
+    {
+        int victim = this.nodes[Sentinel].Prev;
+        while (this.nodes[victim].Referenced)
+        {
+            this.nodes[victim].Referenced = false;
+            this.MoveToFront(victim);
+            victim = this.nodes[Sentinel].Prev;
+        }
+
+        return victim;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Detach(int idx)
     {
@@ -239,6 +244,14 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         public int Prev { get; set; }
 
         public int Next { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this entry has been accessed
+        /// since the last recency reorder (the CLOCK reference bit). Set under the
+        /// shared read lock on a cache hit and cleared under the write lock during
+        /// the eviction second-chance scan.
+        /// </summary>
+        public bool Referenced { get; set; }
     }
 
     public void Dispose() => this.rwLock.Dispose();
