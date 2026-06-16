@@ -66,8 +66,12 @@ in the facade is the smell.
 **Why it matters:** these files exceed what a reviewer can hold in working memory, force wide-ranging
 merge conflicts, and make it impossible to unit-test slices in isolation.
 
-**Remediation:** push the remaining inline logic into the collaborators it already owns (e.g. move
-AutoNumber high-water maintenance into a small `AutoNumberMaintainer`;
+**Remediation:** push the remaining inline logic into the collaborators it already owns
+(~~move AutoNumber high-water maintenance into a small `AutoNumberMaintainer`~~ **Done** — the
+TDEF AutoNumber high-water scan and its non-throwing candidate resolver now live in
+[AutoNumberMaintainer](JetDatabaseWriter/Schema/AutoNumberMaintainer.cs), a small writer-owned
+collaborator; `AccessWriter` calls `autoNumberMaintainer.UpdateHighWaterAsync(...)` once after each
+insert batch instead of hosting the logic inline;
 ~~move linked-table creation entirely into `LinkedTableManager`~~ **Done** — the five public
 `CreateLinked*Async` entry points are now thin forwarders to
 [LinkedTableManager](JetDatabaseWriter/Relationships/LinkedTableManager.cs), which owns the
@@ -413,7 +417,8 @@ analyzers on) so the bar is enforced before merge.
 1. Decompose the two ~400-line `IndexBTreeEditor` methods (#2) — highest defect risk per line.
 2. Finish delegating `AccessWriter`/`AccessReader` into their existing collaborators and split into
    `partial` files (#1), which also clears #9. *In progress* — linked-table creation now delegates
-   entirely to `LinkedTableManager`; AutoNumber bookkeeping and the `partial` split remain.
+   entirely to `LinkedTableManager` and AutoNumber high-water bookkeeping now lives in
+   `AutoNumberMaintainer`; the `partial` split remains.
 3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
 5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters. ~~Tidy the sync-over-async lock (#6)~~ **Done** — single async primitive + one boundary bridge + exponential backoff.

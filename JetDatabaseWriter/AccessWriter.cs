@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -73,6 +72,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>Builds table-definition pages for writer-created schemas.</summary>
     private readonly TDefPageBuilder tdefPageBuilder;
+
+    /// <summary>Advances the per-table AutoNumber high-water counter after inserts.</summary>
+    private readonly AutoNumberMaintainer autoNumberMaintainer;
 
     /// <summary>Pre-encodes oversized MEMO/OLE/Attachment payloads into LVAL chains.</summary>
     private readonly LongValueEncoder longValueEncoder;
@@ -167,6 +169,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.Relationships = new RelationshipManager(this, this.indexMaintainer, this.pageAllocator);
         this.ComplexColumns = new ComplexColumnManager(this, this.indexMaintainer);
         this.tdefPageBuilder = new TDefPageBuilder(this);
+        this.autoNumberMaintainer = new AutoNumberMaintainer(this);
         this.longValueEncoder = new LongValueEncoder(this, this.pageAllocator);
         this.uniqueIndexChecker = new UniqueIndexChecker(this);
         this.transactionLifecycle = new TransactionLifecycle(this);
@@ -2019,7 +2022,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     await this.indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
-                await this.UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+                await this.autoNumberMaintainer.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
             }
         }
         catch
@@ -2030,102 +2033,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         return inserted;
-    }
-
-    private async ValueTask UpdateTDefAutoNumberHighWaterAsync(long tdefPage, TableDef tableDef, List<object[]> rows, CancellationToken cancellationToken)
-    {
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        long highWater = 0;
-        for (int colIndex = 0; colIndex < tableDef.Columns.Count; colIndex++)
-        {
-            ColumnInfo column = tableDef.Columns[colIndex];
-            if ((column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
-            {
-                continue;
-            }
-
-            foreach (object[] row in rows)
-            {
-                if (colIndex >= row.Length || row[colIndex] is null || row[colIndex] is DBNull)
-                {
-                    continue;
-                }
-
-                if (TryGetAutoNumberCandidate(row[colIndex], out long value) && value > highWater)
-                {
-                    highWater = value;
-                }
-            }
-        }
-
-        if (highWater <= 0)
-        {
-            return;
-        }
-
-        byte[] page = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            uint current = Ru32(page, Constants.TableDefinition.AutoNumberOffset);
-            uint next = highWater >= uint.MaxValue ? uint.MaxValue : (uint)highWater;
-            if (next <= current)
-            {
-                return;
-            }
-
-            Wi32(page, Constants.TableDefinition.AutoNumberOffset, unchecked((int)next));
-            await this.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
-
-    private static bool TryGetAutoNumberCandidate(object boxed, out long value)
-    {
-        // AutoNumber columns are always Long Integer identity values, but the boxed
-        // row payload may carry any integer-family CLR type (or a numeric string)
-        // depending on how the caller supplied the row. Resolve the candidate
-        // without throwing so an unexpected non-integer value is skipped
-        // deterministically rather than masked by an empty catch around Convert.ToInt64.
-        switch (boxed)
-        {
-            case int i:
-                value = i;
-                return true;
-            case long l:
-                value = l;
-                return true;
-            case short s:
-                value = s;
-                return true;
-            case byte b:
-                value = b;
-                return true;
-            case sbyte sb:
-                value = sb;
-                return true;
-            case ushort us:
-                value = us;
-                return true;
-            case uint ui:
-                value = ui;
-                return true;
-            case ulong ul when ul <= long.MaxValue:
-                value = (long)ul;
-                return true;
-            case string text when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed):
-                value = parsed;
-                return true;
-            default:
-                value = 0;
-                return false;
-        }
     }
 
     /// <summary>
