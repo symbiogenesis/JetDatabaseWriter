@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Transactions;
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 #if NETSTANDARD2_1
 using System.Runtime.InteropServices;
@@ -34,16 +35,23 @@ using System.Threading.Tasks;
 /// disposable.
 /// </para>
 /// <para>
-/// Acquisition uses a poll loop: try to take the lock, sleep
-/// <see cref="PollIntervalMilliseconds"/>, retry until the configured timeout
-/// elapses. This keeps the implementation portable to the synchronous and async
-/// call sites in <c>AccessBase</c>.
+/// Acquisition runs a single asynchronous exponential-backoff poll loop
+/// (<see cref="AcquireBlockingAsync"/>): try to take the lock, then await a
+/// growing delay — starting at <see cref="InitialPollIntervalMilliseconds"/> and
+/// capped at <see cref="MaxPollIntervalMilliseconds"/> — before retrying, until
+/// the configured timeout elapses. The backoff schedule and timeout accounting
+/// live in <see cref="PollBackoff"/>. The synchronous entry point
+/// (<see cref="AcquirePageLock"/>) bridges onto that same async primitive once at
+/// the call boundary instead of maintaining a duplicate blocking loop.
 /// </para>
 /// </remarks>
 internal sealed class JetByteRangeLock
 {
-    /// <summary>How often the acquisition poll loop retries the lock.</summary>
-    internal const int PollIntervalMilliseconds = 20;
+    /// <summary>Initial backoff before the first lock retry, in milliseconds.</summary>
+    private const int InitialPollIntervalMilliseconds = 2;
+
+    /// <summary>Maximum backoff between successive lock retries, in milliseconds.</summary>
+    private const int MaxPollIntervalMilliseconds = 64;
 
     private readonly FileStream? fileStream;
     private readonly int lockTimeoutMs;
@@ -106,7 +114,12 @@ internal sealed class JetByteRangeLock
         }
 
         long offset = pageNumber * pageSize;
-        this.AcquireBlocking(offset, pageSize);
+
+        // Bridge this synchronous entry point onto the single async acquisition
+        // primitive exactly once, at the call boundary. AcquireBlockingAsync uses
+        // ConfigureAwait(false) throughout, so blocking here cannot deadlock on a
+        // captured synchronization context.
+        this.AcquireBlockingAsync(offset, pageSize, CancellationToken.None).AsTask().GetAwaiter().GetResult();
         return new ReleaseToken(this, offset, pageSize);
     }
 
@@ -177,47 +190,24 @@ internal sealed class JetByteRangeLock
         || RuntimeInformation.IsOSPlatform(OSPlatform.Create("ANDROID"));
 #endif
 
-    private void AcquireBlocking(long offset, long length)
-    {
-        if (this.TryAcquire(offset, length))
-        {
-            return;
-        }
-
-        var stopwatch = Stopwatch.StartNew();
-        do
-        {
-            Task.Delay(PollIntervalMilliseconds).ConfigureAwait(false).GetAwaiter().GetResult();
-
-            if (this.TryAcquire(offset, length))
-            {
-                return;
-            }
-        }
-        while (stopwatch.ElapsedMilliseconds < this.lockTimeoutMs);
-
-        this.ThrowTimeout(offset, length);
-    }
-
     private async ValueTask AcquireBlockingAsync(long offset, long length, CancellationToken cancellationToken)
     {
-        if (this.TryAcquire(offset, length))
+        var backoff = new PollBackoff(this.lockTimeoutMs);
+        while (true)
         {
-            return;
-        }
-
-        var stopwatch = Stopwatch.StartNew();
-        do
-        {
-            await Task.Delay(PollIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
             if (this.TryAcquire(offset, length))
             {
                 return;
             }
-        }
-        while (stopwatch.ElapsedMilliseconds < this.lockTimeoutMs);
 
-        this.ThrowTimeout(offset, length);
+            int delayMilliseconds = backoff.NextDelayMilliseconds();
+            if (delayMilliseconds < 0)
+            {
+                this.ThrowTimeout(offset, length);
+            }
+
+            await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private bool TryAcquire(long offset, long length)
@@ -256,11 +246,54 @@ internal sealed class JetByteRangeLock
         }
     }
 
+    [DoesNotReturn]
     private void ThrowTimeout(long offset, long length)
     {
         long pageNumber = length > 0 ? offset / length : -1;
         throw new IOException(
             $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
+    }
+
+    /// <summary>
+    /// Exponential-backoff schedule shared by the synchronous and asynchronous
+    /// acquisition loops. Derives a deadline from the configured timeout and
+    /// yields capped, deadline-clamped retry delays.
+    /// </summary>
+    /// <param name="timeoutMilliseconds">Maximum milliseconds to keep polling before the schedule reports a timeout.</param>
+    private struct PollBackoff(int timeoutMilliseconds)
+    {
+        private readonly long deadlineTimestamp = Stopwatch.GetTimestamp() + (Stopwatch.Frequency * timeoutMilliseconds / 1000L);
+        private int delayMilliseconds = InitialPollIntervalMilliseconds;
+
+        /// <summary>
+        /// Returns the next retry delay in milliseconds — growing exponentially up
+        /// to <see cref="MaxPollIntervalMilliseconds"/> and clamped so the wait
+        /// never runs past the deadline — or <c>-1</c> once the timeout has elapsed
+        /// and the caller must stop polling.
+        /// </summary>
+        public int NextDelayMilliseconds()
+        {
+            long remainingTicks = this.deadlineTimestamp - Stopwatch.GetTimestamp();
+            if (remainingTicks <= 0)
+            {
+                return -1;
+            }
+
+            int delay = this.delayMilliseconds;
+            this.delayMilliseconds = Math.Min(MaxPollIntervalMilliseconds, this.delayMilliseconds * 2);
+
+            // Only the small (<= cap) delay is converted to ticks, so the clamp
+            // stays overflow-safe even for very large timeouts under checked
+            // arithmetic.
+            long delayTicks = Stopwatch.Frequency * delay / 1000L;
+            if (delayTicks <= remainingTicks)
+            {
+                return delay;
+            }
+
+            long clampedMilliseconds = remainingTicks * 1000L / Stopwatch.Frequency;
+            return clampedMilliseconds <= 0 ? 1 : (int)clampedMilliseconds;
+        }
     }
 
     private sealed class ReleaseToken(JetByteRangeLock owner, long offset, long length) : IDisposable

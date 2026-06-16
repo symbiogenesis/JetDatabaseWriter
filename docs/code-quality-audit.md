@@ -25,7 +25,7 @@ surface, concurrency primitives, and analyzer-suppression density.
 | 3 | Weak, primitive-obsessed public API | API design | **Resolved** |
 | 4 | Reader doubles as MIME sniffer + base64 data-URI generator | SRP / performance | **Resolved** |
 | 5 | Silent exception swallowing / exceptions-as-control-flow | Error handling | **Resolved** |
-| 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Medium** |
+| 6 | Sync-over-async busy-poll lock + duplicated sync/async loops | Concurrency | **Resolved** |
 | 7 | Sprawling, overlapping concurrency model | Concurrency | **Medium** |
 | 8 | Large parameter lists & boolean-flag parameters | API ergonomics | **Low-Medium** |
 | 9 | Member-ordering suppressions hiding organic accretion | Maintainability | **Low** |
@@ -227,7 +227,24 @@ condition — treat it as a bug signal.
 
 ---
 
-## 6. Sync-over-Async Busy-Poll Lock + Duplicated Sync/Async Loops — **Medium**
+## 6. Sync-over-Async Busy-Poll Lock + Duplicated Sync/Async Loops — **Resolved**
+
+> **Resolved.** The duplicated sync poll loop was removed. Acquisition now runs a
+> single async primitive
+> ([`AcquireBlockingAsync`](JetDatabaseWriter/Transactions/JetByteRangeLock.cs)),
+> and the (test-only) synchronous entry point
+> ([`AcquirePageLock`](JetDatabaseWriter/Transactions/JetByteRangeLock.cs)) bridges
+> onto it exactly once at the call boundary
+> (`AcquireBlockingAsync(...).AsTask().GetAwaiter().GetResult()`) instead of
+> running its own per-iteration `Task.Delay(...).GetAwaiter().GetResult()`. The
+> fixed 20 ms interval was replaced with a deadline-clamped exponential backoff
+> (2 ms doubling to a 64 ms cap), encapsulated in a
+> [`PollBackoff`](JetDatabaseWriter/Transactions/JetByteRangeLock.cs) value type so
+> the schedule and timeout accounting live in one place. Because this repo bans
+> `Thread.Sleep`/`Task.Wait`/`Task.Result` (see
+> [BannedSymbols.txt](BannedSymbols.txt)), a single boundary bridge is the
+> sanctioned synchronous escape hatch rather than an OS wait handle. The original
+> finding follows for context.
 
 [JetByteRangeLock.cs](JetDatabaseWriter/Transactions/JetByteRangeLock.cs#L190) acquires a contended lock
 by **blocking on an async delay**:
@@ -355,4 +372,4 @@ analyzers on) so the bar is enforced before merge.
    `partial` files (#1), which also clears #9.
 3. ~~Add a typed row + multi-column predicate API (#3) — biggest external/usability win.~~ **Done** — `RowValues` + `RowCriteria`/`ColumnPredicate`.
 4. ~~Move OLE MIME/data-URI synthesis out of the reader hot path (#4).~~ **Done** — extracted into `OleObjectDecoder`.
-5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters; tidy the sync-over-async lock (#6) opportunistically.
+5. ~~Tidy the swallow-to-sentinel decode paths (#5)~~ **Done** — non-throwing AutoNumber/decode guards + consolidated `when` filters. ~~Tidy the sync-over-async lock (#6)~~ **Done** — single async primitive + one boundary bridge + exponential backoff.
