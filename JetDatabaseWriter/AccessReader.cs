@@ -24,6 +24,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -1118,6 +1119,124 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
+    public async ValueTask<IReadOnlyList<RelationshipMetadata>> ListRelationshipsAsync(CancellationToken cancellationToken = default)
+    {
+        using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // MSysRelationships is a system table; ReadTableAsync resolves it through
+        // the catalog fallback and returns an empty table when it is absent (Jet3
+        // or slim-catalog files). The operation gate is reentrant, so the nested
+        // ReadTableAsync call joins this root operation rather than blocking.
+        DataTable table = await this.ReadTableAsync(Constants.SystemTableNames.Relationships, cancellationToken: cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return AggregateRelationships(table);
+        }
+        finally
+        {
+            table.Dispose();
+        }
+    }
+
+    private static List<RelationshipMetadata> AggregateRelationships(DataTable table)
+    {
+        static string Str(object? value) => value as string ?? string.Empty;
+        static int Int(object? value) => value switch
+        {
+            int i => i,
+            short s => s,
+            byte b => b,
+            long l => unchecked((int)l),
+            _ => 0,
+        };
+
+        if (!table.Columns.Contains("szRelationship")
+            || !table.Columns.Contains("szObject")
+            || !table.Columns.Contains("szReferencedObject")
+            || !table.Columns.Contains("szColumn")
+            || !table.Columns.Contains("szReferencedColumn"))
+        {
+            return [];
+        }
+
+        bool hasIcolumn = table.Columns.Contains("icolumn");
+        bool hasGrbit = table.Columns.Contains("grbit");
+
+        // Group one MSysRelationships row per FK column back into a single
+        // relationship, preserving first-seen order for a deterministic result.
+        var groups = new Dictionary<string, List<DataRow>>(StringComparer.OrdinalIgnoreCase);
+        var order = new List<string>();
+        foreach (DataRow row in table.Rows)
+        {
+            string name = Str(row["szRelationship"]);
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            if (!groups.TryGetValue(name, out List<DataRow>? list))
+            {
+                list = [];
+                groups[name] = list;
+                order.Add(name);
+            }
+
+            list.Add(row);
+        }
+
+        var result = new List<RelationshipMetadata>(groups.Count);
+        foreach (string name in order)
+        {
+            List<DataRow> rows = groups[name];
+            if (hasIcolumn)
+            {
+                rows.Sort((left, right) => Int(left["icolumn"]).CompareTo(Int(right["icolumn"])));
+            }
+
+            string primaryTable = Str(rows[0]["szReferencedObject"]);
+            string foreignTable = Str(rows[0]["szObject"]);
+            if (primaryTable.Length == 0 || foreignTable.Length == 0)
+            {
+                continue;
+            }
+
+            string[] primaryColumns = new string[rows.Count];
+            string[] foreignColumns = new string[rows.Count];
+            bool malformed = false;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                primaryColumns[i] = Str(rows[i]["szReferencedColumn"]);
+                foreignColumns[i] = Str(rows[i]["szColumn"]);
+                if (primaryColumns[i].Length == 0 || foreignColumns[i].Length == 0)
+                {
+                    malformed = true;
+                }
+            }
+
+            if (malformed)
+            {
+                continue;
+            }
+
+            int grbit = hasGrbit ? Int(rows[0]["grbit"]) : 0;
+            result.Add(new RelationshipMetadata
+            {
+                Name = name,
+                PrimaryTable = primaryTable,
+                PrimaryColumns = primaryColumns,
+                ForeignTable = foreignTable,
+                ForeignColumns = foreignColumns,
+                EnforcesReferentialIntegrity = (grbit & (int)Constants.RelationshipFlags.NoRefIntegrity) == 0,
+                CascadeUpdates = (grbit & (int)Constants.RelationshipFlags.CascadeUpdates) != 0,
+                CascadeDeletes = (grbit & (int)Constants.RelationshipFlags.CascadeDeletes) != 0,
+            });
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc/>
     public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName)
         => new AccessObjectIndexQuery(this, tableName, indexName);
 
@@ -1125,6 +1244,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
         where T : class, new()
             => new AccessTypedIndexQuery<T>(this, tableName, indexName);
+
+    /// <inheritdoc/>
+    public IAccessEntityQuery<T> Query<T>(string tableName)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        return new AccessEntityQuery<T>(this, tableName);
+    }
 
     /// <inheritdoc/>
     public async IAsyncEnumerable<object[]> SeekRowsAsync(

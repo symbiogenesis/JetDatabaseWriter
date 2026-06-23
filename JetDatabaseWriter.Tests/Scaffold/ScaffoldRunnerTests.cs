@@ -383,13 +383,16 @@ public sealed class ScaffoldRunnerTests : IDisposable
     /// <param name="tables">The tables.</param>
     /// <param name="columnsByTable">The columns by table.</param>
     /// <param name="failingTables">The failing tables.</param>
+    /// <param name="relationships">The foreign-key relationships.</param>
     private sealed class FakeAccessReader(
         List<string> tables,
         Dictionary<string, List<ColumnMetadata>>? columnsByTable = null,
-        Dictionary<string, Exception>? failingTables = null) : IAccessReader
+        Dictionary<string, Exception>? failingTables = null,
+        List<RelationshipMetadata>? relationships = null) : IAccessReader
     {
         private readonly Dictionary<string, List<ColumnMetadata>> columnsByTable = columnsByTable ?? [];
         private readonly Dictionary<string, Exception> failingTables = failingTables ?? [];
+        private readonly List<RelationshipMetadata> relationships = relationships ?? [];
 
         public DatabaseFormat DatabaseFormat => DatabaseFormat.Jet4Mdb;
 
@@ -457,10 +460,20 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
+        public ValueTask<IReadOnlyList<RelationshipMetadata>> ListRelationshipsAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ValueTask<IReadOnlyList<RelationshipMetadata>>([.. this.relationships]);
+        }
+
         public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName) =>
             throw new NotImplementedException();
 
         public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+            where T : class, new() =>
+            throw new NotImplementedException();
+
+        public IAccessEntityQuery<T> Query<T>(string tableName)
             where T : class, new() =>
             throw new NotImplementedException();
 

@@ -134,6 +134,20 @@ public interface IAccessReader : IAccessBase
     public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns metadata for every foreign-key relationship declared in the database's
+    /// <c>MSysRelationships</c> catalog.
+    /// </summary>
+    /// <remarks>
+    /// Each entry links a child (<see cref="RelationshipMetadata.ForeignTable"/>) to a
+    /// parent (<see cref="RelationshipMetadata.PrimaryTable"/>), with composite keys listed
+    /// in matching column order. Returns an empty list for databases without the
+    /// <c>MSysRelationships</c> table (Jet3 or slim-catalog files).
+    /// </remarks>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>A read-only list of <see cref="RelationshipMetadata"/> entries.</returns>
+    public ValueTask<IReadOnlyList<RelationshipMetadata>> ListRelationshipsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Starts an explicit index-backed read query over <paramref name="indexName"/>
     /// and returns matching rows as typed object arrays.
     /// </summary>
@@ -163,6 +177,17 @@ public interface IAccessReader : IAccessBase
     /// <param name="indexName">Index name (case-insensitive).</param>
     /// <returns>A fluent index-query builder.</returns>
     public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+        where T : class, new();
+
+    /// <summary>
+    /// Starts a fluent, EF-style entity query over <paramref name="tableName"/> that
+    /// supports filtering and relationship-inferred eager loading via
+    /// <see cref="IAccessEntityQuery{T}.Include{TProperty}"/>.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <returns>A composable entity query.</returns>
+    public IAccessEntityQuery<T> Query<T>(string tableName)
         where T : class, new();
 
     /// <summary>

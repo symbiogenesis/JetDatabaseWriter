@@ -33,7 +33,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ streaming** | `Rows<T>("...", o => …)` auto-infers an index (scan fallback) over `IAsyncEnumerable<T>`; chain `.Where(...).Take(...).ToListAsync(ct)`; `FromIndex<T>(...)` to override |
+| ✅ **POCO + LINQ streaming** | `Rows<T>("...", o => …)` auto-infers an index; `Query<T>(...).Include(...)` eager-loads inferred relationships; async LINQ over `IAsyncEnumerable<T>`; `FromIndex<T>(...)` to override |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -253,6 +253,32 @@ await foreach (object[] row in reader.SeekRowsAsync("Companies", "IX_CompanyName
     Console.WriteLine(row[0]);
 }
 ```
+
+### Relationships and eager loading (`Include`)
+
+`ListRelationshipsAsync` returns every foreign-key relationship from the database's `MSysRelationships` catalog. Each entry links a child (`ForeignTable`) to a parent (`PrimaryTable`) with matching key columns, plus the integrity and cascade flags.
+
+```csharp
+foreach (RelationshipMetadata rel in await reader.ListRelationshipsAsync(cancellationToken))
+    Console.WriteLine($"{rel.Name}: {rel.ForeignTable}({string.Join(",", rel.ForeignColumns)}) -> {rel.PrimaryTable}({string.Join(",", rel.PrimaryColumns)})");
+```
+
+`Query<T>(...)` is an EF-style entity query that **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Reference navigations load the parent; collection navigations load the children. `Where(...)` reuses the same index inference as `Rows<T>(table, predicate)`.
+
+```csharp
+// Parent with its children (collection navigation)
+List<Customer> customers = await reader.Query<Customer>("Customers")
+    .Where(c => c.Region == "West")
+    .Include(c => c.Orders)
+    .ToListAsync(cancellationToken);
+
+// Child with its parent (reference navigation)
+List<Order> orders = await reader.Query<Order>("Orders")
+    .Include(o => o.Customer)
+    .ToListAsync(cancellationToken);
+```
+
+The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. Each `Include` reads the related table once and joins in memory; only `&&`-combined column predicates drive root index inference. Without an `Include` the query streams (it implements `IAsyncEnumerable<T>`); with one, results are materialized so the related rows can be batch-loaded first. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
 
 ### Complex (Attachment / Multi-value) column metadata
 
@@ -778,6 +804,25 @@ public sealed class Orders
 ```
 
 Table and column names are automatically converted to PascalCase C# identifiers — spaces, hyphens, and special characters are cleaned, and C# keywords are escaped.
+
+When the database declares foreign-key relationships, each generated entity also gets **navigation properties** inferred from `MSysRelationships`: a reference to the parent (named after the foreign-key column, EF-style — `CustomerID` → `Customer`) and a collection of children (named after the child table). These pair directly with `reader.Query<T>(...).Include(...)`:
+
+```csharp
+public sealed class Customers
+{
+    public int CustomerID { get; set; }
+    /// <summary>Navigation: related Orders children.</summary>
+    public ICollection<Orders> Orders { get; set; } = new List<Orders>();
+}
+
+public sealed class Orders
+{
+    public int OrderID { get; set; }
+    public int CustomerID { get; set; }
+    /// <summary>Navigation: the related Customers (parent).</summary>
+    public Customers? Customer { get; set; }
+}
+```
 
 ---
 

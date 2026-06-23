@@ -44,6 +44,19 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
 
         await output.WriteLineAsync($"Found {tables.Count} table(s). Generating models into: {outputDir}");
 
+        IReadOnlyList<RelationshipMetadata> relationships;
+        try
+        {
+            relationships = await reader.ListRelationshipsAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException)
+        {
+            await error.WriteLineAsync($"  Warning: relationships unavailable; navigation properties skipped: {ex.Message}");
+            relationships = [];
+        }
+
+        Dictionary<string, List<ScaffoldNavigation>> navigationsByTable = NavigationResolver.Resolve(tables, relationships);
+
         int generated = 0;
         foreach (string table in tables)
         {
@@ -61,7 +74,11 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             string className = NameCleaner.ToClassName(table);
             string filePath = Path.Combine(outputDir, $"{className}.cs");
 
-            await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, columns, ns, useRecords, nullable), cancellationToken);
+            IReadOnlyList<ScaffoldNavigation> navigations = navigationsByTable.TryGetValue(table, out List<ScaffoldNavigation>? navs)
+                ? navs
+                : [];
+
+            await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, columns, navigations, ns, useRecords, nullable), cancellationToken);
             await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)");
             generated++;
         }
