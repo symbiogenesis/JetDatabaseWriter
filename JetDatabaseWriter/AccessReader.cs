@@ -7,6 +7,7 @@ using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -562,6 +563,86 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             yield return mapped;
         }
+    }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<T> Rows<T>(
+        string tableName,
+        Expression<Func<T, bool>> predicate,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(predicate, nameof(predicate));
+
+        Func<T, bool> compiled = predicate.Compile();
+        RowCriteria pushable = IndexPredicateTranslator.ExtractPushableCriteria(predicate);
+        return this.RowsInferredAsync(tableName, compiled, pushable, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Drives <see cref="Rows{T}(string, Expression{Func{T, bool}}, IProgress{long}?, CancellationToken)"/>:
+    /// plans an index seek from the pushable predicate, streams from the index when
+    /// one is usable (or scans otherwise), and applies the fully compiled predicate
+    /// to every candidate row. The seek only ever narrows the candidate set, so the
+    /// compiled filter guarantees the result is exactly the predicate's matches.
+    /// </summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">The table to read.</param>
+    /// <param name="predicate">The compiled row filter applied to every candidate.</param>
+    /// <param name="pushable">The index-seekable necessary conditions extracted from the predicate.</param>
+    /// <param name="progress">Optional matched-row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    private async IAsyncEnumerable<T> RowsInferredAsync<T>(
+        string tableName,
+        Func<T, bool> predicate,
+        RowCriteria pushable,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        IndexPlan? plan = await this.TryPlanIndexReadAsync(tableName, pushable, cancellationToken).ConfigureAwait(false);
+
+        IAsyncEnumerable<T> candidates = plan is not null
+            ? this.ReadIndexRowsAsync<T>(tableName, plan.Index.Name, plan.Criteria, cancellationToken)
+            : this.Rows<T>(tableName, progress: null, cancellationToken);
+
+        long produced = 0;
+        await foreach (T item in candidates.ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (predicate(item))
+            {
+                produced++;
+                progress?.Report(produced);
+                yield return item;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Picks the index that best satisfies <paramref name="pushable"/>, or returns
+    /// <see langword="null"/> when a full scan is required (no pushable conditions,
+    /// a Jet3 database, a linked or missing table, or no covering index).
+    /// </summary>
+    /// <param name="tableName">The table to read.</param>
+    /// <param name="pushable">The index-seekable necessary conditions.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The chosen index plan, or <see langword="null"/> to scan.</returns>
+    private async ValueTask<IndexPlan?> TryPlanIndexReadAsync(
+        string tableName,
+        RowCriteria pushable,
+        CancellationToken cancellationToken)
+    {
+        // Index seeks are Jet4/ACE-only; everything else falls back to a scan.
+        if (pushable.Count == 0 || this.Format == DatabaseFormat.Jet3Mdb)
+        {
+            return null;
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await this.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
+        return IndexPlanner.TryPlan(indexes, pushable);
     }
 
     /// <summary>

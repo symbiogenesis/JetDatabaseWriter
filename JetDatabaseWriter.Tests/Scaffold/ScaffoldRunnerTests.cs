@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Scaffold;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -488,6 +489,10 @@ public sealed class ScaffoldRunnerTests : IDisposable
             throw new NotImplementedException();
 
         public IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+            where T : class, new() =>
+            throw new NotImplementedException();
+
+        public IAsyncEnumerable<T> Rows<T>(string tableName, Expression<Func<T, bool>> predicate, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
             where T : class, new() =>
             throw new NotImplementedException();
 

@@ -33,7 +33,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>`; explicit `FromIndex<T>(...)` for index-backed reads |
+| ✅ **POCO + LINQ streaming** | `Rows<T>("...", o => …)` auto-infers an index (scan fallback) over `IAsyncEnumerable<T>`; chain `.Where(...).Take(...).ToListAsync(ct)`; `FromIndex<T>(...)` to override |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -214,7 +214,18 @@ foreach (IndexMetadata idx in indexes)
 
 Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Use `IndexMetadata.EnforcesUniqueness` for semantic uniqueness and `IndexMetadata.HasUniqueFlag` when you need the raw real-index `flags & 0x01` bit. Access does not always set that flag on primary keys because uniqueness is implied by `Kind == PrimaryKey`.
 
-`FromIndex(...)` starts an explicit Jet4/ACE index-backed read. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
+### Index-backed reads
+
+Pass a predicate to `Rows<T>(...)` and the reader **infers the index automatically**: a leading-key equality (optionally terminated by one range) is satisfied by a Jet4/ACE index seek, and anything else transparently falls back to a table scan. Inference never changes the result set — only how the rows are found — so you write the obvious query and let the reader optimize it:
+
+```csharp
+await foreach (Order order in reader.Rows<Order>("Orders", o => o.OrderDate >= start && o.OrderDate < end))
+    Console.WriteLine(order.OrderId);
+```
+
+Only conjuncts combined with `&&` over direct column members (`o.Column == value`, `o.Column > value`, …) drive inference; method calls, `||`, computed members such as `o.When.Year`, and column-to-column comparisons are evaluated client-side. Jet3 `.mdb` files always scan.
+
+`FromIndex(...)` is the explicit override — reach for it to **force a specific index**, guarantee **index-ordered** streaming, or seek shapes the inferrer does not model. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
 
 ```csharp
 await foreach (Company company in reader
@@ -388,7 +399,7 @@ await foreach (string[] row in reader.RowsAsStrings("Orders")
 }
 ```
 
-Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. Use `FromIndex(...)` for explicit index-backed equality, leading-key-prefix, or range reads; use `SeekRowsAsync` when you only need the older full-key exact-match object-array API.
+Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. To let the reader pick an index for you, pass the predicate directly to `Rows<T>(table, predicate)` (see [Index-backed reads](#index-backed-reads)); chained `.Where(...)` over `Rows(...)` stays client-side because it receives a compiled delegate the engine can't inspect. Use `FromIndex(...)` to force a specific index or index ordering, or `SeekRowsAsync` for the older full-key exact-match object-array API.
 
 ---
 

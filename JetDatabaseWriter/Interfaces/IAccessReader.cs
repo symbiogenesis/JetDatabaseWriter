@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -280,6 +281,41 @@ public interface IAccessReader : IAccessBase
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of <typeparamref name="T"/> instances.</returns>
     public IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+        where T : class, new();
+
+    /// <summary>
+    /// Returns the rows of <paramref name="tableName"/> that satisfy
+    /// <paramref name="predicate"/>, mapped to instances of <typeparamref name="T"/>
+    /// and lazily streamed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reader infers an index from the predicate automatically: when a usable
+    /// index covers a leading-key equality (optionally terminated by one range)
+    /// the read is index-backed; otherwise it falls back to a table scan. The
+    /// outcome is identical either way — inference is a pure optimization — so the
+    /// only observable difference is performance and row ordering. Use
+    /// <see cref="FromIndex{T}(string, string)"/> to force a specific index or to
+    /// guarantee index-ordered results.
+    /// </para>
+    /// <para>
+    /// Only conjuncts combined with <c>&amp;&amp;</c> over direct column members
+    /// (<c>o.Column == value</c>, <c>o.Column &gt; value</c>, …) drive index
+    /// inference; any other shape is evaluated client-side. <paramref name="progress"/>
+    /// reports the count of matched rows yielded so far.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="predicate">A row filter expression; drives index inference and the client-side filter.</param>
+    /// <param name="progress">Optional progress reporter — receives the matched-row count.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns>An async sequence of matching <typeparamref name="T"/> instances.</returns>
+    public IAsyncEnumerable<T> Rows<T>(
+        string tableName,
+        Expression<Func<T, bool>> predicate,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
