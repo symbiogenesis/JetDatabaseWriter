@@ -1246,11 +1246,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             => new AccessTypedIndexQuery<T>(this, tableName, indexName);
 
     /// <inheritdoc/>
-    public IAccessEntityQuery<T> Query<T>(string tableName)
+    public IQueryable<T> Query<T>(string tableName)
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return new AccessEntityQuery<T>(this, tableName);
+        var provider = new AccessQueryProvider<T>(this, tableName);
+        return new AccessQueryable<T>(provider);
     }
 
     /// <inheritdoc/>

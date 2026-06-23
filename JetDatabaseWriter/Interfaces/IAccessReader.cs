@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -180,14 +181,17 @@ public interface IAccessReader : IAccessBase
         where T : class, new();
 
     /// <summary>
-    /// Starts a fluent, EF-style entity query over <paramref name="tableName"/> that
-    /// supports filtering and relationship-inferred eager loading via
-    /// <see cref="IAccessEntityQuery{T}.Include{TProperty}"/>.
+    /// Starts an <see cref="System.Linq.IQueryable{T}"/> entity query over
+    /// <paramref name="tableName"/>. Supported operators (<c>Where</c>, <c>OrderBy</c>/
+    /// <c>ThenBy</c>, <c>Skip</c>/<c>Take</c>, and the <c>Include</c> extension) translate
+    /// to reader operations; <c>Where</c> drives index inference and <c>Include</c> eager-loads
+    /// an inferred relationship. Use the async terminal extensions (<c>ToListAsync</c>, …) or
+    /// <c>await foreach</c> to execute.
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <returns>A composable entity query.</returns>
-    public IAccessEntityQuery<T> Query<T>(string tableName)
+    /// <returns>A composable query; enumerate with the async terminal extensions or <c>AsAsyncEnumerable()</c>.</returns>
+    public IQueryable<T> Query<T>(string tableName)
         where T : class, new();
 
     /// <summary>

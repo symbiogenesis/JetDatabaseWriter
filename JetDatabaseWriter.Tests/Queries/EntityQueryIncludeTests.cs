@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -83,7 +84,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         var ids = new List<int>();
-        await foreach (JdwParent parent in reader.Query<JdwParent>("JdwParent").WithCancellation(ct))
+        await foreach (JdwParent parent in reader.Query<JdwParent>("JdwParent").AsAsyncEnumerable().WithCancellation(ct))
         {
             ids.Add(parent.Id);
         }

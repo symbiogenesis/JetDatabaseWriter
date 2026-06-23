@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Scaffold;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -473,7 +474,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
             where T : class, new() =>
             throw new NotImplementedException();
 
-        public IAccessEntityQuery<T> Query<T>(string tableName)
+        public IQueryable<T> Query<T>(string tableName)
             where T : class, new() =>
             throw new NotImplementedException();
 

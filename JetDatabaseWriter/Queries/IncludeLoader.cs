@@ -8,6 +8,8 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -20,8 +22,10 @@ using JetDatabaseWriter.Models;
 /// Join keys are read from each root POCO by column name (case-insensitive), the
 /// same convention the row mapper uses. A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
-/// rows by their foreign-key columns. The related table is read in full per include,
-/// so includes trade memory and a table scan for a single pass.
+/// rows by their foreign-key columns. When the related table has an index covering
+/// the join columns (a primary key or foreign-key index, inferred automatically) the
+/// related rows are loaded with one index seek per distinct key; otherwise the table
+/// is scanned once and grouped in memory.
 /// </remarks>
 internal static class IncludeLoader
 {
@@ -67,8 +71,9 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         EnsureConstructible(relatedType, navigation);
-        Dictionary<string, object> parentsByKey = await IndexRelatedAsync(
-            reader, relationship.PrimaryTable, relatedType, relationship.PrimaryColumns, cancellationToken).ConfigureAwait(false);
+        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.ForeignColumns);
+        Dictionary<string, object> parentsByKey = await BuildParentLookupAsync(
+            reader, relationship.PrimaryTable, relatedType, relationship.PrimaryColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         foreach (object root in roots)
         {
@@ -87,8 +92,9 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         EnsureConstructible(relatedType, navigation);
-        Dictionary<string, List<object>> childrenByKey = await GroupRelatedAsync(
-            reader, relationship.ForeignTable, relatedType, relationship.ForeignColumns, cancellationToken).ConfigureAwait(false);
+        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.PrimaryColumns);
+        Dictionary<string, List<object>> childrenByKey = await BuildChildGroupsAsync(
+            reader, relationship.ForeignTable, relatedType, relationship.ForeignColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         foreach (object root in roots)
         {
@@ -104,6 +110,177 @@ internal static class IncludeLoader
 
             navigation.SetValue(root, list);
         }
+    }
+
+    private static async ValueTask<Dictionary<string, object>> BuildParentLookupAsync(
+        AccessReader reader,
+        string table,
+        Type type,
+        IReadOnlyList<string> keyColumns,
+        Dictionary<string, object?[]> distinctKeys,
+        CancellationToken cancellationToken)
+    {
+        // One parent per key: seek the parent key index when one covers the key
+        // columns, otherwise scan the parent table once.
+        SeekPlan? plan = distinctKeys.Count > 0
+            ? await ResolveSeekPlanAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (plan is not SeekPlan seek)
+        {
+            return await IndexRelatedAsync(reader, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+        }
+
+        var map = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
+        {
+            IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
+            await foreach (object[] row in reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            {
+                map[entry.Key] = RuntimeRowMapper.Map(type, seek.Headers, row);
+                break;
+            }
+        }
+
+        return map;
+    }
+
+    private static async ValueTask<Dictionary<string, List<object>>> BuildChildGroupsAsync(
+        AccessReader reader,
+        string table,
+        Type type,
+        IReadOnlyList<string> keyColumns,
+        Dictionary<string, object?[]> distinctKeys,
+        CancellationToken cancellationToken)
+    {
+        // Many children per key: seek the foreign-key index when one covers the key
+        // columns, otherwise scan the child table once.
+        SeekPlan? plan = distinctKeys.Count > 0
+            ? await ResolveSeekPlanAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (plan is not SeekPlan seek)
+        {
+            return await GroupRelatedAsync(reader, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+        }
+
+        var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
+        {
+            var list = new List<object>();
+            IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
+            await foreach (object[] row in reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            {
+                list.Add(RuntimeRowMapper.Map(type, seek.Headers, row));
+            }
+
+            if (list.Count > 0)
+            {
+                map[entry.Key] = list;
+            }
+        }
+
+        return map;
+    }
+
+    private static async ValueTask<SeekPlan?> ResolveSeekPlanAsync(
+        AccessReader reader,
+        string table,
+        IReadOnlyList<string> keyColumns,
+        CancellationToken cancellationToken)
+    {
+        // Index seeks are Jet4/ACE only; everything else falls back to a scan.
+        if (reader.Format == DatabaseFormat.Jet3Mdb)
+        {
+            return null;
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+        IndexMetadata? index = FindCoveringIndex(indexes, keyColumns);
+        if (index is null)
+        {
+            return null;
+        }
+
+        (string[] headers, _) = await ReadHeadersAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false);
+        return new SeekPlan(index.Name, index.Columns.Count, headers);
+    }
+
+    private static IndexMetadata? FindCoveringIndex(IReadOnlyList<IndexMetadata> indexes, IReadOnlyList<string> joinColumns)
+    {
+        IndexMetadata? prefixMatch = null;
+        foreach (IndexMetadata index in indexes)
+        {
+            if (index.FirstDp <= 0 || index.Columns.Count < joinColumns.Count)
+            {
+                continue;
+            }
+
+            bool leadingMatch = true;
+            for (int i = 0; i < joinColumns.Count; i++)
+            {
+                if (!string.Equals(index.Columns[i].Name, joinColumns[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    leadingMatch = false;
+                    break;
+                }
+            }
+
+            if (!leadingMatch)
+            {
+                continue;
+            }
+
+            if (index.Columns.Count == joinColumns.Count)
+            {
+                return index;
+            }
+
+            prefixMatch ??= index;
+        }
+
+        return prefixMatch;
+    }
+
+    private static IndexQueryCriteria BuildSeekCriteria(int indexColumnCount, int joinColumnCount, object?[] values) =>
+        indexColumnCount == joinColumnCount ? IndexQueryCriteria.Exact(values) : IndexQueryCriteria.KeyPrefix(values);
+
+    private static Dictionary<string, object?[]> CollectDistinctKeys(IReadOnlyList<object> roots, IReadOnlyList<string> columns)
+    {
+        var result = new Dictionary<string, object?[]>(StringComparer.Ordinal);
+        foreach (object root in roots)
+        {
+            (string? key, object?[]? values) = BuildKeyAndValues(root, columns);
+            if (key is not null)
+            {
+                result.TryAdd(key, values!);
+            }
+        }
+
+        return result;
+    }
+
+    private static (string? Key, object?[]? Values) BuildKeyAndValues(object instance, IReadOnlyList<string> columns)
+    {
+        Dictionary<string, PropertyInfo> properties = RuntimeRowMapper.GetProperties(instance.GetType());
+        object?[] values = new object?[columns.Count];
+        string[] parts = new string[columns.Count];
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (!properties.TryGetValue(columns[i], out PropertyInfo? property))
+            {
+                return (null, null);
+            }
+
+            object? value = property.GetValue(instance);
+            if (Normalize(value) is not string component)
+            {
+                return (null, null);
+            }
+
+            values[i] = value;
+            parts[i] = component;
+        }
+
+        return (string.Join("|", parts), values);
     }
 
     private static async ValueTask<Dictionary<string, object>> IndexRelatedAsync(
@@ -336,4 +513,6 @@ internal static class IncludeLoader
     private static InvalidOperationException NoRelationship(PropertyInfo navigation, string table, Type relatedType) =>
         new($"Could not infer a relationship for navigation '{navigation.Name}' between table '{table}' and type '{relatedType.Name}'. "
             + "Ensure a foreign key linking the two tables exists in MSysRelationships.");
+
+    private readonly record struct SeekPlan(string IndexName, int IndexColumnCount, string[] Headers);
 }

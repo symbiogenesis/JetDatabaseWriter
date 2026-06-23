@@ -33,7 +33,8 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ streaming** | `Rows<T>("...", o => …)` auto-infers an index; `Query<T>(...).Include(...)` eager-loads inferred relationships; async LINQ over `IAsyncEnumerable<T>`; `FromIndex<T>(...)` to override |
+| ✅ **POCO + LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
+| ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Include` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/…) |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -263,22 +264,26 @@ foreach (RelationshipMetadata rel in await reader.ListRelationshipsAsync(cancell
     Console.WriteLine($"{rel.Name}: {rel.ForeignTable}({string.Join(",", rel.ForeignColumns)}) -> {rel.PrimaryTable}({string.Join(",", rel.PrimaryColumns)})");
 ```
 
-`Query<T>(...)` is an EF-style entity query that **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Reference navigations load the parent; collection navigations load the children. `Where(...)` reuses the same index inference as `Rows<T>(table, predicate)`.
+`Query<T>(...)` returns an `IQueryable<T>` and **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Compose the standard LINQ operators (`Where`, `OrderBy`/`ThenBy`, `Skip`, `Take`) and execute with the async terminals (`ToListAsync`, `FirstOrDefaultAsync`, `SingleOrDefaultAsync`, `CountAsync`, `AnyAsync`) or `AsAsyncEnumerable()` for `await foreach`. `Where` drives the same index inference as `Rows<T>(table, predicate)`; ordering and paging run in memory after the filtered set is read.
 
 ```csharp
-// Parent with its children (collection navigation)
+// Parent with its children (collection navigation), filtered, ordered and paged
 List<Customer> customers = await reader.Query<Customer>("Customers")
     .Where(c => c.Region == "West")
+    .OrderBy(c => c.Name)
+    .Skip(20)
+    .Take(10)
     .Include(c => c.Orders)
     .ToListAsync(cancellationToken);
 
 // Child with its parent (reference navigation)
-List<Order> orders = await reader.Query<Order>("Orders")
+Order? order = await reader.Query<Order>("Orders")
+    .Where(o => o.OrderId == 10248)
     .Include(o => o.Customer)
-    .ToListAsync(cancellationToken);
+    .FirstOrDefaultAsync(cancellationToken);
 ```
 
-The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. Each `Include` reads the related table once and joins in memory; only `&&`-combined column predicates drive root index inference. Without an `Include` the query streams (it implements `IAsyncEnumerable<T>`); with one, results are materialized so the related rows can be batch-loaded first. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
+The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. When the join columns are indexed (a primary key or foreign-key index, inferred automatically) each `Include` loads the related rows with one index seek per distinct key; otherwise it scans the related table once and joins in memory. Operators outside the supported set throw `NotSupportedException` — materialize with `ToListAsync(...)` and use LINQ-to-Objects for anything further. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
 
 ### Complex (Attachment / Multi-value) column metadata
 
