@@ -105,6 +105,76 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
             await reader.Query<JdwChild>("JdwChild").Include(c => c.Stray).ToListAsync(ct));
     }
 
+    [Fact]
+    public async Task Include_Reference_UsesIndexSeek_WhenKeysAreFewRelativeToTable()
+    {
+        // 25 parents, 2 children: the distinct foreign keys are a small share of the
+        // parent table, so the cost guard resolves parents via index seeks.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await BuildSizedAsync(parentCount: 25, childCount: 2, ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        List<JdwChild> children = await reader.Query<JdwChild>("JdwChild").Include(c => c.Parent).ToListAsync(ct);
+
+        Assert.Equal(2, children.Count);
+        Assert.All(children, c => Assert.NotNull(c.Parent));
+        Assert.Equal("P1", children.Single(c => c.Id == 100).Parent!.Name);
+        Assert.Equal("P2", children.Single(c => c.Id == 101).Parent!.Name);
+    }
+
+    [Fact]
+    public async Task Include_Collection_UsesIndexSeek_WhenKeysAreFewRelativeToTable()
+    {
+        // 2 parents, 12 children: the distinct parent keys are a small share of the
+        // child table, so the cost guard groups children via foreign-key index seeks.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await BuildSizedAsync(parentCount: 2, childCount: 12, ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        List<JdwParent> parents = await reader.Query<JdwParent>("JdwParent").Include(p => p.Children).ToListAsync(ct);
+
+        parents.Sort((a, b) => a.Id.CompareTo(b.Id));
+        Assert.Equal(2, parents.Count);
+        Assert.Equal(6, parents[0].Children.Count);
+        Assert.Equal(6, parents[1].Children.Count);
+        Assert.All(parents[0].Children, c => Assert.Equal(1, c.ParentId));
+    }
+
+    private async Task<MemoryStream> BuildSizedAsync(int parentCount, int childCount, CancellationToken ct)
+    {
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
+        await using AccessWriter writer = await OpenWriterAsync(temp, ct);
+
+        await writer.CreateTableAsync(
+            "JdwParent",
+            [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), maxLength: 50)],
+            ct);
+        await writer.CreateTableAsync(
+            "JdwChild",
+            [new("Id", typeof(int)) { IsPrimaryKey = true }, new("ParentId", typeof(int)), new("Label", typeof(string), maxLength: 50)],
+            ct);
+        await writer.CreateRelationshipAsync(
+            new RelationshipDefinition("FK_JdwChild_JdwParent", "JdwParent", "Id", "JdwChild", "ParentId"),
+            ct);
+
+        var parents = new List<object[]>(parentCount);
+        for (int i = 1; i <= parentCount; i++)
+        {
+            parents.Add(new object[] { i, $"P{i}" });
+        }
+
+        await writer.InsertRowsAsync("JdwParent", parents, ct);
+
+        var children = new List<object[]>(childCount);
+        for (int i = 0; i < childCount; i++)
+        {
+            children.Add(new object[] { 100 + i, (i % 2) + 1, $"c{i}" });
+        }
+
+        await writer.InsertRowsAsync("JdwChild", children, ct);
+        return temp;
+    }
+
     private async Task<MemoryStream> BuildAsync(CancellationToken ct)
     {
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);

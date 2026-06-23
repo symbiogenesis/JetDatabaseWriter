@@ -2741,6 +2741,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return bounds;
     }
 
+    /// <summary>
+    /// Returns the declared row count from <paramref name="tableName"/>'s TDEF header
+    /// (a cheap lookup with no row scan), or 0 when the table cannot be resolved. Used
+    /// as a cost estimate when choosing between per-key index seeks and a single scan.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The declared row count, or 0 when unknown.</returns>
+    internal async ValueTask<long> GetDeclaredRowCountAsync(string tableName, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();
+        cancellationToken.ThrowIfCancellationRequested();
+        ResolvedTable? resolved = await this.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        return resolved?.Definition.RowCount ?? 0;
+    }
+
     internal async ValueTask<ResolvedTable?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<CatalogEntry> tables = await this.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);

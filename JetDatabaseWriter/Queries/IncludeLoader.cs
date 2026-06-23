@@ -23,12 +23,21 @@ using JetDatabaseWriter.Models;
 /// same convention the row mapper uses. A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
 /// rows by their foreign-key columns. When the related table has an index covering
-/// the join columns (a primary key or foreign-key index, inferred automatically) the
-/// related rows are loaded with one index seek per distinct key; otherwise the table
-/// is scanned once and grouped in memory.
+/// the join columns (a primary key or foreign-key index, inferred automatically) and
+/// the distinct keys are only a small share of that table, the related rows are loaded
+/// with one index seek per distinct key; otherwise (no covering index, a Jet3 file, or
+/// too many distinct keys relative to the table) it scans the table once and groups in
+/// memory.
 /// </remarks>
 internal static class IncludeLoader
 {
+    /// <summary>
+    /// Seek one index entry per distinct key only when those keys are at most a
+    /// 1/<c>SeekKeyCountTableFraction</c> share of the related table; above that the
+    /// per-seek B-tree descents do more total work than a single sequential scan.
+    /// </summary>
+    private const int SeekKeyCountTableFraction = 4;
+
     public static async ValueTask ApplyAsync(
         AccessReader reader,
         string parentTable,
@@ -121,9 +130,9 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         // One parent per key: seek the parent key index when one covers the key
-        // columns, otherwise scan the parent table once.
+        // columns and the keys are few relative to the table, otherwise scan once.
         SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false)
+            ? await ResolveSeekPlanAsync(reader, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
             : null;
         if (plan is not SeekPlan seek)
         {
@@ -153,9 +162,9 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         // Many children per key: seek the foreign-key index when one covers the key
-        // columns, otherwise scan the child table once.
+        // columns and the keys are few relative to the table, otherwise scan once.
         SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false)
+            ? await ResolveSeekPlanAsync(reader, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
             : null;
         if (plan is not SeekPlan seek)
         {
@@ -185,6 +194,7 @@ internal static class IncludeLoader
         AccessReader reader,
         string table,
         IReadOnlyList<string> keyColumns,
+        int distinctKeyCount,
         CancellationToken cancellationToken)
     {
         // Index seeks are Jet4/ACE only; everything else falls back to a scan.
@@ -196,6 +206,16 @@ internal static class IncludeLoader
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
         IndexMetadata? index = FindCoveringIndex(indexes, keyColumns);
         if (index is null)
+        {
+            return null;
+        }
+
+        // Cost guard: seeking K keys (each a B-tree descent) only beats one scan when K
+        // is a small fraction of the related table. When the declared row count says we
+        // would seek a large share of the table, scan instead. A row count of 0 (unknown
+        // or empty) leaves the seek path enabled.
+        long rowCount = await reader.GetDeclaredRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+        if (rowCount > 0 && (long)distinctKeyCount * SeekKeyCountTableFraction > rowCount)
         {
             return null;
         }
