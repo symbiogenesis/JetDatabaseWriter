@@ -2461,7 +2461,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 ],
             },
             cancellationToken).ConfigureAwait(false);
-        await this.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
+        await this.catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await this.pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
     }
 
@@ -2720,7 +2720,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        await this.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
+        await this.catalogWriter.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
 
         foreach (long tdefPage in deleted.TDefPages)
         {
@@ -2861,68 +2861,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    private async ValueTask DeleteAceRowsForObjectIdsAsync(IReadOnlyList<long> objectIds, CancellationToken cancellationToken)
-    {
-        if (objectIds.Count == 0)
-        {
-            return;
-        }
-
-        long acesTdefPage = await this.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (acesTdefPage <= 0)
-        {
-            return;
-        }
-
-        TableDef acesDef = await this.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
-        if (objectIdColumn is null)
-        {
-            return;
-        }
-
-        var ids = new HashSet<int>();
-        foreach (long id in objectIds)
-        {
-            ids.Add(checked((int)id));
-        }
-
-        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        await this.ForEachLiveTableRowAsync(
-            acesTdefPage,
-            (row, _) =>
-            {
-                string objectIdText = this.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
-                if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
-                    && ids.Contains(objectId))
-                {
-                    object[] deletedIndexRow = acesDef.CreateNullValueRow();
-                    acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
-                    deletedRows.Add((row.Location, deletedIndexRow));
-                }
-
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        foreach ((RowLocation row, _) in deletedRows)
-        {
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (deletedRows.Count > 0)
-        {
-            await this.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await this.MaintainSystemTableIndexesIncrementallyAsync(
-                acesTdefPage,
-                acesDef,
-                Constants.SystemTableNames.Aces,
-                insertedRows: null,
-                deletedRows: deletedRows,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     internal async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default) => _ = await this.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
@@ -2966,7 +2904,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
+    internal async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
         long tdefPage,
         TableDef tableDef,
         string tableName,
