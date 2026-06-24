@@ -655,6 +655,44 @@ internal static class EncryptionManager
             AccessEncryptionFormat.AccdbAgileCfb);
     }
 
+    /// <summary>
+    /// Re-encrypts an already-decrypted ACCDB package and writes the resulting
+    /// Office Crypto compound file (CFB) to <paramref name="destination"/>. This
+    /// is the inverse of <see cref="TryDecryptCompoundFileWithFormatAsync"/> and
+    /// is invoked when an Office Crypto <c>.accdb</c> opened for writing is
+    /// disposed: the in-memory decrypted database is re-wrapped so the caller's
+    /// outer encrypted stream ends up with every buffered write.
+    /// </summary>
+    /// <param name="decryptedInner">In-memory stream holding the decrypted inner ACCDB. Must be a <see cref="MemoryStream"/>.</param>
+    /// <param name="destination">The outer stream that receives the re-encrypted CFB document.</param>
+    /// <param name="format">The Office Crypto format to apply (<see cref="AccessEncryptionFormat.AccdbStandard"/> or Agile).</param>
+    /// <param name="password">The database password.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <paramref name="decryptedInner"/> is not the expected in-memory backing stream.</exception>
+    internal static async ValueTask RewrapDecryptedCompoundFileAsync(
+        Stream decryptedInner,
+        Stream destination,
+        AccessEncryptionFormat format,
+        ReadOnlyMemory<char> password,
+        CancellationToken cancellationToken = default)
+    {
+        MemoryStream memory = decryptedInner as MemoryStream
+            ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
+
+        byte[] inner = memory.ToArray();
+
+        OfficeEncryptedPackage package = format == AccessEncryptionFormat.AccdbStandard
+            ? OfficeCryptoStandard.Encrypt(inner, password.Span)
+            : OfficeCryptoAgile.Encrypt(inner, password.Span);
+
+        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(package);
+
+        _ = destination.Seek(0, SeekOrigin.Begin);
+        await destination.WriteAsync(cfb.AsMemory(), cancellationToken).ConfigureAwait(false);
+        destination.SetLength(cfb.Length);
+        await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static async ValueTask<AccessEncryptionFormat> TryDetectCompoundFileFormatAsync(
         Stream stream,
         CancellationToken cancellationToken)

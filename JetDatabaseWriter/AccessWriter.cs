@@ -12,7 +12,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -1776,7 +1775,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         try
         {
-            await this.RewrapAgileOnDisposeAsync().ConfigureAwait(false);
+            await EncryptionManager.RewrapDecryptedCompoundFileAsync(
+                this.DatabaseStream,
+                this.outerEncryptedStream,
+                this.outerEncryptedFormat,
+                this.Options.Password).ConfigureAwait(false);
         }
         finally
         {
@@ -1791,33 +1794,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         this.stateLock.Dispose();
         return default;
-    }
-
-    /// <summary>
-    /// Re-encrypts the in-memory decrypted ACCDB (held by <c>_stream</c>) using
-    /// freshly-generated Office Crypto parameters and writes the resulting CFB
-    /// document back to <see cref="outerEncryptedStream"/>. Called from
-    /// <see cref="DisposeAsync"/> when the writer was opened on an Office Crypto
-    /// .accdb file.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown when the encrypted writer does not have the required in-memory backing stream.</exception>
-    private async ValueTask RewrapAgileOnDisposeAsync()
-    {
-        MemoryStream memory = this.DatabaseStream as MemoryStream
-            ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
-
-        byte[] inner = memory.ToArray();
-
-        OfficeEncryptedPackage package = this.outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
-            ? OfficeCryptoStandard.Encrypt(inner, this.Options.Password.Span)
-            : OfficeCryptoAgile.Encrypt(inner, this.Options.Password.Span);
-
-        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(package);
-
-        _ = this.outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
-        await this.outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
-        this.outerEncryptedStream.SetLength(cfb.Length);
-        await this.outerEncryptedStream.FlushAsync().ConfigureAwait(false);
     }
 
     private static object[] NormalizePublicRow(object?[] values, string paramName)
