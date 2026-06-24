@@ -15,6 +15,37 @@ internal static class NameCleaner
     /// <param name="columnName">The column name.</param>
     internal static string ToPropertyName(string columnName) => SanitizeToPascalCase(columnName);
 
+    /// <summary>
+    /// Produces a simple English plural of a PascalCase identifier for collection
+    /// navigation names (for example <c>Order</c> -&gt; <c>Orders</c>,
+    /// <c>Category</c> -&gt; <c>Categories</c>, <c>Address</c> -&gt; <c>Addresses</c>).
+    /// </summary>
+    /// <param name="name">The singular identifier.</param>
+    internal static string Pluralize(string name)
+    {
+        if (name.Length == 0)
+        {
+            return name;
+        }
+
+        char last = name[^1];
+        if ((last is 'y' or 'Y') && name.Length >= 2 && !IsVowel(name[^2]))
+        {
+            return name[..^1] + "ies";
+        }
+
+        if (last is 's' or 'S' or 'x' or 'X' or 'z' or 'Z'
+            || name.EndsWith("ch", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("sh", StringComparison.OrdinalIgnoreCase))
+        {
+            return name + "es";
+        }
+
+        return name + "s";
+    }
+
+    private static bool IsVowel(char c) => c is 'a' or 'e' or 'i' or 'o' or 'u' or 'A' or 'E' or 'I' or 'O' or 'U';
+
     internal static string SanitizeToPascalCase(string raw)
     {
         if (raw.Length == 0)
