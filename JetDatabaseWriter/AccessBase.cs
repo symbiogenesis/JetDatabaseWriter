@@ -322,24 +322,6 @@ public abstract class AccessBase : IAccessBase
     // taking an upward dependency on AccessBase. They are surfaced here
     // through the file-level `using static JetDatabaseWriter.Schema.JetTypeInfo;`.
 
-    internal static void WriteUInt24(byte[] b, int o, int value)
-    {
-        Wu16(b, o, value & 0xFFFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
-    }
-
-    internal static void WriteField(byte[] b, int o, int fieldSize, int value)
-    {
-        if (fieldSize == 1)
-        {
-            b[o] = (byte)value;
-        }
-        else
-        {
-            Wu16(b, o, value);
-        }
-    }
-
     /// <summary>
     /// Encodes a string for storage in a Jet4 text/memo column.
     /// When all characters are in the U+0001..U+00FF range, emits the

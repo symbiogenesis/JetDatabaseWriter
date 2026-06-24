@@ -564,6 +564,24 @@ internal static class JetTypeInfo
     internal static void Wi64(Span<byte> b, int o, long value) =>
         BinaryPrimitives.WriteInt64LittleEndian(b.Slice(o, 8), value);
 
+    internal static void WriteUInt24(byte[] b, int o, int value)
+    {
+        Wu16(b, o, value & 0xFFFF);
+        b[o + 2] = (byte)((value >> 16) & 0xFF);
+    }
+
+    internal static void WriteField(byte[] b, int o, int fieldSize, int value)
+    {
+        if (fieldSize == 1)
+        {
+            b[o] = (byte)value;
+        }
+        else
+        {
+            Wu16(b, o, value);
+        }
+    }
+
     /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
     /// <param name="source">The source.</param>
     internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
