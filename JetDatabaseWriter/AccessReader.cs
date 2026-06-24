@@ -1115,7 +1115,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        return this.ParseIndexMetadata(td, resolved.Definition.Columns);
+        return IndexCatalogReader.ReadMetadata(this, td, resolved.Definition.Columns);
     }
 
     /// <inheritdoc/>
@@ -1343,7 +1343,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        List<IndexMetadata> indexes = this.ParseIndexMetadata(tdefBytes, td.Columns);
+        List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(this, tdefBytes, td.Columns);
 
         IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
@@ -1448,131 +1448,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
-    }
-
-    private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
-    {
-        int numCols = Ru16(td, this.TDef.NumCols);
-        int numIdx = Ri32(td, this.TDef.NumCols + 2);
-        int numRealIdx = Ri32(td, this.TDef.NumRealIdx);
-
-        // Defensive bounds: corrupt TDEFs can report absurd counts.
-        if (numIdx is <= 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            return [];
-        }
-
-        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            numRealIdx = 0;
-        }
-
-        // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
-        int colStart = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
-
-        // Walk column-name length-prefix block to find where it ends.
-        int pos = colStart + (numCols * this.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (this.ReadColumnName(td, ref pos, out _) < 0)
-            {
-                return [];
-            }
-        }
-
-        int realIdxDescStart = pos;
-        IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-
-        if (anchors.LogIdxNamesStart > td.Length)
-        {
-            return [];
-        }
-
-        // Build a col_num → name lookup honouring deleted-column gaps.
-        var colNumToName = new Dictionary<int, string>(columns.Count);
-        foreach (ColumnInfo c in columns)
-        {
-            colNumToName[c.ColNum] = c.Name;
-        }
-
-        // Pre-walk index names so we can pair each logical-idx entry with its name.
-        string[] names = new string[numIdx];
-        int npos = anchors.LogIdxNamesStart;
-        for (int i = 0; i < numIdx; i++)
-        {
-            if (this.ReadColumnName(td, ref npos, out string n) < 0)
-            {
-                names[i] = string.Empty;
-            }
-            else
-            {
-                names[i] = n;
-            }
-        }
-
-        var result = new List<IndexMetadata>(numIdx);
-        for (int i = 0; i < numIdx; i++)
-        {
-            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
-            {
-                break;
-            }
-
-            (int _, int indexNum, int realIdxNum, int relIdxNum, int relTblPage, byte cascadeUps, byte cascadeDels, IndexKind indexType) = entry;
-
-            // Read the col_map for the backing real-idx entry to recover key columns.
-            var keyColumns = new List<IndexColumnReference>();
-            byte flags = 0x00;
-            int firstDp = 0;
-            if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && this.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot, out List<KeyColumn>? kcs))
-            {
-                foreach ((int cn, bool ascending) in kcs)
-                {
-                    keyColumns.Add(new IndexColumnReference
-                    {
-                        Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
-                        ColumnNumber = cn,
-                        IsAscending = ascending,
-                    });
-                }
-
-                flags = slot.Flags;
-                if (slot.FirstDpOffset >= 0 && slot.FirstDpOffset + 4 <= td.Length)
-                {
-                    firstDp = Ri32(td, slot.FirstDpOffset);
-                }
-            }
-
-            // Access often leaves the real-index unique flag clear on primary
-            // keys; their semantic uniqueness is conveyed by index_type=0x01.
-            bool hasUniqueFlag = (flags & Constants.TableDefinition.UniqueIndexFlag) != 0;
-
-            result.Add(new IndexMetadata
-            {
-                Name = names[i],
-                IndexNumber = indexNum,
-                RealIndexNumber = realIdxNum,
-                Kind = indexType,
-                HasUniqueFlag = hasUniqueFlag,
-                IgnoreNulls = (flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0,
-                IsRequired = (flags & Constants.TableDefinition.RequiredIndexFlag) != 0,
-                IsForeignKey = relIdxNum != -1,
-                RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
-
-                // Per Jackcess IndexImpl: only bit 0x01 (CASCADE_DELETES_FLAG /
-                // CASCADE_UPDATES_FLAG) signals "cascade enabled". DAO/Access stamps
-                // a non-zero default (0x04 = CASCADE_SET_DEFAULT_FLAG) into these
-                // bytes for every index — including PK and standalone indexes — so
-                // a bare `!= 0` check would surface false positives. Mask to bit 0x01.
-                CascadeUpdates = (cascadeUps & 0x01) != 0,
-                CascadeDeletes = (cascadeDels & 0x01) != 0,
-                Columns = keyColumns,
-                FirstDp = firstDp,
-            });
-        }
-
-        return result;
     }
 
     private async ValueTask<List<(long DataPage, int RowIndex)>> FindIndexRowLocationsAsync(
