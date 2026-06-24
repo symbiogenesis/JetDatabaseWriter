@@ -18,8 +18,6 @@ using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Helpers;
-using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -1356,12 +1354,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var cursor = new IndexCursor(
             this.ReadPageCachedAsync,
             this.PageSizeBytes);
-        List<(long DataPage, int RowIndex)> hits = await this.FindIndexRowLocationsAsync(
+        List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(
+            this.Format,
             tableName,
             index,
             td,
             criteria,
-            cursor,
             cancellationToken).ConfigureAwait(false);
 
         (Func<object?[], TRow> factory, bool[]? wantedColumns) = createProjection(td);
@@ -1448,78 +1446,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
-    }
-
-    private async ValueTask<List<(long DataPage, int RowIndex)>> FindIndexRowLocationsAsync(
-        string tableName,
-        IndexMetadata index,
-        TableDef tableDef,
-        IndexQueryCriteria criteria,
-        IndexCursor cursor,
-        CancellationToken cancellationToken)
-    {
-        static bool IsEmptyRange(in EncodedIndexRange range)
-        {
-            if (range.Lower.IsUnbounded || range.Upper.IsUnbounded)
-            {
-                return false;
-            }
-
-            int comparison = IndexHelpers.CompareKeyBytes(range.Lower.Key!, range.Upper.Key!);
-            return comparison > 0 || (comparison == 0 && (!range.Lower.Inclusive || !range.Upper.Inclusive));
-        }
-
-        switch (criteria.Kind)
-        {
-            case IndexQueryKind.All:
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None),
-                    cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.Exact:
-                byte[] searchKey = IndexKeyEncoder.EncodeIndexSeekKey(this.Format, tableName, index, tableDef, criteria.Values!);
-                return await cursor.FindRowLocationsAsync(index.FirstDp, searchKey, cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.KeyPrefix:
-                byte[] prefixKey = IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Values!, nameof(criteria));
-                var prefixRange = new EncodedIndexRange(
-                    new EncodedIndexBound(prefixKey, Inclusive: true, IsPrefix: false),
-                    EncodedIndexBound.None,
-                    prefixKey);
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    prefixRange,
-                    cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.Range:
-                EncodedIndexBound lowerBound = criteria.Lower is null
-                    ? EncodedIndexBound.None
-                    : new EncodedIndexBound(
-                        IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
-                        criteria.Lower.IsInclusive,
-                        criteria.Lower.Values.Count < index.Columns.Count);
-                EncodedIndexBound upperBound = criteria.Upper is null
-                    ? EncodedIndexBound.None
-                    : new EncodedIndexBound(
-                        IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
-                        criteria.Upper.IsInclusive,
-                        criteria.Upper.Values.Count < index.Columns.Count);
-                var range = new EncodedIndexRange(lowerBound, upperBound);
-
-                if (IsEmptyRange(in range))
-                {
-                    return [];
-                }
-
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    range,
-                    cancellationToken).ConfigureAwait(false);
-
-            default:
-                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
-        }
     }
 
     private async ValueTask<object?[]?> MaterializeSeekRowAsync(
