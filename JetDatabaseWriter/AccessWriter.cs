@@ -512,7 +512,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         long usageMapPageNumber = await this.dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         await this.UpdateTableIndexUsageMapRowsAsync(
             usageMapPageNumber,
-            ToSinglePageGroups(leafPageNumbers),
+            DataPageInserter.ToSinglePageGroups(leafPageNumbers),
             cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
@@ -716,7 +716,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 await this.UpdateTableIndexUsageMapRowsAsync(
                     usageMapPageNumber,
-                    ToSinglePageGroups(leafPageNumbers),
+                    DataPageInserter.ToSinglePageGroups(leafPageNumbers),
                     cancellationToken).ConfigureAwait(false);
 
                 for (int usedPagesIndex = 0; usedPagesIndex < usedPagesLogicalOffsets.Length; usedPagesIndex++)
@@ -2648,88 +2648,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Matches the DAO-observed shape for a real-index usage-map page: table rows
-    /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
-    /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    /// Forwards real-index usage-map row maintenance to <see cref="DataPageInserter"/>,
+    /// which owns usage-map page construction. Retained so the index maintainer can
+    /// drive usage-map updates through the writer.
     /// </summary>
-    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
-    /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>The page number of the newly allocated usage-map page.</returns>
-    internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
-        => this.AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
-
-    internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
-    {
-        byte[] page = new byte[this.PageSizeBytes];
-        page[0] = Constants.PageTypes.Data;
-        page[1] = 0x01;
-
-        int rowCount = indexPageGroups.Count + 2;
-        int rowStart = this.PageSizeBytes;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
-        {
-            rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, this.DataPage.RowsStart + (rowIndex * 2), rowStart);
-
-            if (rowIndex < 2)
-            {
-                continue;
-            }
-
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
-        }
-
-        Wi32(page, this.DataPage.TDefOff, 0);
-        Wu16(page, this.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (this.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-
-        return await this.pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
-    }
-
-    internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
-    {
-        byte[] page = await this.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-
-        int existingRowCount = Ru16(page, this.DataPage.NumRows);
-        int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
-        int rowStart = this.PageSizeBytes;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
-        {
-            rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, this.DataPage.RowsStart + (rowIndex * 2), rowStart);
-
-            if (rowIndex < 2)
-            {
-                continue;
-            }
-
-            int groupIndex = rowIndex - 2;
-            if (groupIndex >= indexPageGroups.Count || indexPageGroups[groupIndex].Length == 0)
-            {
-                continue;
-            }
-
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
-        }
-
-        Wi32(page, this.DataPage.TDefOff, 0);
-        Wu16(page, this.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (this.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-        await this.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static long[][] ToSinglePageGroups(long[] pageNumbers)
-    {
-        long[][] pageGroups = new long[pageNumbers.Length][];
-        for (int i = 0; i < pageNumbers.Length; i++)
-        {
-            pageGroups[i] = [pageNumbers[i]];
-        }
-
-        return pageGroups;
-    }
+    /// <param name="usageMapPageNumber">The usage-map page number.</param>
+    /// <param name="indexPageGroups">The per-index leaf-page groups.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+        => this.dataPageInserter.UpdateTableIndexUsageMapRowsAsync(usageMapPageNumber, indexPageGroups, cancellationToken);
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.

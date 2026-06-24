@@ -39,6 +39,17 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         tdefPage[0x18] = 0x01;
     }
 
+    internal static long[][] ToSinglePageGroups(long[] pageNumbers)
+    {
+        long[][] pageGroups = new long[pageNumbers.Length][];
+        for (int i = 0; i < pageNumbers.Length; i++)
+        {
+            pageGroups[i] = [pageNumbers[i]];
+        }
+
+        return pageGroups;
+    }
+
     internal async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
         if (writer.TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
@@ -286,5 +297,78 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
         Wu16(page, 2, freeSpace);
         await writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Matches the DAO-observed shape for a real-index usage-map page: table rows
+    /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
+    /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    /// </summary>
+    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The page number of the newly allocated usage-map page.</returns>
+    internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
+        => this.AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
+
+    internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+    {
+        byte[] page = new byte[writer.PageSizeBytes];
+        page[0] = Constants.PageTypes.Data;
+        page[1] = 0x01;
+
+        int rowCount = indexPageGroups.Count + 2;
+        int rowStart = writer.PageSizeBytes;
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            rowStart -= Constants.UsageMap.RowSize;
+            Wu16(page, writer.DataPage.RowsStart + (rowIndex * 2), rowStart);
+
+            if (rowIndex < 2)
+            {
+                continue;
+            }
+
+            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
+        }
+
+        Wi32(page, writer.DataPage.TDefOff, 0);
+        Wu16(page, writer.DataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (writer.DataPage.RowsStart + (rowCount * 2));
+        Wu16(page, 2, freeSpace);
+
+        return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+    {
+        byte[] page = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+
+        int existingRowCount = Ru16(page, writer.DataPage.NumRows);
+        int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
+        int rowStart = writer.PageSizeBytes;
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            rowStart -= Constants.UsageMap.RowSize;
+            Wu16(page, writer.DataPage.RowsStart + (rowIndex * 2), rowStart);
+
+            if (rowIndex < 2)
+            {
+                continue;
+            }
+
+            int groupIndex = rowIndex - 2;
+            if (groupIndex >= indexPageGroups.Count || indexPageGroups[groupIndex].Length == 0)
+            {
+                continue;
+            }
+
+            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
+        }
+
+        Wi32(page, writer.DataPage.TDefOff, 0);
+        Wu16(page, writer.DataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (writer.DataPage.RowsStart + (rowCount * 2));
+        Wu16(page, 2, freeSpace);
+        await writer.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 }
