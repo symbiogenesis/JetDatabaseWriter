@@ -19,7 +19,6 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -29,7 +28,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
-using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -2825,7 +2823,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     pagesToFree.Add(pageNumber);
                     foreach (RowBound rowBound in this.EnumerateLiveRowBounds(page))
                     {
-                        longValueRoots.AddRange(this.CollectLongValueRoots(page, rowBound, tableDef));
+                        longValueRoots.AddRange(this.longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef));
                     }
 
                     return new ValueTask<bool>(true);
@@ -2873,7 +2871,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await this.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+            await this.longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
 
         foreach (long pageNumber in pagesToFree)
@@ -3483,7 +3481,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (tableDef is not null && this.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
-                    longValueRoots = this.CollectLongValueRoots(page, rowBound, tableDef);
+                    longValueRoots = this.longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
                 }
 
                 Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
@@ -3502,88 +3500,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await this.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
-    {
-        var roots = new List<LongValueDescriptor>();
-        bool hasVarColumns = false;
-        foreach (ColumnInfo column in tableDef.Columns)
-        {
-            if (!column.IsFixed)
-            {
-                hasVarColumns = true;
-                break;
-            }
-        }
-
-        if (!this.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
-        {
-            return roots;
-        }
-
-        foreach (ColumnInfo column in tableDef.Columns)
-        {
-            if (column.Type is not MemoType and not OleType)
-            {
-                continue;
-            }
-
-            ColumnSlice slice = this.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
-            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
-            {
-                continue;
-            }
-
-            int valueStart = rowBound.RowStart + slice.DataStart;
-            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out LongValueDescriptor descriptor)
-                || !descriptor.IsExternal
-                || descriptor.FirstDp == 0)
-            {
-                continue;
-            }
-
-            roots.Add(descriptor);
-        }
-
-        return roots;
-    }
-
-    private async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
-        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReadNextLongValueDpAsync, this.pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
-
-    private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
-    {
-        long pageNumber = LongValueStore.PageNumber(currentDp);
-        int rowIndex = LongValueStore.RowIndex(currentDp);
-        if (pageNumber <= 0)
-        {
-            return 0;
-        }
-
-        byte[] lvalPage = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (lvalPage[0] != Constants.PageTypes.Data)
-            {
-                return 0;
-            }
-
-            foreach (RowBound rowBound in this.EnumerateLiveRowBounds(lvalPage))
-            {
-                if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
-                {
-                    return Ru32(lvalPage, rowBound.RowStart);
-                }
-            }
-
-            return 0;
-        }
-        finally
-        {
-            ReturnPage(lvalPage);
+            await this.longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
     }
 }
