@@ -506,7 +506,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 enablePrefixCompression: false);
             long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
             leafPageNumbers[i] = leafPageNumber;
-            this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
+            this.tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
 
         long usageMapPageNumber = await this.dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
@@ -519,7 +519,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             int usedPagesOffset = usedPagesLogicalOffsets[i];
             tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(i + 2));
-            this.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+            this.tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
         }
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
@@ -692,7 +692,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     enablePrefixCompression: false);
                 long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[indexIndex] = leafPageNumber;
-                this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[indexIndex], checked((int)leafPageNumber));
+                this.tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[indexIndex], checked((int)leafPageNumber));
             }
 
             tdefDirty = true;
@@ -723,7 +723,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 {
                     int usedPagesOffset = usedPagesLogicalOffsets[usedPagesIndex];
                     tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(usedPagesIndex + 2));
-                    this.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+                    this.tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
                 }
             }
 
@@ -2621,33 +2621,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF
-    /// offset, dispatching the bytes across the physical page boundary
-    /// when the field straddles two pages. Used to patch <c>first_dp</c>
-    /// values after their leaf pages are appended.
-    /// </summary>
-    /// <param name="pages">The pages.</param>
-    /// <param name="logicalOffset">The logical offset.</param>
-    /// <param name="value">The value.</param>
-    private void WriteLogicalTDefI32(byte[][] pages, int logicalOffset, int value)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            (int pageIdx, int pageOff) = this.tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
-            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
-        }
-    }
-
-    private void WriteLogicalTDefUInt24(byte[][] pages, int logicalOffset, int value)
-    {
-        for (int i = 0; i < 3; i++)
-        {
-            (int pageIdx, int pageOff) = this.tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
-            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
-        }
-    }
-
-    /// <summary>
     /// Forwards real-index usage-map row maintenance to <see cref="DataPageInserter"/>,
     /// which owns usage-map page construction. Retained so the index maintainer can
     /// drive usage-map updates through the writer.
@@ -2922,54 +2895,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return new RowLocation(target.PageNumber, rowIndex, rowStart, rowBytes.Length);
     }
 
-    internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
-    {
-        if (delta == 0)
-        {
-            return;
-        }
-
-        byte[] page = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        long updated;
-
-        try
-        {
-            uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
-            updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
-            Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
-
-            // Mirror the change into the per-real-idx `num_idx_rows` counter
-            // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
-            // skip block at [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx *
-            // _tdef.RealIdxEntrySz)). Per mdbtools HACKING.md the slot is laid
-            // out as `unknown(4) + num_idx_rows(4) + unknown(4)`. DAO compares
-            // num_idx_rows against the leaf-level row count when walking
-            // MSysObjects; if they disagree it aborts compact with
-            // "could not find the object 'MSysDb'" — see
-            // docs/design/round-trip-openrecordset-hypothesis.md.
-            int numRealIdx = Ri32(page, this.TDef.NumRealIdx);
-            if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
-            {
-                int slotEnd = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
-                if (slotEnd <= page.Length)
-                {
-                    for (int i = 0; i < numRealIdx; i++)
-                    {
-                        int countOff = this.TDef.BlockEnd + (i * this.TDef.RealIdxEntrySz) + 4;
-                        uint cur = Ru32(page, countOff);
-                        long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
-                        Wi32(page, countOff, unchecked((int)(uint)next));
-                    }
-                }
-            }
-
-            await this.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
+    /// <summary>
+    /// Adjusts the persisted row count of the table at <paramref name="tdefPage"/>
+    /// by <paramref name="delta"/>. Delegates to <see cref="TDefPageBuilder"/>,
+    /// which owns TDEF row-count and <c>num_idx_rows</c> byte layout.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="delta">The signed row-count delta.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
+        => this.tdefPageBuilder.AdjustTDefRowCountAsync(tdefPage, delta, cancellationToken);
 
     /// <summary>
     /// Rewrites all data pages for a small system table with the supplied live rows.
