@@ -21,6 +21,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -1227,7 +1228,7 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    // ── Row layout decoding (shared by RowDecodePlan and writer column reads) ────
+    // ── Row layout decoding (forwards to RowDecodePlan; used by writer column reads) ────
 
     /// <summary>
     /// Parses the row-trailer metadata (numCols, null-mask position, var-table
@@ -1245,58 +1246,7 @@ public abstract class AccessBase : IAccessBase
     /// rows for tables with zero variable-length columns.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
     internal bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
-    {
-        layout = default;
-        if (rowSize < this.RowFields.NumCols)
-        {
-            return false;
-        }
-
-        int numCols = this.RowFields.ReadNumCols(page, rowStart);
-        if (numCols == 0)
-        {
-            return false;
-        }
-
-        int nullMaskSz = (numCols + 7) / 8;
-        int nullMaskPos = rowSize - nullMaskSz;
-        if (nullMaskPos < this.RowFields.NumCols)
-        {
-            return false;
-        }
-
-        int varLen;
-        int varTableStart;
-        int eod;
-        if (!hasVarColumns)
-        {
-            varLen = 0;
-            varTableStart = nullMaskPos;
-            eod = nullMaskPos;
-        }
-        else
-        {
-            int varLenPos = nullMaskPos - this.RowFields.VarLen;
-            if (varLenPos < this.RowFields.NumCols)
-            {
-                return false;
-            }
-
-            varLen = this.RowFields.ReadVarLen(page, rowStart + varLenPos);
-            int jumpSz = this.Format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
-            varTableStart = varLenPos - jumpSz - (varLen * this.RowFields.VarEntry);
-            int eodPos = varTableStart - this.RowFields.Eod;
-            if (eodPos < this.RowFields.NumCols)
-            {
-                return false;
-            }
-
-            eod = this.RowFields.ReadEod(page, rowStart + eodPos);
-        }
-
-        layout = new RowLayout(numCols, nullMaskPos, varLen, varTableStart, eod);
-        return true;
-    }
+        => RowDecodePlan.TryParseRowLayout(this.Format, this.RowFields, page, rowStart, rowSize, hasVarColumns, out layout);
 
     /// <summary>
     /// Resolves the per-column data slice (or null/bool/empty marker) for
@@ -1309,73 +1259,7 @@ public abstract class AccessBase : IAccessBase
     /// <param name="layout">The layout.</param>
     /// <param name="col">The column descriptor.</param>
     internal ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
-    {
-        bool nullBit = false;
-        if (col.ColNum < layout.NumCols)
-        {
-            int mByte = layout.NullMaskPos + (col.ColNum / 8);
-            int mBit = col.ColNum % 8;
-            if (mByte < rowSize)
-            {
-                nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-            }
-        }
-
-        if (col.Type == BooleanType && !col.IsCalculated)
-        {
-            return new ColumnSlice(ColumnSliceKind.Bool, 0, 0, nullBit);
-        }
-
-        if (col.ColNum >= layout.NumCols || !nullBit)
-        {
-            return new ColumnSlice(ColumnSliceKind.Null, 0, 0, false);
-        }
-
-        if (col.IsFixed)
-        {
-            int start = this.RowFields.NumCols + col.FixedOff;
-            int sz = col.IsCalculated ? col.Size : GetFixedSize(col.Type);
-            if (sz == 0 || start + sz > rowSize)
-            {
-                return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
-            }
-
-            return new ColumnSlice(col.IsCalculated ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
-        }
-
-        if (col.VarIdx >= layout.VarLen)
-        {
-            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
-        }
-
-        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - col.VarIdx) * this.RowFields.VarEntry);
-        if (entryPos < 0 || entryPos + this.RowFields.VarEntry > rowSize)
-        {
-            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
-        }
-
-        int varOff = this.RowFields.ReadVarEntry(page, rowStart + entryPos);
-
-        int varEnd;
-        if (col.VarIdx + 1 < layout.VarLen)
-        {
-            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * this.RowFields.VarEntry);
-            varEnd = this.RowFields.ReadVarEntry(page, rowStart + nextEntry);
-        }
-        else
-        {
-            varEnd = layout.Eod;
-        }
-
-        int dataStart = varOff;
-        int dataLen = varEnd - varOff;
-        if (dataLen < 0 || dataStart < 0 || dataStart + dataLen > rowSize)
-        {
-            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
-        }
-
-        return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
-    }
+        => RowDecodePlan.ResolveColumnSlice(this.RowFields, page, rowStart, rowSize, layout, col);
 
     /// <summary>
     /// Yields <see cref="RowLocation"/>s (row index + start/size) for every live, non-overflow
