@@ -197,7 +197,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         if (deletedRows.Count > 0)
         {
             await writer.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await writer.MaintainSystemTableIndexesIncrementallyAsync(
+            await indexes.MaintainSystemTableIndexesIncrementallyAsync(
                 acesTdefPage,
                 acesDef,
                 Constants.SystemTableNames.Aces,

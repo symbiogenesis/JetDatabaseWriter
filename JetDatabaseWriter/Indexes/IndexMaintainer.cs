@@ -38,6 +38,154 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// </summary>
     public string? LastIncrementalBail { get; private set; }
 
+    /// <summary>Gets the most recent system-table index-maintenance path.</summary>
+    internal SystemTableIndexMaintenancePath LastSystemTableIndexMaintenancePath { get; private set; }
+
+    /// <summary>
+    /// Inserts one row into a system table (MSysObjects, MSysRelationships,
+    /// MSysComplexColumns, …) and refreshes that table's indexes so external
+    /// readers (Microsoft Access / DAO Compact &amp; Repair) can locate the
+    /// new row through the catalog indexes. Bare <see cref="AccessWriter.InsertRowDataAsync"/>
+    /// only writes the data row; index leaves are not maintained, so DAO
+    /// walking via <c>ParentIdName</c> / <c>Id</c> never sees the row and the
+    /// catalog appears empty from outside.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="values">The values.</param>
+    /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <remarks>
+    /// User-row inserts are batched by <see cref="AccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
+    /// for performance; system-table inserts are infrequent and can afford to
+    /// pay the per-call index-maintenance cost.
+    /// </remarks>
+    internal async ValueTask InsertSystemRowAndMaintainAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        object[] values,
+        bool updateTDefRowCount = true,
+        CancellationToken cancellationToken = default)
+    {
+        this.LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
+        RowLocation loc = await writer.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
+
+        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
+        this.LastSystemTableIndexMaintenancePath = await this.MaintainSystemTableIndexesIncrementallyAsync(
+            tdefPage,
+            tableDef,
+            tableName,
+            hint,
+            deletedRows: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        CancellationToken cancellationToken)
+    {
+        if (!await this.SystemTableHasMaintainableIndexesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            return SystemTableIndexMaintenancePath.SkippedNoMaintainableIndexes;
+        }
+
+        try
+        {
+            bool incremental = await this.TryMaintainIndexesIncrementalAsync(
+                tdefPage,
+                tableDef,
+                insertedRows,
+                deletedRows,
+                cancellationToken).ConfigureAwait(false);
+            if (incremental)
+            {
+                return SystemTableIndexMaintenancePath.Incremental;
+            }
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw this.CreateSystemTableIndexMaintenanceException(tableName, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw this.CreateSystemTableIndexMaintenanceException(tableName, ex);
+        }
+
+        throw this.CreateSystemTableIndexMaintenanceException(tableName);
+    }
+
+    private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
+    {
+        string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
+        if (!string.IsNullOrWhiteSpace(this.LastIncrementalBail))
+        {
+            message += $" Bail: {this.LastIncrementalBail}.";
+        }
+
+        return inner is null ? new InvalidOperationException(message) : new InvalidOperationException(message, inner);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when every real-idx slot on <paramref name="tdefPage"/>
+    /// references a valid in-range data page through its <c>first_dp</c>
+    /// pointer. Used by <see cref="InsertSystemRowAndMaintainAsync"/> to
+    /// avoid index maintenance on writer-bootstrapped system tables whose
+    /// real-idx descriptors point at unallocated pages.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != Constants.PageTypes.TableDefinition || Ru32(page, 4) != 0)
+            {
+                return false;
+            }
+
+            int numCols = Ru16(page, writer.TDef.NumCols);
+            int numRealIdx = Ri32(page, writer.TDef.NumRealIdx);
+            if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
+            {
+                return false;
+            }
+
+            int realIdxDescStart = writer.Relationships.LocateRealIdxDescStart(page, numCols, numRealIdx);
+            if (realIdxDescStart < 0)
+            {
+                return false;
+            }
+
+            long totalPages = writer.PhysicalPageCount;
+            for (int ri = 0; ri < numRealIdx; ri++)
+            {
+                if (!writer.IndexLayoutInfo.TryReadRealIdxSlot(page, realIdxDescStart, ri, out RealIdxSlot slot))
+                {
+                    return false;
+                }
+
+                long firstDp = (uint)Ri32(page, slot.FirstDpOffset);
+                if (firstDp <= 0 || firstDp >= totalPages)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
+        }
+    }
+
     /// <summary>
     /// Reads <paramref name="pageNumber"/> through the page cache and returns
     /// a freshly cloned, caller-owned copy of the bytes. The cache buffer is
