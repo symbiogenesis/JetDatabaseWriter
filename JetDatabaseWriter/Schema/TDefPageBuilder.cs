@@ -29,8 +29,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         for (int i = 0; i < columns.Count; i++)
         {
             ColumnDefinition definition = columns[i];
-            AccessWriter.ValidateCalculatedColumn(definition, format);
-            ColumnType type = AccessWriter.TypeCodeFromDefinition(definition);
+            ValidateCalculatedColumn(definition, format);
+            ColumnType type = TypeCodeFromDefinition(definition);
 
             if (type == BigIntType && format != DatabaseFormat.AceAccdb)
             {
@@ -45,7 +45,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
 
             bool isCalculated = definition.IsCalculated;
-            bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
+            bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
@@ -104,8 +104,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Size = size,
                 Flags = flags,
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
-                NumericPrecision = type == NumericType ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
-                NumericScale = type == NumericType ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
+                NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition) : (byte)0,
+                NumericScale = type == NumericType ? ResolveNumericScale(definition) : (byte)0,
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
@@ -609,7 +609,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
-            if (AccessWriter.IsVariableType(columns[i].Type))
+            if (IsAlwaysVariableLength(columns[i].Type))
             {
                 numVarCols++;
             }

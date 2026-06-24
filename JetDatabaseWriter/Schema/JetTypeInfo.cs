@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -181,6 +182,197 @@ internal static class JetTypeInfo
         MemoType or OleType or AttachmentType or ComplexType => ColumnSize.Lval,
         BinaryType or DateTimeExtendedType or _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
     };
+
+    internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
+    {
+        if (column.IsCalculated && column.CalculatedResultType != 0)
+        {
+            return (ColumnType)column.CalculatedResultType;
+        }
+
+        // Complex columns override the CLR-driven mapping. Access writes the
+        // generic complex type byte for both Attachment and MultiValue parent
+        // descriptors; the subtype lives in MSysComplexColumns.
+        if (column.IsAttachment && column.IsMultiValue)
+        {
+            throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
+        }
+
+        if (column.IsAttachment)
+        {
+            return ComplexType;
+        }
+
+        if (column.IsMultiValue)
+        {
+            return ComplexType;
+        }
+
+        if (column.ColumnTypeOverride is ColumnType descriptorType)
+        {
+            return descriptorType;
+        }
+
+        if (column.IsDateTimeExtended)
+        {
+            if (column.ClrType != typeof(DateTime))
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' has IsDateTimeExtended = true but CLR type '{column.ClrType}' is not DateTime.",
+                    nameof(column));
+            }
+
+            return DateTimeExtendedType;
+        }
+
+        Type clrType = column.ClrType;
+
+        switch (Type.GetTypeCode(clrType))
+        {
+            case TypeCode.Boolean:
+                return BooleanType;
+            case TypeCode.Byte:
+                return ByteType;
+            case TypeCode.Int16:
+                return IntegerType;
+            case TypeCode.Int32:
+                return LongIntegerType;
+            case TypeCode.Int64:
+                return BigIntType;
+            case TypeCode.Single:
+                return FloatType;
+            case TypeCode.Double:
+                return DoubleType;
+            case TypeCode.DateTime:
+                return DateTimeType;
+            case TypeCode.Decimal:
+                return NumericType;
+            case TypeCode.String:
+                return column.MaxLength is > 0 and <= 255 ? TextType : MemoType;
+            case TypeCode.Object:
+                if (clrType == typeof(Guid))
+                {
+                    return GuidType;
+                }
+
+                if (clrType == typeof(Hyperlink))
+                {
+                    // typeof(Hyperlink) is shorthand for a MEMO column; TDefPageBuilder.BuildTableDefinition
+                    // adds HYPERLINK_FLAG_MASK (0x80) unless DescriptorFlagsOverride replaces
+                    // the computed TDEF column-flag byte.
+                    return MemoType;
+                }
+
+                if (clrType == typeof(byte[]))
+                {
+                    return column.MaxLength is > 0 and <= 255 ? BinaryType : OleType;
+                }
+
+                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+            case TypeCode.Char:
+            case TypeCode.DBNull:
+            case TypeCode.Empty:
+            case TypeCode.SByte:
+            case TypeCode.UInt16:
+            case TypeCode.UInt32:
+            case TypeCode.UInt64:
+                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+            default:
+                throw new InvalidOperationException($"CLR type '{clrType}' is unknown.");
+        }
+    }
+
+    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
+    {
+        if (!column.IsCalculated)
+        {
+            return;
+        }
+
+        if (format != DatabaseFormat.AceAccdb)
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated columns are only supported in ACCDB databases.");
+        }
+
+        if (string.IsNullOrWhiteSpace(column.CalculationExpression))
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' is calculated but has no CalculationExpression.",
+                nameof(column));
+        }
+
+        if (column.IsAttachment || column.IsMultiValue || column.IsHyperlink || column.ClrType == typeof(Hyperlink))
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated Attachment, MultiValue, and Hyperlink columns are not supported.");
+        }
+
+        if (column.IsAutoIncrement)
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
+        }
+
+        ColumnType type = TypeCodeFromDefinition(column);
+        switch (type)
+        {
+            case BooleanType:
+            case ByteType:
+            case IntegerType:
+            case LongIntegerType:
+            case MoneyType:
+            case BigIntType:
+            case FloatType:
+            case DoubleType:
+            case DateTimeType:
+            case BinaryType:
+            case TextType:
+            case MemoType:
+            case GuidType:
+            case NumericType:
+                return;
+            case OleType:
+            case AttachmentType:
+            case ComplexType:
+            case DateTimeExtendedType:
+                throw new NotSupportedException(
+                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is not supported.");
+            default:
+                throw new InvalidOperationException(
+                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is unknown.");
+        }
+    }
+
+    /// <summary>
+    /// Validates and returns the precision (1..28) declared on a
+    /// <c>Numeric</c> column definition. Defaults to <c>18</c> when the
+    /// caller leaves <see cref="ColumnDefinition.NumericPrecision"/> at its
+    /// initial value (matches Access "Number → Decimal" UI default).
+    /// </summary>
+    /// <param name="definition">The definition.</param>
+    internal static byte ResolveNumericPrecision(ColumnDefinition definition)
+    {
+        byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
+        Guard.InRange(p, 1, 28, $"Column '{definition.Name}' NumericPrecision");
+        return p;
+    }
+
+    /// <summary>
+    /// Validates and returns the scale (0..28, &lt;= precision) declared on a
+    /// <c>Numeric</c> column definition. Defaults to <c>0</c> (Access UI
+    /// default). The incremental index path uses this value as the
+    /// canonical sort-key scale.
+    /// </summary>
+    /// <param name="definition">The definition.</param>
+    internal static byte ResolveNumericScale(ColumnDefinition definition)
+    {
+        byte s = definition.NumericScale;
+        byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
+        Guard.InRange(s, 0, 28, $"Column '{definition.Name}' NumericScale");
+        Guard.InRange(s, 0, p, $"Column '{definition.Name}' NumericScale (NumericPrecision={p})");
+        return s;
+    }
 
     // ── Fixed-column decoding ────────────────────────────────────────
     //
