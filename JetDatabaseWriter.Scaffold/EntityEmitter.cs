@@ -50,6 +50,15 @@ internal static class EntityEmitter
         string ns,
         bool useRecords,
         bool nullable)
+        => Emit(className, columns, [], ns, useRecords, nullable);
+
+    public static string Emit(
+        string className,
+        IReadOnlyList<ColumnMetadata> columns,
+        IReadOnlyList<ScaffoldNavigation> navigations,
+        string ns,
+        bool useRecords,
+        bool nullable)
     {
         TypeDeclarationSyntax typeDecl = useRecords
             ? RecordDeclaration(Token(SyntaxKind.RecordKeyword), className)
@@ -76,9 +85,30 @@ internal static class EntityEmitter
             typeDecl = typeDecl.AddMembers(BuildProperty(propName, col, nullable));
         }
 
+        bool anyCollection = false;
+        foreach (ScaffoldNavigation nav in navigations)
+        {
+            string navName = DeduplicateName(nav.PreferredName, usedNames);
+            if (navName == className)
+            {
+                navName = DeduplicateName(navName + "Navigation", usedNames);
+            }
+
+            typeDecl = typeDecl.AddMembers(nav.IsCollection
+                ? BuildCollectionNav(navName, nav.TargetClassName)
+                : BuildReferenceNav(navName, nav.TargetClassName, nullable));
+            anyCollection = anyCollection || nav.IsCollection;
+        }
+
         FileScopedNamespaceDeclarationSyntax nsDecl = FileScopedNamespaceDeclaration(ParseName(ns))
-            .AddUsings(UsingDirective(ParseName("System")))
-            .AddMembers(typeDecl);
+            .AddUsings(UsingDirective(ParseName("System")));
+
+        if (anyCollection)
+        {
+            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.Collections.Generic")));
+        }
+
+        nsDecl = nsDecl.AddMembers(typeDecl);
 
         CompilationUnitSyntax compilationUnit = CompilationUnit()
             .AddMembers(nsDecl)
@@ -117,6 +147,31 @@ internal static class EntityEmitter
             Trivia(XmlDocSummary($"Column: {col}.")),
             ElasticLineFeed);
     }
+
+    private static PropertyDeclarationSyntax BuildReferenceNav(string name, string targetType, bool nullable)
+    {
+        string type = nullable ? targetType + "?" : targetType;
+        return PropertyDeclaration(ParseTypeName(type), name)
+            .AddModifiers(Token(SyntaxKind.PublicKeyword))
+            .AddAccessorListAccessors(
+                AccessorDeclaration(SyntaxKind.GetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)),
+                AccessorDeclaration(SyntaxKind.SetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)))
+            .WithLeadingTrivia(
+                Trivia(XmlDocSummary($"Navigation: the related {targetType} (parent).")),
+                ElasticLineFeed);
+    }
+
+    private static PropertyDeclarationSyntax BuildCollectionNav(string name, string targetType)
+        => PropertyDeclaration(ParseTypeName($"ICollection<{targetType}>"), name)
+            .AddModifiers(Token(SyntaxKind.PublicKeyword))
+            .AddAccessorListAccessors(
+                AccessorDeclaration(SyntaxKind.GetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)),
+                AccessorDeclaration(SyntaxKind.SetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)))
+            .WithInitializer(EqualsValueClause(ParseExpression($"new List<{targetType}>()")))
+            .WithSemicolonToken(Token(SyntaxKind.SemicolonToken))
+            .WithLeadingTrivia(
+                Trivia(XmlDocSummary($"Navigation: related {targetType} children.")),
+                ElasticLineFeed);
 
     private static string FormatOutput(string source)
     {

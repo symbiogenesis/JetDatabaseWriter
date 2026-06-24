@@ -33,7 +33,8 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>`; explicit `FromIndex<T>(...)` for index-backed reads |
+| ✅ **POCO + LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
+| ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Include` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/…) |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -214,7 +215,18 @@ foreach (IndexMetadata idx in indexes)
 
 Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Use `IndexMetadata.EnforcesUniqueness` for semantic uniqueness and `IndexMetadata.HasUniqueFlag` when you need the raw real-index `flags & 0x01` bit. Access does not always set that flag on primary keys because uniqueness is implied by `Kind == PrimaryKey`.
 
-`FromIndex(...)` starts an explicit Jet4/ACE index-backed read. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
+### Index-backed reads
+
+Pass a predicate to `Rows<T>(...)` and the reader **infers the index automatically**: a leading-key equality (optionally terminated by one range) is satisfied by a Jet4/ACE index seek, and anything else transparently falls back to a table scan. Inference never changes the result set — only how the rows are found — so you write the obvious query and let the reader optimize it:
+
+```csharp
+await foreach (Order order in reader.Rows<Order>("Orders", o => o.OrderDate >= start && o.OrderDate < end))
+    Console.WriteLine(order.OrderId);
+```
+
+Only conjuncts combined with `&&` over direct column members (`o.Column == value`, `o.Column > value`, …) drive inference; method calls, `||`, computed members such as `o.When.Year`, and column-to-column comparisons are evaluated client-side. Jet3 `.mdb` files always scan.
+
+`FromIndex(...)` is the explicit override — reach for it to **force a specific index**, guarantee **index-ordered** streaming, or seek shapes the inferrer does not model. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
 
 ```csharp
 await foreach (Company company in reader
@@ -242,6 +254,36 @@ await foreach (object[] row in reader.SeekRowsAsync("Companies", "IX_CompanyName
     Console.WriteLine(row[0]);
 }
 ```
+
+### Relationships and eager loading (`Include`)
+
+`ListRelationshipsAsync` returns every foreign-key relationship from the database's `MSysRelationships` catalog. Each entry links a child (`ForeignTable`) to a parent (`PrimaryTable`) with matching key columns, plus the integrity and cascade flags.
+
+```csharp
+foreach (RelationshipMetadata rel in await reader.ListRelationshipsAsync(cancellationToken))
+    Console.WriteLine($"{rel.Name}: {rel.ForeignTable}({string.Join(",", rel.ForeignColumns)}) -> {rel.PrimaryTable}({string.Join(",", rel.PrimaryColumns)})");
+```
+
+`Query<T>(...)` returns an `IQueryable<T>` and **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Compose the standard LINQ operators (`Where`, `OrderBy`/`ThenBy`, `Skip`, `Take`) and execute with the async terminals (`ToListAsync`, `FirstOrDefaultAsync`, `SingleOrDefaultAsync`, `CountAsync`, `AnyAsync`) or `AsAsyncEnumerable()` for `await foreach`. `Where` drives the same index inference as `Rows<T>(table, predicate)`; ordering and paging run in memory after the filtered set is read.
+
+```csharp
+// Parent with its children (collection navigation), filtered, ordered and paged
+List<Customer> customers = await reader.Query<Customer>("Customers")
+    .Where(c => c.Region == "West")
+    .OrderBy(c => c.Name)
+    .Skip(20)
+    .Take(10)
+    .Include(c => c.Orders)
+    .ToListAsync(cancellationToken);
+
+// Child with its parent (reference navigation)
+Order? order = await reader.Query<Order>("Orders")
+    .Where(o => o.OrderId == 10248)
+    .Include(o => o.Customer)
+    .FirstOrDefaultAsync(cancellationToken);
+```
+
+The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. When the join columns are indexed (a primary key or foreign-key index, inferred automatically) each `Include` loads the related rows with one index seek per distinct key; otherwise it scans the related table once and joins in memory. Operators outside the supported set throw `NotSupportedException` — materialize with `ToListAsync(...)` and use LINQ-to-Objects for anything further. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
 
 ### Complex (Attachment / Multi-value) column metadata
 
@@ -388,7 +430,7 @@ await foreach (string[] row in reader.RowsAsStrings("Orders")
 }
 ```
 
-Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. Use `FromIndex(...)` for explicit index-backed equality, leading-key-prefix, or range reads; use `SeekRowsAsync` when you only need the older full-key exact-match object-array API.
+Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. To let the reader pick an index for you, pass the predicate directly to `Rows<T>(table, predicate)` (see [Index-backed reads](#index-backed-reads)); chained `.Where(...)` over `Rows(...)` stays client-side because it receives a compiled delegate the engine can't inspect. Use `FromIndex(...)` to force a specific index or index ordering, or `SeekRowsAsync` for the older full-key exact-match object-array API.
 
 ---
 
@@ -767,6 +809,25 @@ public sealed class Orders
 ```
 
 Table and column names are automatically converted to PascalCase C# identifiers — spaces, hyphens, and special characters are cleaned, and C# keywords are escaped.
+
+When the database declares foreign-key relationships, each generated entity also gets **navigation properties** inferred from `MSysRelationships`: a reference to the parent (named after the foreign-key column, EF-style — `CustomerID` → `Customer`) and a collection of children (named after the child table). These pair directly with `reader.Query<T>(...).Include(...)`:
+
+```csharp
+public sealed class Customers
+{
+    public int CustomerID { get; set; }
+    /// <summary>Navigation: related Orders children.</summary>
+    public ICollection<Orders> Orders { get; set; } = new List<Orders>();
+}
+
+public sealed class Orders
+{
+    public int OrderID { get; set; }
+    public int CustomerID { get; set; }
+    /// <summary>Navigation: the related Customers (parent).</summary>
+    public Customers? Customer { get; set; }
+}
+```
 
 ---
 
