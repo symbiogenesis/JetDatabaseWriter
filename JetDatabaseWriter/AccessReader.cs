@@ -1478,11 +1478,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     cancellationToken).ConfigureAwait(false);
 
             case IndexQueryKind.Exact:
-                byte[] searchKey = this.EncodeIndexSeekKey(tableName, index, tableDef, criteria.Values!);
+                byte[] searchKey = IndexKeyEncoder.EncodeIndexSeekKey(this.Format, tableName, index, tableDef, criteria.Values!);
                 return await cursor.FindRowLocationsAsync(index.FirstDp, searchKey, cancellationToken).ConfigureAwait(false);
 
             case IndexQueryKind.KeyPrefix:
-                byte[] prefixKey = this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Values!, nameof(criteria));
+                byte[] prefixKey = IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Values!, nameof(criteria));
                 var prefixRange = new EncodedIndexRange(
                     new EncodedIndexBound(prefixKey, Inclusive: true, IsPrefix: false),
                     EncodedIndexBound.None,
@@ -1496,13 +1496,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 EncodedIndexBound lowerBound = criteria.Lower is null
                     ? EncodedIndexBound.None
                     : new EncodedIndexBound(
-                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
+                        IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
                         criteria.Lower.IsInclusive,
                         criteria.Lower.Values.Count < index.Columns.Count);
                 EncodedIndexBound upperBound = criteria.Upper is null
                     ? EncodedIndexBound.None
                     : new EncodedIndexBound(
-                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
+                        IndexKeyEncoder.EncodeIndexKeyPrefix(this.Format, tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
                         criteria.Upper.IsInclusive,
                         criteria.Upper.Values.Count < index.Columns.Count);
                 var range = new EncodedIndexRange(lowerBound, upperBound);
@@ -1520,65 +1520,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             default:
                 throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
         }
-    }
-
-    private byte[] EncodeIndexSeekKey(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
-        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: true, nameof(keyValues));
-
-    private byte[] EncodeIndexKeyPrefix(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
-        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
-
-    private byte[] EncodeIndexKey(
-        string tableName,
-        IndexMetadata index,
-        TableDef tableDef,
-        IReadOnlyList<object?> keyValues,
-        bool requireFullKey,
-        string paramName)
-    {
-        Guard.NotNull(keyValues, paramName);
-
-        if (requireFullKey && keyValues.Count != index.Columns.Count)
-        {
-            throw new ArgumentException(
-                $"Index '{index.Name}' on table '{tableName}' expects {index.Columns.Count} key value(s), but {keyValues.Count} were supplied.",
-                paramName);
-        }
-
-        if (!requireFullKey && (keyValues.Count == 0 || keyValues.Count > index.Columns.Count))
-        {
-            throw new ArgumentException(
-                $"Index '{index.Name}' on table '{tableName}' expects between 1 and {index.Columns.Count} leading key value(s), but {keyValues.Count} were supplied.",
-                paramName);
-        }
-
-        bool legacyNumeric = this.Format == DatabaseFormat.Jet4Mdb;
-        byte[][] perColumn = new byte[keyValues.Count][];
-        int totalLength = 0;
-
-        for (int i = 0; i < keyValues.Count; i++)
-        {
-            IndexColumnReference keyColumn = index.Columns[i];
-
-            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber)
-                ?? throw new InvalidDataException($"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
-
-            object? value = keyValues[i];
-            perColumn[i] = column.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(column.Type, value, keyColumn.IsAscending);
-            totalLength += perColumn[i].Length;
-        }
-
-        byte[] composite = new byte[totalLength];
-        int offset = 0;
-        for (int i = 0; i < perColumn.Length; i++)
-        {
-            Buffer.BlockCopy(perColumn[i], 0, composite, offset, perColumn[i].Length);
-            offset += perColumn[i].Length;
-        }
-
-        return composite;
     }
 
     private async ValueTask<object?[]?> MaterializeSeekRowAsync(
