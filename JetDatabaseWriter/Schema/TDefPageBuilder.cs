@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
@@ -29,8 +31,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         for (int i = 0; i < columns.Count; i++)
         {
             ColumnDefinition definition = columns[i];
-            AccessWriter.ValidateCalculatedColumn(definition, format);
-            ColumnType type = AccessWriter.TypeCodeFromDefinition(definition);
+            ValidateCalculatedColumn(definition, format);
+            ColumnType type = TypeCodeFromDefinition(definition);
 
             if (type == BigIntType && format != DatabaseFormat.AceAccdb)
             {
@@ -45,7 +47,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
 
             bool isCalculated = definition.IsCalculated;
-            bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
+            bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
@@ -104,8 +106,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Size = size,
                 Flags = flags,
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
-                NumericPrecision = type == NumericType ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
-                NumericScale = type == NumericType ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
+                NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition) : (byte)0,
+                NumericScale = type == NumericType ? ResolveNumericScale(definition) : (byte)0,
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
@@ -425,6 +427,99 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         return (pages, logicalFirstDpOffsets, usedPagesOffsets);
     }
 
+    /// <summary>
+    /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF
+    /// offset, dispatching the bytes across the physical page boundary
+    /// when the field straddles two pages. Used to patch <c>first_dp</c>
+    /// values after their leaf pages are appended.
+    /// </summary>
+    /// <param name="pages">The pages.</param>
+    /// <param name="logicalOffset">The logical offset.</param>
+    /// <param name="value">The value.</param>
+    internal void WriteLogicalTDefI32(byte[][] pages, int logicalOffset, int value)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            (int pageIdx, int pageOff) = this.LogicalToPhysicalTDefOffset(logicalOffset + i);
+            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
+        }
+    }
+
+    /// <summary>
+    /// Writes a 3-byte little-endian unsigned integer at the given LOGICAL
+    /// TDEF offset, dispatching the bytes across the physical page boundary
+    /// when the field straddles two pages. Used to patch <c>used_pages</c>
+    /// usage-map page pointers.
+    /// </summary>
+    /// <param name="pages">The pages.</param>
+    /// <param name="logicalOffset">The logical offset.</param>
+    /// <param name="value">The value.</param>
+    internal void WriteLogicalTDefUInt24(byte[][] pages, int logicalOffset, int value)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            (int pageIdx, int pageOff) = this.LogicalToPhysicalTDefOffset(logicalOffset + i);
+            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
+        }
+    }
+
+    /// <summary>
+    /// Adjusts the persisted row count of the table whose TDEF lives at
+    /// <paramref name="tdefPage"/> by <paramref name="delta"/>, mirroring the
+    /// change into every per-real-idx <c>num_idx_rows</c> counter.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="delta">The signed row-count delta.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
+    {
+        if (delta == 0)
+        {
+            return;
+        }
+
+        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long updated;
+
+        try
+        {
+            uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
+            updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
+            Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
+
+            // Mirror the change into the per-real-idx `num_idx_rows` counter
+            // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
+            // skip block at [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx *
+            // _tdef.RealIdxEntrySz)). Per mdbtools HACKING.md the slot is laid
+            // out as `unknown(4) + num_idx_rows(4) + unknown(4)`. DAO compares
+            // num_idx_rows against the leaf-level row count when walking
+            // MSysObjects; if they disagree it aborts compact with
+            // "could not find the object 'MSysDb'" — see
+            // docs/design/round-trip-openrecordset-hypothesis.md.
+            int numRealIdx = Ri32(page, writer.TDef.NumRealIdx);
+            if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
+            {
+                int slotEnd = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
+                if (slotEnd <= page.Length)
+                {
+                    for (int i = 0; i < numRealIdx; i++)
+                    {
+                        int countOff = writer.TDef.BlockEnd + (i * writer.TDef.RealIdxEntrySz) + 4;
+                        uint cur = Ru32(page, countOff);
+                        long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
+                        Wi32(page, countOff, unchecked((int)(uint)next));
+                    }
+                }
+            }
+
+            await writer.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
+        }
+    }
+
     public (int PageIndex, int PageOffset) LogicalToPhysicalTDefOffset(int logicalOffset)
         => LogicalTDefChain.LogicalToPhysicalOffset(writer.PageSizeBytes, logicalOffset);
 
@@ -609,7 +704,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
-            if (AccessWriter.IsVariableType(columns[i].Type))
+            if (IsAlwaysVariableLength(columns[i].Type))
             {
                 numVarCols++;
             }

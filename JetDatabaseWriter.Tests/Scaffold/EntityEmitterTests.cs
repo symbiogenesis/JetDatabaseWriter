@@ -109,6 +109,20 @@ public class EntityEmitterTests
     }
 
     [Fact]
+    public void Emit_HyperlinkColumn_AddsModelsUsing()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Website", ClrType = typeof(Hyperlink), IsNullable = true, TypeName = "Hyperlink", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Site", columns, "NS", useRecords: false, nullable: true);
+
+        Assert.Contains("using JetDatabaseWriter.Models;", result, StringComparison.Ordinal);
+        Assert.Contains("public Hyperlink? Website", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Emit_Sealed_Modifier_Present()
     {
         string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: false, nullable: false);

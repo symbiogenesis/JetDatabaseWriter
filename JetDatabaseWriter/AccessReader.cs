@@ -18,8 +18,6 @@ using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Helpers;
-using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -1115,7 +1113,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        return this.ParseIndexMetadata(td, resolved.Definition.Columns);
+        return IndexCatalogReader.ReadMetadata(this, td, resolved.Definition.Columns);
     }
 
     /// <inheritdoc/>
@@ -1131,109 +1129,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         DataTable table = await this.ReadTableAsync(Constants.SystemTableNames.Relationships, cancellationToken: cancellationToken).ConfigureAwait(false);
         try
         {
-            return AggregateRelationships(table);
+            return RelationshipMetadataAggregator.Aggregate(table);
         }
         finally
         {
             table.Dispose();
         }
-    }
-
-    private static List<RelationshipMetadata> AggregateRelationships(DataTable table)
-    {
-        static string Str(object? value) => value as string ?? string.Empty;
-        static int Int(object? value) => value switch
-        {
-            int i => i,
-            short s => s,
-            byte b => b,
-            long l => unchecked((int)l),
-            _ => 0,
-        };
-
-        if (!table.Columns.Contains("szRelationship")
-            || !table.Columns.Contains("szObject")
-            || !table.Columns.Contains("szReferencedObject")
-            || !table.Columns.Contains("szColumn")
-            || !table.Columns.Contains("szReferencedColumn"))
-        {
-            return [];
-        }
-
-        bool hasIcolumn = table.Columns.Contains("icolumn");
-        bool hasGrbit = table.Columns.Contains("grbit");
-
-        // Group one MSysRelationships row per FK column back into a single
-        // relationship, preserving first-seen order for a deterministic result.
-        var groups = new Dictionary<string, List<DataRow>>(StringComparer.OrdinalIgnoreCase);
-        var order = new List<string>();
-        foreach (DataRow row in table.Rows)
-        {
-            string name = Str(row["szRelationship"]);
-            if (name.Length == 0)
-            {
-                continue;
-            }
-
-            if (!groups.TryGetValue(name, out List<DataRow>? list))
-            {
-                list = [];
-                groups[name] = list;
-                order.Add(name);
-            }
-
-            list.Add(row);
-        }
-
-        var result = new List<RelationshipMetadata>(groups.Count);
-        foreach (string name in order)
-        {
-            List<DataRow> rows = groups[name];
-            if (hasIcolumn)
-            {
-                rows.Sort((left, right) => Int(left["icolumn"]).CompareTo(Int(right["icolumn"])));
-            }
-
-            string primaryTable = Str(rows[0]["szReferencedObject"]);
-            string foreignTable = Str(rows[0]["szObject"]);
-            if (primaryTable.Length == 0 || foreignTable.Length == 0)
-            {
-                continue;
-            }
-
-            string[] primaryColumns = new string[rows.Count];
-            string[] foreignColumns = new string[rows.Count];
-            bool malformed = false;
-            for (int i = 0; i < rows.Count; i++)
-            {
-                primaryColumns[i] = Str(rows[i]["szReferencedColumn"]);
-                foreignColumns[i] = Str(rows[i]["szColumn"]);
-                if (primaryColumns[i].Length == 0 || foreignColumns[i].Length == 0)
-                {
-                    malformed = true;
-                }
-            }
-
-            if (malformed)
-            {
-                continue;
-            }
-
-            int grbit = hasGrbit ? Int(rows[0]["grbit"]) : 0;
-            result.Add(new RelationshipMetadata
-            {
-                Name = name,
-                PrimaryTable = primaryTable,
-                PrimaryColumns = primaryColumns,
-                ForeignTable = foreignTable,
-                ForeignColumns = foreignColumns,
-                EnforcesReferentialIntegrity = (grbit & (int)Constants.RelationshipFlags.NoRefIntegrity) == 0,
-                CascadeUpdates = (grbit & (int)Constants.RelationshipFlags.CascadeUpdates) != 0,
-                CascadeDeletes = (grbit & (int)Constants.RelationshipFlags.CascadeDeletes) != 0,
-            });
-        }
-
-        return result;
     }
 
     /// <inheritdoc/>
@@ -1343,7 +1244,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             yield break;
         }
 
-        List<IndexMetadata> indexes = this.ParseIndexMetadata(tdefBytes, td.Columns);
+        List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(this, tdefBytes, td.Columns);
 
         IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
@@ -1356,12 +1257,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var cursor = new IndexCursor(
             this.ReadPageCachedAsync,
             this.PageSizeBytes);
-        List<(long DataPage, int RowIndex)> hits = await this.FindIndexRowLocationsAsync(
+        List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(
+            this.Format,
             tableName,
             index,
             td,
             criteria,
-            cursor,
             cancellationToken).ConfigureAwait(false);
 
         (Func<object?[], TRow> factory, bool[]? wantedColumns) = createProjection(td);
@@ -1448,262 +1349,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
-    }
-
-    private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
-    {
-        int numCols = Ru16(td, this.TDef.NumCols);
-        int numIdx = Ri32(td, this.TDef.NumCols + 2);
-        int numRealIdx = Ri32(td, this.TDef.NumRealIdx);
-
-        // Defensive bounds: corrupt TDEFs can report absurd counts.
-        if (numIdx is <= 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            return [];
-        }
-
-        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            numRealIdx = 0;
-        }
-
-        // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
-        int colStart = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
-
-        // Walk column-name length-prefix block to find where it ends.
-        int pos = colStart + (numCols * this.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (this.ReadColumnName(td, ref pos, out _) < 0)
-            {
-                return [];
-            }
-        }
-
-        int realIdxDescStart = pos;
-        IndexSectionAnchors anchors = this.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-
-        if (anchors.LogIdxNamesStart > td.Length)
-        {
-            return [];
-        }
-
-        // Build a col_num → name lookup honouring deleted-column gaps.
-        var colNumToName = new Dictionary<int, string>(columns.Count);
-        foreach (ColumnInfo c in columns)
-        {
-            colNumToName[c.ColNum] = c.Name;
-        }
-
-        // Pre-walk index names so we can pair each logical-idx entry with its name.
-        string[] names = new string[numIdx];
-        int npos = anchors.LogIdxNamesStart;
-        for (int i = 0; i < numIdx; i++)
-        {
-            if (this.ReadColumnName(td, ref npos, out string n) < 0)
-            {
-                names[i] = string.Empty;
-            }
-            else
-            {
-                names[i] = n;
-            }
-        }
-
-        var result = new List<IndexMetadata>(numIdx);
-        for (int i = 0; i < numIdx; i++)
-        {
-            if (!this.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
-            {
-                break;
-            }
-
-            (int _, int indexNum, int realIdxNum, int relIdxNum, int relTblPage, byte cascadeUps, byte cascadeDels, IndexKind indexType) = entry;
-
-            // Read the col_map for the backing real-idx entry to recover key columns.
-            var keyColumns = new List<IndexColumnReference>();
-            byte flags = 0x00;
-            int firstDp = 0;
-            if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && this.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot, out List<KeyColumn>? kcs))
-            {
-                foreach ((int cn, bool ascending) in kcs)
-                {
-                    keyColumns.Add(new IndexColumnReference
-                    {
-                        Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
-                        ColumnNumber = cn,
-                        IsAscending = ascending,
-                    });
-                }
-
-                flags = slot.Flags;
-                if (slot.FirstDpOffset >= 0 && slot.FirstDpOffset + 4 <= td.Length)
-                {
-                    firstDp = Ri32(td, slot.FirstDpOffset);
-                }
-            }
-
-            // Access often leaves the real-index unique flag clear on primary
-            // keys; their semantic uniqueness is conveyed by index_type=0x01.
-            bool hasUniqueFlag = (flags & Constants.TableDefinition.UniqueIndexFlag) != 0;
-
-            result.Add(new IndexMetadata
-            {
-                Name = names[i],
-                IndexNumber = indexNum,
-                RealIndexNumber = realIdxNum,
-                Kind = indexType,
-                HasUniqueFlag = hasUniqueFlag,
-                IgnoreNulls = (flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0,
-                IsRequired = (flags & Constants.TableDefinition.RequiredIndexFlag) != 0,
-                IsForeignKey = relIdxNum != -1,
-                RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
-
-                // Per Jackcess IndexImpl: only bit 0x01 (CASCADE_DELETES_FLAG /
-                // CASCADE_UPDATES_FLAG) signals "cascade enabled". DAO/Access stamps
-                // a non-zero default (0x04 = CASCADE_SET_DEFAULT_FLAG) into these
-                // bytes for every index — including PK and standalone indexes — so
-                // a bare `!= 0` check would surface false positives. Mask to bit 0x01.
-                CascadeUpdates = (cascadeUps & 0x01) != 0,
-                CascadeDeletes = (cascadeDels & 0x01) != 0,
-                Columns = keyColumns,
-                FirstDp = firstDp,
-            });
-        }
-
-        return result;
-    }
-
-    private async ValueTask<List<(long DataPage, int RowIndex)>> FindIndexRowLocationsAsync(
-        string tableName,
-        IndexMetadata index,
-        TableDef tableDef,
-        IndexQueryCriteria criteria,
-        IndexCursor cursor,
-        CancellationToken cancellationToken)
-    {
-        static bool IsEmptyRange(in EncodedIndexRange range)
-        {
-            if (range.Lower.IsUnbounded || range.Upper.IsUnbounded)
-            {
-                return false;
-            }
-
-            int comparison = IndexHelpers.CompareKeyBytes(range.Lower.Key!, range.Upper.Key!);
-            return comparison > 0 || (comparison == 0 && (!range.Lower.Inclusive || !range.Upper.Inclusive));
-        }
-
-        switch (criteria.Kind)
-        {
-            case IndexQueryKind.All:
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None),
-                    cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.Exact:
-                byte[] searchKey = this.EncodeIndexSeekKey(tableName, index, tableDef, criteria.Values!);
-                return await cursor.FindRowLocationsAsync(index.FirstDp, searchKey, cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.KeyPrefix:
-                byte[] prefixKey = this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Values!, nameof(criteria));
-                var prefixRange = new EncodedIndexRange(
-                    new EncodedIndexBound(prefixKey, Inclusive: true, IsPrefix: false),
-                    EncodedIndexBound.None,
-                    prefixKey);
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    prefixRange,
-                    cancellationToken).ConfigureAwait(false);
-
-            case IndexQueryKind.Range:
-                EncodedIndexBound lowerBound = criteria.Lower is null
-                    ? EncodedIndexBound.None
-                    : new EncodedIndexBound(
-                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
-                        criteria.Lower.IsInclusive,
-                        criteria.Lower.Values.Count < index.Columns.Count);
-                EncodedIndexBound upperBound = criteria.Upper is null
-                    ? EncodedIndexBound.None
-                    : new EncodedIndexBound(
-                        this.EncodeIndexKeyPrefix(tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
-                        criteria.Upper.IsInclusive,
-                        criteria.Upper.Values.Count < index.Columns.Count);
-                var range = new EncodedIndexRange(lowerBound, upperBound);
-
-                if (IsEmptyRange(in range))
-                {
-                    return [];
-                }
-
-                return await cursor.FindRowLocationsInRangeAsync(
-                    index.FirstDp,
-                    range,
-                    cancellationToken).ConfigureAwait(false);
-
-            default:
-                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
-        }
-    }
-
-    private byte[] EncodeIndexSeekKey(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
-        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: true, nameof(keyValues));
-
-    private byte[] EncodeIndexKeyPrefix(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
-        this.EncodeIndexKey(tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
-
-    private byte[] EncodeIndexKey(
-        string tableName,
-        IndexMetadata index,
-        TableDef tableDef,
-        IReadOnlyList<object?> keyValues,
-        bool requireFullKey,
-        string paramName)
-    {
-        Guard.NotNull(keyValues, paramName);
-
-        if (requireFullKey && keyValues.Count != index.Columns.Count)
-        {
-            throw new ArgumentException(
-                $"Index '{index.Name}' on table '{tableName}' expects {index.Columns.Count} key value(s), but {keyValues.Count} were supplied.",
-                paramName);
-        }
-
-        if (!requireFullKey && (keyValues.Count == 0 || keyValues.Count > index.Columns.Count))
-        {
-            throw new ArgumentException(
-                $"Index '{index.Name}' on table '{tableName}' expects between 1 and {index.Columns.Count} leading key value(s), but {keyValues.Count} were supplied.",
-                paramName);
-        }
-
-        bool legacyNumeric = this.Format == DatabaseFormat.Jet4Mdb;
-        byte[][] perColumn = new byte[keyValues.Count][];
-        int totalLength = 0;
-
-        for (int i = 0; i < keyValues.Count; i++)
-        {
-            IndexColumnReference keyColumn = index.Columns[i];
-
-            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber)
-                ?? throw new InvalidDataException($"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
-
-            object? value = keyValues[i];
-            perColumn[i] = column.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(column.Type, value, keyColumn.IsAscending);
-            totalLength += perColumn[i].Length;
-        }
-
-        byte[] composite = new byte[totalLength];
-        int offset = 0;
-        for (int i = 0; i < perColumn.Length; i++)
-        {
-            Buffer.BlockCopy(perColumn[i], 0, composite, offset, perColumn[i].Length);
-            offset += perColumn[i].Length;
-        }
-
-        return composite;
     }
 
     private async ValueTask<object?[]?> MaterializeSeekRowAsync(

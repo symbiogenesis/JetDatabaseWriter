@@ -22,7 +22,11 @@ using JetDatabaseWriter.Models;
 /// Join keys are read from each root POCO by column name (case-insensitive), the
 /// same convention the row mapper uses. A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
-/// rows by their foreign-key columns. When the related table has an index covering
+/// rows by their foreign-key columns. When more than one relationship links the same
+/// pair of tables (for example two foreign keys to the same parent), the navigation
+/// property name is matched against the foreign-key column name, EF-style, so a
+/// <c>Buyer</c> navigation binds to the <c>BuyerId</c> column and <c>Seller</c> to
+/// <c>SellerId</c>. When the related table has an index covering
 /// the join columns (a primary key or foreign-key index, inferred automatically) and
 /// the distinct keys are only a small share of that table, the related rows are loaded
 /// with one index seek per distinct key; otherwise (no covering index, a Jet3 file, or
@@ -57,14 +61,14 @@ internal static class IncludeLoader
             Type? elementType = GetEnumerableElementType(navigation.PropertyType);
             if (elementType is not null)
             {
-                RelationshipMetadata relationship = FindCollectionRelationship(relationships, parentTable, elementType)
+                RelationshipMetadata relationship = FindCollectionRelationship(relationships, parentTable, elementType, navigation.Name)
                     ?? throw NoRelationship(navigation, parentTable, elementType);
                 await LoadCollectionAsync(reader, roots, navigation, elementType, relationship, cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 Type relatedType = navigation.PropertyType;
-                RelationshipMetadata relationship = FindReferenceRelationship(relationships, parentTable, relatedType)
+                RelationshipMetadata relationship = FindReferenceRelationship(relationships, parentTable, relatedType, navigation.Name)
                     ?? throw NoRelationship(navigation, parentTable, relatedType);
                 await LoadReferenceAsync(reader, roots, navigation, relatedType, relationship, cancellationToken).ConfigureAwait(false);
             }
@@ -474,37 +478,77 @@ internal static class IncludeLoader
     private static RelationshipMetadata? FindCollectionRelationship(
         IReadOnlyList<RelationshipMetadata> relationships,
         string parentTable,
-        Type childType)
+        Type childType,
+        string navigationName)
     {
         string parent = Simplify(parentTable);
         string child = Simplify(childType.Name);
+        RelationshipMetadata? firstMatch = null;
         foreach (RelationshipMetadata relationship in relationships)
         {
             if (Simplify(relationship.PrimaryTable) == parent && Simplify(relationship.ForeignTable) == child)
             {
-                return relationship;
+                firstMatch ??= relationship;
+                if (NavigationMatchesColumns(navigationName, relationship.ForeignColumns))
+                {
+                    return relationship;
+                }
             }
         }
 
-        return null;
+        return firstMatch;
     }
 
     private static RelationshipMetadata? FindReferenceRelationship(
         IReadOnlyList<RelationshipMetadata> relationships,
         string childTable,
-        Type parentType)
+        Type parentType,
+        string navigationName)
     {
         string child = Simplify(childTable);
         string parent = Simplify(parentType.Name);
+        RelationshipMetadata? firstMatch = null;
         foreach (RelationshipMetadata relationship in relationships)
         {
             if (Simplify(relationship.ForeignTable) == child && Simplify(relationship.PrimaryTable) == parent)
             {
-                return relationship;
+                firstMatch ??= relationship;
+                if (NavigationMatchesColumns(navigationName, relationship.ForeignColumns))
+                {
+                    return relationship;
+                }
             }
         }
 
-        return null;
+        return firstMatch;
+    }
+
+    private static bool NavigationMatchesColumns(string navigationName, IReadOnlyList<string> foreignColumns)
+    {
+        // Disambiguates which relationship a navigation binds to when several link the
+        // same table pair: a navigation name matches a foreign-key column when it equals
+        // the column or the column with a trailing "Id" removed (EF-style: Buyer -> BuyerId).
+        string nav = Simplify(navigationName);
+        if (nav.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (string column in foreignColumns)
+        {
+            string col = Simplify(column);
+            if (col == nav)
+            {
+                return true;
+            }
+
+            if (col.Length > 2 && col.EndsWith("ID", StringComparison.Ordinal) && col[..^2] == nav)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string Simplify(string name)

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,10 +11,14 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
+using static JetDatabaseWriter.AccessBase;
 using static JetDatabaseWriter.Enums.ColumnType;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes oversized MEMO / OLE / Attachment payloads into LVAL page chains.
@@ -185,5 +190,86 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         }
 
         return LongValueDescriptor.Chained(data.Length, nextDp, lvalToken).ToHeaderBytes();
+    }
+
+    internal List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
+    {
+        var roots = new List<LongValueDescriptor>();
+        bool hasVarColumns = false;
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (!column.IsFixed)
+            {
+                hasVarColumns = true;
+                break;
+            }
+        }
+
+        if (!writer.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        {
+            return roots;
+        }
+
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.Type is not MemoType and not OleType)
+            {
+                continue;
+            }
+
+            ColumnSlice slice = writer.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
+            {
+                continue;
+            }
+
+            int valueStart = rowBound.RowStart + slice.DataStart;
+            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out LongValueDescriptor descriptor)
+                || !descriptor.IsExternal
+                || descriptor.FirstDp == 0)
+            {
+                continue;
+            }
+
+            roots.Add(descriptor);
+        }
+
+        return roots;
+    }
+
+    internal async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
+        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReadNextLongValueDpAsync, pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
+    {
+        long pageNumber = LongValueStore.PageNumber(currentDp);
+        int rowIndex = LongValueStore.RowIndex(currentDp);
+        if (pageNumber <= 0)
+        {
+            return 0;
+        }
+
+        byte[] lvalPage = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (lvalPage[0] != Constants.PageTypes.Data)
+            {
+                return 0;
+            }
+
+            foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(lvalPage))
+            {
+                if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
+                {
+                    return Ru32(lvalPage, rowBound.RowStart);
+                }
+            }
+
+            return 0;
+        }
+        finally
+        {
+            ReturnPage(lvalPage);
+        }
     }
 }
