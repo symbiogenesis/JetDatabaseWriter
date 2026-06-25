@@ -4,8 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Read-only cursor over a JET index B-tree. It performs layout-aware
@@ -122,6 +126,95 @@ internal sealed class IndexCursor
             matches,
             cancellationToken).ConfigureAwait(false);
         return matches;
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="criteria"/> into data-row pointers by dispatching
+    /// to the appropriate seek primitive: an unbounded range for
+    /// <see cref="IndexQueryKind.All"/>, an exact-key walk for
+    /// <see cref="IndexQueryKind.Exact"/>, and an encoded range for
+    /// <see cref="IndexQueryKind.KeyPrefix"/> / <see cref="IndexQueryKind.Range"/>.
+    /// Composite seek keys are encoded via <see cref="IndexKeyEncoder"/> using
+    /// <paramref name="format"/>'s numeric encoding. Returns an empty list for a
+    /// provably empty range.
+    /// </summary>
+    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="tableName">Owning table name, used only in encoder exception messages.</param>
+    /// <param name="index">The index being seeked; supplies the root page and key columns.</param>
+    /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
+    /// <param name="criteria">The query criteria to resolve.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="NotSupportedException">The criteria kind is not supported.</exception>
+    public async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsForCriteriaAsync(
+        DatabaseFormat format,
+        string tableName,
+        IndexMetadata index,
+        TableDef tableDef,
+        IndexQueryCriteria criteria,
+        CancellationToken cancellationToken)
+    {
+        static bool IsEmptyRange(in EncodedIndexRange range)
+        {
+            if (range.Lower.IsUnbounded || range.Upper.IsUnbounded)
+            {
+                return false;
+            }
+
+            int comparison = IndexHelpers.CompareKeyBytes(range.Lower.Key!, range.Upper.Key!);
+            return comparison > 0 || (comparison == 0 && (!range.Lower.Inclusive || !range.Upper.Inclusive));
+        }
+
+        switch (criteria.Kind)
+        {
+            case IndexQueryKind.All:
+                return await this.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None),
+                    cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.Exact:
+                byte[] searchKey = IndexKeyEncoder.EncodeIndexSeekKey(format, tableName, index, tableDef, criteria.Values!);
+                return await this.FindRowLocationsAsync(index.FirstDp, searchKey, cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.KeyPrefix:
+                byte[] prefixKey = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Values!, nameof(criteria));
+                var prefixRange = new EncodedIndexRange(
+                    new EncodedIndexBound(prefixKey, Inclusive: true, IsPrefix: false),
+                    EncodedIndexBound.None,
+                    prefixKey);
+                return await this.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    prefixRange,
+                    cancellationToken).ConfigureAwait(false);
+
+            case IndexQueryKind.Range:
+                EncodedIndexBound lowerBound = criteria.Lower is null
+                    ? EncodedIndexBound.None
+                    : new EncodedIndexBound(
+                        IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)),
+                        criteria.Lower.IsInclusive,
+                        criteria.Lower.Values.Count < index.Columns.Count);
+                EncodedIndexBound upperBound = criteria.Upper is null
+                    ? EncodedIndexBound.None
+                    : new EncodedIndexBound(
+                        IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)),
+                        criteria.Upper.IsInclusive,
+                        criteria.Upper.Values.Count < index.Columns.Count);
+                var range = new EncodedIndexRange(lowerBound, upperBound);
+
+                if (IsEmptyRange(in range))
+                {
+                    return [];
+                }
+
+                return await this.FindRowLocationsInRangeAsync(
+                    index.FirstDp,
+                    range,
+                    cancellationToken).ConfigureAwait(false);
+
+            default:
+                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
+        }
     }
 
     private async ValueTask<byte[]?> FindCandidateLeafAsync(

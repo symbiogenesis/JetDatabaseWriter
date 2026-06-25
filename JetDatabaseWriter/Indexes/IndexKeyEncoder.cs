@@ -2,11 +2,16 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
@@ -515,6 +520,91 @@ internal static class IndexKeyEncoder
         decimal d = decimal.Round(ToDecimal(value), declaredScale, MidpointRounding.ToEven);
 
         return EncodeNumericEntry(d, ascending, declaredScale, legacy);
+    }
+
+    /// <summary>
+    /// Encodes a full composite index seek key from <paramref name="keyValues"/>,
+    /// requiring exactly one value per index key column. Each value is encoded
+    /// in column-map order via <see cref="EncodeEntry"/> (or
+    /// <see cref="EncodeNumericEntryAtDeclaredScale"/> for <c>Numeric</c>
+    /// columns) and the per-column blocks are concatenated.
+    /// </summary>
+    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="tableName">Owning table name, used only in exception messages.</param>
+    /// <param name="index">Index whose key columns drive the encoding order.</param>
+    /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
+    /// <param name="keyValues">Exactly one value per index key column.</param>
+    /// <exception cref="ArgumentException">The value count does not equal the index key-column count.</exception>
+    public static byte[] EncodeIndexSeekKey(DatabaseFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
+        EncodeIndexKey(format, tableName, index, tableDef, keyValues, requireFullKey: true, nameof(keyValues));
+
+    /// <summary>
+    /// Encodes a leading-column index key prefix from <paramref name="keyValues"/>,
+    /// accepting between one and the index's key-column count values for range /
+    /// prefix seeks. Encoding rules match <see cref="EncodeIndexSeekKey"/>.
+    /// </summary>
+    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="tableName">Owning table name, used only in exception messages.</param>
+    /// <param name="index">Index whose key columns drive the encoding order.</param>
+    /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
+    /// <param name="keyValues">One to N leading key-column values.</param>
+    /// <param name="paramName">Originating caller parameter name, surfaced in argument-validation exceptions.</param>
+    /// <exception cref="ArgumentException">The value count is zero or exceeds the index key-column count.</exception>
+    public static byte[] EncodeIndexKeyPrefix(DatabaseFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
+        EncodeIndexKey(format, tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
+
+    private static byte[] EncodeIndexKey(
+        DatabaseFormat format,
+        string tableName,
+        IndexMetadata index,
+        TableDef tableDef,
+        IReadOnlyList<object?> keyValues,
+        bool requireFullKey,
+        string paramName)
+    {
+        Guard.NotNull(keyValues, paramName);
+
+        if (requireFullKey && keyValues.Count != index.Columns.Count)
+        {
+            throw new ArgumentException(
+                $"Index '{index.Name}' on table '{tableName}' expects {index.Columns.Count} key value(s), but {keyValues.Count} were supplied.",
+                paramName);
+        }
+
+        if (!requireFullKey && (keyValues.Count == 0 || keyValues.Count > index.Columns.Count))
+        {
+            throw new ArgumentException(
+                $"Index '{index.Name}' on table '{tableName}' expects between 1 and {index.Columns.Count} leading key value(s), but {keyValues.Count} were supplied.",
+                paramName);
+        }
+
+        bool legacyNumeric = format == DatabaseFormat.Jet4Mdb;
+        byte[][] perColumn = new byte[keyValues.Count][];
+        int totalLength = 0;
+
+        for (int i = 0; i < keyValues.Count; i++)
+        {
+            IndexColumnReference keyColumn = index.Columns[i];
+
+            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber)
+                ?? throw new InvalidDataException($"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
+
+            object? value = keyValues[i];
+            perColumn[i] = column.Type == NumericType
+                ? EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
+                : EncodeEntry(column.Type, value, keyColumn.IsAscending);
+            totalLength += perColumn[i].Length;
+        }
+
+        byte[] composite = new byte[totalLength];
+        int offset = 0;
+        for (int i = 0; i < perColumn.Length; i++)
+        {
+            Buffer.BlockCopy(perColumn[i], 0, composite, offset, perColumn[i].Length);
+            offset += perColumn[i].Length;
+        }
+
+        return composite;
     }
 
     /// <summary>

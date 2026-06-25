@@ -19,7 +19,6 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -29,7 +28,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
-using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -107,7 +105,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal RelationshipManager Relationships { get; }
 
     /// <summary>Gets the most recent system-table index-maintenance path.</summary>
-    internal SystemTableIndexMaintenancePath LastSystemTableIndexMaintenancePath { get; private set; }
+    internal SystemTableIndexMaintenancePath LastSystemTableIndexMaintenancePath => this.indexMaintainer.LastSystemTableIndexMaintenancePath;
 
     /// <summary>Gets the Attachment / MultiValue (complex column) subsystem:
     /// ACCDB system-table scaffolding, per-column ComplexID allocation, per-row
@@ -508,20 +506,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 enablePrefixCompression: false);
             long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
             leafPageNumbers[i] = leafPageNumber;
-            this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
+            this.tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
 
         long usageMapPageNumber = await this.dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         await this.UpdateTableIndexUsageMapRowsAsync(
             usageMapPageNumber,
-            ToSinglePageGroups(leafPageNumbers),
+            DataPageInserter.ToSinglePageGroups(leafPageNumbers),
             cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
         {
             int usedPagesOffset = usedPagesLogicalOffsets[i];
             tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(i + 2));
-            this.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+            this.tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
         }
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
@@ -694,7 +692,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     enablePrefixCompression: false);
                 long leafPageNumber = await this.pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[indexIndex] = leafPageNumber;
-                this.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[indexIndex], checked((int)leafPageNumber));
+                this.tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[indexIndex], checked((int)leafPageNumber));
             }
 
             tdefDirty = true;
@@ -718,14 +716,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 await this.UpdateTableIndexUsageMapRowsAsync(
                     usageMapPageNumber,
-                    ToSinglePageGroups(leafPageNumbers),
+                    DataPageInserter.ToSinglePageGroups(leafPageNumbers),
                     cancellationToken).ConfigureAwait(false);
 
                 for (int usedPagesIndex = 0; usedPagesIndex < usedPagesLogicalOffsets.Length; usedPagesIndex++)
                 {
                     int usedPagesOffset = usedPagesLogicalOffsets[usedPagesIndex];
                     tdefPages[usedPagesOffset / this.PageSizeBytes][usedPagesOffset % this.PageSizeBytes] = checked((byte)(usedPagesIndex + 2));
-                    this.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+                    this.tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
                 }
             }
 
@@ -2059,199 +2057,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await this.AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
     }
 
-    internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
-    {
-        if (column.IsCalculated && column.CalculatedResultType != 0)
-        {
-            return (ColumnType)column.CalculatedResultType;
-        }
-
-        // Complex columns override the CLR-driven mapping. Access writes the
-        // generic complex type byte for both Attachment and MultiValue parent
-        // descriptors; the subtype lives in MSysComplexColumns.
-        if (column.IsAttachment && column.IsMultiValue)
-        {
-            throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
-        }
-
-        if (column.IsAttachment)
-        {
-            return ComplexType;
-        }
-
-        if (column.IsMultiValue)
-        {
-            return ComplexType;
-        }
-
-        if (column.ColumnTypeOverride is ColumnType descriptorType)
-        {
-            return descriptorType;
-        }
-
-        if (column.IsDateTimeExtended)
-        {
-            if (column.ClrType != typeof(DateTime))
-            {
-                throw new ArgumentException(
-                    $"Column '{column.Name}' has IsDateTimeExtended = true but CLR type '{column.ClrType}' is not DateTime.",
-                    nameof(column));
-            }
-
-            return DateTimeExtendedType;
-        }
-
-        Type clrType = column.ClrType;
-
-        switch (Type.GetTypeCode(clrType))
-        {
-            case TypeCode.Boolean:
-                return BooleanType;
-            case TypeCode.Byte:
-                return ByteType;
-            case TypeCode.Int16:
-                return IntegerType;
-            case TypeCode.Int32:
-                return LongIntegerType;
-            case TypeCode.Int64:
-                return BigIntType;
-            case TypeCode.Single:
-                return FloatType;
-            case TypeCode.Double:
-                return DoubleType;
-            case TypeCode.DateTime:
-                return DateTimeType;
-            case TypeCode.Decimal:
-                return NumericType;
-            case TypeCode.String:
-                return column.MaxLength is > 0 and <= 255 ? TextType : MemoType;
-            case TypeCode.Object:
-                if (clrType == typeof(Guid))
-                {
-                    return GuidType;
-                }
-
-                if (clrType == typeof(Hyperlink))
-                {
-                    // typeof(Hyperlink) is shorthand for a MEMO column; TDefPageBuilder.BuildTableDefinition
-                    // adds HYPERLINK_FLAG_MASK (0x80) unless DescriptorFlagsOverride replaces
-                    // the computed TDEF column-flag byte.
-                    return MemoType;
-                }
-
-                if (clrType == typeof(byte[]))
-                {
-                    return column.MaxLength is > 0 and <= 255 ? BinaryType : OleType;
-                }
-
-                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
-            case TypeCode.Char:
-            case TypeCode.DBNull:
-            case TypeCode.Empty:
-            case TypeCode.SByte:
-            case TypeCode.UInt16:
-            case TypeCode.UInt32:
-            case TypeCode.UInt64:
-                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
-            default:
-                throw new InvalidOperationException($"CLR type '{clrType}' is unknown.");
-        }
-    }
-
-    internal static bool IsVariableType(ColumnType type) => type is TextType or BinaryType or MemoType or OleType;
-
-    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
-    {
-        if (!column.IsCalculated)
-        {
-            return;
-        }
-
-        if (format != DatabaseFormat.AceAccdb)
-        {
-            throw new NotSupportedException(
-                $"Column '{column.Name}': calculated columns are only supported in ACCDB databases.");
-        }
-
-        if (string.IsNullOrWhiteSpace(column.CalculationExpression))
-        {
-            throw new ArgumentException(
-                $"Column '{column.Name}' is calculated but has no CalculationExpression.",
-                nameof(column));
-        }
-
-        if (column.IsAttachment || column.IsMultiValue || column.IsHyperlink || column.ClrType == typeof(Hyperlink))
-        {
-            throw new NotSupportedException(
-                $"Column '{column.Name}': calculated Attachment, MultiValue, and Hyperlink columns are not supported.");
-        }
-
-        if (column.IsAutoIncrement)
-        {
-            throw new NotSupportedException(
-                $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
-        }
-
-        ColumnType type = TypeCodeFromDefinition(column);
-        switch (type)
-        {
-            case BooleanType:
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case MoneyType:
-            case BigIntType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case BinaryType:
-            case TextType:
-            case MemoType:
-            case GuidType:
-            case NumericType:
-                return;
-            case OleType:
-            case AttachmentType:
-            case ComplexType:
-            case DateTimeExtendedType:
-                throw new NotSupportedException(
-                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is not supported.");
-            default:
-                throw new InvalidOperationException(
-                    $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is unknown.");
-        }
-    }
-
-    /// <summary>
-    /// Validates and returns the precision (1..28) declared on a
-    /// <c>Numeric</c> column definition. Defaults to <c>18</c> when the
-    /// caller leaves <see cref="ColumnDefinition.NumericPrecision"/> at its
-    /// initial value (matches Access "Number → Decimal" UI default).
-    /// </summary>
-    /// <param name="definition">The definition.</param>
-    internal static byte ResolveNumericPrecision(ColumnDefinition definition)
-    {
-        byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        Guard.InRange(p, 1, 28, $"Column '{definition.Name}' NumericPrecision");
-        return p;
-    }
-
-    /// <summary>
-    /// Validates and returns the scale (0..28, &lt;= precision) declared on a
-    /// <c>Numeric</c> column definition. Defaults to <c>0</c> (Access UI
-    /// default). The incremental index path uses this value as the
-    /// canonical sort-key scale.
-    /// </summary>
-    /// <param name="definition">The definition.</param>
-    internal static byte ResolveNumericScale(ColumnDefinition definition)
-    {
-        byte s = definition.NumericScale;
-        byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        Guard.InRange(s, 0, 28, $"Column '{definition.Name}' NumericScale");
-        Guard.InRange(s, 0, p, $"Column '{definition.Name}' NumericScale (NumericPrecision={p})");
-        return s;
-    }
-
     private static FileStream CreateStream(string path) =>
         OpenDatabaseFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
@@ -2656,7 +2461,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 ],
             },
             cancellationToken).ConfigureAwait(false);
-        await this.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
+        await this.catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await this.pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
     }
 
@@ -2816,115 +2621,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF
-    /// offset, dispatching the bytes across the physical page boundary
-    /// when the field straddles two pages. Used to patch <c>first_dp</c>
-    /// values after their leaf pages are appended.
+    /// Forwards real-index usage-map row maintenance to <see cref="DataPageInserter"/>,
+    /// which owns usage-map page construction. Retained so the index maintainer can
+    /// drive usage-map updates through the writer.
     /// </summary>
-    /// <param name="pages">The pages.</param>
-    /// <param name="logicalOffset">The logical offset.</param>
-    /// <param name="value">The value.</param>
-    private void WriteLogicalTDefI32(byte[][] pages, int logicalOffset, int value)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            (int pageIdx, int pageOff) = this.tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
-            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
-        }
-    }
-
-    private void WriteLogicalTDefUInt24(byte[][] pages, int logicalOffset, int value)
-    {
-        for (int i = 0; i < 3; i++)
-        {
-            (int pageIdx, int pageOff) = this.tdefPageBuilder.LogicalToPhysicalTDefOffset(logicalOffset + i);
-            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
-        }
-    }
-
-    /// <summary>
-    /// Matches the DAO-observed shape for a real-index usage-map page: table rows
-    /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
-    /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
-    /// </summary>
-    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
-    /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>The page number of the newly allocated usage-map page.</returns>
-    internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
-        => this.AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
-
-    internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
-    {
-        byte[] page = new byte[this.PageSizeBytes];
-        page[0] = Constants.PageTypes.Data;
-        page[1] = 0x01;
-
-        int rowCount = indexPageGroups.Count + 2;
-        int rowStart = this.PageSizeBytes;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
-        {
-            rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, this.DataPage.RowsStart + (rowIndex * 2), rowStart);
-
-            if (rowIndex < 2)
-            {
-                continue;
-            }
-
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
-        }
-
-        Wi32(page, this.DataPage.TDefOff, 0);
-        Wu16(page, this.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (this.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-
-        return await this.pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
-    }
-
-    internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
-    {
-        byte[] page = await this.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-
-        int existingRowCount = Ru16(page, this.DataPage.NumRows);
-        int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
-        int rowStart = this.PageSizeBytes;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
-        {
-            rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, this.DataPage.RowsStart + (rowIndex * 2), rowStart);
-
-            if (rowIndex < 2)
-            {
-                continue;
-            }
-
-            int groupIndex = rowIndex - 2;
-            if (groupIndex >= indexPageGroups.Count || indexPageGroups[groupIndex].Length == 0)
-            {
-                continue;
-            }
-
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
-        }
-
-        Wi32(page, this.DataPage.TDefOff, 0);
-        Wu16(page, this.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (this.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-        await this.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static long[][] ToSinglePageGroups(long[] pageNumbers)
-    {
-        long[][] pageGroups = new long[pageNumbers.Length][];
-        for (int i = 0; i < pageNumbers.Length; i++)
-        {
-            pageGroups[i] = [pageNumbers[i]];
-        }
-
-        return pageGroups;
-    }
+    /// <param name="usageMapPageNumber">The usage-map page number.</param>
+    /// <param name="indexPageGroups">The per-index leaf-page groups.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+        => this.dataPageInserter.UpdateTableIndexUsageMapRowsAsync(usageMapPageNumber, indexPageGroups, cancellationToken);
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.
@@ -2988,7 +2693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        await this.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
+        await this.catalogWriter.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
 
         foreach (long tdefPage in deleted.TDefPages)
         {
@@ -3018,7 +2723,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     pagesToFree.Add(pageNumber);
                     foreach (RowBound rowBound in this.EnumerateLiveRowBounds(page))
                     {
-                        longValueRoots.AddRange(this.CollectLongValueRoots(page, rowBound, tableDef));
+                        longValueRoots.AddRange(this.longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef));
                     }
 
                     return new ValueTask<bool>(true);
@@ -3066,7 +2771,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await this.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+            await this.longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
 
         foreach (long pageNumber in pagesToFree)
@@ -3129,90 +2834,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    private async ValueTask DeleteAceRowsForObjectIdsAsync(IReadOnlyList<long> objectIds, CancellationToken cancellationToken)
-    {
-        if (objectIds.Count == 0)
-        {
-            return;
-        }
-
-        long acesTdefPage = await this.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (acesTdefPage <= 0)
-        {
-            return;
-        }
-
-        TableDef acesDef = await this.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
-        if (objectIdColumn is null)
-        {
-            return;
-        }
-
-        var ids = new HashSet<int>();
-        foreach (long id in objectIds)
-        {
-            ids.Add(checked((int)id));
-        }
-
-        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        await this.ForEachLiveTableRowAsync(
-            acesTdefPage,
-            (row, _) =>
-            {
-                string objectIdText = this.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
-                if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
-                    && ids.Contains(objectId))
-                {
-                    object[] deletedIndexRow = acesDef.CreateNullValueRow();
-                    acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
-                    deletedRows.Add((row.Location, deletedIndexRow));
-                }
-
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        foreach ((RowLocation row, _) in deletedRows)
-        {
-            await this.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (deletedRows.Count > 0)
-        {
-            await this.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await this.MaintainSystemTableIndexesIncrementallyAsync(
-                acesTdefPage,
-                acesDef,
-                Constants.SystemTableNames.Aces,
-                insertedRows: null,
-                deletedRows: deletedRows,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     internal async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default) => _ = await this.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
-    /// <summary>
-    /// Inserts one row into a system table (MSysObjects, MSysRelationships,
-    /// MSysComplexColumns, …) and refreshes that table's indexes so external
-    /// readers (Microsoft Access / DAO Compact &amp; Repair) can locate the
-    /// new row through the catalog indexes. Bare <see cref="InsertRowDataAsync"/>
-    /// only writes the data row; index leaves are not maintained, so DAO
-    /// walking via <c>ParentIdName</c> / <c>Id</c> never sees the row and the
-    /// catalog appears empty from outside.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="values">The values.</param>
-    /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <remarks>
-    /// User-row inserts are batched by <see cref="InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
-    /// for performance; system-table inserts are infrequent and can afford to
-    /// pay the per-call index-maintenance cost.
-    /// </remarks>
     internal async ValueTask InsertSystemRowAndMaintainAsync(
         long tdefPage,
         TableDef tableDef,
@@ -3220,123 +2843,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         object[] values,
         bool updateTDefRowCount = true,
         CancellationToken cancellationToken = default)
-    {
-        this.LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
-        RowLocation loc = await this.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
-
-        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
-        this.LastSystemTableIndexMaintenancePath = await this.MaintainSystemTableIndexesIncrementallyAsync(
-            tdefPage,
-            tableDef,
-            tableName,
-            hint,
-            deletedRows: null,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
-        long tdefPage,
-        TableDef tableDef,
-        string tableName,
-        List<(RowLocation Loc, object[] Row)>? insertedRows,
-        List<(RowLocation Loc, object[] Row)>? deletedRows,
-        CancellationToken cancellationToken)
-    {
-        if (!await this.SystemTableHasMaintainableIndexesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
-        {
-            return SystemTableIndexMaintenancePath.SkippedNoMaintainableIndexes;
-        }
-
-        try
-        {
-            bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
-                tdefPage,
-                tableDef,
-                insertedRows,
-                deletedRows,
-                cancellationToken).ConfigureAwait(false);
-            if (incremental)
-            {
-                return SystemTableIndexMaintenancePath.Incremental;
-            }
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            throw this.CreateSystemTableIndexMaintenanceException(tableName, ex);
-        }
-        catch (InvalidOperationException ex)
-        {
-            throw this.CreateSystemTableIndexMaintenanceException(tableName, ex);
-        }
-
-        throw this.CreateSystemTableIndexMaintenanceException(tableName);
-    }
-
-    private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
-    {
-        string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
-        if (!string.IsNullOrWhiteSpace(this.indexMaintainer.LastIncrementalBail))
-        {
-            message += $" Bail: {this.indexMaintainer.LastIncrementalBail}.";
-        }
-
-        return inner is null ? new InvalidOperationException(message) : new InvalidOperationException(message, inner);
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when every real-idx slot on <paramref name="tdefPage"/>
-    /// references a valid in-range data page through its <c>first_dp</c>
-    /// pointer. Used by <see cref="InsertSystemRowAndMaintainAsync"/> to
-    /// avoid index maintenance on writer-bootstrapped system tables whose
-    /// real-idx descriptors point at unallocated pages.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        byte[] page = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (page[0] != Constants.PageTypes.TableDefinition || Ru32(page, 4) != 0)
-            {
-                return false;
-            }
-
-            int numCols = Ru16(page, this.TDef.NumCols);
-            int numRealIdx = Ri32(page, this.TDef.NumRealIdx);
-            if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
-            {
-                return false;
-            }
-
-            int realIdxDescStart = this.Relationships.LocateRealIdxDescStart(page, numCols, numRealIdx);
-            if (realIdxDescStart < 0)
-            {
-                return false;
-            }
-
-            long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
-            for (int ri = 0; ri < numRealIdx; ri++)
-            {
-                if (!this.IndexLayoutInfo.TryReadRealIdxSlot(page, realIdxDescStart, ri, out RealIdxSlot slot))
-                {
-                    return false;
-                }
-
-                long firstDp = (uint)Ri32(page, slot.FirstDpOffset);
-                if (firstDp <= 0 || firstDp >= totalPages)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
+        => await this.indexMaintainer.InsertSystemRowAndMaintainAsync(tdefPage, tableDef, tableName, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Inserts a row and returns its (page, row-index) location so the caller
@@ -3388,54 +2895,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return new RowLocation(target.PageNumber, rowIndex, rowStart, rowBytes.Length);
     }
 
-    internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
-    {
-        if (delta == 0)
-        {
-            return;
-        }
-
-        byte[] page = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        long updated;
-
-        try
-        {
-            uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
-            updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
-            Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
-
-            // Mirror the change into the per-real-idx `num_idx_rows` counter
-            // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
-            // skip block at [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx *
-            // _tdef.RealIdxEntrySz)). Per mdbtools HACKING.md the slot is laid
-            // out as `unknown(4) + num_idx_rows(4) + unknown(4)`. DAO compares
-            // num_idx_rows against the leaf-level row count when walking
-            // MSysObjects; if they disagree it aborts compact with
-            // "could not find the object 'MSysDb'" — see
-            // docs/design/round-trip-openrecordset-hypothesis.md.
-            int numRealIdx = Ri32(page, this.TDef.NumRealIdx);
-            if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
-            {
-                int slotEnd = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
-                if (slotEnd <= page.Length)
-                {
-                    for (int i = 0; i < numRealIdx; i++)
-                    {
-                        int countOff = this.TDef.BlockEnd + (i * this.TDef.RealIdxEntrySz) + 4;
-                        uint cur = Ru32(page, countOff);
-                        long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
-                        Wi32(page, countOff, unchecked((int)(uint)next));
-                    }
-                }
-            }
-
-            await this.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
+    /// <summary>
+    /// Adjusts the persisted row count of the table at <paramref name="tdefPage"/>
+    /// by <paramref name="delta"/>. Delegates to <see cref="TDefPageBuilder"/>,
+    /// which owns TDEF row-count and <c>num_idx_rows</c> byte layout.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="delta">The signed row-count delta.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
+        => this.tdefPageBuilder.AdjustTDefRowCountAsync(tdefPage, delta, cancellationToken);
 
     /// <summary>
     /// Rewrites all data pages for a small system table with the supplied live rows.
@@ -3676,7 +3145,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (tableDef is not null && this.Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
-                    longValueRoots = this.CollectLongValueRoots(page, rowBound, tableDef);
+                    longValueRoots = this.longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
                 }
 
                 Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
@@ -3695,88 +3164,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await this.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
-    {
-        var roots = new List<LongValueDescriptor>();
-        bool hasVarColumns = false;
-        foreach (ColumnInfo column in tableDef.Columns)
-        {
-            if (!column.IsFixed)
-            {
-                hasVarColumns = true;
-                break;
-            }
-        }
-
-        if (!this.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
-        {
-            return roots;
-        }
-
-        foreach (ColumnInfo column in tableDef.Columns)
-        {
-            if (column.Type is not MemoType and not OleType)
-            {
-                continue;
-            }
-
-            ColumnSlice slice = this.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
-            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
-            {
-                continue;
-            }
-
-            int valueStart = rowBound.RowStart + slice.DataStart;
-            if (!LongValueDescriptor.TryRead(page.AsSpan(valueStart, slice.DataLen), out LongValueDescriptor descriptor)
-                || !descriptor.IsExternal
-                || descriptor.FirstDp == 0)
-            {
-                continue;
-            }
-
-            roots.Add(descriptor);
-        }
-
-        return roots;
-    }
-
-    private async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
-        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReadNextLongValueDpAsync, this.pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
-
-    private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
-    {
-        long pageNumber = LongValueStore.PageNumber(currentDp);
-        int rowIndex = LongValueStore.RowIndex(currentDp);
-        if (pageNumber <= 0)
-        {
-            return 0;
-        }
-
-        byte[] lvalPage = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (lvalPage[0] != Constants.PageTypes.Data)
-            {
-                return 0;
-            }
-
-            foreach (RowBound rowBound in this.EnumerateLiveRowBounds(lvalPage))
-            {
-                if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
-                {
-                    return Ru32(lvalPage, rowBound.RowStart);
-                }
-            }
-
-            return 0;
-        }
-        finally
-        {
-            ReturnPage(lvalPage);
+            await this.longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
         }
     }
 }

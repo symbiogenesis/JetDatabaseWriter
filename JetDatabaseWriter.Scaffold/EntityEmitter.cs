@@ -108,6 +108,11 @@ internal static class EntityEmitter
             nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.Collections.Generic")));
         }
 
+        foreach (string extraNamespace in CollectColumnNamespaces(columns))
+        {
+            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName(extraNamespace)));
+        }
+
         nsDecl = nsDecl.AddMembers(typeDecl);
 
         CompilationUnitSyntax compilationUnit = CompilationUnit()
@@ -126,6 +131,32 @@ internal static class EntityEmitter
         }
 
         return name;
+    }
+
+    private static SortedSet<string> CollectColumnNamespaces(IReadOnlyList<ColumnMetadata> columns)
+    {
+        // Collects the non-System namespaces of the column CLR types so the generated file
+        // imports them (for example JetDatabaseWriter.Models for a Hyperlink column);
+        // without these usings the emitted entity would not compile.
+        var namespaces = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (ColumnMetadata col in columns)
+        {
+            Type type = Nullable.GetUnderlyingType(col.ClrType) ?? col.ClrType;
+            if (type.IsArray)
+            {
+                type = type.GetElementType() ?? type;
+            }
+
+            string? namespaceName = type.Namespace;
+            if (namespaceName is not null
+                && namespaceName != "System"
+                && !namespaceName.StartsWith("System.", StringComparison.Ordinal))
+            {
+                namespaces.Add(namespaceName);
+            }
+        }
+
+        return namespaces;
     }
 
     private static PropertyDeclarationSyntax BuildProperty(string name, ColumnMetadata col, bool nullable)

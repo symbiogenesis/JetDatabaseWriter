@@ -138,6 +138,75 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
         => this.InsertAceRowsForCatalogObjectAsync(checked((int)tdefPageNumber), useRestrictedOwnerAcm: false, useRelationshipGroupAcm: false, cancellationToken);
 
+    /// <summary>
+    /// Deletes every <c>MSysACEs</c> row whose <c>ObjectId</c> matches one of
+    /// the supplied object identifiers and refreshes the table's indexes so the
+    /// removals are visible to external readers.
+    /// </summary>
+    /// <param name="objectIds">The object identifiers whose ACE rows are removed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask DeleteAceRowsForObjectIdsAsync(IReadOnlyList<long> objectIds, CancellationToken cancellationToken)
+    {
+        if (objectIds.Count == 0)
+        {
+            return;
+        }
+
+        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (acesTdefPage <= 0)
+        {
+            return;
+        }
+
+        TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
+        if (objectIdColumn is null)
+        {
+            return;
+        }
+
+        var ids = new HashSet<int>();
+        foreach (long id in objectIds)
+        {
+            ids.Add(checked((int)id));
+        }
+
+        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
+        await writer.ForEachLiveTableRowAsync(
+            acesTdefPage,
+            (row, _) =>
+            {
+                string objectIdText = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
+                if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
+                    && ids.Contains(objectId))
+                {
+                    object[] deletedIndexRow = acesDef.CreateNullValueRow();
+                    acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
+                    deletedRows.Add((row.Location, deletedIndexRow));
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        foreach ((RowLocation row, _) in deletedRows)
+        {
+            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (deletedRows.Count > 0)
+        {
+            await writer.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainSystemTableIndexesIncrementallyAsync(
+                acesTdefPage,
+                acesDef,
+                Constants.SystemTableNames.Aces,
+                insertedRows: null,
+                deletedRows: deletedRows,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private static string EncodeTextForeignName(string foreignName) =>
         foreignName.Replace('.', '#');
 

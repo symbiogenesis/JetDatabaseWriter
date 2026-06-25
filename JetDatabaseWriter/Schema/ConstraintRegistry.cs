@@ -221,7 +221,7 @@ internal sealed class ConstraintRegistry(
         ValidationRule = def.ValidationRule,
         IsCalculated = def.IsCalculated,
         CalculationExpression = def.CalculationExpression,
-        CalculatedResultType = AccessWriter.TypeCodeFromDefinition(def),
+        CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
     };
 
     private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)

@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Schema;
 using Xunit;
 
 /// <summary>
@@ -166,8 +167,8 @@ public sealed class CompressedUnicodeFlagTests
         // database — tested indirectly by the DaoValidationTests.
         // Here we just verify the internal plumbing: the writer's
         // EncodeJet4Text respects the compress=false path.
-        byte[] plain = AccessBase.EncodeJet4Text("TestTable", compress: false);
-        byte[] compressed = AccessBase.EncodeJet4Text("TestTable", compress: true);
+        byte[] plain = JetTypeInfo.EncodeJet4Text("TestTable", compress: false);
+        byte[] compressed = JetTypeInfo.EncodeJet4Text("TestTable", compress: true);
 
         // Plain must be UCS-2 LE (no FF FE marker)
         Assert.True(plain.Length > 0);
@@ -200,7 +201,7 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("HelloWorld_Test_12345")] // longer string
     public void EncodeJet4Text_CompressFalse_NeverEmitsMarker(string value)
     {
-        byte[] result = AccessBase.EncodeJet4Text(value, compress: false);
+        byte[] result = JetTypeInfo.EncodeJet4Text(value, compress: false);
         if (result.Length >= 2)
         {
             Assert.False(
@@ -219,7 +220,7 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("HelloWorld_Test_12345")]
     public void EncodeJet4Text_CompressTrue_EmitsMarkerForLatin1(string value)
     {
-        byte[] result = AccessBase.EncodeJet4Text(value, compress: true);
+        byte[] result = JetTypeInfo.EncodeJet4Text(value, compress: true);
         Assert.True(result.Length >= 2);
         Assert.Equal(0xFF, result[0]);
         Assert.Equal(0xFE, result[1]);
@@ -244,7 +245,7 @@ public sealed class CompressedUnicodeFlagTests
         ArgumentException.ThrowIfNullOrEmpty(expected);
 
         byte[] compressed = BuildCompressed(expected);
-        string actual = AccessBase.DecodeJet4Text(compressed, 0, compressed.Length);
+        string actual = JetTypeInfo.DecodeJet4Text(compressed, 0, compressed.Length);
         Assert.Equal(expected, actual);
     }
 
@@ -262,7 +263,7 @@ public sealed class CompressedUnicodeFlagTests
         ArgumentException.ThrowIfNullOrEmpty(expected);
 
         byte[] ucs2 = Encoding.Unicode.GetBytes(expected);
-        string actual = AccessBase.DecodeJet4Text(ucs2, 0, ucs2.Length);
+        string actual = JetTypeInfo.DecodeJet4Text(ucs2, 0, ucs2.Length);
         Assert.Equal(expected, actual);
     }
 
@@ -276,11 +277,11 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("A medium-length string for round-tripping")]
     public void RoundTrip_BothCompressionModes_DecodeCorrectly(string original)
     {
-        byte[] compressed = AccessBase.EncodeJet4Text(original, compress: true);
-        byte[] plain = AccessBase.EncodeJet4Text(original, compress: false);
+        byte[] compressed = JetTypeInfo.EncodeJet4Text(original, compress: true);
+        byte[] plain = JetTypeInfo.EncodeJet4Text(original, compress: false);
 
-        Assert.Equal(original, AccessBase.DecodeJet4Text(compressed, 0, compressed.Length));
-        Assert.Equal(original, AccessBase.DecodeJet4Text(plain, 0, plain.Length));
+        Assert.Equal(original, JetTypeInfo.DecodeJet4Text(compressed, 0, compressed.Length));
+        Assert.Equal(original, JetTypeInfo.DecodeJet4Text(plain, 0, plain.Length));
     }
 
     /// <summary>

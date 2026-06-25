@@ -12,8 +12,8 @@ using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.AccessBase;
 using static JetDatabaseWriter.Enums.ColumnType;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes in-memory value arrays into on-disk row byte layouts for a JET
