@@ -60,31 +60,49 @@ internal static class AccessQueryTranslator
         switch (call.Method.Name)
         {
             case "Where":
-                plan.Predicates.Add(ExtractLambda(call.Arguments[1]));
+                plan.Stages.Add(new FilterStage(ExtractLambda(call.Arguments[1])));
                 break;
             case "OrderBy":
-                plan.Orderings.Clear();
-                plan.Orderings.Add((ExtractLambda(call.Arguments[1]), false));
+                plan.Stages.Add(NewOrderStage(ExtractLambda(call.Arguments[1]), descending: false));
                 break;
             case "OrderByDescending":
-                plan.Orderings.Clear();
-                plan.Orderings.Add((ExtractLambda(call.Arguments[1]), true));
+                plan.Stages.Add(NewOrderStage(ExtractLambda(call.Arguments[1]), descending: true));
                 break;
             case "ThenBy":
-                plan.Orderings.Add((ExtractLambda(call.Arguments[1]), false));
+                AppendOrdering(plan, ExtractLambda(call.Arguments[1]), descending: false);
                 break;
             case "ThenByDescending":
-                plan.Orderings.Add((ExtractLambda(call.Arguments[1]), true));
+                AppendOrdering(plan, ExtractLambda(call.Arguments[1]), descending: true);
                 break;
             case "Skip":
-                plan.Skip = Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture);
+                plan.Stages.Add(new SkipStage(Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture)));
                 break;
             case "Take":
-                plan.Take = Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture);
+                plan.Stages.Add(new TakeStage(Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture)));
                 break;
             default:
                 throw NotSupported(call.Method.Name);
         }
+    }
+
+    private static OrderStage NewOrderStage(LambdaExpression keySelector, bool descending)
+    {
+        var stage = new OrderStage();
+        stage.Keys.Add(new OrderingKey(keySelector, descending));
+        return stage;
+    }
+
+    private static void AppendOrdering(AccessQueryPlan plan, LambdaExpression keySelector, bool descending)
+    {
+        // ThenBy refines the most recent ordering run; if an operator intervened (the
+        // last stage is not an OrderStage), start a fresh ordering instead of crashing.
+        if (plan.Stages.Count > 0 && plan.Stages[^1] is OrderStage order)
+        {
+            order.Keys.Add(new OrderingKey(keySelector, descending));
+            return;
+        }
+
+        plan.Stages.Add(NewOrderStage(keySelector, descending));
     }
 
     private static LambdaExpression ExtractLambda(Expression expression) => expression switch

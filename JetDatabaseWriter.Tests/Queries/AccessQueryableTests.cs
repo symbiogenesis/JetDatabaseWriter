@@ -166,6 +166,84 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
             await reader.Query<JdwItem>("JdwItem").Select(i => i.Name).ToListAsync(ct));
     }
 
+    [Fact]
+    public async Task Take_BeforeWhere_TakesThenFilters()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // OrderBy fixes the row order to 1..6; Take(3) keeps {1,2,3}; the later Where then
+        // filters only those three (ids 1 and 3 score >= 30), not the whole table.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem")
+            .OrderBy(i => i.Id)
+            .Take(3)
+            .Where(i => i.Score >= 30)
+            .ToListAsync(ct);
+
+        int[] expected = [1, 3];
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task Take_BeforeSkip_PagesWithinTakenWindow()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Order is 1..6; Take(4) => {1,2,3,4}; Skip(2) within that window => {3,4}.
+        // A fixed filter->page collapse would instead yield {3,4,5,6}.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem")
+            .OrderBy(i => i.Id)
+            .Take(4)
+            .Skip(2)
+            .ToListAsync(ct);
+
+        int[] expected = [3, 4];
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task Skip_BeforeOrderBy_OrdersTheRemainder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Skip applies to the unordered scan, then OrderBy sorts what remains. Compare
+        // against the same operators run over the engine's scan order in memory.
+        List<JdwItem> scan = await reader.Query<JdwItem>("JdwItem").ToListAsync(ct);
+        int[] expected = scan.Skip(2).OrderBy(i => i.Score).ThenBy(i => i.Id).Select(i => i.Id).ToArray();
+
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem")
+            .Skip(2)
+            .OrderBy(i => i.Score)
+            .ThenBy(i => i.Id)
+            .ToListAsync(ct);
+
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task LeadingFilter_OrderThenTake_KeepsIndexFastPath()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // A leading Where still pushes into index inference; ordering and Take then run in
+        // sequence over the filtered rows {1,3,5,6} -> ordered by Id -> first two {1,3}.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem")
+            .Where(i => i.Score >= 30)
+            .OrderBy(i => i.Id)
+            .Take(2)
+            .ToListAsync(ct);
+
+        int[] expected = [1, 3];
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
     {
         stream.Position = 0;

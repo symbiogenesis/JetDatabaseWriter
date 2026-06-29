@@ -12,10 +12,12 @@ using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// <see cref="IQueryProvider"/> for <see cref="AccessQueryable{T}"/>. Translates the
-/// supported LINQ operators into reader operations: filtering reuses index inference,
-/// ordering / paging run in memory after materialization, and includes eager-load
-/// inferred relationships. The provider is generic on the entity type so it can map
-/// rows; <see cref="AccessQueryable{T}"/> reaches it through <see cref="IAccessQueryEngine"/>.
+/// supported LINQ operators into an ordered <see cref="QueryStage"/> pipeline and runs
+/// the stages in written order: a leading run of filters is pushed into the reader's
+/// index inference, later stages (filter / order / page) run over the stream, and
+/// includes eager-load inferred relationships onto the final set. The provider is
+/// generic on the entity type so it can map rows; <see cref="AccessQueryable{T}"/>
+/// reaches it through <see cref="IAccessQueryEngine"/>.
 /// </summary>
 /// <typeparam name="T">The entity type mapped from the table's rows.</typeparam>
 /// <param name="reader">The reader the query executes against.</param>
@@ -55,32 +57,6 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         }
     }
 
-    private static async IAsyncEnumerable<T> StreamWithPagingAsync(
-        IAsyncEnumerable<T> source,
-        int? skip,
-        int? take,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        int skipped = 0;
-        int taken = 0;
-        await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (skip is int s && skipped < s)
-            {
-                skipped++;
-                continue;
-            }
-
-            if (take is int t && taken >= t)
-            {
-                yield break;
-            }
-
-            taken++;
-            yield return item;
-        }
-    }
-
     private static Expression<Func<T, bool>>? CombinePredicates(List<LambdaExpression> predicates)
     {
         if (predicates.Count == 0)
@@ -104,56 +80,6 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(first.Body, rebound), parameter);
     }
 
-    private static List<T> ApplyOrderings(List<T> buffer, List<(LambdaExpression KeySelector, bool Descending)> orderings)
-    {
-        if (orderings.Count == 0)
-        {
-            return buffer;
-        }
-
-        Func<T, object?> firstKey = CompileKey(orderings[0].KeySelector);
-        IOrderedEnumerable<T> ordered = orderings[0].Descending
-            ? buffer.OrderByDescending(firstKey, QueryKeyComparer.Instance)
-            : buffer.OrderBy(firstKey, QueryKeyComparer.Instance);
-        for (int i = 1; i < orderings.Count; i++)
-        {
-            Func<T, object?> key = CompileKey(orderings[i].KeySelector);
-            ordered = orderings[i].Descending
-                ? ordered.ThenByDescending(key, QueryKeyComparer.Instance)
-                : ordered.ThenBy(key, QueryKeyComparer.Instance);
-        }
-
-        return ordered.ToList();
-    }
-
-    private static IReadOnlyList<T> ApplyPaging(IReadOnlyList<T> source, int? skip, int? take)
-    {
-        if (skip is null && take is null)
-        {
-            return source;
-        }
-
-        IEnumerable<T> sequence = source;
-        if (skip is int s)
-        {
-            sequence = sequence.Skip(s);
-        }
-
-        if (take is int t)
-        {
-            sequence = sequence.Take(t);
-        }
-
-        return sequence.ToList();
-    }
-
-    private static Func<T, object?> CompileKey(LambdaExpression selector)
-    {
-        ParameterExpression parameter = selector.Parameters[0];
-        Expression body = Expression.Convert(selector.Body, typeof(object));
-        return Expression.Lambda<Func<T, object?>>(body, parameter).Compile();
-    }
-
     private async ValueTask<List<T>> ExecuteListAsync(Expression expression, CancellationToken cancellationToken)
     {
         var list = new List<T>();
@@ -168,15 +94,13 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
     private async IAsyncEnumerable<T> ExecuteTypedAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         AccessQueryPlan plan = AccessQueryTranslator.Translate(expression);
-        Expression<Func<T, bool>>? predicate = CombinePredicates(plan.Predicates);
-        IAsyncEnumerable<T> filtered = predicate is null
-            ? reader.Rows<T>(table, progress: null, cancellationToken)
-            : reader.Rows<T>(table, predicate, progress: null, cancellationToken);
+        IAsyncEnumerable<T> sequence = this.BuildPipeline(plan, cancellationToken);
 
-        // Pure filter (no ordering or includes) streams; skip/take apply on the stream.
-        if (plan.Orderings.Count == 0 && plan.Includes.Count == 0)
+        // Without includes the pipeline streams straight through, so Take/First can
+        // short-circuit before the whole table is read.
+        if (plan.Includes.Count == 0)
         {
-            await foreach (T item in StreamWithPagingAsync(filtered, plan.Skip, plan.Take, cancellationToken).ConfigureAwait(false))
+            await foreach (T item in sequence.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 yield return item;
             }
@@ -184,23 +108,47 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
             yield break;
         }
 
-        // Ordering and includes need the filtered set materialized first.
-        var buffer = new List<T>();
-        await foreach (T item in filtered.WithCancellation(cancellationToken).ConfigureAwait(false))
+        // Eager loads stitch onto the final set, so materialize the pipeline first.
+        var result = new List<T>();
+        await foreach (T item in sequence.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            buffer.Add(item);
+            result.Add(item);
         }
 
-        IReadOnlyList<T> result = ApplyPaging(ApplyOrderings(buffer, plan.Orderings), plan.Skip, plan.Take);
-        if (plan.Includes.Count > 0)
-        {
-            await IncludeLoader.ApplyAsync(reader, table, result, plan.Includes, cancellationToken).ConfigureAwait(false);
-        }
-
+        await IncludeLoader.ApplyAsync(reader, table, result, plan.Includes, cancellationToken).ConfigureAwait(false);
         foreach (T item in result)
         {
             yield return item;
         }
+    }
+
+    private IAsyncEnumerable<T> BuildPipeline(AccessQueryPlan plan, CancellationToken cancellationToken)
+    {
+        List<QueryStage> stages = plan.Stages;
+
+        // Push the leading run of consecutive filters into the reader so its index
+        // inference can seek rather than scan. Filters are mutually commutative, so
+        // collapsing only the leading run preserves LINQ ordering semantics; every later
+        // stage — including a filter that follows ordering or paging — runs in order.
+        int next = 0;
+        var leading = new List<LambdaExpression>();
+        while (next < stages.Count && stages[next] is FilterStage filter)
+        {
+            leading.Add(filter.Predicate);
+            next++;
+        }
+
+        Expression<Func<T, bool>>? pushed = CombinePredicates(leading);
+        IAsyncEnumerable<T> sequence = pushed is null
+            ? reader.Rows<T>(table, progress: null, cancellationToken)
+            : reader.Rows(table, pushed, progress: null, cancellationToken);
+
+        for (; next < stages.Count; next++)
+        {
+            sequence = stages[next].Apply(sequence, cancellationToken);
+        }
+
+        return sequence;
     }
 
     private sealed class ReplaceParameterVisitor(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
