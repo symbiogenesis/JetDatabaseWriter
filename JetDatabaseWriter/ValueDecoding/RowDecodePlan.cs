@@ -658,7 +658,7 @@ internal sealed class RowDecodePlan
         LongValueDecoder longValueDecoder,
         ref bool needsLongValue) => slice.Kind switch
         {
-            ColumnSliceKind.Bool => slice.BoolValue,
+            ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),

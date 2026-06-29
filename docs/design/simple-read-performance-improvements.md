@@ -111,57 +111,71 @@ cached. The remaining per-*row* cost is where the simple-read budget is spent.
 
 ---
 
-## 1. Eliminate per-cell boxing on the untyped path
+## 1. Eliminate per-cell boxing on the untyped path (DONE)
 
-**Biggest no-API-change win.**
+**Status: implemented (2026-06-29).**
 
-The untyped decode returns `object?[]`, and every fixed-width cell is boxed.
-Today there is **no box cache** anywhere in the decoder:
+The untyped decode returns `object?[]`, and every fixed-width cell was boxed
+into its own heap object. There was **no box cache** anywhere in the decoder:
 
-- Booleans box on every cell — `ColumnSliceKind.Bool => slice.BoolValue` in
-  `RowDecodePlan.DecodeTypedValue`
-  ([RowDecodePlan.cs#L502](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs#L502)).
-- Bytes box on every cell — `ByteType => row[start]` in
-  `JetTypeInfo.ReadFixedTyped`
-  ([JetTypeInfo.cs#L293](../../JetDatabaseWriter/Schema/JetTypeInfo.cs#L293)).
-- Small integers (`short`/`int` status, enum, flag, quantity columns) box on
-  every cell — `IntegerType => Ri16(...)`, `LongIntegerType => Ri32(...)`
-  ([JetTypeInfo.cs#L287](../../JetDatabaseWriter/Schema/JetTypeInfo.cs#L287)).
+- Booleans boxed on every cell — `ColumnSliceKind.Bool => slice.BoolValue` in
+  `RowDecodePlan.DecodeTypedValue`.
+- Bytes boxed on every cell — `ByteType => row[start]` in
+  `JetTypeInfo.ReadFixedTyped`.
+- Small integers (`short`/`int` status, enum, flag, quantity columns) boxed on
+  every cell — `IntegerType => Ri16(...)`, `LongIntegerType => Ri32(...)`.
 
 `DBNull.Value` is already a singleton, which is the existing precedent that
 shared, immutable boxed read-results are acceptable in row arrays.
 
-### Proposed change
+### Change
 
-Introduce a small internal box cache used by the fixed-width typed decode:
+Added an internal `BoxCache`
+([BoxCache.cs](../../JetDatabaseWriter/Infrastructure/BoxCache.cs)) of interned
+boxes and routed the fixed-width typed decode through it:
 
 - `bool`: two interned boxes (`true` / `false`) — eliminates **100%** of boolean
-  cell boxing.
+  cell boxing. Consumed by `RowDecodePlan.DecodeTypedValue`
+  (`ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue)`).
 - `byte`: a 256-entry table (`0..255`) — eliminates **100%** of byte cell
-  boxing.
-- small `int`/`short`: a cache over a low range (e.g. `-1..256`, mirroring the
-  runtime's own small-integer caches) — interns the very common
-  status/enum/flag/quantity columns.
+  boxing. Consumed by `JetTypeInfo.ReadFixedTyped`
+  (`ByteType => BoxCache.Byte(row[start])`).
+- small `short`/`int`: a `-1..256` table mirroring the runtime's own
+  small-integer caches — interns the very common status/enum/flag/quantity
+  columns. Consumed by `JetTypeInfo.ReadFixedTyped`
+  (`IntegerType => BoxCache.Int16(...)`, `LongIntegerType => BoxCache.Int32(...)`).
+  Values outside the cached window fall back to a normal box, so the contract is
+  unchanged.
 
-Boxed value types are immutable, so a shared box can never be observed as
-mutated by a caller; the only behavioral change is that two equal low-magnitude
-cells may become reference-equal, which is benign (and arguably more correct).
+Each accessor preserves the exact boxed CLR type (`bool`/`byte`/`short`/`int`),
+so the `Integer` column still yields a boxed `short` and `LongInteger` a boxed
+`int` — no widening. High-cardinality types (`Money`, `Double`, `DateTime`,
+`BigInt`, `Guid`, `Numeric`) are deliberately left boxing per cell. Boxed value
+types are immutable, so a shared box can never be observed as mutated; the only
+behavioural change is that two equal low-magnitude cells become reference-equal,
+which is benign (mirroring the long-standing shared `DBNull.Value`).
 
 ### Impact and risk
 
 - **Impact:** removes all `bool`/`byte` cell allocation and the bulk of
   low-cardinality integer allocation on `Rows()`, `ReadDataTableAsync()`, and the
   typed *fallback* path that still produces an `object?[]`. Directly reduces the
-  Gen0/Gen1 pressure visible in the table above (numeric untyped shows
+  Gen0/Gen1 pressure visible in the table above (numeric untyped showed
   ~1,390 Gen0 + ~453 Gen1 collections per 1,000 ops). Status/flag/enum-heavy
   schemas — common in real Access databases — benefit the most.
 - **Inherent limit:** high-cardinality columns (IDs, prices, timestamps) cannot
   be interned; for those, the *only* ways to avoid the box are recommendations
   **2** (don't decode the column) and **3** (decode into a typed field). The
   three are complementary.
-- **Risk:** very low. No API or null-semantics change.
-- **Where:** [JetTypeInfo.cs#L287](../../JetDatabaseWriter/Schema/JetTypeInfo.cs#L287),
-  [RowDecodePlan.cs#L493](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs#L493).
+- **Risk:** very low — no API or null-semantics change. Covered by per-accessor
+  unit tests in
+  [BoxCacheTests.cs](../../JetDatabaseWriter.Tests/Infrastructure/BoxCacheTests.cs)
+  (boxed-type correctness, value correctness, in-range interning, and
+  out-of-range fallback) plus the Reader, ValueDecoding, Schema, and RoundTrip
+  namespaces with no behaviour change.
+- **Where:** [BoxCache.cs](../../JetDatabaseWriter/Infrastructure/BoxCache.cs),
+  [JetTypeInfo.cs](../../JetDatabaseWriter/Schema/JetTypeInfo.cs),
+  [RowDecodePlan.cs](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs).
 
 ---
 
@@ -398,7 +412,7 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 
 ## Recommended order
 
-1. **#1 box interning** — no API change, broad benefit, lowest risk. Do first.
+1. **#1 box interning** (done) — no API change, broad benefit, lowest risk.
 2. **#4 collapse forwarding** (done) and **#5 scratch pooling** (done) — small,
    safe.
 3. **#2 public projection** — highest wide-table leverage; additive API.

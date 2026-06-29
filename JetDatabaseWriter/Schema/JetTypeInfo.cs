@@ -509,14 +509,16 @@ internal static class JetTypeInfo
         {
             return type switch
             {
-                ByteType => row[start],
+                ByteType => BoxCache.Byte(row[start]),
 
                 // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
                 // the legacy "(short)Ru16(...)" cast throws OverflowException for
                 // values with the high bit set and ReadFixedString silently maps
                 // those to string.Empty → DBNull. The typed path keeps the value.
-                IntegerType => Ri16(row, start),
-                LongIntegerType => Ri32(row, start),
+                // BoxCache interns low-magnitude results so status/flag/enum cells
+                // do not allocate a fresh box on the untyped object-array path.
+                IntegerType => BoxCache.Int16(Ri16(row, start)),
+                LongIntegerType => BoxCache.Int32(Ri32(row, start)),
                 FloatType => ReadSingleLittleEndian(row.Slice(start, 4)),
                 DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)),
                 DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))),
