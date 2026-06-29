@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Queries;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
@@ -31,23 +32,43 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
     public IQueryable<TElement> CreateQuery<TElement>(Expression expression) =>
         new AccessQueryable<TElement>(this, expression);
 
-    public object? Execute(Expression expression) => this.Execute<object>(expression);
+    public object? Execute(Expression expression)
+    {
+        Guard.NotNull(expression, nameof(expression));
+        if (TryGetScalarOperator(expression, out MethodCallExpression? call))
+        {
+            IQueryable<T> rows = this.ExecuteTypedSyncList(call.Arguments[0]).AsQueryable();
+            return rows.Provider.Execute(RetargetScalar(call, rows));
+        }
+
+        return this.ExecuteTypedSyncList(expression);
+    }
 
     public TResult Execute<TResult>(Expression expression)
     {
         Guard.NotNull(expression, nameof(expression));
-        IEnumerable list = this.ExecuteSyncList(expression);
+
+        // A scalar terminal (Count/Any/First/Single/Sum/Min/Max/Average/...) sits at the
+        // root with the sequence-producing query as its source. Run the source through our
+        // pipeline so leading filters still infer indexes, then let LINQ-to-Objects reduce
+        // it with the operator's own predicate/selector for faithful LINQ semantics.
+        if (TryGetScalarOperator(expression, out MethodCallExpression? call))
+        {
+            IQueryable<T> rows = this.ExecuteTypedSyncList(call.Arguments[0]).AsQueryable();
+            return rows.Provider.Execute<TResult>(RetargetScalar(call, rows));
+        }
+
+        List<T> list = this.ExecuteTypedSyncList(expression);
         if (list is TResult typed)
         {
             return typed;
         }
 
         throw new NotSupportedException(
-            "Synchronous scalar query execution is not supported; use the async terminal operators (ToListAsync, FirstOrDefaultAsync, ...).");
+            $"This query yields a sequence of '{typeof(T).Name}'; materialize it with ToList()/ToListAsync() or reduce it with a scalar operator such as Count(), Any(), or First().");
     }
 
-    public IEnumerable ExecuteSyncList(Expression expression) =>
-        this.ExecuteListAsync(expression, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+    public IEnumerable ExecuteSyncList(Expression expression) => this.ExecuteTypedSyncList(expression);
 
     public async IAsyncEnumerable<object> ExecuteStreamAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -79,6 +100,34 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         Expression rebound = new ReplaceParameterVisitor(second.Parameters[0], parameter).Visit(second.Body);
         return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(first.Body, rebound), parameter);
     }
+
+    private static bool TryGetScalarOperator(Expression expression, [NotNullWhen(true)] out MethodCallExpression? call)
+    {
+        // A scalar terminal is a Queryable call whose result is not itself a query; its
+        // first argument is the sequence-producing source we still run through the pipeline.
+        if (expression is MethodCallExpression candidate
+            && candidate.Method.DeclaringType == typeof(Queryable)
+            && !typeof(IQueryable).IsAssignableFrom(candidate.Method.ReturnType))
+        {
+            call = candidate;
+            return true;
+        }
+
+        call = null;
+        return false;
+    }
+
+    private static MethodCallExpression RetargetScalar(MethodCallExpression call, IQueryable<T> rows)
+    {
+        // Re-issue the operator against the materialized rows, preserving any
+        // predicate/selector arguments so the in-memory provider evaluates it faithfully.
+        Expression[] arguments = [.. call.Arguments];
+        arguments[0] = rows.Expression;
+        return Expression.Call(call.Method, arguments);
+    }
+
+    private List<T> ExecuteTypedSyncList(Expression expression) =>
+        this.ExecuteListAsync(expression, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     private async ValueTask<List<T>> ExecuteListAsync(Expression expression, CancellationToken cancellationToken)
     {
