@@ -234,8 +234,24 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         return true;
     }
 
+    /// <summary>
+    /// The single sync bridge behind <see cref="IQueryable{T}"/>'s <see cref="IEnumerable{T}"/>
+    /// surface; <c>foreach</c> and the sync LINQ terminals reach it through <c>Execute</c>,
+    /// <c>Execute&lt;TResult&gt;</c>, and <c>ExecuteSyncList</c>.
+    /// </summary>
+    /// <remarks>
+    /// The async stack already uses <c>ConfigureAwait(false)</c> end to end, but rather than rely on
+    /// that discipline holding across the whole transitive read stack, the work runs through
+    /// <c>Task.Run</c>: a thread-pool thread carries no <see cref="SynchronizationContext"/>, so no
+    /// continuation can post back to a UI/classic-ASP.NET context the caller is blocking on. That
+    /// removes the sync-over-async deadlock class at the bridge instead of merely documenting it. It
+    /// still blocks one pool thread, so async callers should prefer the async terminals
+    /// (<c>ToListAsync</c> / <c>await foreach</c>) on hot paths.
+    /// </remarks>
+    /// <param name="plan">The translated query plan to materialize.</param>
+    /// <returns>The fully materialized rows.</returns>
     private List<T> MaterializeSync(AccessQueryPlan plan) =>
-        this.MaterializeAsync(plan, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        Task.Run(() => this.MaterializeAsync(plan, CancellationToken.None).AsTask()).GetAwaiter().GetResult();
 
     private async ValueTask<List<T>> MaterializeAsync(AccessQueryPlan plan, CancellationToken cancellationToken)
     {
