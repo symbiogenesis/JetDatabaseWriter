@@ -1,6 +1,6 @@
 # Simple-read performance improvements
 
-Status: largely implemented (2026-06-16 – 2026-06-29). Sections 1 and 3–6 shipped; section 2 (a public projection surface for untyped callers) remains the one open item; section 7 (synchronous fast-path enumeration) is deferred tier-3 work pending an in-memory-scan profiling pass.
+Status: implemented and closed (2026-06-16 – 2026-06-30). Sections 1 and 3–6 shipped. Section 2 (a public projection surface for untyped callers) is deferred — not rejected outright, but not built without a concrete dynamic-column caller, because the headline wide-table win is already reachable today via a narrow `Rows<T>()` DTO (see section 2). Section 7 (synchronous fast-path enumeration) is rejected as net API bloat with no supporting evidence (see section 7).
 Date: 2026-06-16 (status refreshed 2026-06-30)
 Scope: "simple" reads — fixed-width numeric/date, short-text, and wide
 non-LVAL tables — through the public `Rows()`, `Rows<T>()`,
@@ -19,7 +19,7 @@ doc did not cover and explicitly flagged as evidence-gated future ideas.
 
 ## TL;DR — the four biggest wins
 
-*Status (2026-06-30): wins 1, 3, and 4 shipped; win 2 (public projection for untyped callers) is the one still open. Items 5–6 below also shipped; item 7 is deferred. See the per-section status lines for details.*
+*Status (2026-06-30): wins 1, 3, and 4 shipped; items 5–6 also shipped. Win 2 (public projection for untyped callers) is deferred until a concrete dynamic-column caller exists — its headline win is already reachable via a narrow `Rows<T>()` DTO. Item 7 is rejected. See the per-section status lines for details.*
 
 1. **Stop boxing on the untyped path** (no API change). The untyped `Rows()` /
    `ReadDataTableAsync()` decode allocates a boxed `object` for *every*
@@ -27,10 +27,13 @@ doc did not cover and explicitly flagged as evidence-gated future ideas.
    eliminates a large fraction of that allocation with zero API or semantic
    change.
 2. **Expose projection to untyped callers** (`Rows(table, columns)` and a
-   column-subset `ReadDataTableAsync`). The internal decode plan already
-   supports a projection mask; wiring it to a public object-array surface cuts
-   wide-table allocation by up to ~90% (measured) for callers that cannot define
-   a DTO.
+   column-subset `ReadDataTableAsync`) — **deferred**. The internal decode plan
+   already supports a projection mask, and wiring it to a public object-array
+   surface would cut wide-table allocation by up to ~90% (measured). But that
+   ~90% win is *already reachable today* via a narrow `Rows<T>()` DTO (it is the
+   `Decode_Wide_Typed_NarrowProjection` benchmark), so this overload only adds
+   value for callers choosing columns at runtime who cannot name a DTO. Held
+   until such a caller exists; see section 2.
 3. **Widen the zero-box `Rows<T>()` fast path.** The compiled direct decoder
    only engages on an *exact* CLR-type match. Adding nullable targets and
    widening conversions moves many real DTOs from the boxing fallback onto the
@@ -193,43 +196,58 @@ which is benign (mirroring the long-standing shared `DBNull.Value`).
 
 ---
 
-## 2. Public projection for untyped reads
+## 2. Public projection for untyped reads (DEFERRED)
 
-**Biggest win for wide tables.**
+**Status: deferred (2026-06-30) — not built without a concrete dynamic-column
+caller.** The measured win is real, but it is already reachable today through a
+narrower API, which collapses the value of adding new surface.
 
 `Decode_Wide_Untyped` decodes and boxes all 40 columns (16.5 MB);
 `Decode_Wide_Typed_NarrowProjection` binds 4 and allocates 1.7 MB — a **~90%
 allocation reduction and ~33% time reduction**. The projection machinery already
 exists internally: `RowDecodePlan` carries a `wantedColumns` mask
 ([RowDecodePlan.cs#L208](../../JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs#L208)),
-and the typed fallback already uses it. The benefit is simply **not reachable**
-from the object-array API today — the only public `Rows` overloads are
-whole-row ([IAccessReader.cs#L268](../../JetDatabaseWriter/Interfaces/IAccessReader.cs#L268)).
+and the typed fallback already uses it.
 
-### Proposed change
+### Why deferred
 
-Add column-selection overloads that thread an existing-feature mask through to
-the decoder:
+The headline number is the decisive point against building this now: that ~90%
+reduction *is* `Decode_Wide_Typed_NarrowProjection`, which is simply `Rows<T>()`
+with a four-property DTO. **The wide-table win already ships today.** A caller
+who cares about wide-table allocation can name a narrow DTO and land on the
+zero-box direct-decoder path — now even wider after section 3.
+
+A public object-array projection therefore does *not* unlock the win; it only
+extends it to callers who **cannot name a DTO at compile time** — runtime-chosen
+columns (a generic data browser, dynamic export, ad-hoc grid). LINQ `.Select`
+does not serve that audience either, because per the contract on
+[IAccessReader.cs#L299](../../JetDatabaseWriter/Interfaces/IAccessReader.cs#L299)
+projection "run[s] client-side" *after* the full row is decoded and boxed, so it
+cannot save the decode cost. That dynamic, no-DTO audience is genuine but niche,
+and it does not justify growing the public surface speculatively.
+
+The shape was also unsettled: the original sketch hedged between "only the
+selected ordinals" and "full width with unwanted slots left `null`." Shipping an
+API whose row shape is decided later is the opposite of a tidy surface.
+
+### If a concrete caller appears
+
+Add **exactly one** tidy entry point for the dynamic case rather than the pair
+originally sketched, and resolve the shape to "the row contains exactly the
+selected columns, in requested order":
 
 ```csharp
-IAsyncEnumerable<object?[]> Rows(string tableName, IReadOnlyList<string> columns, ...);
+// Preferred single entry point — serves the dynamic/no-DTO audience with no
+// streaming object?[] twin (streaming callers can adopt Rows<T>()).
 ValueTask<DataTable> ReadDataTableAsync(string tableName, IReadOnlyList<string> columns, ...);
 ```
 
 Internally: resolve the requested names to a `bool[]` mask and reuse
 `RowDecodePlan.CreateTyped(td, wantedColumns, ...)` plus the existing pooled
-`object?[]` buffer path. Returned rows contain only the selected ordinals (or
-the full width with unwanted slots left `null`, decided by the chosen shape).
-
-### Impact and risk
-
-- **Impact:** up to ~90% allocation and ~⅓ time on wide tables; scales with the
-  fraction of unused columns. This is the highest-leverage option for callers
-  who genuinely need `object[]`/`DataTable` (UI grids, exports) and cannot adopt
-  a DTO.
-- **Risk:** low — additive API; the underlying mask path is already exercised by
-  `Rows<T>()`'s fallback and is covered by tests. Combine with **1** so the
-  *selected* low-cardinality columns also avoid boxing.
+`object?[]` buffer path. Combine with **1** so the *selected* low-cardinality
+columns also avoid boxing. The underlying mask path is already exercised by
+`Rows<T>()`'s fallback, so the risk would be low — the objection is surface, not
+implementation.
 
 ---
 
@@ -396,7 +414,9 @@ hit count, which the previous lost-update `hits++` could not guarantee.
 
 ---
 
-## 7. (Tier 3) Synchronous fast-path enumeration for fully-cached simple scans
+## 7. Synchronous fast-path enumeration for fully-cached simple scans (REJECTED)
+
+**Status: rejected (2026-06-30) — net API bloat with no supporting evidence.**
 
 For non-LVAL tables with a warm page cache, every per-row `ValueTask` already
 completes synchronously (`CrackRowTypedAsync` returns a sync-completed
@@ -405,9 +425,25 @@ completes synchronously (`CrackRowTypedAsync` returns a sync-completed
 `IEnumerable<object?[]>` / `IEnumerable<T>` overload (or a buffered
 `IReadOnlyList<T>` materializer) would remove that overhead for in-memory scans.
 
-- **Impact:** per-row state-machine overhead on the hottest fully-cached scans.
-- **Risk:** medium — new public surface; must not duplicate decode logic. Lower
-  priority than 1–4.
+### Why rejected
+
+- **No evidence.** This was always gated on an in-memory-scan profiling pass that
+  was never run, so building it would be adding public surface on spec. Section 4
+  already removed the redundant per-row iterator hop, which is the part that was
+  cheaply removable.
+- **It roughly doubles the streaming surface** — synchronous twins of `Rows()`,
+  `Rows<T>()`, and `RowsAsStrings()` — for a benefit that only materializes on
+  already-fully-cached, non-LVAL scans, i.e. the cheapest case that is already
+  fast.
+- **It is a footgun.** A synchronous enumerator over a page-cached scan silently
+  performs blocking I/O on any cache miss — sync-over-async in a library whose
+  entire contract is asynchronous — or forces a fragile "must be fully cached"
+  precondition that the type system cannot express.
+
+The per-row state-machine overhead is real but small, and the only honest way to
+revisit this would be a profile that isolates it *and* a design that does not
+duplicate the decode logic. Neither exists, so the item is closed rather than
+left as a standing tier-3 invitation.
 
 ---
 
@@ -417,9 +453,10 @@ completes synchronously (`CrackRowTypedAsync` returns a sync-completed
 (numeric 25.1 ms vs 9.75 ms; text 59.6 ms vs 24.2 ms) because it fully
 materializes rows and assigns every cell through `DataRow`. This matches the
 closed baseline's decision to keep the current `NewRow` insertion strategy. The
-boxing fix (**1**) and the column-subset overload (**2**) both flow through to
-`DataTable`, so no separate `DataTable`-strategy change is proposed here — the
-guidance to prefer streaming APIs in hot paths stands.
+boxing fix (**1**) already flows through to `DataTable`; the column-subset
+overload (**2**) would too if it is ever built, so no separate
+`DataTable`-strategy change is proposed here — the guidance to prefer streaming
+APIs in hot paths stands.
 
 `RowsAsStrings` must allocate a `string` per cell by contract, so its allocation
 floor is inherent; it is not a target beyond what **4**/**5** give it for free.
@@ -429,13 +466,16 @@ floor is inherent; it is not a target beyond what **4**/**5** give it for free.
 1. **#1 box interning** (done) — no API change, broad benefit, lowest risk.
 2. **#4 collapse forwarding** (done) and **#5 scratch pooling** (done) — small,
    safe.
-3. **#2 public projection** — highest wide-table leverage; additive API.
-4. **#3 widen direct decoder** (done) — extends the zero-box path with lossless
+3. **#3 widen direct decoder** (done) — extends the zero-box path with lossless
    widening + nullable lift; covered by per-conversion unit and round-trip
    tests.
-5. **#6 LruCache shared-read** (done) and **#7 sync enumeration** — the former
-   is implemented; the latter only with an in-memory-scan profile that justifies
-   the new API surface.
+4. **#6 LruCache shared-read** (done) — concurrent cache hits now run under the
+   shared read lock.
+5. **#2 public projection** (deferred) — the wide-table win is already reachable
+   via a narrow `Rows<T>()` DTO, so this is held until a concrete dynamic-column
+   caller justifies the new surface.
+6. **#7 sync enumeration** (rejected) — net API bloat with no supporting
+   evidence.
 
 ## Validation plan
 
@@ -450,7 +490,7 @@ Targeted expectations:
 
 - **#1:** `Decode_Numeric_Untyped` and `Decode_Numeric_DataTable` allocation
   drop (largest on bool/byte/small-int-heavy schemas); mean neutral-or-better.
-- **#2:** a new wide-projection untyped benchmark should approach
+- **#2 (only if built):** a new wide-projection untyped benchmark should approach
   `Decode_Wide_Typed_NarrowProjection` (≈1.7 MB) rather than 16.5 MB.
 - **#3:** a nullable/widened DTO benchmark should drop from the untyped-like
   allocation onto the `Decode_Numeric_Typed` (≈3.8 MB) profile.
@@ -468,6 +508,8 @@ covers LVAL/MEMO/OLE decode, `DataTable` insertion strategy, text decode,
 owned-page discovery, and table-scan read-ahead, and lists "public object-array
 projection API," "projected/typed index seek," and "lazy long-value access" as
 evidence-gated future ideas. This document supplies fresh evidence for the
-**object-array projection** idea (#2) and adds two areas that the closed pass did
-not analyze for the *untyped* simple-read path: **per-cell boxing** (#1) and
-**direct-decoder coverage** (#3). It does not contradict any closed decision.
+**object-array projection** idea (#2) — concluding it should *not* be built
+without a concrete dynamic-column caller, because the wide-table win is already
+reachable through a narrow `Rows<T>()` DTO — and adds two areas that the closed
+pass did not analyze for the *untyped* simple-read path: **per-cell boxing** (#1)
+and **direct-decoder coverage** (#3). It does not contradict any closed decision.
