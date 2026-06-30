@@ -39,7 +39,7 @@ so each is a single, monolithic, hard-to-navigate file.
 |------|------:|------|
 | [JetDatabaseWriter/AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs) | 3,146 | public writer facade |
 | [JetDatabaseWriter/AccessReader.cs](JetDatabaseWriter/AccessReader.cs) | 2,885 | public reader facade |
-| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 2,027 | B-tree mutation |
+| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,949 | B-tree mutation |
 | [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,685 | attachments/multivalue |
 | [JetDatabaseWriter/Indexes/IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,618 | index orchestration |
 | [JetDatabaseWriter/Relationships/RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,583 | FK lifecycle |
@@ -73,9 +73,9 @@ disposal) as an interim step.
 [IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) contains several methods that are
 each longer than many entire classes:
 
-- [`TrySurgicalCrossLeafMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L911) — **~440 lines**.
-- [`TryStageIntermediateRewritesAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1528) — **~430 lines**.
-- [`TrySurgicalMultiLevelMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L398) — **~218 lines**.
+- [`TrySurgicalCrossLeafMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1093) — **~341 lines**.
+- [`TryStageIntermediateRewritesAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1607) — **~342 lines**.
+- [`TrySurgicalMultiLevelMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L600) — **~175 lines**.
 
 In [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs):
 
@@ -89,7 +89,7 @@ code in the repository to modify: high cyclomatic complexity, many early-return 
 seams for targeted testing.
 
 **Remediation:** extract each phase into a named, individually testable method (or a small
-state-object with explicit steps). Even without changing behavior, decomposing a 438-line method into
+state-object with explicit steps). Even without changing behavior, decomposing a 340-line method into
 6–8 named steps dramatically improves reviewability and lets the B-tree split/merge phases be unit
 tested directly.
 
@@ -102,10 +102,13 @@ The largest types suppress StyleCop ordering rules to tolerate mixed member layo
 - [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L34) — `#pragma warning disable SA1204`
   (SA1202 was resolved; SA1204 remains to allow static members grouped alongside related instance members).
 - Same suppressions in
-  [ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs#L23),
-  [RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs#L20),
-  [IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L13), and
-  [IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs#L18).
+  [ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs#L23) and
+  [RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs#L20).
+
+[IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) and
+[IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) previously carried the same
+suppression; both were removed on 2026-06-30 once their members were reordered to satisfy
+SA1202/SA1204 without it — the remediation below, applied in miniature.
 
 These appear only in the god classes and are a tell-tale of accretion: the files grew until enforcing
 member ordering became inconvenient, so the rule was switched off. They are harmless in isolation but
