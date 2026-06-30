@@ -23,7 +23,10 @@ using JetDatabaseWriter.Models;
 /// same convention the row mapper uses. Keys are compared by normalized value rather
 /// than CLR type, so a relationship still matches when the two sides use different
 /// numeric types (for example a parent <c>int</c> <c>Id</c> against a child
-/// <c>double</c> <c>ParentId</c>). A reference navigation matches the child's
+/// <c>double</c> <c>ParentId</c>). Binary (<c>byte[]</c>) keys compare by content, and a
+/// key whose CLR type is not a supported scalar (numeric, <c>bool</c>, <c>char</c>,
+/// <c>string</c>, <c>Guid</c>, <c>DateTime</c>, or <c>byte[]</c>) is treated as unmatchable
+/// rather than coerced through an arbitrary <c>ToString()</c>. A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
 /// rows by their foreign-key columns. When more than one relationship links the same
 /// pair of tables (for example two foreign keys to the same parent), the navigation
@@ -539,7 +542,7 @@ internal static class IncludeLoader
         return string.Join("|", parts);
     }
 
-    private static string? Normalize(object? value) => value switch
+    internal static string? Normalize(object? value) => value switch
     {
         null or DBNull => null,
         bool b => b ? "b1" : "b0",
@@ -548,10 +551,12 @@ internal static class IncludeLoader
         ulong ul => "n" + FormatNumeric(ul),
         decimal m => "n" + FormatNumeric(m),
         float or double => NormalizeReal(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
+        char c => "s" + c,
         Guid g => "g" + g.ToString("N"),
         DateTime dt => "t" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
         string s => "s" + s,
-        _ => "o" + value,
+        byte[] bytes => "x" + BitConverter.ToString(bytes),
+        _ => null,
     };
 
     private static string NormalizeReal(double value)
