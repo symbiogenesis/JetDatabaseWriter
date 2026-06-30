@@ -34,7 +34,10 @@ using JetDatabaseWriter.Models;
 /// the distinct keys are only a small share of that table, the related rows are loaded
 /// with one index seek per distinct key; otherwise (no covering index, a Jet3 file, or
 /// too many distinct keys relative to the table) it scans the table once and groups in
-/// memory.
+/// memory. A collection navigation may also carry inline EF-style filter / order / page
+/// operators (<c>Include(o =&gt; o.Items.Where(...).OrderBy(...).Take(n))</c>); those run
+/// in memory per parent after the related rows load, so a <c>Take</c> bounds the children
+/// per parent and a following <c>ThenInclude</c> descends only into the kept rows.
 /// </remarks>
 internal static class IncludeLoader
 {
@@ -61,7 +64,7 @@ internal static class IncludeLoader
         AccessReader reader,
         string parentTable,
         IReadOnlyList<object> roots,
-        IReadOnlyList<IReadOnlyList<PropertyInfo>> includePaths,
+        IReadOnlyList<IReadOnlyList<IncludeStep>> includePaths,
         CancellationToken cancellationToken)
     {
         if (roots.Count == 0 || includePaths.Count == 0)
@@ -97,7 +100,7 @@ internal static class IncludeLoader
             {
                 RelationshipMetadata relationship = FindCollectionRelationship(relationships, table, elementType, navigation.Name)
                     ?? throw NoRelationship(navigation, table, elementType);
-                loaded = await LoadCollectionAsync(reader, entities, navigation, elementType, relationship, cancellationToken).ConfigureAwait(false);
+                loaded = await LoadCollectionAsync(reader, entities, navigation, elementType, relationship, node.Operations, cancellationToken).ConfigureAwait(false);
                 relatedTable = relationship.ForeignTable;
             }
             else
@@ -118,18 +121,18 @@ internal static class IncludeLoader
         }
     }
 
-    private static List<IncludeNode> BuildForest(IReadOnlyList<IReadOnlyList<PropertyInfo>> paths)
+    private static List<IncludeNode> BuildForest(IReadOnlyList<IReadOnlyList<IncludeStep>> paths)
     {
         // Merge the include paths into a navigation tree so a shared prefix (for example
         // two ThenIncludes off the same Include) loads once and both branches descend from
         // the same loaded entities instead of re-loading and overwriting the first branch.
         var roots = new List<IncludeNode>();
-        foreach (IReadOnlyList<PropertyInfo> path in paths)
+        foreach (IReadOnlyList<IncludeStep> path in paths)
         {
             List<IncludeNode> level = roots;
-            foreach (PropertyInfo navigation in path)
+            foreach (IncludeStep step in path)
             {
-                IncludeNode node = FindOrAddNode(level, navigation);
+                IncludeNode node = FindOrAddNode(level, step);
                 level = node.Children;
             }
         }
@@ -137,17 +140,24 @@ internal static class IncludeLoader
         return roots;
     }
 
-    private static IncludeNode FindOrAddNode(List<IncludeNode> level, PropertyInfo navigation)
+    private static IncludeNode FindOrAddNode(List<IncludeNode> level, IncludeStep step)
     {
         foreach (IncludeNode existing in level)
         {
-            if (existing.Navigation.Equals(navigation))
+            if (existing.Navigation.Equals(step.Navigation))
             {
+                // Shared prefix: adopt the inline operators from whichever branch specifies
+                // them so a plain reference to the same navigation doesn't drop the filter.
+                if (existing.Operations.Count == 0 && step.Operations.Count > 0)
+                {
+                    existing.Operations = step.Operations;
+                }
+
                 return existing;
             }
         }
 
-        var created = new IncludeNode(navigation);
+        var created = new IncludeNode(step.Navigation) { Operations = step.Operations };
         level.Add(created);
         return created;
     }
@@ -181,6 +191,7 @@ internal static class IncludeLoader
         PropertyInfo navigation,
         Type relatedType,
         RelationshipMetadata relationship,
+        IReadOnlyList<IncludeOperation> operations,
         CancellationToken cancellationToken)
     {
         EnsureConstructible(relatedType, navigation);
@@ -195,7 +206,10 @@ internal static class IncludeLoader
             IList list = RuntimeRowMapper.CreateList(relatedType);
             if (key is not null && childrenByKey.TryGetValue(key, out List<object>? children))
             {
-                foreach (object child in children)
+                // Filtered / ordered include operators run in memory per parent, so each
+                // parent's children are filtered, ordered, and paged independently before the
+                // navigation is set and before a ThenInclude descends into the kept rows.
+                foreach (object child in ApplyOperations(children, operations))
                 {
                     list.Add(child);
                     loaded.Add(child);
@@ -206,6 +220,16 @@ internal static class IncludeLoader
         }
 
         return loaded;
+    }
+
+    private static IEnumerable<object> ApplyOperations(IEnumerable<object> source, IReadOnlyList<IncludeOperation> operations)
+    {
+        foreach (IncludeOperation operation in operations)
+        {
+            source = operation.Apply(source);
+        }
+
+        return source;
     }
 
     private static async ValueTask<Dictionary<string, object>> BuildParentLookupAsync(
@@ -701,6 +725,8 @@ internal static class IncludeLoader
     private sealed class IncludeNode(PropertyInfo navigation)
     {
         public PropertyInfo Navigation { get; } = navigation;
+
+        public IReadOnlyList<IncludeOperation> Operations { get; set; } = [];
 
         public List<IncludeNode> Children { get; } = [];
     }

@@ -30,14 +30,18 @@ public static class AccessQueryExtensions
     /// <paramref name="navigation"/> property. The relationship is inferred from the
     /// database's <c>MSysRelationships</c> catalog by matching the navigation's target
     /// type to the related table; the related rows load via an index seek when the join
-    /// columns are indexed, otherwise via a single scan. Chain
+    /// columns are indexed, otherwise via a single scan. A collection navigation may be
+    /// filtered, ordered, and paged inline — EF-style — by chaining <c>Where</c>,
+    /// <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/<c>ThenByDescending</c>,
+    /// <c>Skip</c>, and <c>Take</c> onto it; those operators run per parent and a following
+    /// <c>ThenInclude</c> descends only into the kept rows. Chain
     /// <see cref="ThenInclude{TEntity, TPreviousProperty, TProperty}(IIncludableQueryable{TEntity, TPreviousProperty}, Expression{Func{TPreviousProperty, TProperty}})"/>
     /// to load a nested navigation off the included entity.
     /// </summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <typeparam name="TProperty">The navigation property type (a reference entity or a collection of entities).</typeparam>
     /// <param name="source">The query to extend.</param>
-    /// <param name="navigation">A property-access expression, e.g. <c>o =&gt; o.Customer</c> or <c>c =&gt; c.Orders</c>.</param>
+    /// <param name="navigation">A property-access expression (<c>o =&gt; o.Customer</c> or <c>c =&gt; c.Orders</c>), optionally with an inline filter/order/page chain on a collection navigation (<c>c =&gt; c.Orders.Where(o =&gt; o.Open).OrderBy(o =&gt; o.Date).Take(5)</c>).</param>
     /// <returns>A new query that will populate the navigation on materialization.</returns>
     public static IIncludableQueryable<T, TProperty> Include<T, TProperty>(this IQueryable<T> source, Expression<Func<T, TProperty>> navigation)
     {
@@ -85,7 +89,7 @@ public static class AccessQueryExtensions
     /// <typeparam name="TPreviousProperty">The element type of the collection included by the preceding step.</typeparam>
     /// <typeparam name="TProperty">The nested navigation type.</typeparam>
     /// <param name="source">The query whose most recent include targets a collection of entities.</param>
-    /// <param name="navigation">A property-access expression on the previously included element, e.g. <c>i =&gt; i.Product</c>.</param>
+    /// <param name="navigation">A property-access expression on the previously included element (<c>i =&gt; i.Product</c>), optionally with an inline filter/order/page chain when it targets a nested collection.</param>
     /// <returns>A new query that will also populate the nested navigation on materialization.</returns>
     public static IIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
         this IIncludableQueryable<TEntity, IEnumerable<TPreviousProperty>> source,

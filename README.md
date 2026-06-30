@@ -34,7 +34,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
 | ✅ **POCO + LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
-| ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Include` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/…) |
+| ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and sync/async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…) |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
@@ -255,7 +255,7 @@ await foreach (object[] row in reader.SeekRowsAsync("Companies", "IX_CompanyName
 }
 ```
 
-### Relationships and eager loading (`Include`)
+### Relationships and eager loading (`Include` / `ThenInclude`)
 
 `ListRelationshipsAsync` returns every foreign-key relationship from the database's `MSysRelationships` catalog. Each entry links a child (`ForeignTable`) to a parent (`PrimaryTable`) with matching key columns, plus the integrity and cascade flags.
 
@@ -264,7 +264,7 @@ foreach (RelationshipMetadata rel in await reader.ListRelationshipsAsync(cancell
     Console.WriteLine($"{rel.Name}: {rel.ForeignTable}({string.Join(",", rel.ForeignColumns)}) -> {rel.PrimaryTable}({string.Join(",", rel.PrimaryColumns)})");
 ```
 
-`Query<T>(...)` returns an `IQueryable<T>` and **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Compose the standard LINQ operators (`Where`, `OrderBy`/`ThenBy`, `Skip`, `Take`) and execute with the async terminals (`ToListAsync`, `FirstOrDefaultAsync`, `SingleOrDefaultAsync`, `CountAsync`, `AnyAsync`) or `AsAsyncEnumerable()` for `await foreach`. `Where` drives the same index inference as `Rows<T>(table, predicate)`; ordering and paging run in memory after the filtered set is read.
+`Query<T>(...)` returns an `IQueryable<T>` and **infers relationships automatically**: pass a navigation property to `Include(...)` and the related rows are eagerly loaded and stitched onto each entity, with the relationship resolved from the catalog — no mapping configuration. Chain `ThenInclude(...)` to eager-load a nested navigation off the included entity, any number of levels deep. A collection navigation can be **filtered, ordered, and paged** inline — `Include(c => c.Orders.Where(o => o.Amount >= 100).OrderBy(o => o.Amount).Take(5))` — and a following `ThenInclude` then descends only into the kept rows. Compose the standard LINQ operators — `Where`, `OrderBy`/`OrderByDescending`/`ThenBy`/`ThenByDescending`, `Skip`, `Take`, `Select` — and execute with the sync or async terminals (`ToListAsync`/`ToArrayAsync`/`ToDictionaryAsync`, `FirstAsync`/`FirstOrDefaultAsync`, `SingleAsync`/`SingleOrDefaultAsync`, `CountAsync`/`LongCountAsync`, `AnyAsync`, `SumAsync`/`AverageAsync`/`MinAsync`/`MaxAsync`), or `AsAsyncEnumerable()` for `await foreach`. `Where` drives the same index inference as `Rows<T>(table, predicate)`; an unfiltered `OrderBy` over a column backed by a covering unique integer-key index streams straight from that index (so a following `Take` bounds the work), and other ordering and paging run in memory after the filtered set is read.
 
 ```csharp
 // Parent with its children (collection navigation), filtered, ordered and paged
@@ -276,6 +276,17 @@ List<Customer> customers = await reader.Query<Customer>("Customers")
     .Include(c => c.Orders)
     .ToListAsync(cancellationToken);
 
+// Filtered / ordered / paged collection include
+List<Customer> withTopOrders = await reader.Query<Customer>("Customers")
+    .Include(c => c.Orders.Where(o => o.Freight >= 100m).OrderByDescending(o => o.Freight).Take(5))
+    .ToListAsync(cancellationToken);
+
+// Nested eager loading: order -> customer -> region (Include then ThenInclude)
+List<Order> orders = await reader.Query<Order>("Orders")
+    .Include(o => o.Customer)
+    .ThenInclude(c => c.Region)
+    .ToListAsync(cancellationToken);
+
 // Child with its parent (reference navigation)
 Order? order = await reader.Query<Order>("Orders")
     .Where(o => o.OrderId == 10248)
@@ -283,7 +294,7 @@ Order? order = await reader.Query<Order>("Orders")
     .FirstOrDefaultAsync(cancellationToken);
 ```
 
-The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. When the join columns are indexed (a primary key or foreign-key index, inferred automatically) each `Include` loads the related rows with one index seek per distinct key; otherwise it scans the related table once and joins in memory. Operators outside the supported set throw `NotSupportedException` — materialize with `ToListAsync(...)` and use LINQ-to-Objects for anything further. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
+The navigation's target type is matched to the related table by name, so the entity classes the [scaffolder](#scaffolding--generate-c-models-from-a-database) generates work as-is. When the join columns are indexed (a primary key or foreign-key index, inferred automatically) each `Include` / `ThenInclude` loads the related rows with one index seek per distinct key; otherwise it scans the related table once and joins in memory, and a shared include prefix (two `ThenInclude` chains off the same `Include`) loads only once. Inline collection filters apply per parent in memory and may only reference the child being filtered. Operators the engine doesn't translate natively — `Select` projections, `GroupBy`, and the like — run in memory over the materialized rows, so the broader LINQ surface still composes. Relationships are read from `MSysRelationships`, so this requires a full-catalog database (Jet3 `.mdb` files have no relationship catalog).
 
 ### Complex (Attachment / Multi-value) column metadata
 

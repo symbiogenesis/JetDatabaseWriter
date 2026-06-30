@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Queries;
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
@@ -134,13 +135,13 @@ internal static class AccessQueryTranslator
 
         if (AccessQueryExtensions.IsIncludeMethod(call.Method))
         {
-            plan.StartInclude(ResolveProperty(ExtractLambda(call.Arguments[1])));
+            plan.StartInclude(ResolveIncludeStep(ExtractLambda(call.Arguments[1])));
             return;
         }
 
         if (AccessQueryExtensions.IsThenIncludeMethod(call.Method))
         {
-            plan.ExtendInclude(ResolveProperty(ExtractLambda(call.Arguments[1])));
+            plan.ExtendInclude(ResolveIncludeStep(ExtractLambda(call.Arguments[1])));
             return;
         }
 
@@ -210,21 +211,144 @@ internal static class AccessQueryTranslator
         _ => Expression.Lambda(expression).Compile().DynamicInvoke(),
     };
 
-    private static PropertyInfo ResolveProperty(LambdaExpression navigation)
+    /// <summary>
+    /// Resolves an <c>Include</c> / <c>ThenInclude</c> navigation lambda into the navigation
+    /// property plus any inline collection operators. The lambda is either a plain property
+    /// access (<c>o =&gt; o.Customer</c>) or, for a collection navigation, that access wrapped
+    /// in an EF-style filtered / ordered include chain
+    /// (<c>o =&gt; o.Items.Where(...).OrderBy(...).Take(n)</c>). The chain is peeled from the
+    /// outside in down to the property; the operators are returned in written (execution) order.
+    /// </summary>
+    /// <param name="navigation">The navigation lambda.</param>
+    /// <returns>The navigation property and its inline operators (empty for a plain access).</returns>
+    private static IncludeStep ResolveIncludeStep(LambdaExpression navigation)
     {
-        Expression body = navigation.Body;
-        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        Expression body = StripConvert(navigation.Body);
+        var calls = new List<MethodCallExpression>();
+        while (body is MethodCallExpression call && IsIncludeOperation(call))
         {
-            body = unary.Operand;
+            calls.Add(call);
+            body = StripConvert(call.Arguments[0]);
         }
 
-        if (body is MemberExpression { Member: PropertyInfo property })
+        PropertyInfo property = ResolveMember(body);
+        calls.Reverse();
+        return new IncludeStep(property, BuildIncludeOperations(calls));
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="call"/> is one of the inline collection operators a
+    /// filtered / ordered include may carry (<c>Where</c>, the four orderings, <c>Skip</c>,
+    /// <c>Take</c>), declared on <see cref="Enumerable"/> or <see cref="Queryable"/>. The
+    /// indexed <c>Where</c> overload is excluded — only a single-parameter predicate qualifies.
+    /// </summary>
+    /// <param name="call">The candidate operator call inside the navigation lambda.</param>
+    /// <returns><see langword="true"/> when the call is a supported include operator.</returns>
+    private static bool IsIncludeOperation(MethodCallExpression call)
+    {
+        if (call.Arguments.Count != 2 ||
+            (call.Method.DeclaringType != typeof(Enumerable) && call.Method.DeclaringType != typeof(Queryable)))
+        {
+            return false;
+        }
+
+        return call.Method.Name switch
+        {
+            "Where" => IsSingleParameterLambda(call.Arguments[1]),
+            "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Skip" or "Take" => true,
+            _ => false,
+        };
+    }
+
+    private static List<IncludeOperation> BuildIncludeOperations(List<MethodCallExpression> calls)
+    {
+        if (calls.Count == 0)
+        {
+            return [];
+        }
+
+        var operations = new List<IncludeOperation>(calls.Count);
+        IncludeOrderOperation? currentOrder = null;
+        foreach (MethodCallExpression call in calls)
+        {
+            switch (call.Method.Name)
+            {
+                case "Where":
+                    currentOrder = null;
+                    operations.Add(new IncludeFilterOperation(ExtractLambda(call.Arguments[1])));
+                    break;
+                case "OrderBy":
+                    currentOrder = StartOrdering(operations, ExtractLambda(call.Arguments[1]), descending: false);
+                    break;
+                case "OrderByDescending":
+                    currentOrder = StartOrdering(operations, ExtractLambda(call.Arguments[1]), descending: true);
+                    break;
+                case "ThenBy":
+                    currentOrder = ContinueOrdering(currentOrder, operations, ExtractLambda(call.Arguments[1]), descending: false);
+                    break;
+                case "ThenByDescending":
+                    currentOrder = ContinueOrdering(currentOrder, operations, ExtractLambda(call.Arguments[1]), descending: true);
+                    break;
+                case "Skip":
+                    currentOrder = null;
+                    operations.Add(new IncludeSkipOperation(ToCount(call.Arguments[1])));
+                    break;
+                case "Take":
+                    currentOrder = null;
+                    operations.Add(new IncludeTakeOperation(ToCount(call.Arguments[1])));
+                    break;
+                default:
+                    throw NotSupported(call.Method.Name);
+            }
+        }
+
+        return operations;
+    }
+
+    private static IncludeOrderOperation StartOrdering(List<IncludeOperation> operations, LambdaExpression selector, bool descending)
+    {
+        var order = new IncludeOrderOperation();
+        order.AddKey(selector, descending);
+        operations.Add(order);
+        return order;
+    }
+
+    private static IncludeOrderOperation ContinueOrdering(
+        IncludeOrderOperation? current,
+        List<IncludeOperation> operations,
+        LambdaExpression selector,
+        bool descending)
+    {
+        // ThenBy refines the most recent ordering run; if none is open (a malformed tree),
+        // start a fresh ordering rather than crash.
+        IncludeOrderOperation order = current ?? StartOrdering(operations, selector, descending);
+        if (current is not null)
+        {
+            order.AddKey(selector, descending);
+        }
+
+        return order;
+    }
+
+    private static int ToCount(Expression expression) =>
+        Convert.ToInt32(EvaluateConstant(expression), CultureInfo.InvariantCulture);
+
+    private static Expression StripConvert(Expression expression) =>
+        expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+            ? unary.Operand
+            : expression;
+
+    private static PropertyInfo ResolveMember(Expression body)
+    {
+        if (StripConvert(body) is MemberExpression { Member: PropertyInfo property })
         {
             return property;
         }
 
         throw new NotSupportedException(
-            "An Include navigation must be a property access, for example o => o.Customer or c => c.Orders.");
+            "An Include navigation must be a property access, optionally followed by Where / OrderBy / "
+            + "OrderByDescending / ThenBy / ThenByDescending / Skip / Take on a collection navigation, "
+            + "for example o => o.Customer, c => c.Orders, or c => c.Orders.Where(o => o.Open).Take(5).");
     }
 
     private static NotSupportedException NotSupported(string operatorName) =>
