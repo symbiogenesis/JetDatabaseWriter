@@ -968,23 +968,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // runs (skipping over every dead leaf in the run).
         var emptyingLeafSiblings = new Dictionary<long, (long Prev, long Next)>();
 
-        // For ascending-up propagation when a parent's max key changes, we
-        // need to know which child-index in the GRANDPARENT this parent
-        // occupies. The captured DescentStep for the grandparent already
-        // carries TakenIndex pointing at this parent's slot.
-
         long nextAllocatedPageNumber = writer.PhysicalPageCount;
 
-        // ── Pre-pass: classify which leaves will empty out so the
-        // chain-detach logic below can tolerate a contiguous run of
-        // emptying leaves. Without this set the
-        // `groups.ContainsKey(neighbor)` guard bails on every internal
-        // group whose immediate sibling is also being emptied — which is
-        // exactly the workload required to engage the recursive
-        // intermediate-collapse path. With it, when both neighbours are
-        // also empty-targets we simply skip patching their pointer-bytes
-        // (they're being orphaned together; no surviving page needs to
-        // skip them).
+        // Pre-pass: classify which leaves will empty out so the merge logic
+        // below can tolerate a contiguous run of emptying leaves. When a
+        // neighbour is itself an empty-target we skip patching its pointer
+        // bytes (the whole run is orphaned together).
         var emptyingLeaves = new HashSet<long>();
         foreach (LeafGroup pre in groups.Values)
         {
@@ -1064,44 +1053,22 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     return false;
                 }
 
-                // a contiguous run of emptying
-                // leaves is allowed; we skip the pair-wise chain-detach
-                // here for any neighbour that is also being orphaned.
-                // The surviving boundary pointers are patched once after
-                // the per-group loop completes (see "boundary stitching"
-                // pass below) so they correctly skip the entire run.
-                // For surviving neighbours that are ALSO in `groups`
-                // (being mutated for content) we still bail, because
-                // merge has no way to coordinate a content rewrite +
-                // pointer patch on the same page.
-                bool prevAlsoEmptying = leafPrev > 0 && emptyingLeaves.Contains(leafPrev);
-                bool nextAlsoEmptying = leafNext > 0 && emptyingLeaves.Contains(leafNext);
-
-                if (leafPrev > 0 && groups.ContainsKey(leafPrev) && !prevAlsoEmptying)
+                // A neighbour that is ALSO being content-mutated in this
+                // batch (present in `groups` but not itself emptying) can't
+                // be coordinated with a merge — bail. Neighbours that are
+                // themselves emptying are fine: every dead leaf records its
+                // (prev, next) below and the single "boundary stitching"
+                // pass re-links the surviving pages, skipping whole runs of
+                // contiguous dead leaves (a standalone dead leaf is just a
+                // run of length one).
+                if (leafPrev > 0 && groups.ContainsKey(leafPrev) && !emptyingLeaves.Contains(leafPrev))
                 {
                     return false;
                 }
 
-                if (leafNext > 0 && groups.ContainsKey(leafNext) && !nextAlsoEmptying)
+                if (leafNext > 0 && groups.ContainsKey(leafNext) && !emptyingLeaves.Contains(leafNext))
                 {
                     return false;
-                }
-
-                // Per-group pair-wise patches happen ONLY when both
-                // surviving neighbours are non-emptying (the standalone
-                // dead-leaf case). Runs of two
-                // or more emptying leaves are stitched together below.
-                if (!prevAlsoEmptying && !nextAlsoEmptying)
-                {
-                    if (leafPrev > 0 && !leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
-                    {
-                        return false;
-                    }
-
-                    if (leafNext > 0 && !leafNextPointerPatches.TryAdd(leafNext, leafPrev))
-                    {
-                        return false;
-                    }
                 }
 
                 emptyingLeafSiblings[group.LeafPage] = (leafPrev, leafNext);
@@ -1202,11 +1169,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         // run-boundary stitching ───────────────────────────
-        // For each contiguous run of emptying leaves with at least one
-        // surviving boundary on either side, patch the surviving page's
-        // sibling pointer to skip OVER the entire run. Per-group patches
-        // above only fire for standalone empty leaves; runs of 2+ are
-        // stitched here.
+        // For each contiguous run of one or more emptying leaves, patch the
+        // surviving pages on either side so their sibling pointers skip OVER
+        // every dead leaf in the run. This is the single place leaf-chain
+        // re-linking happens for merges (a standalone dead leaf is just a
+        // run of length one).
         foreach ((long deadPage, (long deadPrev, long deadNext)) in emptyingLeafSiblings)
         {
             // Only act at run boundaries: this dead leaf has at least one
@@ -1221,10 +1188,10 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
             // Walk the run rightwards from deadPage to find the first
             // non-emptying page (or 0 = chain terminus).
-            long surv = deadNext;
-            while (surv > 0 && emptyingLeafSiblings.ContainsKey(surv))
+            long survRight = deadNext;
+            while (survRight > 0 && emptyingLeafSiblings.ContainsKey(survRight))
             {
-                surv = emptyingLeafSiblings[surv].Next;
+                survRight = emptyingLeafSiblings[survRight].Next;
             }
 
             // Walk leftwards similarly.
@@ -1238,8 +1205,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             // dead leaves in the same run all compute the same survLeft /
             // survRight, so TryAdd may legitimately collide; treat the
             // collision as success when the staged value matches).
-            if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev) && !leafPrevPointerPatches.TryAdd(deadPrev, surv) &&
-                    leafPrevPointerPatches[deadPrev] != surv)
+            if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev) && !leafPrevPointerPatches.TryAdd(deadPrev, survRight) &&
+                    leafPrevPointerPatches[deadPrev] != survRight)
             {
                 return false;
             }
@@ -1331,17 +1298,15 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             await writer.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
         }
 
-        long? newRootPage = stagingState.NewRootPage;
-
-        // if the root intermediate split, patch the real-idx
-        // first_dp slot on the TDEF page to point at the freshly-allocated
-        // root. The new root page itself was already appended via
-        // newPageAppends above, so the page number is stable.
-        if (newRootPage.HasValue)
+        // If the root intermediate split, patch the real-idx first_dp slot
+        // on the TDEF page to point at the freshly-allocated root. The new
+        // root page itself was already appended via newPageAppends above, so
+        // the page number is stable.
+        if (stagingState.NewRootPage is long newRootPage)
         {
             byte[] tdefBytes = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-            Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage.Value));
+            Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage));
             await writer.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
         }
 
@@ -1568,38 +1533,32 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // value via the lookup below.
         var intermediateTailOverrides = new Dictionary<long, long>(parentOps.Count * 2);
 
-        // Also: remember each group's path so we can propagate max-key
-        // changes upward when a parent's rewrite changes its own max.
+        // Single pass over every captured path builds all three per-
+        // intermediate maps: a reference DescentStep (header preservation +
+        // original entries), the grandparent link, and the deepest level at
+        // which each page appears. Depth drives the deepest-first processing
+        // order below. parentOps initially keys ONLY parent-of-leaf
+        // intermediates; propagating max-key changes upward adds ops to
+        // shallower intermediates as the loop runs.
+        var depthOf = new Dictionary<long, int>(parentOps.Count * 2);
         foreach (LeafGroup group in groups.Values)
         {
             for (int level = 0; level < group.Path.Count; level++)
             {
                 DescentStep step = group.Path[level];
-                if (!intermediateRefs.ContainsKey(step.PageNumber))
+                long pn = step.PageNumber;
+
+                if (!intermediateRefs.ContainsKey(pn))
                 {
-                    intermediateRefs[step.PageNumber] = step;
+                    intermediateRefs[pn] = step;
                 }
 
                 if (level > 0)
                 {
                     DescentStep parent = group.Path[level - 1];
-                    intermediateGrandparent[step.PageNumber] = (parent.PageNumber, parent.TakenIndex);
+                    intermediateGrandparent[pn] = (parent.PageNumber, parent.TakenIndex);
                 }
-            }
-        }
 
-        // Process intermediates from deepest level up. We don't know depth
-        // explicitly, but parentOps initially keys ONLY parent-of-leaf
-        // intermediates. As we propagate max-key changes up, we add ops to
-        // shallower intermediates. Process in passes, deepest first.
-
-        // Compute depth of each intermediate via the captured paths.
-        var depthOf = new Dictionary<long, int>(intermediateRefs.Count);
-        foreach (LeafGroup group in groups.Values)
-        {
-            for (int level = 0; level < group.Path.Count; level++)
-            {
-                long pn = group.Path[level].PageNumber;
                 if (!depthOf.TryGetValue(pn, out int existingDepth) || existingDepth < level)
                 {
                     depthOf[pn] = level;
@@ -1614,20 +1573,20 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             cancellationToken.ThrowIfCancellationRequested();
 
             // Pick the deepest pending page.
-            long deepest = pending[0];
-            int deepestDepth = depthOf.TryGetValue(deepest, out int d0) ? d0 : -1;
+            int deepestIdx = 0;
+            int deepestDepth = depthOf.GetValueOrDefault(pending[0], -1);
             for (int i = 1; i < pending.Count; i++)
             {
-                long candidate = pending[i];
-                int cd = depthOf.TryGetValue(candidate, out int dc) ? dc : -1;
+                int cd = depthOf.GetValueOrDefault(pending[i], -1);
                 if (cd > deepestDepth)
                 {
-                    deepest = candidate;
+                    deepestIdx = i;
                     deepestDepth = cd;
                 }
             }
 
-            pending.Remove(deepest);
+            long deepest = pending[deepestIdx];
+            pending.RemoveAt(deepestIdx);
 
             if (!parentOps.TryGetValue(deepest, out List<IntermediateOp>? ops) || ops.Count == 0)
             {
@@ -1753,13 +1712,9 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 int nSplit = splitInts.Count;
 
                 // First split page reuses `deepest`; remaining pages are
-                // freshly allocated.
-                long[] intPageNumbers = new long[nSplit];
-                intPageNumbers[0] = deepest;
-                for (int p = 1; p < nSplit; p++)
-                {
-                    intPageNumbers[p] = stagingState.NextAllocatedPageNumber++;
-                }
+                // freshly allocated from the staging counter.
+                long[] intPageNumbers = AllocateSplitPageNumbers(deepest, nSplit, stagingState.NextAllocatedPageNumber);
+                stagingState.NextAllocatedPageNumber += nSplit - 1;
 
                 // Compute each split page's tail_page.
                 long[] intTails = new long[nSplit];
