@@ -1165,7 +1165,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        var updateIndexes = new Dictionary<int, object>();
+        var updateIndexes = new Dictionary<int, object>(updatedValues.Count);
         foreach (KeyValuePair<string, object?> kvp in updatedValues)
         {
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
@@ -1182,11 +1182,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<RowLocation> locations = await this.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
-        // Build the post-update payload for every row that matches the predicate,
-        // up front, so all FK / unique-index checks run before any disk page is
-        // mutated. The pre-update row is kept alongside each payload for the
-        // PK-cascade key build and the index-maintenance delete hints.
-        var pendingNewRows = new List<(int Index, object[] OldRow, object[] NewRow)>();
+        // Stage every matching row so FK / unique-index checks complete before
+        // any disk page is mutated.
+        var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1205,10 +1203,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             await this.Constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
 
-            pendingNewRows.Add((i, oldRow, newRow));
+            pendingUpdates.Add((i, oldRow, newRow));
         }
 
-        if (pendingNewRows.Count == 0)
+        if (pendingUpdates.Count == 0)
         {
             return 0;
         }
@@ -1220,15 +1218,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             // FK-side: every updated row must (still) satisfy any FK constraint
             // whose foreign side is THIS table.
-            foreach ((_, _, object[] newRow) in pendingNewRows)
+            foreach ((_, _, object[] newRow) in pendingUpdates)
             {
                 await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
             }
 
-            // PK-side: if any of the updated columns belongs to a PK referenced
-            // by a child table, gather (oldKey, newPkValues) pairs per affected
-            // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
-            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingNewRows.Count);
+            // PK-side: cascade or reject only when this update touches a referenced PK.
+            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingUpdates.Count);
             foreach (FkRelationship rel in rels)
             {
                 if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
@@ -1237,30 +1233,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
                 int[] pkIdx = new int[rel.PrimaryColumns.Count];
-                bool ok = true;
-                bool anyPkUpdated = false;
+                bool touchesPrimaryKey = false;
                 for (int i = 0; i < rel.PrimaryColumns.Count; i++)
                 {
-                    pkIdx[i] = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
-                    if (pkIdx[i] < 0)
+                    int columnIndex = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
+                    if (columnIndex < 0)
                     {
-                        ok = false;
+                        touchesPrimaryKey = false;
                         break;
                     }
 
-                    if (updateIndexes.ContainsKey(pkIdx[i]))
-                    {
-                        anyPkUpdated = true;
-                    }
+                    pkIdx[i] = columnIndex;
+                    touchesPrimaryKey |= updateIndexes.ContainsKey(columnIndex);
                 }
 
-                if (!ok || !anyPkUpdated)
+                if (!touchesPrimaryKey)
                 {
                     continue;
                 }
 
                 changes.Clear();
-                foreach ((_, object[] oldRow, object[] newRow) in pendingNewRows)
+                foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
                 {
                     string? oldKey = RelationshipKeyBuilder.Build(oldRow, pkIdx);
                     changes.Add((oldKey, oldRow, newRow));
@@ -1272,17 +1265,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // Pre-write unique-index enforcement: after FK checks succeed,
         // validate that the post-update key set contains no duplicates for
-        // any unique index. The check sees the snapshot with pendingNewRows
+        // any unique index. The check sees the snapshot with pendingUpdates
         // substituted at their original indices.
-        await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
+        await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingUpdates, cancellationToken).ConfigureAwait(false);
 
-        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
-        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
-        foreach ((int i, object[] oldRow, object[] newRow) in pendingNewRows)
+        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
-            updateDeletedHints.Add((locations[i], oldRow));
+            RowLocation oldLoc = locations[i];
+            await this.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            updateDeletedHints.Add((oldLoc, oldRow));
             RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, newRow));
         }
@@ -1298,7 +1292,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
-        return pendingNewRows.Count;
+        return pendingUpdates.Count;
     }
 
     /// <inheritdoc/>
