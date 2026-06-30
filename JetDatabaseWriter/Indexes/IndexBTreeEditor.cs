@@ -610,8 +610,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return true;
         }
 
-        // 1. Path-capturing descent with the FIRST change key.
-        byte[] firstKey = addEntries.Count > 0 ? addEntries[0].Key : removeEntries[0].Key;
+        bool hasAdds = addEntries.Count > 0;
+        byte[] firstKey = hasAdds ? addEntries[0].Key : removeEntries[0].Key;
         var path = new List<DescentStep>();
         long targetLeafPage = await this.DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
         if (targetLeafPage <= 0 || path.Count == 0)
@@ -622,9 +622,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        // 2. Verify every other change targets the same leaf via fast re-walk.
-        int firstAdd = addEntries.Count > 0 ? 1 : 0;
-        for (int i = firstAdd; i < addEntries.Count; i++)
+        int firstUncheckedAdd = hasAdds ? 1 : 0;
+        for (int i = firstUncheckedAdd; i < addEntries.Count; i++)
         {
             if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, addEntries[i].Key))
             {
@@ -632,8 +631,8 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
         }
 
-        int rstart = addEntries.Count > 0 ? 0 : 1;
-        for (int i = rstart; i < removeEntries.Count; i++)
+        int firstUncheckedRemove = hasAdds ? 0 : 1;
+        for (int i = firstUncheckedRemove; i < removeEntries.Count; i++)
         {
             if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, removeEntries[i].Key))
             {
@@ -641,7 +640,6 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
         }
 
-        // 3. Read the target leaf and decode existing entries.
         byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
@@ -656,22 +654,17 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        // 4. Splice the change-set into the live leaf entries.
         var removePtrs = new List<(long DataPage, byte DataRow)>(removeEntries.Count);
-        foreach ((_, long dp, byte dr) in removeEntries)
+        for (int i = 0; i < removeEntries.Count; i++)
         {
-            removePtrs.Add((dp, dr));
+            IndexEntry removeEntry = removeEntries[i];
+            removePtrs.Add((removeEntry.DataPage, removeEntry.DataRow));
         }
 
         List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existingLeafEntries, addEntries, removePtrs);
-        if (spliced is null)
+        if (spliced is not { Count: > 0 })
         {
-            return false;
-        }
-
-        if (spliced.Count == 0)
-        {
-            // Leaf-becomes-empty underflow is out of scope for this code path.
+            // Splice rejection and empty-leaf underflow are out of scope for this path.
             return false;
         }
 
@@ -682,42 +675,35 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
-        // 5. Try to fit the spliced entries on the original leaf page.
         byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
             layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
             IndexEntry newLast = spliced[^1];
-            bool maxUnchanged = IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) == 0;
+            List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
 
-            if (maxUnchanged)
+            if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
             {
-                // Pure in-place leaf rewrite — no parent updates needed.
-                await writer.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
-                return true;
+                var newSummary = new DecodedIntermediateEntry(new(newLast.Key, newLast.DataPage, newLast.DataRow), ChildPage: targetLeafPage);
+                ancestorWrites = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
+                if (ancestorWrites is null)
+                {
+                    return false;
+                }
             }
 
-            // Max key changed → walk path replacing parent's summary entry
-            // for this leaf (and propagating up while the change is to the
-            // last summary on each ancestor).
-            var newSummary = new DecodedIntermediateEntry(new(newLast.Key, newLast.DataPage, newLast.DataRow), ChildPage: targetLeafPage);
-            List<(long PageNum, byte[] Bytes)>? ancestorWrites = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
-            if (ancestorWrites is null)
-            {
-                return false;
-            }
-
-            // Commit: leaf first, then ancestors.
             await writer.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
-            foreach ((long pn, byte[] bytes) in ancestorWrites)
+            if (ancestorWrites is not null)
             {
-                await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                foreach ((long pn, byte[] bytes) in ancestorWrites)
+                {
+                    await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             return true;
         }
 
-        // 6. Try an N-way leaf split (greedy left-fill).
         // Bails only if a single entry exceeds page payload area.
         SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, writer.PageSizeBytes, spliced);
         if (splitPages is null)
@@ -738,9 +724,6 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         DecodedIntermediateEntry[] summaries = BuildSplitSummaries(splitPages, pageNumbers);
-
-        // Compute parent (and grandparent, ...) writes WITHOUT committing —
-        // bail cleanly on overflow.
         List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = this.PrepareAncestorSplitWrites(
             layout, tdefPage, path, summaries);
         if (splitAncestorWrites is null)
@@ -753,6 +736,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         //   (b) Patch leafNext.prev_page to point at the LAST new page.
         //   (c) Rewrite the original leaf in place as the new LEFT-most.
         //   (d) Rewrite parent + ancestors in place with the new summaries.
+        long lastSplitPage = pageNumbers[^1];
         if (!await this.TryAppendContiguousAsync(new ArraySegment<byte[]>(pageBytesAll, 1, splitCount - 1), cancellationToken).ConfigureAwait(false))
         {
             return false;
@@ -760,7 +744,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         if (leafNext > 0)
         {
-            await this.PatchPrevPointerAsync(layout, leafNext, pageNumbers[splitCount - 1], cancellationToken).ConfigureAwait(false);
+            await this.PatchPrevPointerAsync(layout, leafNext, lastSplitPage, cancellationToken).ConfigureAwait(false);
         }
 
         await writer.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
