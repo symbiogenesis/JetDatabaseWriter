@@ -188,7 +188,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.lockFileCoordinator.Acquire();
         try
         {
-            this.ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            this.ByteRangeLockCore = options.CreateByteRangeLock(stream);
         }
         catch
         {

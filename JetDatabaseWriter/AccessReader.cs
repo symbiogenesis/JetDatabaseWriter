@@ -164,7 +164,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // half-built reader, so failed construction after slot acquisition
             // must release the lock-file slot through DisposeReaderConstructionResources.
             this.lockFile.Acquire();
-            this.ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            this.ByteRangeLockCore = options.CreateByteRangeLock(stream);
             constructionComplete = true;
         }
         finally

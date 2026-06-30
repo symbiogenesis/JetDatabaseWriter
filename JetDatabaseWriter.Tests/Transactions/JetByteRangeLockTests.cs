@@ -62,6 +62,17 @@ public sealed class JetByteRangeLockTests : IDisposable
     }
 
     [Fact]
+    public void Create_NegativeLockTimeout_ThrowsArgumentOutOfRangeException()
+    {
+        using var ms = new MemoryStream();
+
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            JetByteRangeLock.Create(ms, enabled: false, lockTimeoutMilliseconds: -1));
+
+        Assert.Equal("value", ex.ParamName);
+    }
+
+    [Fact]
     public void Acquire_SameInstance_TwoPages_BothSucceed()
     {
         using FileStream fs = OpenReadWriteStream(this.tempPath);

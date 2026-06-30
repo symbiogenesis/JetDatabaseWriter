@@ -738,41 +738,21 @@ internal static class EncryptionManager
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
-        LockFileSlotWriter? lockSlot = AcquireReencryptLockSlot(path, options);
-        try
-        {
-            byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+        using var lockFile = LockFileCoordinator.ForReencrypt(path, options);
+        lockFile.Acquire();
 
-            byte[] result = await ReencryptCoreAsync(
-                sourceStream,
-                oldPassword,
-                newPassword,
-                targetFormat,
-                requireSourceEncrypted,
-                cancellationToken).ConfigureAwait(false);
+        byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
 
-            await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            lockSlot?.Dispose();
-        }
-    }
+        byte[] result = await ReencryptCoreAsync(
+            sourceStream,
+            oldPassword,
+            newPassword,
+            targetFormat,
+            requireSourceEncrypted,
+            cancellationToken).ConfigureAwait(false);
 
-    private static LockFileSlotWriter? AcquireReencryptLockSlot(string path, AccessWriterOptions? options)
-    {
-        if (options?.UseLockFile == false)
-        {
-            return null;
-        }
-
-        return LockFileSlotWriter.Open(
-            path,
-            nameof(AccessWriter),
-            respectExisting: options?.RespectExistingLockFile ?? true,
-            machineName: options?.LockFileMachineName,
-            userName: options?.LockFileUserName);
+        await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)

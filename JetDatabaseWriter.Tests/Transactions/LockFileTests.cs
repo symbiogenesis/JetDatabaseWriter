@@ -417,12 +417,33 @@ public sealed class LockFileTests : IDisposable
     }
 
     [Fact]
+    public void AccessReaderOptions_UseByteRangeLocks_DefaultsToFalse()
+    {
+        var options = new AccessReaderOptions();
+        Assert.False(options.UseByteRangeLocks);
+    }
+
+    [Fact]
+    public void AccessWriterOptions_UseByteRangeLocks_DefaultsToPlatformSupport()
+    {
+        var options = new AccessWriterOptions();
+        Assert.Equal(JetByteRangeLock.PlatformSupportsByteRangeLocks(), options.UseByteRangeLocks);
+    }
+
+    [Fact]
+    public void AccessOptions_LockTimeoutMilliseconds_DefaultsToFiveSeconds()
+    {
+        Assert.Equal(5_000, new AccessReaderOptions().LockTimeoutMilliseconds);
+        Assert.Equal(5_000, new AccessWriterOptions().LockTimeoutMilliseconds);
+    }
+
+    [Fact]
     public async Task DisposeAfterAsync_WhenOneStepFails_ThrowsOriginalException()
     {
         using var coordinator = new LockFileCoordinator(
             string.Empty,
             nameof(LockFileTests),
-            new LockFileSettings(Enabled: false));
+            new LockFileSettings(Enabled: false, RespectExisting: false, UserName: string.Empty, MachineName: string.Empty));
         var expected = new InvalidOperationException("first cleanup failed");
 
         InvalidOperationException actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -437,7 +458,7 @@ public sealed class LockFileTests : IDisposable
         using var coordinator = new LockFileCoordinator(
             string.Empty,
             nameof(LockFileTests),
-            new LockFileSettings(Enabled: false));
+            new LockFileSettings(Enabled: false, RespectExisting: false, UserName: string.Empty, MachineName: string.Empty));
         var first = new InvalidOperationException("first cleanup failed");
         var second = new IOException("second cleanup failed");
         int stepsRun = 0;
@@ -712,7 +733,9 @@ public sealed class LockFileTests : IDisposable
         _ = LockFileSlotWriter.Open(
             dbPath,
             ownerTypeName: nameof(LockFileTests),
-            respectExisting: false);
+            respectExisting: false,
+            machineName: "TESTHOST",
+            userName: "tester");
 #pragma warning restore CA2000
 
     private static string ReadAsciiField(byte[] bytes, int offset, int length)
