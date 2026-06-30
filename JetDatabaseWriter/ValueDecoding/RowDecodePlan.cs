@@ -157,16 +157,10 @@ internal sealed class RowDecodePlan
         in RowLayout layout,
         ColumnInfo col)
     {
-        bool nullBit = false;
-        if (col.ColNum < layout.NumCols)
-        {
-            int mByte = layout.NullMaskPos + (col.ColNum / 8);
-            int mBit = col.ColNum % 8;
-            if (mByte < rowSize)
-            {
-                nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-            }
-        }
+        bool nullBit = col.ColNum < layout.NumCols
+            && JetTypeInfo.IsNullMaskBitSet(
+                page.Slice(rowStart + layout.NullMaskPos, rowSize - layout.NullMaskPos),
+                col.ColNum);
 
         if (col.Type == BooleanType && !col.IsCalculated)
         {

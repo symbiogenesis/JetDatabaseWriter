@@ -1001,9 +1001,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             int numCols = this.writer.ReadRowColumnCount(page, parentRowStart);
             int nullMaskSz = GetNullMaskSizeBytes(numCols);
             int nullMaskPos = parentRowSize - nullMaskSz;
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
+            bool slotSet = IsNullMaskBitSet(page.AsSpan(parentRowStart + nullMaskPos, nullMaskSz), complexCol.ColNum);
 
             int slotOff = parentRowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
@@ -1049,12 +1047,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
 
             Wi32(page, slotOff, conceptualTableId);
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            if (byteOff < rowSize)
-            {
-                page[rowStart + byteOff] |= (byte)(1 << bitOff);
-            }
+            SetNullMaskBit(page.AsSpan(rowStart + nullMaskPos, nullMaskSz), complexCol.ColNum, true);
 
             await this.writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
@@ -1241,10 +1234,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    int byteOff = nullMaskPos + (col.ColNum / 8);
-                    int bitOff = col.ColNum % 8;
-                    bool slotSet = byteOff < loc.RowSize
-                        && (page[loc.RowStart + byteOff] & (1 << bitOff)) != 0;
+                    bool slotSet = IsNullMaskBitSet(page.AsSpan(loc.RowStart + nullMaskPos, nullMaskSz), col.ColNum);
                     if (!slotSet)
                     {
                         continue;

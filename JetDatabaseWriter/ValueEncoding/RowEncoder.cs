@@ -49,33 +49,6 @@ internal sealed class RowEncoder(AccessWriter writer)
         return LongValueStore.WrapInlineLongValue(data);
     }
 
-    internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
-        => SetNullMaskBit(mask.AsSpan(), columnNumber, state);
-
-    internal static void SetNullMaskBit(Span<byte> mask, int columnNumber, bool state)
-    {
-        if (columnNumber < 0)
-        {
-            return;
-        }
-
-        int byteOffset = columnNumber / 8;
-        int bitOffset = columnNumber % 8;
-        if (byteOffset >= mask.Length)
-        {
-            return;
-        }
-
-        if (state)
-        {
-            mask[byteOffset] |= (byte)(1 << bitOffset);
-        }
-        else
-        {
-            mask[byteOffset] &= (byte)~(1 << bitOffset);
-        }
-    }
-
     private static int TryEncodeFixedValue(ColumnInfo column, object value, Span<byte> dest)
     {
         switch (column.Type)
@@ -336,7 +309,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
-                    SetNullMaskBit(nullMask, column.ColNum, true);
+                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 
                 continue;
@@ -372,7 +345,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 }
 
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
-                SetNullMaskBit(nullMask, column.ColNum, true);
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
             }
             else
             {
@@ -384,7 +357,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
                 varEntries[column.VarIdx] = variableValue;
                 varPayloadSize += variableValue.Length;
-                SetNullMaskBit(nullMask, column.ColNum, true);
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
             }
         }
 
