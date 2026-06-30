@@ -764,6 +764,19 @@ internal static class JetTypeInfo
         b[o + 2] = (byte)((value >> 16) & 0xFF);
     }
 
+    internal static void WriteUInt24(Span<byte> b, int o, int value)
+    {
+        Wu16(b, o, value & 0xFFFF);
+        b[o + 2] = (byte)((value >> 16) & 0xFF);
+    }
+
+    internal static void WriteUInt24BigEndian(byte[] b, int o, int value)
+    {
+        b[o] = (byte)((value >> 16) & 0xFF);
+        b[o + 1] = (byte)((value >> 8) & 0xFF);
+        b[o + 2] = (byte)(value & 0xFF);
+    }
+
     internal static void WriteField(byte[] b, int o, int fieldSize, int value)
     {
         if (fieldSize == 1)
