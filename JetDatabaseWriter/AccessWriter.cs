@@ -1181,12 +1181,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<RowLocation> locations = await this.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
-        // FK enforcement: build the list of new-row payloads up front so we
-        // can validate FK constraints (FK-side parent presence, PK-side
-        // cascade-or-reject) before mutating any disk page.
-        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
-
+        // Build the post-update payload for every row that matches the predicate,
+        // up front, so all FK / unique-index checks run before any disk page is mutated.
         var pendingNewRows = new List<(int Index, object[] NewRow)>();
         for (int i = 0; i < total; i++)
         {
@@ -1208,8 +1204,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             pendingNewRows.Add((i, rowValues));
         }
 
-        if (fkCtx != null && pendingNewRows.Count > 0)
+        if (pendingNewRows.Count == 0)
         {
+            return 0;
+        }
+
+        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        if (rels.Count > 0)
+        {
+            var fkCtx = new FkContext(rels);
+
             // FK-side: every updated row must (still) satisfy any FK constraint
             // whose foreign side is THIS table.
             foreach ((_, object[] newRow) in pendingNewRows)
@@ -1267,12 +1271,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // validate that the post-update key set contains no duplicates for
         // any unique index. The check sees the snapshot with pendingNewRows
         // substituted at their original indices.
-        if (pendingNewRows.Count > 0)
-        {
-            await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
-        }
+        await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
 
-        int updated = 0;
         var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
         var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
         foreach ((int i, object[] rowValues) in pendingNewRows)
@@ -1283,24 +1283,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             updateDeletedHints.Add((locations[i], oldRow));
             RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, rowValues));
-            updated++;
         }
 
-        if (updated > 0)
+        bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            entry.TDefPage,
+            tableDef,
+            updateInsertedHints,
+            updateDeletedHints,
+            cancellationToken).ConfigureAwait(false);
+        if (!incremental)
         {
-            bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
-                entry.TDefPage,
-                tableDef,
-                updateInsertedHints,
-                updateDeletedHints,
-                cancellationToken).ConfigureAwait(false);
-            if (!incremental)
-            {
-                await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-            }
+            await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
-        return updated;
+        return pendingNewRows.Count;
     }
 
     /// <inheritdoc/>
