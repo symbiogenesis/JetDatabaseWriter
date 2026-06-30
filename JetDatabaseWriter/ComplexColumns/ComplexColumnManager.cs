@@ -20,7 +20,7 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202, SA1204
+#pragma warning disable SA1204
 
 /// <summary>
 /// Owns the Attachment / MultiValue (complex column) subsystem for

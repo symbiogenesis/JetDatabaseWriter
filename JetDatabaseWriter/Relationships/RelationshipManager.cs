@@ -17,7 +17,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202, SA1204
+#pragma warning disable SA1204
 
 /// <summary>
 /// Foreign-key relationship management for <see cref="AccessWriter"/>:
