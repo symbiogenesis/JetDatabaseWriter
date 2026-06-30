@@ -163,6 +163,18 @@ which is benign (mirroring the long-standing shared `DBNull.Value`).
   Gen0/Gen1 pressure visible in the table above (numeric untyped showed
   ~1,390 Gen0 + ~453 Gen1 collections per 1,000 ops). Status/flag/enum-heavy
   schemas — common in real Access databases — benefit the most.
+- **Measured (2026-06-29, ShortRun, same host as the baseline table):**
+  `Decode_Numeric_Untyped` 8.38 MB → 6.45 MB (−23%),
+  `Decode_Numeric_DataTable` 10.92 MB → 8.96 MB (−18%),
+  `Decode_Numeric_Untyped_TwoPass` 15.34 MB → 11.83 MB (−23%), and
+  `Decode_Numeric_ColdOpen_FirstScan` 10.81 MB → 8.64 MB (−20%); the zero-box
+  `Decode_Numeric_Typed` (3.67 → 3.50 MB) and `Decode_Numeric_AsStrings`
+  (9.13 → 8.92 MB) are neutral, as expected. Untyped-scan GC fell from
+  ~1,390/~453 to ~1,078/~359 Gen0/Gen1 per 1,000 ops. Only 3 of the fixture's 9
+  columns are interning-eligible (`ProductId` 1–200, `Quantity` 1–50, `StatusId`
+  1–5), so they account for the entire ~1.9 MB drop; a flag/enum-heavy schema
+  would gain more. Means are noisy under ShortRun, so only allocation (measured
+  deterministically by `MemoryDiagnoser`) is reported.
 - **Inherent limit:** high-cardinality columns (IDs, prices, timestamps) cannot
   be interned; for those, the *only* ways to avoid the box are recommendations
   **2** (don't decode the column) and **3** (decode into a typed field). The
