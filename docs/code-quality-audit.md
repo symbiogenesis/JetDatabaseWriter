@@ -323,9 +323,8 @@ regressions as the code evolves, and it makes the concurrency invariants hard to
 > (`Default` / `Clear`) instead of `bool clearRowData`, so every scrub call site
 > reads `DeletedRowDataMode.Clear` rather than a positional boolean. The
 > page-builder parameter lists were already addressed by the parameter-object
-> consolidation backlog
-> ([docs/design/parameter-object-consolidation-todos.md](design/parameter-object-consolidation-todos.md),
-> item #4): zero-pointer callers use the 4-argument convenience overloads, and
+> consolidation pass (item #4): zero-pointer callers use the 4-argument
+> convenience overloads, and
 > the sibling-preserving long-form `BuildLeafPage` / `BuildIntermediatePage`
 > overloads keep **named** `prevPage:` / `nextPage:` / `tailPage:` arguments.
 > That backlog deliberately **rejected** a sibling-pointer struct or tuple
