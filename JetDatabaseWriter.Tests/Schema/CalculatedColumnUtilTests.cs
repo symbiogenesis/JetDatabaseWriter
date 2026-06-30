@@ -4,8 +4,11 @@ using System;
 using System.Buffers.Binary;
 using System.Text;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
+using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Round-trip tests for the 23-byte calculated-value envelope helper used by
@@ -70,6 +73,21 @@ public sealed class CalculatedColumnUtilTests
 
         byte[] unwrapped = CalculatedColumnUtil.Unwrap(wrapped);
         Assert.Equal(wrapped.Length - Constants.CalculatedColumn.DataOffset, unwrapped.Length);
+    }
+
+    [Theory]
+    [InlineData(ComplexType)]
+    [InlineData(AttachmentType)]
+    public void ReadPayload_ComplexAndAttachment_UseFourByteComplexIdPayload(ColumnType columnType)
+    {
+        byte[] payload = new byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(payload, 42);
+
+        Assert.Equal("__CX:42__", CalculatedColumnUtil.ReadPayloadString(payload, columnType, strictNumeric: true));
+
+        object typed = CalculatedColumnUtil.ReadPayloadTyped(payload, columnType, strictNumeric: true);
+        ComplexIdRef complexId = Assert.IsType<ComplexIdRef>(typed);
+        Assert.Equal(42, complexId.Id);
     }
 
     [Fact]

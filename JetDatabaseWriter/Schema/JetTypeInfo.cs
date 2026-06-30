@@ -59,6 +59,42 @@ internal static class JetTypeInfo
     };
 
     /// <summary>
+    /// Returns <see langword="true"/> when a variable-length row slot stores a
+    /// fixed-size payload for <paramref name="type"/>, and returns the required
+    /// payload byte count. Complex and attachment parent columns use a 4-byte
+    /// complex-id payload even though their logical values live in hidden child
+    /// tables.
+    /// </summary>
+    /// <param name="type">JET column-type code (see <see cref="ColumnType"/>).</param>
+    /// <param name="byteCount">Receives the required fixed-payload byte count.</param>
+    public static bool TryGetVariableSlotFixedPayloadSize(ColumnType type, out int byteCount)
+    {
+        byteCount = type switch
+        {
+            ComplexType or AttachmentType => 4,
+            ByteType or
+            IntegerType or
+            LongIntegerType or
+            MoneyType or
+            FloatType or
+            DoubleType or
+            DateTimeType or
+            GuidType or
+            NumericType or
+            BigIntType or
+            DateTimeExtendedType => GetFixedSize(type),
+            BooleanType or
+            BinaryType or
+            TextType or
+            OleType or
+            MemoType or
+            _ => 0,
+        };
+
+        return byteCount > 0;
+    }
+
+    /// <summary>
     /// Returns <see langword="true"/> for the four JET types
     /// (<c>TEXT/BINARY/MEMO/OLE</c>) that are <i>always</i> stored in the
     /// row's variable-length area. Other types may still live in the variable
