@@ -2,9 +2,11 @@
 
 **Scope:** the `JetDatabaseWriter` library project (production code only — tests, benchmarks,
 and FormatProbe excluded except where noted).
-**Date:** 2026-06-16.
+**Date:** 2026-06-16 (metrics re-verified 2026-06-30).
 **Method:** static review of file/method size metrics, exception-handling patterns, public API
 surface, concurrency primitives, and analyzer-suppression density.
+**Status:** findings #3–#8 and #10 are resolved (see each section); #1 (god classes) and #2
+(monster methods) remain open; #9 and #11 are low-priority and tracked alongside #1/#2.
 
 > **Context first.** This is a disciplined, well-tested codebase: strict build settings
 > (`WarningLevel 9999`, `AnalysisLevel latest-all`, warnings-as-errors, StyleCop + Roslynator +
@@ -41,16 +43,16 @@ so each is a single, monolithic, hard-to-navigate file.
 
 | Type | Lines | Role |
 |------|------:|------|
-| [JetDatabaseWriter/AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs) | 3,442 | public writer facade |
-| [JetDatabaseWriter/AccessReader.cs](JetDatabaseWriter/AccessReader.cs) | 2,925 | public reader facade |
-| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,802 | B-tree mutation |
-| [JetDatabaseWriter/AccessBase.cs](JetDatabaseWriter/AccessBase.cs) | 1,620 | shared base |
-| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,501 | attachments/multivalue |
-| [JetDatabaseWriter/Relationships/RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,410 | FK lifecycle |
-| [JetDatabaseWriter/Indexes/IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,307 | index orchestration |
+| [JetDatabaseWriter/AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs) | 3,146 | public writer facade |
+| [JetDatabaseWriter/AccessReader.cs](JetDatabaseWriter/AccessReader.cs) | 2,885 | public reader facade |
+| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 2,027 | B-tree mutation |
+| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,685 | attachments/multivalue |
+| [JetDatabaseWriter/Indexes/IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,618 | index orchestration |
+| [JetDatabaseWriter/Relationships/RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,583 | FK lifecycle |
+| [JetDatabaseWriter/AccessBase.cs](JetDatabaseWriter/AccessBase.cs) | 1,419 | shared base |
 
 `AccessWriter` is the clearest offender. It is declared at
-[AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L44) as a single `sealed` class that:
+[AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L41) as a single `sealed` class that:
 
 - implements two public interfaces (`IAccessWriter`, `IAccessSchema`) plus the `AccessBase` contract;
 - owns **~15 collaborator fields** (lock coordinator, index maintainer, TDEF builder, long-value
@@ -86,15 +88,15 @@ interim step.
 [IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) contains several methods that are
 each longer than many entire classes:
 
-- [`TrySurgicalCrossLeafMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L911) — **~438 lines** (911–1349).
-- [`TryStageIntermediateRewritesAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1528) — **~412 lines** (1528–1940).
-- [`TrySurgicalMultiLevelMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L398) — **~218 lines** (398–615).
+- [`TrySurgicalCrossLeafMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L911) — **~440 lines**.
+- [`TryStageIntermediateRewritesAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1528) — **~430 lines**.
+- [`TrySurgicalMultiLevelMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L398) — **~218 lines**.
 
 In [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs):
 
-- [`UpdateRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1102) — ~164 lines (1102–1265).
-- [`CreateCatalogTableArtifactAsync`](JetDatabaseWriter/AccessWriter.cs#L633) — ~140 lines (633–772).
-- [`DeleteRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1266) — ~114 lines (1266–1380).
+- [`UpdateRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1152) — ~165 lines.
+- [`CreateCatalogTableArtifactAsync`](JetDatabaseWriter/AccessWriter.cs#L633) — ~140 lines.
+- [`DeleteRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1320) — ~110 lines.
 
 These methods interleave several distinct phases (descent, validation, splice, page rewrite,
 parent/ancestor patching) with deep nesting and many local mutable variables. They are the riskiest

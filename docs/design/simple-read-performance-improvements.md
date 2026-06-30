@@ -1,7 +1,7 @@
 # Simple-read performance improvements
 
-Status: open proposal (evidence-gathered, not yet implemented)
-Date: 2026-06-16
+Status: largely implemented (2026-06-16 – 2026-06-29). Sections 1 and 3–6 shipped; section 2 (a public projection surface for untyped callers) remains the one open item; section 7 (synchronous fast-path enumeration) is deferred tier-3 work pending an in-memory-scan profiling pass.
+Date: 2026-06-16 (status refreshed 2026-06-30)
 Scope: "simple" reads — fixed-width numeric/date, short-text, and wide
 non-LVAL tables — through the public `Rows()`, `Rows<T>()`,
 `RowsAsStrings()`, and `ReadDataTableAsync()` entry points. MEMO/OLE long
@@ -18,6 +18,8 @@ path, a public projection surface, and zero-box-path coverage) that the closed
 doc did not cover and explicitly flagged as evidence-gated future ideas.
 
 ## TL;DR — the four biggest wins
+
+*Status (2026-06-30): wins 1, 3, and 4 shipped; win 2 (public projection for untyped callers) is the one still open. Items 5–6 below also shipped; item 7 is deferred. See the per-section status lines for details.*
 
 1. **Stop boxing on the untyped path** (no API change). The untyped `Rows()` /
    `ReadDataTableAsync()` decode allocates a boxed `object` for *every*

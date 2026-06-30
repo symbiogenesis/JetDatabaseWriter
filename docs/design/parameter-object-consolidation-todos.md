@@ -1,11 +1,13 @@
 # Parameter Object Consolidation TODOs
 
-**Status:** Proposed backlog, created 2026-06-01.
+**Status:** COMPLETE — all action items below shipped (effort started 2026-06-01). This document is
+retained as a record of the consolidation that was done and, more usefully, for the **Cross-Cutting
+Design Constraints** below, which remain the guardrails for any future parameter-object work.
 
-This document tracks follow-up work from a production-source scan for methods
+This document tracked follow-up work from a production-source scan for methods
 with multiple parameters that may be better served by existing or new domain
-types. The goal is not to eliminate every long signature. The goal is to reduce
-boolean/scalar parameter bundles where the code is already passing a coherent
+types. The goal was not to eliminate every long signature. The goal was to reduce
+boolean/scalar parameter bundles where the code was already passing a coherent
 domain concept through several layers.
 
 ## Scan Summary
