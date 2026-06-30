@@ -76,7 +76,7 @@ internal static class AccessQueryTranslator
     /// <returns><see langword="true"/> when the engine can translate the operator.</returns>
     private static bool IsEngineSupported(MethodCallExpression call)
     {
-        if (AccessQueryExtensions.IsIncludeMethod(call.Method))
+        if (AccessQueryExtensions.IsIncludeMethod(call.Method) || AccessQueryExtensions.IsThenIncludeMethod(call.Method))
         {
             return true;
         }
@@ -134,7 +134,13 @@ internal static class AccessQueryTranslator
 
         if (AccessQueryExtensions.IsIncludeMethod(call.Method))
         {
-            plan.Includes.Add(ResolveProperty(ExtractLambda(call.Arguments[1])));
+            plan.StartInclude(ResolveProperty(ExtractLambda(call.Arguments[1])));
+            return;
+        }
+
+        if (AccessQueryExtensions.IsThenIncludeMethod(call.Method))
+        {
+            plan.ExtendInclude(ResolveProperty(ExtractLambda(call.Arguments[1])));
             return;
         }
 

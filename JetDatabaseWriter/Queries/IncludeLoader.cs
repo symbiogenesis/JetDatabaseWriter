@@ -20,7 +20,10 @@ using JetDatabaseWriter.Models;
 /// </summary>
 /// <remarks>
 /// Join keys are read from each root POCO by column name (case-insensitive), the
-/// same convention the row mapper uses. A reference navigation matches the child's
+/// same convention the row mapper uses. Keys are compared by normalized value rather
+/// than CLR type, so a relationship still matches when the two sides use different
+/// numeric types (for example a parent <c>int</c> <c>Id</c> against a child
+/// <c>double</c> <c>ParentId</c>). A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
 /// rows by their foreign-key columns. When more than one relationship links the same
 /// pair of tables (for example two foreign keys to the same parent), the navigation
@@ -42,40 +45,114 @@ internal static class IncludeLoader
     /// </summary>
     private const int SeekKeyCountTableFraction = 4;
 
+    /// <summary>
+    /// Conservative magnitude bound (just inside <see cref="decimal.MaxValue"/>) below
+    /// which a finite <see cref="double"/> is guaranteed to cast to <see cref="decimal"/>
+    /// without overflow, so it can join the unified numeric key space.
+    /// </summary>
+    private const double NumericKeyDecimalMax = 7.9e28;
+
+    /// <summary>
+    /// Negative counterpart of <see cref="NumericKeyDecimalMax"/>.
+    /// </summary>
+    private const double NumericKeyDecimalMin = -7.9e28;
+
     public static async ValueTask ApplyAsync(
         AccessReader reader,
         string parentTable,
         IReadOnlyList<object> roots,
-        IReadOnlyList<PropertyInfo> includes,
+        IReadOnlyList<IReadOnlyList<PropertyInfo>> includePaths,
         CancellationToken cancellationToken)
     {
-        if (roots.Count == 0)
+        if (roots.Count == 0 || includePaths.Count == 0)
         {
             return;
         }
 
+        IReadOnlyList<IncludeNode> forest = BuildForest(includePaths);
         IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        await LoadNodesAsync(reader, parentTable, roots, forest, relationships, cancellationToken).ConfigureAwait(false);
+    }
 
-        foreach (PropertyInfo navigation in includes)
+    private static async ValueTask LoadNodesAsync(
+        AccessReader reader,
+        string table,
+        IReadOnlyList<object> entities,
+        IReadOnlyList<IncludeNode> nodes,
+        IReadOnlyList<RelationshipMetadata> relationships,
+        CancellationToken cancellationToken)
+    {
+        if (entities.Count == 0)
         {
+            return;
+        }
+
+        foreach (IncludeNode node in nodes)
+        {
+            PropertyInfo navigation = node.Navigation;
             Type? elementType = GetEnumerableElementType(navigation.PropertyType);
+            List<object> loaded;
+            string relatedTable;
             if (elementType is not null)
             {
-                RelationshipMetadata relationship = FindCollectionRelationship(relationships, parentTable, elementType, navigation.Name)
-                    ?? throw NoRelationship(navigation, parentTable, elementType);
-                await LoadCollectionAsync(reader, roots, navigation, elementType, relationship, cancellationToken).ConfigureAwait(false);
+                RelationshipMetadata relationship = FindCollectionRelationship(relationships, table, elementType, navigation.Name)
+                    ?? throw NoRelationship(navigation, table, elementType);
+                loaded = await LoadCollectionAsync(reader, entities, navigation, elementType, relationship, cancellationToken).ConfigureAwait(false);
+                relatedTable = relationship.ForeignTable;
             }
             else
             {
                 Type relatedType = navigation.PropertyType;
-                RelationshipMetadata relationship = FindReferenceRelationship(relationships, parentTable, relatedType, navigation.Name)
-                    ?? throw NoRelationship(navigation, parentTable, relatedType);
-                await LoadReferenceAsync(reader, roots, navigation, relatedType, relationship, cancellationToken).ConfigureAwait(false);
+                RelationshipMetadata relationship = FindReferenceRelationship(relationships, table, relatedType, navigation.Name)
+                    ?? throw NoRelationship(navigation, table, relatedType);
+                loaded = await LoadReferenceAsync(reader, entities, navigation, relatedType, relationship, cancellationToken).ConfigureAwait(false);
+                relatedTable = relationship.PrimaryTable;
+            }
+
+            // Descend into the entities just loaded for this navigation: a ThenInclude
+            // chain on this node loads against the related table and the related rows.
+            if (node.Children.Count > 0)
+            {
+                await LoadNodesAsync(reader, relatedTable, loaded, node.Children, relationships, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    private static async ValueTask LoadReferenceAsync(
+    private static List<IncludeNode> BuildForest(IReadOnlyList<IReadOnlyList<PropertyInfo>> paths)
+    {
+        // Merge the include paths into a navigation tree so a shared prefix (for example
+        // two ThenIncludes off the same Include) loads once and both branches descend from
+        // the same loaded entities instead of re-loading and overwriting the first branch.
+        var roots = new List<IncludeNode>();
+        foreach (IReadOnlyList<PropertyInfo> path in paths)
+        {
+            List<IncludeNode> level = roots;
+            foreach (PropertyInfo navigation in path)
+            {
+                IncludeNode node = FindOrAddNode(level, navigation);
+                level = node.Children;
+            }
+        }
+
+        return roots;
+    }
+
+    private static IncludeNode FindOrAddNode(List<IncludeNode> level, PropertyInfo navigation)
+    {
+        foreach (IncludeNode existing in level)
+        {
+            if (existing.Navigation.Equals(navigation))
+            {
+                return existing;
+            }
+        }
+
+        var created = new IncludeNode(navigation);
+        level.Add(created);
+        return created;
+    }
+
+    private static async ValueTask<List<object>> LoadReferenceAsync(
         AccessReader reader,
         IReadOnlyList<object> roots,
         PropertyInfo navigation,
@@ -94,9 +171,11 @@ internal static class IncludeLoader
             object? parent = key is not null && parentsByKey.TryGetValue(key, out object? match) ? match : null;
             navigation.SetValue(root, parent);
         }
+
+        return [.. parentsByKey.Values];
     }
 
-    private static async ValueTask LoadCollectionAsync(
+    private static async ValueTask<List<object>> LoadCollectionAsync(
         AccessReader reader,
         IReadOnlyList<object> roots,
         PropertyInfo navigation,
@@ -109,6 +188,7 @@ internal static class IncludeLoader
         Dictionary<string, List<object>> childrenByKey = await BuildChildGroupsAsync(
             reader, relationship.ForeignTable, relatedType, relationship.ForeignColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
+        var loaded = new List<object>();
         foreach (object root in roots)
         {
             string? key = BuildKeyFromObject(root, relationship.PrimaryColumns);
@@ -118,11 +198,14 @@ internal static class IncludeLoader
                 foreach (object child in children)
                 {
                     list.Add(child);
+                    loaded.Add(child);
                 }
             }
 
             navigation.SetValue(root, list);
         }
+
+        return loaded;
     }
 
     private static async ValueTask<Dictionary<string, object>> BuildParentLookupAsync(
@@ -442,15 +525,50 @@ internal static class IncludeLoader
         null or DBNull => null,
         bool b => b ? "b1" : "b0",
         byte or sbyte or short or ushort or int or uint or long =>
-            "i" + Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
-        ulong ul => "u" + ul.ToString(CultureInfo.InvariantCulture),
-        float or double or decimal =>
-            "d" + Convert.ToDecimal(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
+            "n" + FormatNumeric(Convert.ToInt64(value, CultureInfo.InvariantCulture)),
+        ulong ul => "n" + FormatNumeric(ul),
+        decimal m => "n" + FormatNumeric(m),
+        float or double => NormalizeReal(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
         Guid g => "g" + g.ToString("N"),
         DateTime dt => "t" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
         string s => "s" + s,
         _ => "o" + value,
     };
+
+    private static string NormalizeReal(double value)
+    {
+        // Finite values inside decimal's range join the unified numeric key space so a
+        // float/double matches an int, long, or decimal of the same value; non-finite or
+        // out-of-range magnitudes (never realistic join keys) keep a self-consistent key.
+        if (double.IsFinite(value) && value >= NumericKeyDecimalMin && value <= NumericKeyDecimalMax)
+        {
+            return "n" + FormatNumeric((decimal)value);
+        }
+
+        return "r" + value.ToString("R", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatNumeric(decimal value)
+    {
+        // Collapse equal values to one canonical string regardless of CLR type or scale so
+        // both sides of a relationship match: integral values format as a plain integer (5,
+        // 5.0, and 5m all yield "5") and fractional values strip trailing-zero scale (5.10m
+        // and 5.1m both yield "5.1").
+        if (decimal.Truncate(value) == value)
+        {
+            if (value is >= long.MinValue and <= long.MaxValue)
+            {
+                return ((long)value).ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (value is > long.MaxValue and <= ulong.MaxValue)
+            {
+                return ((ulong)value).ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
+        return (value / 1.0000000000000000000000000000m).ToString(CultureInfo.InvariantCulture);
+    }
 
     private static Type? GetEnumerableElementType(Type type)
     {
@@ -579,4 +697,11 @@ internal static class IncludeLoader
             + "Ensure a foreign key linking the two tables exists in MSysRelationships.");
 
     private readonly record struct SeekPlan(string IndexName, int IndexColumnCount, string[] Headers);
+
+    private sealed class IncludeNode(PropertyInfo navigation)
+    {
+        public PropertyInfo Navigation { get; } = navigation;
+
+        public List<IncludeNode> Children { get; } = [];
+    }
 }

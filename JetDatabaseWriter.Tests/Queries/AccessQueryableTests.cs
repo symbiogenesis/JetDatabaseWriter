@@ -618,6 +618,112 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         Assert.Equal(50, await reader.Query<JdwItem>("JdwItem").MaxAsync(i => i.Score, ct));
     }
 
+    [Fact]
+    public async Task CountAsync_NoPredicate_CountsAllRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Whole-table count takes the metadata fast path (live row-slot tally), not a scan
+        // that maps every row to a POCO.
+        Assert.Equal(6, await reader.Query<JdwItem>("JdwItem").CountAsync(ct));
+        Assert.Equal(6L, await reader.Query<JdwItem>("JdwItem").LongCountAsync(ct));
+    }
+
+    [Fact]
+    public async Task CountAsync_AfterDelete_CountsLiveRowsNotDeclared()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+
+        await using (AccessWriter writer = await OpenWriterAsync(temp, ct))
+        {
+            await writer.DeleteRowsAsync("JdwItem", "Id", 2, ct);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // The whole-table fast path must report the live row count (5). The declared TDEF
+        // row count is not decremented on delete, so a naive metadata read would wrongly
+        // return 6.
+        Assert.Equal(5, await reader.Query<JdwItem>("JdwItem").CountAsync(ct));
+        Assert.Equal(5L, await reader.Query<JdwItem>("JdwItem").LongCountAsync(ct));
+    }
+
+    [Fact]
+    public async Task OrderByPrimaryKey_Take_PagesInKeyOrder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // OrderBy(Id) is served straight from the unique primary-key index in key order, so
+        // Take(3) yields the first three rows by Id without sorting the whole table.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem")
+            .OrderBy(i => i.Id)
+            .Take(3)
+            .ToListAsync(ct);
+
+        int[] expected = [1, 2, 3];
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task OrderByPrimaryKey_ReturnsAllRowsInKeyOrder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // The index-served ordering must yield every live row exactly once, in key order.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToListAsync(ct);
+
+        Assert.Equal([1, 2, 3, 4, 5, 6], result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task FirstAsync_OrderByPrimaryKey_ReturnsLeadingRow()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem first = await reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).FirstAsync(ct);
+
+        Assert.Equal(1, first.Id);
+    }
+
+    [Fact]
+    public async Task OrderByPrimaryKeyDescending_FallsBackToMemory_StillCorrect()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // The primary-key index is ascending, so a descending order cannot be walked from it
+        // and falls back to the in-memory sort, which must still produce the right order.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem").OrderByDescending(i => i.Id).ToListAsync(ct);
+
+        Assert.Equal([6, 5, 4, 3, 2, 1], result.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task OrderByNonUniqueColumn_PreservesStableTieOrder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Score has a non-unique index, so it must NOT serve the ordering: the index would
+        // break Score ties (ids 1 and 6 both score 30) in physical order, whereas LINQ keeps
+        // them in source order. The in-memory stable sort must be preserved.
+        List<JdwItem> result = await reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Score).ToListAsync(ct);
+
+        int[] expected = [2, 4, 1, 6, 5, 3];
+        Assert.Equal(expected, result.Select(i => i.Id).ToArray());
+    }
+
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
     {
         stream.Position = 0;

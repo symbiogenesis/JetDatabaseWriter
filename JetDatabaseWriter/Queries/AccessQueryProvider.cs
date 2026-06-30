@@ -6,10 +6,14 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// <see cref="IQueryProvider"/> for <see cref="AccessQueryable{T}"/>. Translates the
@@ -113,6 +117,31 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         }
     }
 
+    public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(expression, nameof(expression));
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+
+        // Fast path: counting the whole table — no stages, no includes, no in-memory tail —
+        // tallies the live row slots without decoding rows or building POCOs. The declared
+        // TDEF row count is deliberately not used: it is not decremented on delete, so it
+        // overcounts; GetRealRowCountAsync scans the row-offset slots and is exact.
+        if (ReferenceEquals(boundary, expression) && plan.Stages.Count == 0 && plan.IncludePaths.Count == 0)
+        {
+            return await reader.GetRealRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Every other shape (a filter, paging, a projection, or includes) streams the rows
+        // and counts them without buffering a list.
+        long count = 0;
+        await foreach (object unused in this.ExecuteStreamAsync(expression, cancellationToken).ConfigureAwait(false))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     private static Expression<Func<T, bool>>? CombinePredicates(List<LambdaExpression> predicates)
     {
         if (predicates.Count == 0)
@@ -146,6 +175,65 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         return (materialized.Provider, rewritten);
     }
 
+    private static bool TryDescribeIntegerOrderKey(OrderingKey key, out string? column)
+    {
+        column = null;
+
+        Expression body = key.KeySelector.Body;
+        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            body = convert.Operand;
+        }
+
+        // Only a direct property access on the lambda parameter (e.g. i => i.Id) maps to a
+        // column; nested paths and computed keys are left to the in-memory sort. The CLR
+        // type is restricted to signed integers/byte, whose JET index key bytes compare in
+        // the same order as the values — unlike float/double (NaN) or date (pre-1899 OADate).
+        if (body is MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
+            && parameter == key.KeySelector.Parameters[0]
+            && IsOrderSafeIntegerType(property.PropertyType))
+        {
+            column = property.Name;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsOrderSafeIntegerType(Type type)
+    {
+        Type underlying = Nullable.GetUnderlyingType(type) ?? type;
+        return underlying == typeof(int)
+            || underlying == typeof(long)
+            || underlying == typeof(short)
+            || underlying == typeof(byte);
+    }
+
+    private static bool CoversOrdering(IndexMetadata index, List<(string Column, bool Descending)> keys)
+    {
+        // The index serves the ordering only when it has a usable B-tree root, never omits
+        // rows (no ignore-nulls), and is unique — uniqueness rules out key ties, so the
+        // index order equals the stable LINQ sort. Its key columns must match the ordering
+        // columns one-for-one, in order, including sort direction.
+        if (index.FirstDp <= 0 || !index.EnforcesUniqueness || index.IgnoreNulls || index.Columns.Count != keys.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < keys.Count; i++)
+        {
+            IndexColumnReference column = index.Columns[i];
+            bool ascendingRequested = !keys[i].Descending;
+            if (column.IsAscending != ascendingRequested
+                || !string.Equals(column.Name, keys[i].Column, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private List<T> MaterializeSync(AccessQueryPlan plan) =>
         this.MaterializeAsync(plan, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
@@ -162,11 +250,11 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
 
     private async IAsyncEnumerable<T> ExecuteEngineAsync(AccessQueryPlan plan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        IAsyncEnumerable<T> sequence = this.BuildPipeline(plan, cancellationToken);
+        IAsyncEnumerable<T> sequence = await this.BuildPipelineAsync(plan, cancellationToken).ConfigureAwait(false);
 
         // Without includes the pipeline streams straight through, so Take/First can
         // short-circuit before the whole table is read.
-        if (plan.Includes.Count == 0)
+        if (plan.IncludePaths.Count == 0)
         {
             await foreach (T item in sequence.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
@@ -183,14 +271,14 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
             result.Add(item);
         }
 
-        await IncludeLoader.ApplyAsync(reader, table, result, plan.Includes, cancellationToken).ConfigureAwait(false);
+        await IncludeLoader.ApplyAsync(reader, table, result, plan.IncludePaths, cancellationToken).ConfigureAwait(false);
         foreach (T item in result)
         {
             yield return item;
         }
     }
 
-    private IAsyncEnumerable<T> BuildPipeline(AccessQueryPlan plan, CancellationToken cancellationToken)
+    private async ValueTask<IAsyncEnumerable<T>> BuildPipelineAsync(AccessQueryPlan plan, CancellationToken cancellationToken)
     {
         List<QueryStage> stages = plan.Stages;
 
@@ -207,9 +295,28 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         }
 
         Expression<Func<T, bool>>? pushed = CombinePredicates(leading);
-        IAsyncEnumerable<T> sequence = pushed is null
-            ? reader.Rows<T>(table, progress: null, cancellationToken)
-            : reader.Rows(table, pushed, progress: null, cancellationToken);
+
+        // When no leading filter consumed the stream and the next stage orders by a covering
+        // unique integer-keyed index, read the source straight from that index in key order
+        // and skip the in-memory sort. A unique index has no key ties, so its order is
+        // identical to the stable LINQ sort, and a following Take/Skip then bounds how many
+        // rows are materialized instead of buffering and sorting the whole table.
+        IAsyncEnumerable<T>? ordered = pushed is null && next < stages.Count && stages[next] is OrderStage order
+            ? await this.TryBuildOrderedSourceAsync(order, cancellationToken).ConfigureAwait(false)
+            : null;
+
+        IAsyncEnumerable<T> sequence;
+        if (ordered is not null)
+        {
+            sequence = ordered;
+            next++;
+        }
+        else
+        {
+            sequence = pushed is null
+                ? reader.Rows<T>(table, progress: null, cancellationToken)
+                : reader.Rows(table, pushed, progress: null, cancellationToken);
+        }
 
         for (; next < stages.Count; next++)
         {
@@ -217,6 +324,37 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         }
 
         return sequence;
+    }
+
+    private async ValueTask<IAsyncEnumerable<T>?> TryBuildOrderedSourceAsync(OrderStage order, CancellationToken cancellationToken)
+    {
+        // Index seeks are Jet4/ACE-only.
+        if (reader.Format == DatabaseFormat.Jet3Mdb)
+        {
+            return null;
+        }
+
+        var keys = new List<(string Column, bool Descending)>(order.Keys.Count);
+        foreach (OrderingKey key in order.Keys)
+        {
+            if (!TryDescribeIntegerOrderKey(key, out string? column))
+            {
+                return null;
+            }
+
+            keys.Add((column!, key.Descending));
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+        foreach (IndexMetadata index in indexes)
+        {
+            if (CoversOrdering(index, keys))
+            {
+                return reader.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken);
+            }
+        }
+
+        return null;
     }
 
     private sealed class ReplaceParameterVisitor(ParameterExpression from, ParameterExpression to) : ExpressionVisitor

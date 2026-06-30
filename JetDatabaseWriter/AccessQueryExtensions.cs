@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Queries;
 
 /// <summary>
 /// LINQ extensions for the entity queries returned by
@@ -20,19 +21,25 @@ public static class AccessQueryExtensions
         typeof(AccessQueryExtensions).GetMethod(nameof(Include))
             ?? throw new InvalidOperationException("The Include method could not be reflected.");
 
+    private static readonly MethodInfo ThenIncludeAfterReferenceMethod = ResolveThenInclude(afterCollection: false);
+
+    private static readonly MethodInfo ThenIncludeAfterCollectionMethod = ResolveThenInclude(afterCollection: true);
+
     /// <summary>
     /// Eagerly loads the related entity or entities reached through the
     /// <paramref name="navigation"/> property. The relationship is inferred from the
     /// database's <c>MSysRelationships</c> catalog by matching the navigation's target
     /// type to the related table; the related rows load via an index seek when the join
-    /// columns are indexed, otherwise via a single scan.
+    /// columns are indexed, otherwise via a single scan. Chain
+    /// <see cref="ThenInclude{TEntity, TPreviousProperty, TProperty}(IIncludableQueryable{TEntity, TPreviousProperty}, Expression{Func{TPreviousProperty, TProperty}})"/>
+    /// to load a nested navigation off the included entity.
     /// </summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <typeparam name="TProperty">The navigation property type (a reference entity or a collection of entities).</typeparam>
     /// <param name="source">The query to extend.</param>
     /// <param name="navigation">A property-access expression, e.g. <c>o =&gt; o.Customer</c> or <c>c =&gt; c.Orders</c>.</param>
     /// <returns>A new query that will populate the navigation on materialization.</returns>
-    public static IQueryable<T> Include<T, TProperty>(this IQueryable<T> source, Expression<Func<T, TProperty>> navigation)
+    public static IIncludableQueryable<T, TProperty> Include<T, TProperty>(this IQueryable<T> source, Expression<Func<T, TProperty>> navigation)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(navigation, nameof(navigation));
@@ -41,7 +48,57 @@ public static class AccessQueryExtensions
             IncludeMethodDefinition.MakeGenericMethod(typeof(T), typeof(TProperty)),
             source.Expression,
             Expression.Quote(navigation));
-        return source.Provider.CreateQuery<T>(call);
+        return new IncludableQueryable<T, TProperty>(source.Provider.CreateQuery<T>(call));
+    }
+
+    /// <summary>
+    /// Eagerly loads a navigation reached from the entity included by the preceding
+    /// <c>Include</c> / <c>ThenInclude</c> (a reference navigation), extending the
+    /// eager-load chain one level deeper.
+    /// </summary>
+    /// <typeparam name="TEntity">The query element type.</typeparam>
+    /// <typeparam name="TPreviousProperty">The reference entity type included by the preceding step.</typeparam>
+    /// <typeparam name="TProperty">The nested navigation type.</typeparam>
+    /// <param name="source">The query whose most recent include targets a reference entity.</param>
+    /// <param name="navigation">A property-access expression on the previously included entity, e.g. <c>c =&gt; c.Region</c>.</param>
+    /// <returns>A new query that will also populate the nested navigation on materialization.</returns>
+    public static IIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
+        this IIncludableQueryable<TEntity, TPreviousProperty> source,
+        Expression<Func<TPreviousProperty, TProperty>> navigation)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(navigation, nameof(navigation));
+
+        MethodCallExpression call = Expression.Call(
+            ThenIncludeAfterReferenceMethod.MakeGenericMethod(typeof(TEntity), typeof(TPreviousProperty), typeof(TProperty)),
+            source.Expression,
+            Expression.Quote(navigation));
+        return new IncludableQueryable<TEntity, TProperty>(source.Provider.CreateQuery<TEntity>(call));
+    }
+
+    /// <summary>
+    /// Eagerly loads a navigation reached from each element of the collection included by
+    /// the preceding <c>Include</c> / <c>ThenInclude</c>, extending the eager-load chain
+    /// one level deeper.
+    /// </summary>
+    /// <typeparam name="TEntity">The query element type.</typeparam>
+    /// <typeparam name="TPreviousProperty">The element type of the collection included by the preceding step.</typeparam>
+    /// <typeparam name="TProperty">The nested navigation type.</typeparam>
+    /// <param name="source">The query whose most recent include targets a collection of entities.</param>
+    /// <param name="navigation">A property-access expression on the previously included element, e.g. <c>i =&gt; i.Product</c>.</param>
+    /// <returns>A new query that will also populate the nested navigation on materialization.</returns>
+    public static IIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
+        this IIncludableQueryable<TEntity, IEnumerable<TPreviousProperty>> source,
+        Expression<Func<TPreviousProperty, TProperty>> navigation)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(navigation, nameof(navigation));
+
+        MethodCallExpression call = Expression.Call(
+            ThenIncludeAfterCollectionMethod.MakeGenericMethod(typeof(TEntity), typeof(TPreviousProperty), typeof(TProperty)),
+            source.Expression,
+            Expression.Quote(navigation));
+        return new IncludableQueryable<TEntity, TProperty>(source.Provider.CreateQuery<TEntity>(call));
     }
 
     /// <summary>Materializes the query into a list, applying every operator and include.</summary>
@@ -58,7 +115,12 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The number of matching rows.</returns>
     public static ValueTask<int> CountAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-        => AsAsyncEnumerable(source).CountAsync(cancellationToken);
+    {
+        Guard.NotNull(source, nameof(source));
+        return source.Provider is IAccessQueryEngine engine
+            ? ToInt32CountAsync(engine.CountAsync(source.Expression, cancellationToken))
+            : AsAsyncEnumerable(source).CountAsync(cancellationToken);
+    }
 
     /// <summary>Determines whether the query produces any rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -197,16 +259,12 @@ public static class AccessQueryExtensions
     /// <param name="source">The query to count.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The number of rows.</returns>
-    public static async ValueTask<long> LongCountAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    public static ValueTask<long> LongCountAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
     {
         Guard.NotNull(source, nameof(source));
-        long count = 0;
-        await foreach (T unused in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            count++;
-        }
-
-        return count;
+        return source.Provider is IAccessQueryEngine engine
+            ? engine.CountAsync(source.Expression, cancellationToken)
+            : CountStreamingAsync(source, cancellationToken);
     }
 
     /// <summary>Counts the rows matching <paramref name="predicate"/> as a 64-bit value.</summary>
@@ -507,6 +565,40 @@ public static class AccessQueryExtensions
     internal static bool IsIncludeMethod(MethodInfo method) =>
         method.IsGenericMethod && method.GetGenericMethodDefinition() == IncludeMethodDefinition;
 
+    internal static bool IsThenIncludeMethod(MethodInfo method)
+    {
+        if (!method.IsGenericMethod)
+        {
+            return false;
+        }
+
+        MethodInfo definition = method.GetGenericMethodDefinition();
+        return definition == ThenIncludeAfterReferenceMethod || definition == ThenIncludeAfterCollectionMethod;
+    }
+
+    private static MethodInfo ResolveThenInclude(bool afterCollection)
+    {
+        foreach (MethodInfo method in typeof(AccessQueryExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static))
+        {
+            if (!string.Equals(method.Name, nameof(ThenInclude), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // Disambiguate the two overloads by the shape of the source parameter's second
+            // type argument: the collection overload's previous property is IEnumerable<T>
+            // (a constructed generic), the reference overload's is a bare type parameter.
+            Type previousProperty = method.GetParameters()[0].ParameterType.GetGenericArguments()[1];
+            bool isReferenceOverload = previousProperty.IsGenericParameter;
+            if (isReferenceOverload != afterCollection)
+            {
+                return method;
+            }
+        }
+
+        throw new InvalidOperationException("A ThenInclude method could not be reflected.");
+    }
+
     /// <summary>
     /// Exposes the query as an <see cref="IAsyncEnumerable{T}"/> for <c>await foreach</c>
     /// and the async LINQ operators.
@@ -520,5 +612,19 @@ public static class AccessQueryExtensions
         Guard.NotNull(source, nameof(source));
         return source as IAsyncEnumerable<T>
             ?? throw new NotSupportedException("This async operator requires a query created by AccessReader.Query<T>(...).");
+    }
+
+    private static async ValueTask<int> ToInt32CountAsync(ValueTask<long> count) =>
+        checked((int)await count.ConfigureAwait(false));
+
+    private static async ValueTask<long> CountStreamingAsync<T>(IQueryable<T> source, CancellationToken cancellationToken)
+    {
+        long count = 0;
+        await foreach (T unused in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            count++;
+        }
+
+        return count;
     }
 }
