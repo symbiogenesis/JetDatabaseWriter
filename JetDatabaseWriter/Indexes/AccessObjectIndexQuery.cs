@@ -1,21 +1,13 @@
 namespace JetDatabaseWriter.Indexes;
 
-using System;
 using System.Collections.Generic;
 using System.Threading;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Models;
 
-internal sealed class AccessObjectIndexQuery : IAccessIndexQuery<object[]>
+internal sealed class AccessObjectIndexQuery : AccessIndexQueryBase<object[]>
 {
-    private readonly AccessReader reader;
-    private readonly string tableName;
-    private readonly string indexName;
-    private readonly IndexQueryCriteria criteria;
-
     public AccessObjectIndexQuery(AccessReader reader, string tableName, string indexName)
-        : this(reader, tableName, indexName, IndexQueryCriteria.All)
+        : base(reader, tableName, indexName, IndexQueryCriteria.All)
     {
     }
 
@@ -24,46 +16,13 @@ internal sealed class AccessObjectIndexQuery : IAccessIndexQuery<object[]>
         string tableName,
         string indexName,
         IndexQueryCriteria criteria)
+        : base(reader, tableName, indexName, criteria)
     {
-        Guard.NotNull(reader, nameof(reader));
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(indexName, nameof(indexName));
-        Guard.NotNull(criteria, nameof(criteria));
-
-        this.reader = reader;
-        this.tableName = tableName;
-        this.indexName = indexName;
-        this.criteria = criteria;
     }
 
-    public IAccessIndexQuery<object[]> WhereEquals(params object?[] keyValues) =>
-        this.With(IndexQueryCriteria.Exact(keyValues));
+    public override IAsyncEnumerable<object[]> ToRowsAsync(CancellationToken cancellationToken = default) =>
+        this.Reader.ReadIndexRowsAsObjectsAsync(this.TableName, this.IndexName, this.Criteria, cancellationToken);
 
-    public IAccessIndexQuery<object[]> WhereKeyPrefix(params object?[] prefixValues) =>
-        this.With(IndexQueryCriteria.KeyPrefix(prefixValues));
-
-    public IAccessIndexQuery<object[]> WhereBetween(
-        object? lower,
-        object? upper,
-        bool lowerInclusive = true,
-        bool upperInclusive = true) =>
-        this.WhereRange(
-            new IndexKeyBound([lower], lowerInclusive),
-            new IndexKeyBound([upper], upperInclusive));
-
-    public IAccessIndexQuery<object[]> WhereRange(IndexKeyBound? lower, IndexKeyBound? upper) =>
-        this.With(IndexQueryCriteria.Range(lower, upper));
-
-    public IAsyncEnumerable<object[]> ToRowsAsync(CancellationToken cancellationToken = default) =>
-        this.reader.ReadIndexRowsAsObjectsAsync(this.tableName, this.indexName, this.criteria, cancellationToken);
-
-    private AccessObjectIndexQuery With(IndexQueryCriteria nextCriteria)
-    {
-        if (this.criteria.IsFiltered)
-        {
-            throw new InvalidOperationException("An index query can contain only one index-key predicate.");
-        }
-
-        return new AccessObjectIndexQuery(this.reader, this.tableName, this.indexName, nextCriteria);
-    }
+    protected override IAccessIndexQuery<object[]> WithCriteria(IndexQueryCriteria nextCriteria) =>
+        new AccessObjectIndexQuery(this.Reader, this.TableName, this.IndexName, nextCriteria);
 }
