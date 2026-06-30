@@ -37,16 +37,16 @@ so each is a single, monolithic, hard-to-navigate file.
 
 | Type | Lines | Role |
 |------|------:|------|
-| [JetDatabaseWriter/AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs) | 3,146 | public writer facade |
-| [JetDatabaseWriter/AccessReader.cs](JetDatabaseWriter/AccessReader.cs) | 2,885 | public reader facade |
-| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,949 | B-tree mutation |
-| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,685 | attachments/multivalue |
-| [JetDatabaseWriter/Indexes/IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,618 | index orchestration |
-| [JetDatabaseWriter/Relationships/RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,583 | FK lifecycle |
-| [JetDatabaseWriter/AccessBase.cs](JetDatabaseWriter/AccessBase.cs) | 1,419 | shared base |
+| [JetDatabaseWriter/AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) | 3,148 | public writer facade |
+| [JetDatabaseWriter/AccessReader.cs](../JetDatabaseWriter/AccessReader.cs) | 2,885 | public reader facade |
+| [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,937 | B-tree mutation |
+| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,676 | attachments/multivalue |
+| [JetDatabaseWriter/Indexes/IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,608 | index orchestration |
+| [JetDatabaseWriter/Relationships/RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,583 | FK lifecycle |
+| [JetDatabaseWriter/AccessBase.cs](../JetDatabaseWriter/AccessBase.cs) | 1,412 | shared base |
 
 `AccessWriter` is the clearest offender. It is declared at
-[AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L41) as a single `sealed` class that:
+[AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs#L41) as a single `sealed` class that:
 
 - implements two public interfaces (`IAccessWriter`, `IAccessSchema`) plus the `AccessBase` contract;
 - owns **~15 collaborator fields** (lock coordinator, index maintainer, TDEF builder, long-value
@@ -68,20 +68,19 @@ disposal) as an interim step.
 
 ---
 
-## 2. Monster Methods (200–450 lines) — **High**
+## 2. Monster Methods (over 100 lines) — **High**
 
 [IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) contains several methods that are
 each longer than many entire classes:
 
-- [`TrySurgicalCrossLeafMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1093) — **~341 lines**.
-- [`TryStageIntermediateRewritesAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1607) — **~342 lines**.
-- [`TrySurgicalMultiLevelMaintainAsync`](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L600) — **~175 lines**.
+- [`TrySurgicalCrossLeafMaintainAsync`](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1077) — **~341 lines**.
+- [`TryStageIntermediateRewritesAsync`](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L1591) — **~346 lines**.
+- [`TrySurgicalMultiLevelMaintainAsync`](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs#L600) — **~159 lines**.
 
-In [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs):
+In [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs):
 
-- [`UpdateRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1152) — ~165 lines.
-- [`CreateCatalogTableArtifactAsync`](JetDatabaseWriter/AccessWriter.cs#L633) — ~140 lines.
-- [`DeleteRowsCoreAsync`](JetDatabaseWriter/AccessWriter.cs#L1320) — ~110 lines.
+- [`UpdateRowsCoreAsync`](../JetDatabaseWriter/AccessWriter.cs#L1151) — ~146 lines.
+- [`CreateCatalogTableArtifactAsync`](../JetDatabaseWriter/AccessWriter.cs#L632) — ~139 lines.
 
 These methods interleave several distinct phases (descent, validation, splice, page rewrite,
 parent/ancestor patching) with deep nesting and many local mutable variables. They are the riskiest
@@ -99,14 +98,12 @@ tested directly.
 
 The largest types suppress StyleCop ordering rules to tolerate mixed member layout:
 
-- [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L34) — `#pragma warning disable SA1204`
-  (SA1202 was resolved; SA1204 remains to allow static members grouped alongside related instance members).
-- Same suppressions in
-  [ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs#L23) and
-  [RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs#L20).
+- [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs#L34) — `#pragma warning disable SA1204`
+  [ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs#L23) and
+  [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs#L20).
 
-[IndexBTreeEditor.cs](JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) and
-[IndexMaintainer.cs](JetDatabaseWriter/Indexes/IndexMaintainer.cs) previously carried the same
+[IndexBTreeEditor.cs](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) and
+[IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs) previously carried the same
 suppression; both were removed on 2026-06-30 once their members were reordered to satisfy
 SA1202/SA1204 without it — the remediation below, applied in miniature.
 
