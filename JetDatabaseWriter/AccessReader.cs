@@ -2235,7 +2235,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         id = 0;
                     }
 
-                    tdefPage = id & 0x00FFFFFFL;
+                    tdefPage = CatalogValueReader.TdefPageFromId(id);
                 }
 
                 if (tdefPage > 0)
@@ -2801,7 +2801,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            if ((id & 0x00FFFFFFL) != tdefPage)
+            if (CatalogValueReader.TdefPageFromId(id) != tdefPage)
             {
                 continue;
             }
@@ -2867,7 +2867,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
-                long tdefPage = id & 0x00FFFFFFL;
+                long tdefPage = CatalogValueReader.TdefPageFromId(id);
                 if (tdefPage > 0)
                 {
                     return tdefPage;

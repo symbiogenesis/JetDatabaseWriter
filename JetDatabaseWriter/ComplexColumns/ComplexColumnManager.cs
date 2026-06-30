@@ -925,7 +925,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     return new ValueTask<bool>(true);
                 }
 
-                flatTdefPage = flatId & 0x00FFFFFFL;
+                flatTdefPage = CatalogValueReader.TdefPageFromId(flatId);
                 return new ValueTask<bool>(false);
             },
             cancellationToken).ConfigureAwait(false);
@@ -1376,7 +1376,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                 {
-                    flatTdefPage = fid & 0x00FFFFFFL;
+                    flatTdefPage = CatalogValueReader.TdefPageFromId(fid);
                 }
 
                 deletedRows.Add((row.Location.PageNumber, row.Location.RowIndex));
@@ -1637,7 +1637,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
-                    flatTdefPages.Add(flatId & 0x00FFFFFFL);
+                    flatTdefPages.Add(CatalogValueReader.TdefPageFromId(flatId));
                 }
 
                 cxRowsToDelete.Add((row.Location.PageNumber, row.Location.RowIndex));
