@@ -88,7 +88,6 @@ Install-Package JetDatabaseWriter
 
 ```csharp
 using JetDatabaseWriter;
-using System.Threading;
 
 public class Order
 {
@@ -167,9 +166,6 @@ Property names are matched to column headers **case-insensitively**. Unmatched p
 
 ```csharp
 DataTable dt = await reader.ReadTableAsync("Products", cancellationToken: cancellationToken);
-// dt.Columns["ProductID"].DataType    == typeof(int)
-// dt.Columns["UnitPrice"].DataType    == typeof(decimal)
-// dt.Columns["Discontinued"].DataType == typeof(bool)
 ```
 
 `ReadTableAsync`, `ReadAllTablesAsync`, and the string-typed DataTable APIs fully materialize their results. They are convenient for data binding, previews, exports, and compatibility code; for bulk processing or large-table scans, prefer `Rows(...)` or `Rows<T>(...)` so rows stream lazily and can short-circuit through async LINQ. `ReadDataTableAsync` remains available as a compatibility alias for `ReadTableAsync`.
@@ -369,18 +365,14 @@ POCO mapping accepts either a `Hyperlink` property or a plain `string` property 
 ### String DataTable — compatibility
 
 ```csharp
-// All values as strings
 DataTable preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken: cancellationToken);
-
-// String row access
-string firstCell = preview.Rows[0][0].ToString();
 ```
 
 ---
 
 ## Streaming Large Tables
 
-### Generic streaming — recommended
+`Rows<T>(...)`, `Rows(...)`, and `RowsAsStrings(...)` stream rows lazily over `IAsyncEnumerable<T>`, so enumeration can short-circuit without materializing the whole table. Each takes an optional `IProgress<long>` row-count callback.
 
 ```csharp
 var progress = new Progress<long>(n => Console.Write($"\r{n:N0} rows"));
@@ -389,56 +381,25 @@ await foreach (Product p in reader.Rows<Product>("Products", progress))
     Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
 ```
 
-### Typed object array streaming
-
-```csharp
-await foreach (object[] row in reader.Rows("BigTable"))
-{
-    int     id  = (int)row[0];
-    decimal val = row[2] == DBNull.Value ? 0m : (decimal)row[2];
-}
-```
-
-### String streaming — compatibility
-
-```csharp
-await foreach (string[] row in reader.RowsAsStrings("BigTable"))
-    Console.WriteLine(string.Join(", ", row));
-```
-
-Null values in typed `object[]` rows surface as `DBNull.Value`.
+`Rows(...)` yields `object[]` rows (nulls surface as `DBNull.Value`); `RowsAsStrings(...)` yields `string[]` rows for compatibility and CSV-style consumers.
 
 ---
 
 ## Querying with async LINQ
 
-The reader exposes each table as an `IAsyncEnumerable<T>` via `Rows`, `Rows<T>`, and `RowsAsStrings`. Compose with the standard async LINQ operators (`Where`, `Take`, `Select`, `ToListAsync`, `FirstOrDefaultAsync`, `CountAsync`, …) — there is no separate query type and no terminal `Execute` call.
+Because those `Rows` / `Rows<T>` / `RowsAsStrings` streams are `IAsyncEnumerable<T>`, they compose with the standard async LINQ operators (`Where`, `Take`, `Select`, `ToListAsync`, `FirstOrDefaultAsync`, `CountAsync`, …) — there is no separate query type and no terminal `Execute` call.
 
 ```csharp
-// Generic POCO result — first match
+// POCO chain — first match (use ToListAsync() to materialize instead)
 Order? first = await reader.Rows<Order>("Orders")
     .Where(o => o.OrderDate.Year == 2024)
     .Take(10)
     .FirstOrDefaultAsync(ct);
 
-// Materialize to a list
-List<Order> recent = await reader.Rows<Order>("Orders")
-    .Where(o => o.OrderDate.Year == 2024)
-    .ToListAsync(ct);
-
 // Object-array chain (no POCO)
 int count = await reader.Rows("OrderDetails")
     .Where(row => row[3] is decimal p && p > 100m)
     .CountAsync(ct);
-
-// String chain — useful for compatibility / CSV-style consumers
-await foreach (string[] row in reader.RowsAsStrings("Orders")
-    .Where(r => r[2].StartsWith("2024"))
-    .Take(50)
-    .WithCancellation(ct))
-{
-    Console.WriteLine(string.Join(", ", row));
-}
 ```
 
 Filtering and projection run client-side per row and require a table scan unless enumeration short-circuits — there is no SQL engine underneath. To let the reader pick an index for you, pass the predicate directly to `Rows<T>(table, predicate)` (see [Index-backed reads](#index-backed-reads)); chained `.Where(...)` over `Rows(...)` stays client-side because it receives a compiled delegate the engine can't inspect. Use `FromIndex(...)` to force a specific index or index ordering, or `SeekRowsAsync` for the older full-key exact-match object-array API.
@@ -447,15 +408,15 @@ Filtering and projection run client-side per row and require a table scan unless
 
 ## Reading All Tables
 
-`ReadAllTablesAsync` materializes every user table in one call and accepts a `Progress<TableProgress>` callback that fires once per table:
-
-For large databases, enumerate `ListTablesAsync()` and stream each table with `Rows(...)` or `Rows<T>(...)` unless you specifically need `DataTable` instances for every table. For string-typed `DataTable` compatibility across all tables, enumerate `ListTablesAsync()` and call `ReadTableAsStringsAsync(...)` per table.
+`ReadAllTablesAsync` materializes every user table into `DataTable` instances in one call, with a `Progress<TableProgress>` callback that fires once per table:
 
 ```csharp
 IReadOnlyDictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
     new Progress<TableProgress>(p => Console.WriteLine($"Reading {p.TableName} ({p.TableIndex + 1}/{p.TableCount})...")),
     cancellationToken);
 ```
+
+For large databases, prefer streaming each table from `ListTablesAsync()` with `Rows(...)` / `Rows<T>(...)` (or `ReadTableAsStringsAsync(...)` for string-typed `DataTable`s) rather than materializing everything at once.
 
 ---
 
