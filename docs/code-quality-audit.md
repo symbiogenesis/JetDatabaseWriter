@@ -99,9 +99,8 @@ tested directly.
 
 The largest types suppress StyleCop ordering rules to tolerate mixed member layout:
 
-- [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L34) — `#pragma warning disable SA1202` /
-  [L35](JetDatabaseWriter/AccessWriter.cs#L35) `SA1204`, with the comment *"Keep member order stable
-  while synchronous APIs remain private compatibility helpers."*
+- [AccessWriter.cs](JetDatabaseWriter/AccessWriter.cs#L34) — `#pragma warning disable SA1204`
+  (SA1202 was resolved; SA1204 remains to allow static members grouped alongside related instance members).
 - Same suppressions in
   [ComplexColumnManager.cs](JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs#L23),
   [RelationshipManager.cs](JetDatabaseWriter/Relationships/RelationshipManager.cs#L20),

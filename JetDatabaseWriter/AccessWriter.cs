@@ -31,7 +31,6 @@ using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
 
 /// <summary>
