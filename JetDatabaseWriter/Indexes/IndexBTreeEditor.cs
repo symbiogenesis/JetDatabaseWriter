@@ -1882,12 +1882,15 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     }
 
                     long newRootPageAlloc = stagingState.NextAllocatedPageNumber++;
-                    var rootEntries = new List<DecodedIntermediateEntry>(nSplit);
-                    for (int p = 0; p < nSplit; p++)
-                    {
-                        DecodedIntermediateEntry pLast = splitInts[p][^1];
-                        rootEntries.Add(pLast);
-                    }
+
+                    // Root summaries must point at the freshly split pages
+                    // (intPageNumbers), exactly like the grandparent branch
+                    // above — NOT at the original children carried in
+                    // splitInts. Reuse the shared summary builder so both
+                    // branches stay consistent.
+                    DecodedIntermediateEntry[] rootEntries = BuildSplitSummaries(
+                        [.. splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry))],
+                        intPageNumbers);
 
                     byte[]? newRootBytes;
                     try
@@ -1930,9 +1933,10 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             if (maxChanged && intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gp))
             {
                 // Propagate: grandparent's summary entry for this
-                // intermediate (at IndexInParent) needs to carry the new
-                // max key (and same ChildPage = this intermediate page).
-                AddParentOp(parentOps, gp.ParentPage, gp.IndexInParent, IntermediateOpType.Replace, newMax);
+                // intermediate (at IndexInParent) carries the new max key but
+                // must keep pointing at `deepest` (the rebuilt intermediate),
+                // NOT at deepest's last child (newMax.ChildPage is a leaf).
+                AddParentOp(parentOps, gp.ParentPage, gp.IndexInParent, IntermediateOpType.Replace, newMax with { ChildPage = deepest });
 
                 if (!pending.Contains(gp.ParentPage))
                 {
