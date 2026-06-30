@@ -74,11 +74,12 @@ internal static class IncludeLoader
 
         IReadOnlyList<IncludeNode> forest = BuildForest(includePaths);
         IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        await LoadNodesAsync(reader, parentTable, roots, forest, relationships, cancellationToken).ConfigureAwait(false);
+        var metadata = new IncludeMetadataCache(reader);
+        await LoadNodesAsync(metadata, parentTable, roots, forest, relationships, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask LoadNodesAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         IReadOnlyList<object> entities,
         IReadOnlyList<IncludeNode> nodes,
@@ -100,7 +101,7 @@ internal static class IncludeLoader
             {
                 RelationshipMetadata relationship = FindCollectionRelationship(relationships, table, elementType, navigation.Name)
                     ?? throw NoRelationship(navigation, table, elementType);
-                loaded = await LoadCollectionAsync(reader, entities, navigation, elementType, relationship, node.Operations, cancellationToken).ConfigureAwait(false);
+                loaded = await LoadCollectionAsync(metadata, entities, navigation, elementType, relationship, node.Operations, cancellationToken).ConfigureAwait(false);
                 relatedTable = relationship.ForeignTable;
             }
             else
@@ -108,7 +109,7 @@ internal static class IncludeLoader
                 Type relatedType = navigation.PropertyType;
                 RelationshipMetadata relationship = FindReferenceRelationship(relationships, table, relatedType, navigation.Name)
                     ?? throw NoRelationship(navigation, table, relatedType);
-                loaded = await LoadReferenceAsync(reader, entities, navigation, relatedType, relationship, cancellationToken).ConfigureAwait(false);
+                loaded = await LoadReferenceAsync(metadata, entities, navigation, relatedType, relationship, cancellationToken).ConfigureAwait(false);
                 relatedTable = relationship.PrimaryTable;
             }
 
@@ -116,7 +117,7 @@ internal static class IncludeLoader
             // chain on this node loads against the related table and the related rows.
             if (node.Children.Count > 0)
             {
-                await LoadNodesAsync(reader, relatedTable, loaded, node.Children, relationships, cancellationToken).ConfigureAwait(false);
+                await LoadNodesAsync(metadata, relatedTable, loaded, node.Children, relationships, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -163,7 +164,7 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<List<object>> LoadReferenceAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         IReadOnlyList<object> roots,
         PropertyInfo navigation,
         Type relatedType,
@@ -173,7 +174,7 @@ internal static class IncludeLoader
         EnsureConstructible(relatedType, navigation);
         Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.ForeignColumns);
         Dictionary<string, object> parentsByKey = await BuildParentLookupAsync(
-            reader, relationship.PrimaryTable, relatedType, relationship.PrimaryColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
+            metadata, relationship.PrimaryTable, relatedType, relationship.PrimaryColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         foreach (object root in roots)
         {
@@ -186,7 +187,7 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<List<object>> LoadCollectionAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         IReadOnlyList<object> roots,
         PropertyInfo navigation,
         Type relatedType,
@@ -197,7 +198,7 @@ internal static class IncludeLoader
         EnsureConstructible(relatedType, navigation);
         Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.PrimaryColumns);
         Dictionary<string, List<object>> childrenByKey = await BuildChildGroupsAsync(
-            reader, relationship.ForeignTable, relatedType, relationship.ForeignColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
+            metadata, relationship.ForeignTable, relatedType, relationship.ForeignColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         var loaded = new List<object>();
         foreach (object root in roots)
@@ -233,7 +234,7 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<Dictionary<string, object>> BuildParentLookupAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
@@ -243,18 +244,18 @@ internal static class IncludeLoader
         // One parent per key: seek the parent key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
         SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(reader, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
+            ? await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
             : null;
         if (plan is not SeekPlan seek)
         {
-            return await IndexRelatedAsync(reader, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+            return await IndexRelatedAsync(metadata, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
         }
 
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
         {
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            await foreach (object[] row in metadata.Reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
                 map[entry.Key] = RuntimeRowMapper.Map(type, seek.Headers, row);
                 break;
@@ -265,7 +266,7 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<Dictionary<string, List<object>>> BuildChildGroupsAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
@@ -275,11 +276,11 @@ internal static class IncludeLoader
         // Many children per key: seek the foreign-key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
         SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(reader, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
+            ? await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
             : null;
         if (plan is not SeekPlan seek)
         {
-            return await GroupRelatedAsync(reader, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+            return await GroupRelatedAsync(metadata, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
         }
 
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
@@ -287,7 +288,7 @@ internal static class IncludeLoader
         {
             var list = new List<object>();
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            await foreach (object[] row in metadata.Reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
                 list.Add(RuntimeRowMapper.Map(type, seek.Headers, row));
             }
@@ -302,19 +303,19 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<SeekPlan?> ResolveSeekPlanAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         IReadOnlyList<string> keyColumns,
         int distinctKeyCount,
         CancellationToken cancellationToken)
     {
         // Index seeks are Jet4/ACE only; everything else falls back to a scan.
-        if (reader.Format == DatabaseFormat.Jet3Mdb)
+        if (metadata.Reader.Format == DatabaseFormat.Jet3Mdb)
         {
             return null;
         }
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<IndexMetadata> indexes = await metadata.GetIndexesAsync(table, cancellationToken).ConfigureAwait(false);
         IndexMetadata? index = FindCoveringIndex(indexes, keyColumns);
         if (index is null)
         {
@@ -325,13 +326,13 @@ internal static class IncludeLoader
         // is a small fraction of the related table. When the declared row count says we
         // would seek a large share of the table, scan instead. A row count of 0 (unknown
         // or empty) leaves the seek path enabled.
-        long rowCount = await reader.GetDeclaredRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+        long rowCount = await metadata.GetRowCountAsync(table, cancellationToken).ConfigureAwait(false);
         if (rowCount > 0 && (long)distinctKeyCount * SeekKeyCountTableFraction > rowCount)
         {
             return null;
         }
 
-        (string[] headers, _) = await ReadHeadersAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false);
+        (string[] headers, _) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
         return new SeekPlan(index.Name, index.Columns.Count, headers);
     }
 
@@ -415,15 +416,15 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<Dictionary<string, object>> IndexRelatedAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
         CancellationToken cancellationToken)
     {
-        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false);
+        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
-        await foreach (object[] row in reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in metadata.Reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
             if (key is null)
@@ -438,15 +439,15 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<Dictionary<string, List<object>>> GroupRelatedAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
         CancellationToken cancellationToken)
     {
-        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(reader, table, keyColumns, cancellationToken).ConfigureAwait(false);
+        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        await foreach (object[] row in reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in metadata.Reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
             if (key is null)
@@ -467,18 +468,12 @@ internal static class IncludeLoader
     }
 
     private static async ValueTask<(string[] Headers, int[] KeyIndices)> ReadHeadersAsync(
-        AccessReader reader,
+        IncludeMetadataCache metadata,
         string table,
         IReadOnlyList<string> keyColumns,
         CancellationToken cancellationToken)
     {
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, cancellationToken).ConfigureAwait(false);
-        string[] headers = new string[meta.Count];
-        for (int i = 0; i < meta.Count; i++)
-        {
-            headers[i] = meta[i].Name;
-        }
-
+        string[] headers = await metadata.GetHeadersAsync(table, cancellationToken).ConfigureAwait(false);
         return (headers, ResolveKeyIndices(headers, keyColumns));
     }
 
@@ -729,5 +724,56 @@ internal static class IncludeLoader
         public IReadOnlyList<IncludeOperation> Operations { get; set; } = [];
 
         public List<IncludeNode> Children { get; } = [];
+    }
+
+    private sealed class IncludeMetadataCache(AccessReader reader)
+    {
+        private readonly Dictionary<string, IReadOnlyList<IndexMetadata>> indexes = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string[]> headers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, long> rowCounts = new(StringComparer.OrdinalIgnoreCase);
+
+        public AccessReader Reader { get; } = reader;
+
+        public async ValueTask<IReadOnlyList<IndexMetadata>> GetIndexesAsync(string table, CancellationToken cancellationToken)
+        {
+            if (this.indexes.TryGetValue(table, out IReadOnlyList<IndexMetadata>? cached))
+            {
+                return cached;
+            }
+
+            IReadOnlyList<IndexMetadata> value = await this.Reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+            this.indexes[table] = value;
+            return value;
+        }
+
+        public async ValueTask<long> GetRowCountAsync(string table, CancellationToken cancellationToken)
+        {
+            if (this.rowCounts.TryGetValue(table, out long cached))
+            {
+                return cached;
+            }
+
+            long value = await this.Reader.GetDeclaredRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+            this.rowCounts[table] = value;
+            return value;
+        }
+
+        public async ValueTask<string[]> GetHeadersAsync(string table, CancellationToken cancellationToken)
+        {
+            if (this.headers.TryGetValue(table, out string[]? cached))
+            {
+                return cached;
+            }
+
+            IReadOnlyList<ColumnMetadata> meta = await this.Reader.GetColumnMetadataAsync(table, cancellationToken).ConfigureAwait(false);
+            string[] value = new string[meta.Count];
+            for (int i = 0; i < meta.Count; i++)
+            {
+                value[i] = meta[i].Name;
+            }
+
+            this.headers[table] = value;
+            return value;
+        }
     }
 }
