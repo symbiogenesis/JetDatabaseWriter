@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Queries;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -26,7 +27,13 @@ using JetDatabaseWriter.Models;
 /// <c>double</c> <c>ParentId</c>). Binary (<c>byte[]</c>) keys compare by content, and a
 /// key whose CLR type is not a supported scalar (numeric, <c>bool</c>, <c>char</c>,
 /// <c>string</c>, <c>Guid</c>, <c>DateTime</c>, or <c>byte[]</c>) is treated as unmatchable
-/// rather than coerced through an arbitrary <c>ToString()</c>. A reference navigation matches the child's
+/// rather than coerced through an arbitrary <c>ToString()</c>. The related table is
+/// identified from the navigation's target type: by default the type name must match the
+/// table name ignoring case and non-alphanumeric separators (so <c>OrderLine</c> binds to
+/// <c>Order_Line</c>), or an explicit
+/// <see cref="System.ComponentModel.DataAnnotations.Schema.TableAttribute"/>
+/// (<c>[Table("Orders")]</c>) on the type overrides that convention so a differently named
+/// POCO still binds. A reference navigation matches the child's
 /// foreign-key columns to the parent's key; a collection navigation groups child
 /// rows by their foreign-key columns. When more than one relationship links the same
 /// pair of tables (for example two foreign keys to the same parent), the navigation
@@ -624,7 +631,7 @@ internal static class IncludeLoader
         string navigationName)
     {
         string parent = Simplify(parentTable);
-        string child = Simplify(childType.Name);
+        string child = Simplify(ResolveTableName(childType));
         RelationshipMetadata? firstMatch = null;
         foreach (RelationshipMetadata relationship in relationships)
         {
@@ -648,7 +655,7 @@ internal static class IncludeLoader
         string navigationName)
     {
         string child = Simplify(childTable);
-        string parent = Simplify(parentType.Name);
+        string parent = Simplify(ResolveTableName(parentType));
         RelationshipMetadata? firstMatch = null;
         foreach (RelationshipMetadata relationship in relationships)
         {
@@ -693,6 +700,19 @@ internal static class IncludeLoader
         return false;
     }
 
+    /// <summary>
+    /// Resolves the Access table name to match for a navigation's target POCO type: an
+    /// explicit <see cref="TableAttribute"/> overrides the default convention that the POCO
+    /// type name equals the table name, so a differently named type (such as a DTO or a
+    /// "tbl"-prefixed table) still binds.
+    /// </summary>
+    /// <param name="type">The navigation target entity type.</param>
+    /// <returns>The table name to match against the relationship catalog.</returns>
+    private static string ResolveTableName(Type type) =>
+        type.GetCustomAttribute<TableAttribute>(inherit: true) is { Name.Length: > 0 } table
+            ? table.Name
+            : type.Name;
+
     private static string Simplify(string name)
     {
         var builder = new StringBuilder(name.Length);
@@ -718,7 +738,8 @@ internal static class IncludeLoader
 
     private static InvalidOperationException NoRelationship(PropertyInfo navigation, string table, Type relatedType) =>
         new($"Could not infer a relationship for navigation '{navigation.Name}' between table '{table}' and type '{relatedType.Name}'. "
-            + "Ensure a foreign key linking the two tables exists in MSysRelationships.");
+            + "Ensure a foreign key linking the two tables exists in MSysRelationships, and that the related type name matches its "
+            + "table name (ignoring case and non-alphanumeric separators) or carries a [Table(\"...\")] attribute naming the table.");
 
     private readonly record struct SeekPlan(string IndexName, int IndexColumnCount, string[] Headers);
 

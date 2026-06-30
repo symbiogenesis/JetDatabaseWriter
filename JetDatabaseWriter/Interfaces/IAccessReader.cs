@@ -188,6 +188,15 @@ public interface IAccessReader : IAccessBase
     /// an inferred relationship. Use the async terminal extensions (<c>ToListAsync</c>, …) or
     /// <c>await foreach</c> to execute.
     /// </summary>
+    /// <remarks>
+    /// <c>Include</c> / <c>ThenInclude</c> resolve the related table from the navigation's
+    /// target type by name, ignoring case and non-alphanumeric separators (so an
+    /// <c>OrderLine</c> type binds to an <c>Order_Line</c> table). Annotate the type with
+    /// <c>[Table("ActualName")]</c>
+    /// (<see cref="System.ComponentModel.DataAnnotations.Schema.TableAttribute"/>) to bind a
+    /// POCO whose name does not match its table. The root <paramref name="tableName"/> is
+    /// always passed explicitly, so the root type needs no attribute.
+    /// </remarks>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <returns>A composable query; enumerate with the async terminal extensions or <c>AsAsyncEnumerable()</c>.</returns>

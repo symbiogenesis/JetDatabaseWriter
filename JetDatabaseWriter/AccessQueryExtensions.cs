@@ -29,7 +29,9 @@ public static class AccessQueryExtensions
     /// Eagerly loads the related entity or entities reached through the
     /// <paramref name="navigation"/> property. The relationship is inferred from the
     /// database's <c>MSysRelationships</c> catalog by matching the navigation's target
-    /// type to the related table; the related rows load via an index seek when the join
+    /// type to the related table by name — ignoring case and non-alphanumeric separators,
+    /// or honoring an explicit <c>[Table("...")]</c> attribute on the type; the related
+    /// rows load via an index seek when the join
     /// columns are indexed, otherwise via a single scan. A collection navigation may be
     /// filtered, ordered, and paged inline — EF-style — by chaining <c>Where</c>,
     /// <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/<c>ThenByDescending</c>,
