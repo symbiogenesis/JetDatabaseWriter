@@ -156,14 +156,64 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
-    public async Task UnsupportedOperator_Throws()
+    public async Task Select_ProjectsColumn()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await reader.Query<JdwItem>("JdwItem").Select(i => i.Name).ToListAsync(ct));
+        // OrderBy stays in the engine; the trailing Select projects each row in memory.
+        List<string> names = await reader.Query<JdwItem>("JdwItem")
+            .OrderBy(i => i.Id)
+            .Select(i => i.Name)
+            .ToListAsync(ct);
+
+        Assert.Equal(["alice", "bob", "carol", "dave", "eve", "adam"], names);
+    }
+
+    [Fact]
+    public async Task Where_OrderBy_Select_FiltersOrdersThenProjects()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // The leading Where pushes into index inference; the projection shapes a DTO.
+        List<(int Id, string Name)> rows = await reader.Query<JdwItem>("JdwItem")
+            .Where(i => i.Score >= 30)
+            .OrderBy(i => i.Id)
+            .Select(i => new ValueTuple<int, string>(i.Id, i.Name))
+            .ToListAsync(ct);
+
+        Assert.Equal([1, 3, 5, 6], rows.Select(r => r.Id).ToArray());
+        Assert.Equal("carol", rows[1].Name);
+    }
+
+    [Fact]
+    public async Task Select_Where_ProjectsThenFiltersInMemory()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Select changes the element type, so the following Where runs in memory over the
+        // projected scores rather than as an engine filter.
+        List<int> scores = await reader.Query<JdwItem>("JdwItem")
+            .Select(i => i.Score)
+            .Where(s => s >= 30)
+            .ToListAsync(ct);
+
+        Assert.Equal([30, 30, 40, 50], scores.OrderBy(s => s).ToArray());
+    }
+
+    [Fact]
+    public async Task Select_Count_ReducesProjection()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(6, reader.Query<JdwItem>("JdwItem").Select(i => i.Name).Count());
     }
 
     [Fact]
@@ -382,6 +432,190 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         List<JdwItem> rows = reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToList();
 
         Assert.Equal([1, 2, 3, 4, 5, 6], rows.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task FirstAsync_ReturnsFirstInOrder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem first = await reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).FirstAsync(ct);
+
+        Assert.Equal(1, first.Id);
+    }
+
+    [Fact]
+    public async Task FirstAsync_WithPredicate_ReturnsMatch()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem match = await reader.Query<JdwItem>("JdwItem").FirstAsync(i => i.Score == 40, ct);
+
+        Assert.Equal(5, match.Id);
+    }
+
+    [Fact]
+    public async Task FirstAsync_OnEmptyResult_Throws()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.Query<JdwItem>("JdwItem").Where(i => i.Score > 1000).FirstAsync(ct));
+    }
+
+    [Fact]
+    public async Task FirstOrDefaultAsync_WithPredicate_ReturnsNullWhenNoMatch()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem? match = await reader.Query<JdwItem>("JdwItem").FirstOrDefaultAsync(i => i.Id == 999, ct);
+
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public async Task SingleAsync_WithPredicate_ReturnsMatch()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem match = await reader.Query<JdwItem>("JdwItem").SingleAsync(i => i.Id == 3, ct);
+
+        Assert.Equal("carol", match.Name);
+    }
+
+    [Fact]
+    public async Task SingleAsync_WhenMultipleMatch_Throws()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Ids 1 and 6 both score 30, so SingleAsync must throw.
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.Query<JdwItem>("JdwItem").Where(i => i.Score == 30).SingleAsync(ct));
+    }
+
+    [Fact]
+    public async Task SingleOrDefaultAsync_WithPredicate_ReturnsMatch()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem? match = await reader.Query<JdwItem>("JdwItem").SingleOrDefaultAsync(i => i.Id == 3, ct);
+
+        Assert.NotNull(match);
+        Assert.Equal("carol", match.Name);
+    }
+
+    [Fact]
+    public async Task CountAsync_WithPredicate_CountsMatches()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(4, await reader.Query<JdwItem>("JdwItem").CountAsync(i => i.Score >= 30, ct));
+    }
+
+    [Fact]
+    public async Task LongCountAsync_CountsAllRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(6L, await reader.Query<JdwItem>("JdwItem").LongCountAsync(ct));
+        Assert.Equal(2L, await reader.Query<JdwItem>("JdwItem").LongCountAsync(i => i.Score == 30, ct));
+    }
+
+    [Fact]
+    public async Task AnyAsync_WithPredicate_ReflectsExistence()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.True(await reader.Query<JdwItem>("JdwItem").AnyAsync(i => i.Score == 50, ct));
+        Assert.False(await reader.Query<JdwItem>("JdwItem").AnyAsync(i => i.Score > 1000, ct));
+    }
+
+    [Fact]
+    public async Task ToArrayAsync_MaterializesInOrder()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JdwItem[] array = await reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToArrayAsync(ct);
+
+        Assert.Equal([1, 2, 3, 4, 5, 6], array.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task ToDictionaryAsync_KeyedById()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Dictionary<int, JdwItem> byId = await reader.Query<JdwItem>("JdwItem").ToDictionaryAsync(i => i.Id, ct);
+
+        Assert.Equal(6, byId.Count);
+        Assert.Equal("carol", byId[3].Name);
+    }
+
+    [Fact]
+    public async Task ToDictionaryAsync_KeyAndElement()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Dictionary<int, string> byId = await reader.Query<JdwItem>("JdwItem").ToDictionaryAsync(i => i.Id, i => i.Name, ct);
+
+        Assert.Equal("eve", byId[5]);
+    }
+
+    [Fact]
+    public async Task SumAsync_AddsScores()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(180, await reader.Query<JdwItem>("JdwItem").SumAsync(i => i.Score, ct));
+    }
+
+    [Fact]
+    public async Task AverageAsync_ReturnsMean()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(30.0, await reader.Query<JdwItem>("JdwItem").AverageAsync(i => i.Score, ct));
+    }
+
+    [Fact]
+    public async Task MinMaxAsync_ReturnExtremes()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        Assert.Equal(10, await reader.Query<JdwItem>("JdwItem").MinAsync(i => i.Score, ct));
+        Assert.Equal(50, await reader.Query<JdwItem>("JdwItem").MaxAsync(i => i.Score, ct));
     }
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)

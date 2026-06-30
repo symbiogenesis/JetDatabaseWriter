@@ -35,31 +35,34 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
     public object? Execute(Expression expression)
     {
         Guard.NotNull(expression, nameof(expression));
-        if (TryGetScalarOperator(expression, out MethodCallExpression? call))
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        List<T> rows = this.MaterializeSync(plan);
+        if (ReferenceEquals(boundary, expression))
         {
-            IQueryable<T> rows = this.ExecuteTypedSyncList(call.Arguments[0]).AsQueryable();
-            return rows.Provider.Execute(RetargetScalar(call, rows));
+            return rows;
         }
 
-        return this.ExecuteTypedSyncList(expression);
+        (IQueryProvider provider, Expression rewritten) = BuildTail(rows, expression, boundary);
+        return provider.Execute(rewritten);
     }
 
     public TResult Execute<TResult>(Expression expression)
     {
         Guard.NotNull(expression, nameof(expression));
 
-        // A scalar terminal (Count/Any/First/Single/Sum/Min/Max/Average/...) sits at the
-        // root with the sequence-producing query as its source. Run the source through our
-        // pipeline so leading filters still infer indexes, then let LINQ-to-Objects reduce
-        // it with the operator's own predicate/selector for faithful LINQ semantics.
-        if (TryGetScalarOperator(expression, out MethodCallExpression? call))
+        // The engine evaluates the supported prefix (so leading filters still infer
+        // indexes); any tail — a scalar terminal such as Count/First/Sum, a Select
+        // projection, or operators after one — replays over the materialized rows with
+        // LINQ-to-Objects for faithful LINQ semantics.
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        List<T> rows = this.MaterializeSync(plan);
+        if (!ReferenceEquals(boundary, expression))
         {
-            IQueryable<T> rows = this.ExecuteTypedSyncList(call.Arguments[0]).AsQueryable();
-            return rows.Provider.Execute<TResult>(RetargetScalar(call, rows));
+            (IQueryProvider provider, Expression rewritten) = BuildTail(rows, expression, boundary);
+            return provider.Execute<TResult>(rewritten);
         }
 
-        List<T> list = this.ExecuteTypedSyncList(expression);
-        if (list is TResult typed)
+        if (rows is TResult typed)
         {
             return typed;
         }
@@ -68,12 +71,44 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
             $"This query yields a sequence of '{typeof(T).Name}'; materialize it with ToList()/ToListAsync() or reduce it with a scalar operator such as Count(), Any(), or First().");
     }
 
-    public IEnumerable ExecuteSyncList(Expression expression) => this.ExecuteTypedSyncList(expression);
+    public IEnumerable ExecuteSyncList(Expression expression)
+    {
+        Guard.NotNull(expression, nameof(expression));
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        List<T> rows = this.MaterializeSync(plan);
+        if (ReferenceEquals(boundary, expression))
+        {
+            return rows;
+        }
+
+        (IQueryProvider provider, Expression rewritten) = BuildTail(rows, expression, boundary);
+        return provider.CreateQuery(rewritten);
+    }
 
     public async IAsyncEnumerable<object> ExecuteStreamAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (T item in this.ExecuteTypedAsync(expression, cancellationToken).ConfigureAwait(false))
+        Guard.NotNull(expression, nameof(expression));
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+
+        // No tail: stream the engine pipeline straight through so Take/First can
+        // short-circuit before the whole table is read.
+        if (ReferenceEquals(boundary, expression))
         {
+            await foreach (T item in this.ExecuteEngineAsync(plan, cancellationToken).ConfigureAwait(false))
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
+
+        // A tail (projection or post-projection operators) replays in memory, so the
+        // engine prefix is materialized first.
+        List<T> rows = await this.MaterializeAsync(plan, cancellationToken).ConfigureAwait(false);
+        (IQueryProvider provider, Expression rewritten) = BuildTail(rows, expression, boundary);
+        foreach (object item in provider.CreateQuery(rewritten))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             yield return item;
         }
     }
@@ -101,38 +136,23 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(first.Body, rebound), parameter);
     }
 
-    private static bool TryGetScalarOperator(Expression expression, [NotNullWhen(true)] out MethodCallExpression? call)
+    private static (IQueryProvider Provider, Expression Rewritten) BuildTail(List<T> rows, Expression root, Expression boundary)
     {
-        // A scalar terminal is a Queryable call whose result is not itself a query; its
-        // first argument is the sequence-producing source we still run through the pipeline.
-        if (expression is MethodCallExpression candidate
-            && candidate.Method.DeclaringType == typeof(Queryable)
-            && !typeof(IQueryable).IsAssignableFrom(candidate.Method.ReturnType))
-        {
-            call = candidate;
-            return true;
-        }
-
-        call = null;
-        return false;
+        // Replay the tail over the materialized engine rows: rebind the engine boundary to
+        // an in-memory queryable and hand the rewritten tree to LINQ-to-Objects, which
+        // turns the Queryable operators into their Enumerable equivalents.
+        IQueryable<T> materialized = rows.AsQueryable();
+        Expression rewritten = new RebindSourceVisitor(boundary, materialized.Expression).Visit(root);
+        return (materialized.Provider, rewritten);
     }
 
-    private static MethodCallExpression RetargetScalar(MethodCallExpression call, IQueryable<T> rows)
-    {
-        // Re-issue the operator against the materialized rows, preserving any
-        // predicate/selector arguments so the in-memory provider evaluates it faithfully.
-        Expression[] arguments = [.. call.Arguments];
-        arguments[0] = rows.Expression;
-        return Expression.Call(call.Method, arguments);
-    }
+    private List<T> MaterializeSync(AccessQueryPlan plan) =>
+        this.MaterializeAsync(plan, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
-    private List<T> ExecuteTypedSyncList(Expression expression) =>
-        this.ExecuteListAsync(expression, CancellationToken.None).AsTask().GetAwaiter().GetResult();
-
-    private async ValueTask<List<T>> ExecuteListAsync(Expression expression, CancellationToken cancellationToken)
+    private async ValueTask<List<T>> MaterializeAsync(AccessQueryPlan plan, CancellationToken cancellationToken)
     {
         var list = new List<T>();
-        await foreach (T item in this.ExecuteTypedAsync(expression, cancellationToken).ConfigureAwait(false))
+        await foreach (T item in this.ExecuteEngineAsync(plan, cancellationToken).ConfigureAwait(false))
         {
             list.Add(item);
         }
@@ -140,9 +160,8 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         return list;
     }
 
-    private async IAsyncEnumerable<T> ExecuteTypedAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async IAsyncEnumerable<T> ExecuteEngineAsync(AccessQueryPlan plan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        AccessQueryPlan plan = AccessQueryTranslator.Translate(expression);
         IAsyncEnumerable<T> sequence = this.BuildPipeline(plan, cancellationToken);
 
         // Without includes the pipeline streams straight through, so Take/First can
@@ -204,5 +223,12 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
     {
         protected override Expression VisitParameter(ParameterExpression node) =>
             node == from ? to : base.VisitParameter(node);
+    }
+
+    private sealed class RebindSourceVisitor(Expression target, Expression replacement) : ExpressionVisitor
+    {
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node) =>
+            ReferenceEquals(node, target) ? replacement : base.Visit(node);
     }
 }

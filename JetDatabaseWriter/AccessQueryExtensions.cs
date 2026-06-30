@@ -84,6 +84,426 @@ public static class AccessQueryExtensions
     public static async ValueTask<T?> SingleOrDefaultAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
         => await AsAsyncEnumerable(source).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Returns the first matching entity, or throws when the query produces no rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The first entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    public static async ValueTask<T> FirstAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            return item;
+        }
+
+        throw new InvalidOperationException("The sequence contains no elements.");
+    }
+
+    /// <summary>Returns the first entity matching <paramref name="predicate"/>, or throws when none match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The first matching entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no row matches.</exception>
+    public static ValueTask<T> FirstAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).FirstAsync(cancellationToken);
+    }
+
+    /// <summary>Returns the first entity matching <paramref name="predicate"/>, or <see langword="default"/> when none match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The first matching entity or <see langword="default"/>.</returns>
+    public static ValueTask<T?> FirstOrDefaultAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    /// <summary>Returns the single matching entity, or throws when none or more than one match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The single entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows or more than one row.</exception>
+    public static async ValueTask<T> SingleAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        await using IAsyncEnumerator<T> enumerator = AsAsyncEnumerable(source).GetAsyncEnumerator(cancellationToken);
+        if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("The sequence contains no elements.");
+        }
+
+        T single = enumerator.Current;
+        if (await enumerator.MoveNextAsync().ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("The sequence contains more than one element.");
+        }
+
+        return single;
+    }
+
+    /// <summary>Returns the single entity matching <paramref name="predicate"/>, or throws when none or more than one match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The single matching entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no row matches or more than one row matches.</exception>
+    public static ValueTask<T> SingleAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).SingleAsync(cancellationToken);
+    }
+
+    /// <summary>Returns the single matching entity, <see langword="default"/> when none match, or throws when more than one matches.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The single matching entity or <see langword="default"/>.</returns>
+    public static ValueTask<T?> SingleOrDefaultAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).SingleOrDefaultAsync(cancellationToken);
+    }
+
+    /// <summary>Counts the rows matching <paramref name="predicate"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to count.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The number of matching rows.</returns>
+    public static ValueTask<int> CountAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).CountAsync(cancellationToken);
+    }
+
+    /// <summary>Counts the rows the query produces as a 64-bit value.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to count.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The number of rows.</returns>
+    public static async ValueTask<long> LongCountAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        long count = 0;
+        await foreach (T unused in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>Counts the rows matching <paramref name="predicate"/> as a 64-bit value.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to count.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The number of matching rows.</returns>
+    public static ValueTask<long> LongCountAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).LongCountAsync(cancellationToken);
+    }
+
+    /// <summary>Determines whether any row matches <paramref name="predicate"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to test.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns><see langword="true"/> when at least one row matches.</returns>
+    public static ValueTask<bool> AnyAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).AnyAsync(cancellationToken);
+    }
+
+    /// <summary>Materializes the query into an array, applying every operator and include.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to materialize.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The matching entities.</returns>
+    public static async ValueTask<T[]> ToArrayAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return [.. list];
+    }
+
+    /// <summary>Materializes the query into a dictionary keyed by <paramref name="keySelector"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TKey">The dictionary key type.</typeparam>
+    /// <param name="source">The query to materialize.</param>
+    /// <param name="keySelector">Produces the key for each entity.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The entities keyed by <paramref name="keySelector"/>.</returns>
+    public static ValueTask<Dictionary<TKey, T>> ToDictionaryAsync<T, TKey>(
+        this IQueryable<T> source,
+        Func<T, TKey> keySelector,
+        CancellationToken cancellationToken = default)
+        where TKey : notnull
+        => ToDictionaryAsync(source, keySelector, comparer: null, cancellationToken);
+
+    /// <summary>Materializes the query into a dictionary keyed by <paramref name="keySelector"/> using <paramref name="comparer"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TKey">The dictionary key type.</typeparam>
+    /// <param name="source">The query to materialize.</param>
+    /// <param name="keySelector">Produces the key for each entity.</param>
+    /// <param name="comparer">The key comparer, or <see langword="null"/> for the default.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The entities keyed by <paramref name="keySelector"/>.</returns>
+    public static async ValueTask<Dictionary<TKey, T>> ToDictionaryAsync<T, TKey>(
+        this IQueryable<T> source,
+        Func<T, TKey> keySelector,
+        IEqualityComparer<TKey>? comparer,
+        CancellationToken cancellationToken = default)
+        where TKey : notnull
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(keySelector, nameof(keySelector));
+        var result = new Dictionary<TKey, T>(comparer);
+        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            result.Add(keySelector(item), item);
+        }
+
+        return result;
+    }
+
+    /// <summary>Materializes the query into a dictionary using <paramref name="keySelector"/> and <paramref name="elementSelector"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TKey">The dictionary key type.</typeparam>
+    /// <typeparam name="TElement">The dictionary value type.</typeparam>
+    /// <param name="source">The query to materialize.</param>
+    /// <param name="keySelector">Produces the key for each entity.</param>
+    /// <param name="elementSelector">Produces the value for each entity.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The projected values keyed by <paramref name="keySelector"/>.</returns>
+    public static ValueTask<Dictionary<TKey, TElement>> ToDictionaryAsync<T, TKey, TElement>(
+        this IQueryable<T> source,
+        Func<T, TKey> keySelector,
+        Func<T, TElement> elementSelector,
+        CancellationToken cancellationToken = default)
+        where TKey : notnull
+        => ToDictionaryAsync(source, keySelector, elementSelector, comparer: null, cancellationToken);
+
+    /// <summary>Materializes the query into a dictionary using <paramref name="keySelector"/>, <paramref name="elementSelector"/>, and <paramref name="comparer"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TKey">The dictionary key type.</typeparam>
+    /// <typeparam name="TElement">The dictionary value type.</typeparam>
+    /// <param name="source">The query to materialize.</param>
+    /// <param name="keySelector">Produces the key for each entity.</param>
+    /// <param name="elementSelector">Produces the value for each entity.</param>
+    /// <param name="comparer">The key comparer, or <see langword="null"/> for the default.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The projected values keyed by <paramref name="keySelector"/>.</returns>
+    public static async ValueTask<Dictionary<TKey, TElement>> ToDictionaryAsync<T, TKey, TElement>(
+        this IQueryable<T> source,
+        Func<T, TKey> keySelector,
+        Func<T, TElement> elementSelector,
+        IEqualityComparer<TKey>? comparer,
+        CancellationToken cancellationToken = default)
+        where TKey : notnull
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(keySelector, nameof(keySelector));
+        Guard.NotNull(elementSelector, nameof(elementSelector));
+        var result = new Dictionary<TKey, TElement>(comparer);
+        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            result.Add(keySelector(item), elementSelector(item));
+        }
+
+        return result;
+    }
+
+    /// <summary>Returns the minimum projected value, ignoring nulls.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TResult">The projected value type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being compared.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The minimum projected value, or <see langword="default"/> for an empty sequence of a nullable type.</returns>
+    public static async ValueTask<TResult?> MinAsync<T, TResult>(this IQueryable<T> source, Func<T, TResult> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Min(selector);
+    }
+
+    /// <summary>Returns the maximum projected value, ignoring nulls.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TResult">The projected value type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being compared.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The maximum projected value, or <see langword="default"/> for an empty sequence of a nullable type.</returns>
+    public static async ValueTask<TResult?> MaxAsync<T, TResult>(this IQueryable<T> source, Func<T, TResult> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Max(selector);
+    }
+
+    /// <summary>Sums the projected <see cref="int"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values.</returns>
+    public static async ValueTask<int> SumAsync<T>(this IQueryable<T> source, Func<T, int> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Sum(selector);
+    }
+
+    /// <summary>Sums the projected <see cref="long"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values.</returns>
+    public static async ValueTask<long> SumAsync<T>(this IQueryable<T> source, Func<T, long> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Sum(selector);
+    }
+
+    /// <summary>Sums the projected <see cref="float"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values.</returns>
+    public static async ValueTask<float> SumAsync<T>(this IQueryable<T> source, Func<T, float> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Sum(selector);
+    }
+
+    /// <summary>Sums the projected <see cref="double"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values.</returns>
+    public static async ValueTask<double> SumAsync<T>(this IQueryable<T> source, Func<T, double> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Sum(selector);
+    }
+
+    /// <summary>Sums the projected <see cref="decimal"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values.</returns>
+    public static async ValueTask<decimal> SumAsync<T>(this IQueryable<T> source, Func<T, decimal> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Sum(selector);
+    }
+
+    /// <summary>Averages the projected <see cref="int"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the projected values.</returns>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, int> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Average(selector);
+    }
+
+    /// <summary>Averages the projected <see cref="long"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the projected values.</returns>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, long> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Average(selector);
+    }
+
+    /// <summary>Averages the projected <see cref="float"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the projected values.</returns>
+    public static async ValueTask<float> AverageAsync<T>(this IQueryable<T> source, Func<T, float> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Average(selector);
+    }
+
+    /// <summary>Averages the projected <see cref="double"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the projected values.</returns>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, double> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Average(selector);
+    }
+
+    /// <summary>Averages the projected <see cref="decimal"/> values.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the projected values.</returns>
+    public static async ValueTask<decimal> AverageAsync<T>(this IQueryable<T> source, Func<T, decimal> selector, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return list.Average(selector);
+    }
+
     internal static bool IsIncludeMethod(MethodInfo method) =>
         method.IsGenericMethod && method.GetGenericMethodDefinition() == IncludeMethodDefinition;
 
