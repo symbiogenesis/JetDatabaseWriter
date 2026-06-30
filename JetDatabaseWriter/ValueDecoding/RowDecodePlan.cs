@@ -98,7 +98,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        int nullMaskSz = (numCols + 7) / 8;
+        int nullMaskSz = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int nullMaskPos = rowSize - nullMaskSz;
         if (nullMaskPos < rowFields.NumCols)
         {

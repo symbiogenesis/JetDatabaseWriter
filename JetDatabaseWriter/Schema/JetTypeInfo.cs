@@ -776,6 +776,13 @@ internal static class JetTypeInfo
         }
     }
 
+    /// <summary>
+    /// Returns the number of bytes needed to hold a row's null bitmap: one bit
+    /// per column, rounded up to a whole byte.
+    /// </summary>
+    /// <param name="columnCount">The number of columns in the row.</param>
+    internal static int GetNullMaskSizeBytes(int columnCount) => (columnCount + 7) / 8;
+
     /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
     /// <param name="source">The source.</param>
     internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>

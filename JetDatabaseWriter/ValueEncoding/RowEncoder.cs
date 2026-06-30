@@ -309,7 +309,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        int nullMaskLen = (numCols + 7) / 8;
+        int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
 
         // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.

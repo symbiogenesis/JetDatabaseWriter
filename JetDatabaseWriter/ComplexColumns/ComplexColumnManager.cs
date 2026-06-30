@@ -999,7 +999,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         try
         {
             int numCols = this.writer.ReadRowColumnCount(page, parentRowStart);
-            int nullMaskSz = (numCols + 7) / 8;
+            int nullMaskSz = GetNullMaskSizeBytes(numCols);
             int nullMaskPos = parentRowSize - nullMaskSz;
             int byteOff = nullMaskPos + (complexCol.ColNum / 8);
             int bitOff = complexCol.ColNum % 8;
@@ -1040,7 +1040,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         try
         {
             int numCols = this.writer.ReadRowColumnCount(page, rowStart);
-            int nullMaskSz = (numCols + 7) / 8;
+            int nullMaskSz = GetNullMaskSizeBytes(numCols);
             int nullMaskPos = rowSize - nullMaskSz;
             int slotOff = rowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotOff + 4 > rowStart + rowSize)
@@ -1231,7 +1231,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             try
             {
                 int numCols = this.writer.ReadRowColumnCount(page, loc.RowStart);
-                int nullMaskSz = (numCols + 7) / 8;
+                int nullMaskSz = GetNullMaskSizeBytes(numCols);
                 int nullMaskPos = loc.RowSize - nullMaskSz;
 
                 foreach (ColumnInfo col in complexCols)
