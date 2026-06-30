@@ -1164,7 +1164,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        var updateIndexes = new Dictionary<int, object?>();
+        var updateIndexes = new Dictionary<int, object>();
         foreach (KeyValuePair<string, object?> kvp in updatedValues)
         {
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
@@ -1173,7 +1173,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
             }
 
-            updateIndexes[columnIndex] = kvp.Value;
+            updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
         }
 
         using DataTable snapshot = await this.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1182,26 +1182,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
         // Build the post-update payload for every row that matches the predicate,
-        // up front, so all FK / unique-index checks run before any disk page is mutated.
-        var pendingNewRows = new List<(int Index, object[] NewRow)>();
+        // up front, so all FK / unique-index checks run before any disk page is
+        // mutated. The pre-update row is kept alongside each payload for the
+        // PK-cascade key build and the index-maintenance delete hints.
+        var pendingNewRows = new List<(int Index, object[] OldRow, object[] NewRow)>();
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
-            if (!predicate.Matches(rowValues))
+            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (!predicate.Matches(oldRow))
             {
                 continue;
             }
 
-            foreach (KeyValuePair<int, object?> update in updateIndexes)
+            object[] newRow = (object[])oldRow.Clone();
+            foreach (KeyValuePair<int, object> update in updateIndexes)
             {
-                rowValues[update.Key] = update.Value ?? DBNull.Value;
+                newRow[update.Key] = update.Value;
             }
 
-            await this.Constraints.ApplyCalculatedAsync(tableName, tableDef, rowValues, force: true, cancellationToken).ConfigureAwait(false);
+            await this.Constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
 
-            pendingNewRows.Add((i, rowValues));
+            pendingNewRows.Add((i, oldRow, newRow));
         }
 
         if (pendingNewRows.Count == 0)
@@ -1216,7 +1219,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             // FK-side: every updated row must (still) satisfy any FK constraint
             // whose foreign side is THIS table.
-            foreach ((_, object[] newRow) in pendingNewRows)
+            foreach ((_, _, object[] newRow) in pendingNewRows)
             {
                 await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
             }
@@ -1256,11 +1259,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
                 changes.Clear();
-                foreach ((int rowIdx, object[] newRow) in pendingNewRows)
+                foreach ((_, object[] oldRow, object[] newRow) in pendingNewRows)
                 {
-                    object?[] oldFullRow = snapshot.Rows[rowIdx].ItemArray;
-                    string? oldKey = RelationshipKeyBuilder.Build(oldFullRow, pkIdx);
-                    changes.Add((oldKey, oldFullRow, newRow));
+                    string? oldKey = RelationshipKeyBuilder.Build(oldRow, pkIdx);
+                    changes.Add((oldKey, oldRow, newRow));
                 }
 
                 await this.Relationships.Enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
@@ -1275,14 +1277,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
         var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
-        foreach ((int i, object[] rowValues) in pendingNewRows)
+        foreach ((int i, object[] oldRow, object[] newRow) in pendingNewRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
             await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((locations[i], oldRow));
-            RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
-            updateInsertedHints.Add((newLoc, rowValues));
+            RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updateInsertedHints.Add((newLoc, newRow));
         }
 
         bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
