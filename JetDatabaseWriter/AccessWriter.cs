@@ -1160,8 +1160,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return 0;
         }
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
         var updateIndexes = new Dictionary<int, object>();
@@ -1319,8 +1320,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(criteria, nameof(criteria));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
         using DataTable snapshot = await this.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1871,8 +1873,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         where TItem : class
     {
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         IReadOnlyList<FkRelationship> relationships = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
 
@@ -2204,6 +2207,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
+    internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        return new ResolvedTable(entry, tableDef);
+    }
+
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -2211,8 +2221,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken,
         Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
 
         // Carry forward any client-side constraints registered for the original schema so
         // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
@@ -2285,8 +2296,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
-        CatalogEntry tempEntry = await this.GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
-        TableDef tempDef = await this.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable tempTable = await this.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry tempEntry = tempTable.Entry;
+        TableDef tempDef = tempTable.Definition;
 
         foreach (DataRow row in snapshot.Rows)
         {

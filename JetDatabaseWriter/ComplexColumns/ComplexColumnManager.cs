@@ -738,8 +738,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Resolve parent table + complex column.
-        CatalogEntry parentEntry = await this.writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef parentDef = await this.writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable parentTable = await this.writer.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry parentEntry = parentTable.Entry;
+        TableDef parentDef = parentTable.Definition;
 
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));

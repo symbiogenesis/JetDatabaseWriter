@@ -213,8 +213,9 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            CatalogEntry childEntry = await writer.GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            TableDef childDef = await writer.ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            ResolvedTable childTable = await writer.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry childEntry = childTable.Entry;
+            TableDef childDef = childTable.Definition;
 
             if (!TryMapFkPairOrdinals(rel, primaryDef, childDef, out int[] primaryPkIdx, out int[] fkIdx))
             {
@@ -328,8 +329,9 @@ internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer 
                 continue;
             }
 
-            CatalogEntry childEntry = await writer.GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            TableDef childDef = await writer.ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            ResolvedTable childTable = await writer.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry childEntry = childTable.Entry;
+            TableDef childDef = childTable.Definition;
             if (!TryMapFkPairOrdinals(rel, primaryDef, childDef, out int[] primaryPkIdx, out int[] fkIdx))
             {
                 continue;
