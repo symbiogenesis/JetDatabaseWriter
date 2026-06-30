@@ -34,7 +34,9 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         throw new NotSupportedException("Untyped CreateQuery is not supported; use the generic LINQ query operators.");
 
     public IQueryable<TElement> CreateQuery<TElement>(Expression expression) =>
-        new AccessQueryable<TElement>(this, expression);
+        IsOrderingOperator(expression)
+            ? new AccessOrderedQueryable<TElement>(this, expression)
+            : new AccessQueryable<TElement>(this, expression);
 
     public object? Execute(Expression expression)
     {
@@ -141,6 +143,21 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
 
         return count;
     }
+
+    /// <summary>
+    /// Determines whether <paramref name="expression"/>'s outermost node is a LINQ
+    /// ordering operator (<c>OrderBy</c> / <c>OrderByDescending</c> / <c>ThenBy</c> /
+    /// <c>ThenByDescending</c>). Only those results are surfaced as
+    /// <see cref="IOrderedQueryable{T}"/> (via <see cref="AccessOrderedQueryable{T}"/>), so
+    /// <c>ThenBy</c> / <c>ThenByDescending</c> stay callable only after an ordering
+    /// operator, matching LINQ semantics.
+    /// </summary>
+    /// <param name="expression">The composed query expression.</param>
+    /// <returns><see langword="true"/> when the outermost operator establishes an ordering.</returns>
+    private static bool IsOrderingOperator(Expression expression) =>
+        expression is MethodCallExpression call
+        && call.Method.DeclaringType == typeof(Queryable)
+        && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending";
 
     private static Expression<Func<T, bool>>? CombinePredicates(List<LambdaExpression> predicates)
     {

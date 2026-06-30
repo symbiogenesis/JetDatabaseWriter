@@ -75,6 +75,37 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
+    public async Task Query_BeforeOrdering_IsNotOrderedQueryable()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        IQueryable<JdwItem> root = reader.Query<JdwItem>("JdwItem");
+        IQueryable<JdwItem> filtered = root.Where(i => i.Score >= 20);
+
+        // The query is not ordered until an ordering operator runs, so ThenBy/
+        // ThenByDescending (which require IOrderedQueryable) are not reachable.
+        Assert.IsNotAssignableFrom<IOrderedQueryable<JdwItem>>(root);
+        Assert.IsNotAssignableFrom<IOrderedQueryable<JdwItem>>(filtered);
+    }
+
+    [Fact]
+    public async Task OrderBy_ProducesOrderedQueryable()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        IOrderedQueryable<JdwItem> ordered = reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Score);
+
+        // OrderBy establishes an ordering, so the result is an IOrderedQueryable and a
+        // further ThenBy keeps that contract.
+        Assert.IsAssignableFrom<IOrderedQueryable<JdwItem>>(ordered);
+        Assert.IsAssignableFrom<IOrderedQueryable<JdwItem>>(ordered.ThenBy(i => i.Name));
+    }
+
+    [Fact]
     public async Task Skip_Take_PageInOrder()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
