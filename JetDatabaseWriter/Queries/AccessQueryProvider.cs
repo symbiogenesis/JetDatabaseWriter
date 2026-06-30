@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -159,29 +158,6 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         && call.Method.DeclaringType == typeof(Queryable)
         && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending";
 
-    private static Expression<Func<T, bool>>? CombinePredicates(List<LambdaExpression> predicates)
-    {
-        if (predicates.Count == 0)
-        {
-            return null;
-        }
-
-        var combined = (Expression<Func<T, bool>>)predicates[0];
-        for (int i = 1; i < predicates.Count; i++)
-        {
-            combined = Combine(combined, (Expression<Func<T, bool>>)predicates[i]);
-        }
-
-        return combined;
-    }
-
-    private static Expression<Func<T, bool>> Combine(Expression<Func<T, bool>> first, Expression<Func<T, bool>> second)
-    {
-        ParameterExpression parameter = first.Parameters[0];
-        Expression rebound = new ReplaceParameterVisitor(second.Parameters[0], parameter).Visit(second.Body);
-        return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(first.Body, rebound), parameter);
-    }
-
     private static (IQueryProvider Provider, Expression Rewritten) BuildTail(List<T> rows, Expression root, Expression boundary)
     {
         // Replay the tail over the materialized engine rows: rebind the engine boundary to
@@ -190,65 +166,6 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         IQueryable<T> materialized = rows.AsQueryable();
         Expression rewritten = new RebindSourceVisitor(boundary, materialized.Expression).Visit(root);
         return (materialized.Provider, rewritten);
-    }
-
-    private static bool TryDescribeIntegerOrderKey(OrderingKey key, out string? column)
-    {
-        column = null;
-
-        Expression body = key.KeySelector.Body;
-        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
-        {
-            body = convert.Operand;
-        }
-
-        // Only a direct property access on the lambda parameter (e.g. i => i.Id) maps to a
-        // column; nested paths and computed keys are left to the in-memory sort. The CLR
-        // type is restricted to signed integers/byte, whose JET index key bytes compare in
-        // the same order as the values — unlike float/double (NaN) or date (pre-1899 OADate).
-        if (body is MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
-            && parameter == key.KeySelector.Parameters[0]
-            && IsOrderSafeIntegerType(property.PropertyType))
-        {
-            column = property.Name;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsOrderSafeIntegerType(Type type)
-    {
-        Type underlying = Nullable.GetUnderlyingType(type) ?? type;
-        return underlying == typeof(int)
-            || underlying == typeof(long)
-            || underlying == typeof(short)
-            || underlying == typeof(byte);
-    }
-
-    private static bool CoversOrdering(IndexMetadata index, List<(string Column, bool Descending)> keys)
-    {
-        // The index serves the ordering only when it has a usable B-tree root, never omits
-        // rows (no ignore-nulls), and is unique — uniqueness rules out key ties, so the
-        // index order equals the stable LINQ sort. Its key columns must match the ordering
-        // columns one-for-one, in order, including sort direction.
-        if (index.FirstDp <= 0 || !index.EnforcesUniqueness || index.IgnoreNulls || index.Columns.Count != keys.Count)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < keys.Count; i++)
-        {
-            IndexColumnReference column = index.Columns[i];
-            bool ascendingRequested = !keys[i].Descending;
-            if (column.IsAscending != ascendingRequested
-                || !string.Equals(column.Name, keys[i].Column, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -320,14 +237,14 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         // collapsing only the leading run preserves LINQ ordering semantics; every later
         // stage — including a filter that follows ordering or paging — runs in order.
         int next = 0;
-        var leading = new List<LambdaExpression>();
+        var leading = new List<FilterStage>();
         while (next < stages.Count && stages[next] is FilterStage filter)
         {
-            leading.Add(filter.Predicate);
+            leading.Add(filter);
             next++;
         }
 
-        Expression<Func<T, bool>>? pushed = CombinePredicates(leading);
+        Expression<Func<T, bool>>? pushed = FilterStage.Combine<T>(leading);
 
         // When no leading filter consumed the stream and the next stage orders by a covering
         // unique integer-keyed index, read the source straight from that index in key order
@@ -367,33 +284,10 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
             return null;
         }
 
-        var keys = new List<(string Column, bool Descending)>(order.Keys.Count);
-        foreach (OrderingKey key in order.Keys)
-        {
-            if (!TryDescribeIntegerOrderKey(key, out string? column))
-            {
-                return null;
-            }
-
-            keys.Add((column!, key.Descending));
-        }
-
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
-        foreach (IndexMetadata index in indexes)
-        {
-            if (CoversOrdering(index, keys))
-            {
-                return reader.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken);
-            }
-        }
-
-        return null;
-    }
-
-    private sealed class ReplaceParameterVisitor(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
-    {
-        protected override Expression VisitParameter(ParameterExpression node) =>
-            node == from ? to : base.VisitParameter(node);
+        return order.FindCoveringIndex(indexes) is { } index
+            ? reader.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
+            : null;
     }
 
     private sealed class RebindSourceVisitor(Expression target, Expression replacement) : ExpressionVisitor
