@@ -1,19 +1,18 @@
 namespace JetDatabaseWriter;
 
-using System;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessWriter"/>.
 /// </summary>
-public sealed class AccessWriterOptions : IAccessOptions
+public sealed class AccessWriterOptions : AccessOptions
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessWriterOptions"/> class.
     /// </summary>
     public AccessWriterOptions()
+        : base(useByteRangeLocks: JetByteRangeLock.PlatformSupportsByteRangeLocks())
     {
     }
 
@@ -22,20 +21,9 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// </summary>
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessWriterOptions(string? plainTextPassword)
-        => this.Password = plainTextPassword.AsMemory();
-
-    /// <summary>
-    /// Gets the password for opening password-protected databases.
-    /// When specified, it is propagated to internal reader operations used by the writer.
-    /// </summary>
-    public ReadOnlyMemory<char> Password { get; init; }
-
-    /// <summary>
-    /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
-    /// alongside the database while it is open, and deleted on dispose.
-    /// Default: true.
-    /// </summary>
-    public bool UseLockFile { get; init; } = true;
+        : base(plainTextPassword, useByteRangeLocks: JetByteRangeLock.PlatformSupportsByteRangeLocks())
+    {
+    }
 
     /// <summary>
     /// Gets a value indicating whether <see cref="AccessWriter.CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>
@@ -60,7 +48,7 @@ public sealed class AccessWriterOptions : IAccessOptions
 
     /// <summary>
     /// Gets a value indicating whether an existing lockfile is respected.
-    /// When <c>true</c> and <see cref="UseLockFile"/> is also <c>true</c>, opening a
+    /// When <c>true</c> and <see cref="AccessOptions.UseLockFile"/> is also <c>true</c>, opening a
     /// database that already has a lockfile throws an <see cref="System.IO.IOException"/>.
     /// When <c>true</c>, lockfile creation is strict: if the lockfile cannot be created
     /// (for example, due to permissions), the open operation throws.
@@ -68,47 +56,6 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// Default: true.
     /// </summary>
     public bool RespectExistingLockFile { get; init; } = true;
-
-    /// <summary>
-    /// Gets the user / security name written into this opener's slot in the
-    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
-    /// <see cref="Environment.UserName"/> is used. Truncated to 31 ASCII characters;
-    /// non-ASCII characters are replaced with '?' to match Access's slot format.
-    /// </summary>
-    public string? LockFileUserName { get; init; }
-
-    /// <summary>
-    /// Gets the machine / computer name written into this opener's slot in the
-    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
-    /// <see cref="Environment.MachineName"/> is used. Truncated to 31 ASCII characters;
-    /// non-ASCII characters are replaced with '?' to match Access's slot format.
-    /// </summary>
-    public string? LockFileMachineName { get; init; }
-
-    /// <summary>
-    /// Gets a value indicating whether cooperative byte-range page locks are taken
-    /// against the database file during writes. When
-    /// enabled, every page-write call exclusively locks the page-sized byte range
-    /// at <c>pageNumber * pageSize</c> for the duration of the write, mirroring the
-    /// JET locking protocol. On Windows this uses the same byte-range lock facility
-    /// observed by Microsoft Access, the OLE DB JET provider, and the ACE engine.
-    /// <para>
-    /// Default: <see langword="true"/> on platforms where
-    /// <see cref="System.IO.FileStream.Lock(long, long)"/> is supported, such as
-    /// Windows, Linux, and Android; <see langword="false"/> where the BCL marks
-    /// byte-range locks unsupported. Has no effect when the writer was opened from
-    /// a non-<see cref="System.IO.FileStream"/>.
-    /// </para>
-    /// </summary>
-    public bool UseByteRangeLocks { get; init; } = JetByteRangeLock.PlatformSupportsByteRangeLocks();
-
-    /// <summary>
-    /// Gets the maximum time in milliseconds to wait when acquiring a contended
-    /// byte-range page lock before throwing <see cref="System.IO.IOException"/>.
-    /// Matches the JET "Object is currently in use" timeout semantics.
-    /// Default: <c>5000</c>.
-    /// </summary>
-    public int LockTimeoutMilliseconds { get; init; } = 5_000;
 
     /// <summary>
     /// Gets the maximum number of distinct pages a single explicit transaction

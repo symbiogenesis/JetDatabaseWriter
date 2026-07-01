@@ -27,10 +27,10 @@ closing section).
 | # | Primitive | Type | Declared in | Scope | Protects |
 |---|-----------|------|-------------|-------|----------|
 | 1 | `operationGate` | `AsyncReentrantOperationGate` | [AccessReader.cs#L80](../../JetDatabaseWriter/AccessReader.cs#L80) | Reader instance | Drains in-flight reader operations against async disposal |
-| 2 | `IoGate` | `SemaphoreSlim(1,1)` | [AccessBase.cs#L119](../../JetDatabaseWriter/AccessBase.cs#L119) | Shared base (reader + writer) | Serializes seek-based stream I/O and journal attach/detach |
-| 3 | `ByteRangeLockCore` | `JetByteRangeLock` | [AccessBase.cs#L98](../../JetDatabaseWriter/AccessBase.cs#L98) | Shared base | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
-| 4 | `stateLock` | `ReaderWriterLockSlim` | [AccessWriter.cs#L55](../../JetDatabaseWriter/AccessWriter.cs#L55) | Writer instance | The two-field insert-page hint cache only |
-| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [AccessBase.cs#L112](../../JetDatabaseWriter/AccessBase.cs#L112) | Shared base | The `ownedDataPagesByTdef` dictionary only |
+| 2 | `IoGate` | `SemaphoreSlim(1,1)` | [AccessBase.cs#L120](../../JetDatabaseWriter/AccessBase.cs#L120) | Shared base (reader + writer) | Serializes seek-based stream I/O and journal attach/detach |
+| 3 | `ByteRangeLockCore` | `JetByteRangeLock` | [AccessBase.cs#L99](../../JetDatabaseWriter/AccessBase.cs#L99) | Shared base | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
+| 4 | `stateLock` | `ReaderWriterLockSlim` | [AccessWriter.cs#L51](../../JetDatabaseWriter/AccessWriter.cs#L51) | Writer instance | The two-field insert-page hint cache only |
+| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [AccessBase.cs#L113](../../JetDatabaseWriter/AccessBase.cs#L113) | Shared base | The `ownedDataPagesByTdef` dictionary only |
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs#L20](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs#L20) | Internal to #1 | The gate's own drain bookkeeping |
 

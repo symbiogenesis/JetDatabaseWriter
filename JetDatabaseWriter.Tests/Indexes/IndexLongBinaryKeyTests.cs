@@ -6,7 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -31,11 +31,11 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task MaxLengthBinaryKey_255Bytes_RoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
         byte[] payload = CreatePayload(255);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "LongBin",
@@ -49,7 +49,7 @@ public sealed class IndexLongBinaryKeyTests
             await writer.InsertRowAsync("LongBin", [1, payload], this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: this.ct);
         Assert.Single(dt.Rows);
         byte[] actual = Assert.IsType<byte[]>(dt.Rows[0]["Bin"]);
@@ -68,7 +68,7 @@ public sealed class IndexLongBinaryKeyTests
     [InlineData(255)]
     public async Task LongBinaryKeys_MultipleRows_RoundTripCorrectly(int length)
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
         byte[][] payloads =
         [
@@ -78,7 +78,7 @@ public sealed class IndexLongBinaryKeyTests
             CreatePayload(length, seed: 0xFF),
         ];
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "MultiBin",
@@ -95,7 +95,7 @@ public sealed class IndexLongBinaryKeyTests
             }
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         DataTable dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
@@ -115,7 +115,7 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_Descending_RoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
         byte[][] payloads =
         [
@@ -124,7 +124,7 @@ public sealed class IndexLongBinaryKeyTests
             CreatePayload(100, seed: 0xF0),
         ];
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "DescLongBin",
@@ -146,7 +146,7 @@ public sealed class IndexLongBinaryKeyTests
             }
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         DataTable dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
@@ -165,11 +165,11 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_UniqueViolation_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
         byte[] payload = CreatePayload(200, seed: 0x42);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
         await writer.CreateTableAsync(
             "UniqueLongBin",
             [
@@ -193,12 +193,12 @@ public sealed class IndexLongBinaryKeyTests
     [Fact]
     public async Task LongBinaryKey_CompositeWithText_RoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
         byte[] bin1 = CreatePayload(128, seed: 0x11);
         byte[] bin2 = CreatePayload(128, seed: 0x22);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "CompLongBin",
@@ -214,7 +214,7 @@ public sealed class IndexLongBinaryKeyTests
             await writer.InsertRowAsync("CompLongBin", ["beta", bin1], this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         DataTable dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: this.ct);
         Assert.Equal(3, dt.Rows.Count);
     }
@@ -230,39 +230,4 @@ public sealed class IndexLongBinaryKeyTests
         return buf;
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
 }

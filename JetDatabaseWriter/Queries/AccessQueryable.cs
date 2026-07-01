@@ -9,13 +9,17 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// An <see cref="IQueryable{T}"/> / <see cref="IOrderedQueryable{T}"/> over a single
-/// Access table that is also async-enumerable. Composition builds an expression tree
-/// through the provider; enumeration (sync or async) delegates to the provider's
-/// <see cref="IAccessQueryEngine"/>.
+/// An <see cref="IQueryable{T}"/> over a single Access table that is also
+/// async-enumerable. Composition builds an expression tree through the provider;
+/// enumeration (sync or async) delegates to the provider's
+/// <see cref="IAccessQueryEngine"/>. The provider surfaces the ordered sibling
+/// <see cref="AccessOrderedQueryable{T}"/> only for the result of an ordering operator,
+/// so this type deliberately does <em>not</em> implement <see cref="IOrderedQueryable{T}"/>:
+/// <c>ThenBy</c> / <c>ThenByDescending</c> stay reachable only after <c>OrderBy</c> /
+/// <c>OrderByDescending</c>, matching LINQ semantics.
 /// </summary>
 /// <typeparam name="T">The element type.</typeparam>
-internal sealed class AccessQueryable<T> : IOrderedQueryable<T>, IAsyncEnumerable<T>
+internal class AccessQueryable<T> : IQueryable<T>, IAsyncEnumerable<T>
 {
     public AccessQueryable(IQueryProvider provider)
     {

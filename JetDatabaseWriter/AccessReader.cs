@@ -164,7 +164,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // half-built reader, so failed construction after slot acquisition
             // must release the lock-file slot through DisposeReaderConstructionResources.
             this.lockFile.Acquire();
-            this.ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            this.ByteRangeLockCore = options.CreateByteRangeLock(stream);
             constructionComplete = true;
         }
         finally
@@ -2235,7 +2235,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         id = 0;
                     }
 
-                    tdefPage = id & 0x00FFFFFFL;
+                    tdefPage = CatalogValueReader.TdefPageFromId(id);
                 }
 
                 if (tdefPage > 0)
@@ -2801,7 +2801,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            if ((id & 0x00FFFFFFL) != tdefPage)
+            if (CatalogValueReader.TdefPageFromId(id) != tdefPage)
             {
                 continue;
             }
@@ -2867,7 +2867,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
-                long tdefPage = id & 0x00FFFFFFL;
+                long tdefPage = CatalogValueReader.TdefPageFromId(id);
                 if (tdefPage > 0)
                 {
                     return tdefPage;

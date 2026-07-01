@@ -33,4 +33,8 @@ internal static class CatalogValueReader
 
     public static long ParseInt64OrZero(string[] row, int index)
         => TryParseInt64(row, index, out long parsed) ? parsed : 0L;
+
+    public static long TdefPageFromId(long id) => id & Constants.SystemObjects.TdefPageMask;
+
+    public static int TdefPageFromId(int id) => id & Constants.SystemObjects.TdefPageMask;
 }

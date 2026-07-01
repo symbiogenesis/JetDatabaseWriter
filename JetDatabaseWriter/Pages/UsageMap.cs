@@ -36,7 +36,7 @@ internal static class UsageMap
     }
 
     internal static int ReadUInt24(byte[] page, int offset)
-        => page[offset] | (page[offset + 1] << 8) | (page[offset + 2] << 16);
+        => ReadUInt24LittleEndian(page.AsSpan(offset, 3));
 
     internal static void WritePointer(byte[] page, int offset, int rowIndex, long pageNumber)
     {

@@ -87,6 +87,8 @@ internal static class LinkedTableManager
             UseLockFile = options.UseLockFile,
             LockFileUserName = options.LockFileUserName,
             LockFileMachineName = options.LockFileMachineName,
+            UseByteRangeLocks = options.UseByteRangeLocks,
+            LockTimeoutMilliseconds = options.LockTimeoutMilliseconds,
             LinkedSourcePathAllowlist = NormalizeAllowlist(options.LinkedSourcePathAllowlist, hostDatabasePath),
             LinkedSourcePathValidator = options.LinkedSourcePathValidator,
             LinkedTextMaxRecordLength = options.LinkedTextMaxRecordLength,

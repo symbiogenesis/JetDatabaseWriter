@@ -1,13 +1,21 @@
 # Static Analysis Modernization TODOs
 
-Status: candidate backlog
-Date: 2026-05-27
+Status: initial pass shipped (2026-05-27); remaining items intentionally deferred
+Date: 2026-05-27 (status refreshed 2026-06-30)
 
 This note tracks a performance-first path for keeping static analysis useful
 without making clean builds slower. The goal is not to add analyzers for their
 own sake; the goal is a strict, maintainable, fast build where most diagnostics
 point at real issues and every analyzer package either pays for itself locally
 or moves to a slower CI/security lane.
+
+**Completion status (2026-06-30):** the initial pass shipped. `Roslynator.Refactorings` (§1) and
+`SecurityCodeScan.VS2019` (§2) were removed from local builds (see Current Posture), while
+`StyleCop.Analyzers` (§3), `Roslynator.Analyzers`, and `BannedApiAnalyzers` were deliberately
+retained (the last extended with security bans). The remaining unchecked `- [ ]` items — chiefly
+the SDK `AnalysisLevel` / code-style tuning (§4) and the optional later `Meziantou.Analyzer` trial —
+are **intentionally deferred future trials, not forgotten work**, and stay closed unless a new
+build-time or coverage concern reopens them.
 
 ## Current Posture
 

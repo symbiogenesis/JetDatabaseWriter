@@ -168,14 +168,8 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// <see langword="false"/>, the lock-file is created or appended-to in best-effort mode
     /// and any I/O / permission failures are swallowed.
     /// </param>
-    /// <param name="machineName">
-    /// Machine name to record in the slot. <see langword="null"/> uses
-    /// <see cref="Environment.MachineName"/>.
-    /// </param>
-    /// <param name="userName">
-    /// User name to record in the slot. <see langword="null"/> uses
-    /// <see cref="Environment.UserName"/>.
-    /// </param>
+    /// <param name="machineName">Machine name to record in the slot.</param>
+    /// <param name="userName">User name to record in the slot.</param>
     /// <returns>
     /// A <see cref="LockFileSlotWriter"/> that owns the slot and the underlying file handle,
     /// or <see langword="null"/> when creation failed in best-effort mode.
@@ -188,8 +182,8 @@ internal sealed class LockFileSlotWriter : IDisposable
         string databasePath,
         string ownerTypeName,
         bool respectExisting,
-        string? machineName = null,
-        string? userName = null)
+        string machineName,
+        string userName)
     {
         string lockPath = GetLockFilePath(databasePath);
 
@@ -368,11 +362,11 @@ internal sealed class LockFileSlotWriter : IDisposable
             $"Cannot open the database. The database has been opened by another user, or you have reached your limit of concurrent users (max {MaxSlots} slots in lock-file).");
     }
 
-    private static byte[] BuildSlotRecord(string? machineName, string? userName)
+    private static byte[] BuildSlotRecord(string machineName, string userName)
     {
         byte[] record = new byte[SlotSize];
-        WriteAsciiField(record.AsSpan(0, MachineNameFieldLength), machineName ?? Environment.MachineName);
-        WriteAsciiField(record.AsSpan(MachineNameFieldLength, UserNameFieldLength), userName ?? Environment.UserName);
+        WriteAsciiField(record.AsSpan(0, MachineNameFieldLength), machineName);
+        WriteAsciiField(record.AsSpan(MachineNameFieldLength, UserNameFieldLength), userName);
         return record;
     }
 
@@ -384,11 +378,7 @@ internal sealed class LockFileSlotWriter : IDisposable
 
         for (int i = 0; i < copyChars; i++)
         {
-            char c = value[i];
-
-            // ASCII subset only — match Access's behaviour for slot text and avoid
-            // pulling in OEM code-page resolution.
-            field[i] = (c is >= (char)0x20 and < (char)0x7F) ? (byte)c : (byte)'?';
+            field[i] = (byte)value[i];
         }
 
         // Zero-pad the rest (already zero from the array initialiser, but be explicit

@@ -15,8 +15,6 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202, SA1204
-
 /// <summary>
 /// Index B-tree maintenance for <see cref="AccessWriter"/>: bulk rebuild
 /// (<see cref="MaintainIndexesAsync"/>), incremental fast-path
@@ -119,6 +117,25 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         throw this.CreateSystemTableIndexMaintenanceException(tableName);
     }
+
+    private static bool HasAnyIndexPageGroup(long[][] groups)
+    {
+        for (int i = 0; i < groups.Length; i++)
+        {
+            if (groups[i].Length > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int ReadTableUsageMapPage(byte[] tdefBuffer)
+        => UsageMap.ReadUInt24(tdefBuffer, Constants.TableDefinition.OwnedPagesPageOffset);
+
+    private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
+        => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
     private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
@@ -647,25 +664,6 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             AccessBase.ReturnPage(page);
         }
     }
-
-    private static bool HasAnyIndexPageGroup(long[][] groups)
-    {
-        for (int i = 0; i < groups.Length; i++)
-        {
-            if (groups[i].Length > 0)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static int ReadTableUsageMapPage(byte[] tdefBuffer)
-        => UsageMap.ReadUInt24(tdefBuffer, Constants.TableDefinition.OwnedPagesPageOffset);
-
-    private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
-        => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
     private async ValueTask<bool> RefreshIncrementalIndexUsageMapsAsync(
         long tdefPage,
@@ -1540,16 +1538,8 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
                 if (hasCleanPath && descentPath.Count > 0)
                 {
-                    IndexEntry leftLast = splitPages.GetLastEntry(0);
-                    var leftSummary = new DecodedIntermediateEntry(leftLast, ChildPage: pageNumbers[0]);
-                    var rightSummaries = new DecodedIntermediateEntry[splitCount - 1];
-                    for (int p = 1; p < splitCount; p++)
-                    {
-                        IndexEntry last = splitPages.GetLastEntry(p);
-                        rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
-                    }
-
-                    ancestorWrites = this.btreeEditor.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, leftSummary, rightSummaries);
+                    DecodedIntermediateEntry[] summaries = IndexBTreeEditor.BuildSplitSummaries(splitPages, pageNumbers);
+                    ancestorWrites = this.btreeEditor.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, summaries);
                     if (ancestorWrites is null)
                     {
                         bool rebuilt = await this.btreeEditor.TryRebuildCatalogIndexTreeAsync(

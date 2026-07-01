@@ -108,7 +108,7 @@ internal static class IndexPageCodec
             }
 
             int rowPointerOffset = entryStart + keyLen;
-            WriteUInt24Be(page, rowPointerOffset, (int)dataPage);
+            WriteUInt24BigEndian(page, rowPointerOffset, (int)dataPage);
             page[rowPointerOffset + 3] = entry.DataRow;
 
             SetEntryStartBit(
@@ -304,7 +304,7 @@ internal static class IndexPageCodec
             }
 
             int rowPointerOffset = entryStart + keyLen;
-            WriteUInt24Be(page, rowPointerOffset, (int)dataPage);
+            WriteUInt24BigEndian(page, rowPointerOffset, (int)dataPage);
             page[rowPointerOffset + 3] = summary.DataRow;
 
             long childPage = decoded.ChildPage;
@@ -1095,13 +1095,6 @@ internal static class IndexPageCodec
         }
 
         return Math.Min(prefixLength, 0xFFFF);
-    }
-
-    private static void WriteUInt24Be(byte[] page, int offset, int value)
-    {
-        page[offset] = (byte)((value >> 16) & 0xFF);
-        page[offset + 1] = (byte)((value >> 8) & 0xFF);
-        page[offset + 2] = (byte)(value & 0xFF);
     }
 
     private static bool TryGetPayloadEnd(

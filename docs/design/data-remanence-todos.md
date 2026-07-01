@@ -7,7 +7,7 @@ This document tracks follow-up work for data remanence, storage cleanup, and Acc
 - **Access-compatible default behavior:** match normal JET/ACE delete, update, free-list, and Compact & Repair behavior as closely as practical.
 - **Secure erase behavior:** opt-in overwrite of old payload bytes before storage is made reusable. This can be stronger than normal Microsoft Access behavior and should stay behind `AccessWriterOptions.SecureEraseMode`.
 
-Existing public documentation lives in [README.md](../../README.md#data-remanence). Current coverage and residual scope are summarized in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+Existing public documentation lives in [README.md](../../README.md#storage-maintenance-and-secure-erase). Current coverage and residual scope are summarized in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 ## Action Items
 

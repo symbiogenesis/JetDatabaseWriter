@@ -243,6 +243,13 @@ internal static class Constants
         public const uint SystemTableMask = 0x80000002U;
 
         /// <summary>
+        /// Bitmask applied to a signed <c>MSysObjects.Id</c> to recover the
+        /// object's TDEF (or complex flat-table) page number: the low 24 bits
+        /// hold the page number, the high byte carries sign/flags.
+        /// </summary>
+        public const int TdefPageMask = 0x00FF_FFFF;
+
+        /// <summary>
         /// 2-byte sentinel written into the <c>MSysObjects.Owner</c> BINARY
         /// column for every catalog row this writer creates. Access itself
         /// stamps a per-file token that varies across databases (empirically

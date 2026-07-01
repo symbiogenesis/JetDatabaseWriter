@@ -49,33 +49,6 @@ internal sealed class RowEncoder(AccessWriter writer)
         return LongValueStore.WrapInlineLongValue(data);
     }
 
-    internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
-        => SetNullMaskBit(mask.AsSpan(), columnNumber, state);
-
-    internal static void SetNullMaskBit(Span<byte> mask, int columnNumber, bool state)
-    {
-        if (columnNumber < 0)
-        {
-            return;
-        }
-
-        int byteOffset = columnNumber / 8;
-        int bitOffset = columnNumber % 8;
-        if (byteOffset >= mask.Length)
-        {
-            return;
-        }
-
-        if (state)
-        {
-            mask[byteOffset] |= (byte)(1 << bitOffset);
-        }
-        else
-        {
-            mask[byteOffset] &= (byte)~(1 << bitOffset);
-        }
-    }
-
     private static int TryEncodeFixedValue(ColumnInfo column, object value, Span<byte> dest)
     {
         switch (column.Type)
@@ -214,8 +187,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return EncodeCalculatedNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture));
         }
 
-        int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
-        if (fixedSize <= 0)
+        if (!JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int fixedSize))
         {
             return null;
         }
@@ -309,7 +281,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        int nullMaskLen = (numCols + 7) / 8;
+        int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
 
         // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.
@@ -336,7 +308,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
-                    SetNullMaskBit(nullMask, column.ColNum, true);
+                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 
                 continue;
@@ -372,7 +344,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 }
 
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
-                SetNullMaskBit(nullMask, column.ColNum, true);
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
             }
             else
             {
@@ -384,7 +356,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
                 varEntries[column.VarIdx] = variableValue;
                 varPayloadSize += variableValue.Length;
-                SetNullMaskBit(nullMask, column.ColNum, true);
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
             }
         }
 
@@ -464,92 +436,83 @@ internal sealed class RowEncoder(AccessWriter writer)
             return this.EncodeCalculatedValue(column, value);
         }
 
-        switch (column.Type)
+        if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int fixedSize))
         {
-            case TextType:
-                return this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
-            case BinaryType:
-                return this.EncodeBinaryValue(value, column.Size);
-            case MemoType:
-                if (value is PreEncodedLongValue preMemo)
-                {
-                    return preMemo.HeaderBytes;
-                }
-
-                return this.EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
-            case OleType:
-                return EncodeOleValue(value);
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case MoneyType:
-            case BigIntType:
-            case NumericType:
-            case GuidType:
-            case ComplexType:
-            case AttachmentType:
-            case DateTimeExtendedType:
-                int fixedSize = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
-                if (fixedSize <= 0)
-                {
-                    return null;
-                }
-
-                byte[] payload = new byte[fixedSize];
-                int written = TryEncodeFixedValue(column, value, payload);
-                if (written <= 0)
-                {
-                    return null;
-                }
-
-                if (written != payload.Length)
-                {
-                    Array.Resize(ref payload, written);
-                }
-
-                return payload;
-            case BooleanType:
+            byte[] payload = new byte[fixedSize];
+            int written = TryEncodeFixedValue(column, value, payload);
+            if (written <= 0)
+            {
                 return null;
-            default:
-                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+            }
+
+            if (written != payload.Length)
+            {
+                Array.Resize(ref payload, written);
+            }
+
+            return payload;
         }
+
+        if (column.Type == TextType)
+        {
+            return this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
+        }
+
+        if (column.Type == BinaryType)
+        {
+            return this.EncodeBinaryValue(value, column.Size);
+        }
+
+        if (column.Type == MemoType)
+        {
+            return value is PreEncodedLongValue preMemo
+                ? preMemo.HeaderBytes
+                : this.EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
+        }
+
+        if (column.Type == OleType)
+        {
+            return EncodeOleValue(value);
+        }
+
+        if (column.Type == BooleanType)
+        {
+            return null;
+        }
+
+        throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
     }
 
     private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
     {
-        switch (column.Type)
+        if (column.Type == TextType)
         {
-            case TextType:
-                return CalculatedColumnUtil.Wrap(
-                    this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
-            case BinaryType:
-                return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
-            case MemoType:
-                return this.EncodeCalculatedMemoValue(value);
-            case OleType:
-                return EncodeCalculatedOleValue(value);
-            case BooleanType:
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case MoneyType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case GuidType:
-            case NumericType:
-            case AttachmentType:
-            case ComplexType:
-            case BigIntType:
-            case DateTimeExtendedType:
-                byte[]? payload = EncodeCalculatedFixedPayload(column, value);
-                return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
-            default:
-                throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+            return CalculatedColumnUtil.Wrap(
+                this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
         }
+
+        if (column.Type == BinaryType)
+        {
+            return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
+        }
+
+        if (column.Type == MemoType)
+        {
+            return this.EncodeCalculatedMemoValue(value);
+        }
+
+        if (column.Type == OleType)
+        {
+            return EncodeCalculatedOleValue(value);
+        }
+
+        if (column.Type == BooleanType || column.Type == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out _))
+        {
+            byte[]? payload = EncodeCalculatedFixedPayload(column, value);
+            return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
+        }
+
+        throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
     }
 
     private byte[]? EncodeCalculatedMemoValue(object value)

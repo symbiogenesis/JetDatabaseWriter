@@ -512,7 +512,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                     Name: writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameColumn),
                     ObjectType: CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, typeColumn)),
                     Flags: CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, flagsColumn!)),
-                    TDefPage: id & 0x00FFFFFFL,
+                    TDefPage: CatalogValueReader.TdefPageFromId(id),
                     Id: id,
                     ParentId: parentId));
                 return new ValueTask<bool>(true);
@@ -552,7 +552,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                 usedIds.Add(id);
                 if (id != 0)
                 {
-                    maxLow24 = Math.Max(maxLow24, id & 0x00FFFFFF);
+                    maxLow24 = Math.Max(maxLow24, CatalogValueReader.TdefPageFromId(id));
                 }
 
                 return new ValueTask<bool>(true);

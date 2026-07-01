@@ -20,7 +20,7 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202, SA1204
+#pragma warning disable SA1204
 
 /// <summary>
 /// Owns the Attachment / MultiValue (complex column) subsystem for
@@ -738,8 +738,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         }
 
         // Resolve parent table + complex column.
-        CatalogEntry parentEntry = await this.writer.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef parentDef = await this.writer.ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable parentTable = await this.writer.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry parentEntry = parentTable.Entry;
+        TableDef parentDef = parentTable.Definition;
 
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
@@ -925,7 +926,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     return new ValueTask<bool>(true);
                 }
 
-                flatTdefPage = flatId & 0x00FFFFFFL;
+                flatTdefPage = CatalogValueReader.TdefPageFromId(flatId);
                 return new ValueTask<bool>(false);
             },
             cancellationToken).ConfigureAwait(false);
@@ -999,11 +1000,9 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         try
         {
             int numCols = this.writer.ReadRowColumnCount(page, parentRowStart);
-            int nullMaskSz = (numCols + 7) / 8;
+            int nullMaskSz = GetNullMaskSizeBytes(numCols);
             int nullMaskPos = parentRowSize - nullMaskSz;
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
+            bool slotSet = IsNullMaskBitSet(page.AsSpan(parentRowStart + nullMaskPos, nullMaskSz), complexCol.ColNum);
 
             int slotOff = parentRowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
@@ -1040,7 +1039,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         try
         {
             int numCols = this.writer.ReadRowColumnCount(page, rowStart);
-            int nullMaskSz = (numCols + 7) / 8;
+            int nullMaskSz = GetNullMaskSizeBytes(numCols);
             int nullMaskPos = rowSize - nullMaskSz;
             int slotOff = rowStart + this.writer.RowFields.NumCols + complexCol.FixedOff;
             if (slotOff + 4 > rowStart + rowSize)
@@ -1049,12 +1048,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             }
 
             Wi32(page, slotOff, conceptualTableId);
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            if (byteOff < rowSize)
-            {
-                page[rowStart + byteOff] |= (byte)(1 << bitOff);
-            }
+            SetNullMaskBit(page.AsSpan(rowStart + nullMaskPos, nullMaskSz), complexCol.ColNum, true);
 
             await this.writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
@@ -1231,7 +1225,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             try
             {
                 int numCols = this.writer.ReadRowColumnCount(page, loc.RowStart);
-                int nullMaskSz = (numCols + 7) / 8;
+                int nullMaskSz = GetNullMaskSizeBytes(numCols);
                 int nullMaskPos = loc.RowSize - nullMaskSz;
 
                 foreach (ColumnInfo col in complexCols)
@@ -1241,10 +1235,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    int byteOff = nullMaskPos + (col.ColNum / 8);
-                    int bitOff = col.ColNum % 8;
-                    bool slotSet = byteOff < loc.RowSize
-                        && (page[loc.RowStart + byteOff] & (1 << bitOff)) != 0;
+                    bool slotSet = IsNullMaskBitSet(page.AsSpan(loc.RowStart + nullMaskPos, nullMaskSz), col.ColNum);
                     if (!slotSet)
                     {
                         continue;
@@ -1376,7 +1367,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                 {
-                    flatTdefPage = fid & 0x00FFFFFFL;
+                    flatTdefPage = CatalogValueReader.TdefPageFromId(fid);
                 }
 
                 deletedRows.Add((row.Location.PageNumber, row.Location.RowIndex));
@@ -1637,7 +1628,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 string flatText = this.writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
-                    flatTdefPages.Add(flatId & 0x00FFFFFFL);
+                    flatTdefPages.Add(CatalogValueReader.TdefPageFromId(flatId));
                 }
 
                 cxRowsToDelete.Add((row.Location.PageNumber, row.Location.RowIndex));

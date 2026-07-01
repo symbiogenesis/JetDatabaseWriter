@@ -258,7 +258,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         TableDef tableDef,
         string tableName,
         DataTable snapshot,
-        List<(int Index, object[] NewRow)> updates,
+        List<(int Index, object[] OldRow, object[] NewRow)> updates,
         CancellationToken cancellationToken)
     {
         if (updates.Count == 0)
@@ -273,7 +273,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         Dictionary<int, object[]> replaceAt = new(updates.Count);
-        foreach ((int idx, object[] newRow) in updates)
+        foreach ((int idx, _, object[] newRow) in updates)
         {
             replaceAt[idx] = newRow;
         }

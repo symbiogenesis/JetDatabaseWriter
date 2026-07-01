@@ -12,7 +12,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -32,7 +31,6 @@ using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
 
 /// <summary>
@@ -190,7 +188,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.lockFileCoordinator.Acquire();
         try
         {
-            this.ByteRangeLockCore = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+            this.ByteRangeLockCore = options.CreateByteRangeLock(stream);
         }
         catch
         {
@@ -1162,11 +1160,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return 0;
         }
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        var updateIndexes = new Dictionary<int, object?>();
+        var updateIndexes = new Dictionary<int, object>(updatedValues.Count);
         foreach (KeyValuePair<string, object?> kvp in updatedValues)
         {
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
@@ -1175,7 +1174,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
             }
 
-            updateIndexes[columnIndex] = kvp.Value;
+            updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
         }
 
         using DataTable snapshot = await this.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1183,46 +1182,49 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<RowLocation> locations = await this.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
-        // FK enforcement: build the list of new-row payloads up front so we
-        // can validate FK constraints (FK-side parent presence, PK-side
-        // cascade-or-reject) before mutating any disk page.
-        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
-
-        var pendingNewRows = new List<(int Index, object[] NewRow)>();
+        // Stage every matching row so FK / unique-index checks complete before
+        // any disk page is mutated.
+        var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            object[] rowValues = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
-            if (!predicate.Matches(rowValues))
+            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (!predicate.Matches(oldRow))
             {
                 continue;
             }
 
-            foreach (KeyValuePair<int, object?> update in updateIndexes)
+            object[] newRow = (object[])oldRow.Clone();
+            foreach (KeyValuePair<int, object> update in updateIndexes)
             {
-                rowValues[update.Key] = update.Value ?? DBNull.Value;
+                newRow[update.Key] = update.Value;
             }
 
-            await this.Constraints.ApplyCalculatedAsync(tableName, tableDef, rowValues, force: true, cancellationToken).ConfigureAwait(false);
+            await this.Constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
 
-            pendingNewRows.Add((i, rowValues));
+            pendingUpdates.Add((i, oldRow, newRow));
         }
 
-        if (fkCtx != null && pendingNewRows.Count > 0)
+        if (pendingUpdates.Count == 0)
         {
+            return 0;
+        }
+
+        IReadOnlyList<FkRelationship> rels = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        if (rels.Count > 0)
+        {
+            var fkCtx = new FkContext(rels);
+
             // FK-side: every updated row must (still) satisfy any FK constraint
             // whose foreign side is THIS table.
-            foreach ((_, object[] newRow) in pendingNewRows)
+            foreach ((_, _, object[] newRow) in pendingUpdates)
             {
                 await this.Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
             }
 
-            // PK-side: if any of the updated columns belongs to a PK referenced
-            // by a child table, gather (oldKey, newPkValues) pairs per affected
-            // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
-            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingNewRows.Count);
+            // PK-side: cascade or reject only when this update touches a referenced PK.
+            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingUpdates.Count);
             foreach (FkRelationship rel in rels)
             {
                 if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
@@ -1231,34 +1233,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 }
 
                 int[] pkIdx = new int[rel.PrimaryColumns.Count];
-                bool ok = true;
-                bool anyPkUpdated = false;
+                bool touchesPrimaryKey = false;
                 for (int i = 0; i < rel.PrimaryColumns.Count; i++)
                 {
-                    pkIdx[i] = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
-                    if (pkIdx[i] < 0)
+                    int columnIndex = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
+                    if (columnIndex < 0)
                     {
-                        ok = false;
+                        touchesPrimaryKey = false;
                         break;
                     }
 
-                    if (updateIndexes.ContainsKey(pkIdx[i]))
-                    {
-                        anyPkUpdated = true;
-                    }
+                    pkIdx[i] = columnIndex;
+                    touchesPrimaryKey |= updateIndexes.ContainsKey(columnIndex);
                 }
 
-                if (!ok || !anyPkUpdated)
+                if (!touchesPrimaryKey)
                 {
                     continue;
                 }
 
                 changes.Clear();
-                foreach ((int rowIdx, object[] newRow) in pendingNewRows)
+                foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
                 {
-                    object?[] oldFullRow = snapshot.Rows[rowIdx].ItemArray;
-                    string? oldKey = RelationshipKeyBuilder.Build(oldFullRow, pkIdx);
-                    changes.Add((oldKey, oldFullRow, newRow));
+                    string? oldKey = RelationshipKeyBuilder.Build(oldRow, pkIdx);
+                    changes.Add((oldKey, oldRow, newRow));
                 }
 
                 await this.Relationships.Enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
@@ -1267,42 +1265,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // Pre-write unique-index enforcement: after FK checks succeed,
         // validate that the post-update key set contains no duplicates for
-        // any unique index. The check sees the snapshot with pendingNewRows
+        // any unique index. The check sees the snapshot with pendingUpdates
         // substituted at their original indices.
-        if (pendingNewRows.Count > 0)
-        {
-            await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
-        }
+        await this.uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingUpdates, cancellationToken).ConfigureAwait(false);
 
-        int updated = 0;
-        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
-        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
-        foreach ((int i, object[] rowValues) in pendingNewRows)
+        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = GetDbNullNormalizedItemArray(snapshot.Rows[i]);
-            await this.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
-            updateDeletedHints.Add((locations[i], oldRow));
-            RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
-            updateInsertedHints.Add((newLoc, rowValues));
-            updated++;
+            RowLocation oldLoc = locations[i];
+            await this.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            updateDeletedHints.Add((oldLoc, oldRow));
+            RowLocation newLoc = await this.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updateInsertedHints.Add((newLoc, newRow));
         }
 
-        if (updated > 0)
+        bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
+            entry.TDefPage,
+            tableDef,
+            updateInsertedHints,
+            updateDeletedHints,
+            cancellationToken).ConfigureAwait(false);
+        if (!incremental)
         {
-            bool incremental = await this.indexMaintainer.TryMaintainIndexesIncrementalAsync(
-                entry.TDefPage,
-                tableDef,
-                updateInsertedHints,
-                updateDeletedHints,
-                cancellationToken).ConfigureAwait(false);
-            if (!incremental)
-            {
-                await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-            }
+            await this.indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
-        return updated;
+        return pendingUpdates.Count;
     }
 
     /// <inheritdoc/>
@@ -1324,8 +1314,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(criteria, nameof(criteria));
         this.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
         using DataTable snapshot = await this.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1776,7 +1767,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         try
         {
-            await this.RewrapAgileOnDisposeAsync().ConfigureAwait(false);
+            await EncryptionManager.RewrapDecryptedCompoundFileAsync(
+                this.DatabaseStream,
+                this.outerEncryptedStream,
+                this.outerEncryptedFormat,
+                this.Options.Password).ConfigureAwait(false);
         }
         finally
         {
@@ -1791,33 +1786,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         this.stateLock.Dispose();
         return default;
-    }
-
-    /// <summary>
-    /// Re-encrypts the in-memory decrypted ACCDB (held by <c>_stream</c>) using
-    /// freshly-generated Office Crypto parameters and writes the resulting CFB
-    /// document back to <see cref="outerEncryptedStream"/>. Called from
-    /// <see cref="DisposeAsync"/> when the writer was opened on an Office Crypto
-    /// .accdb file.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown when the encrypted writer does not have the required in-memory backing stream.</exception>
-    private async ValueTask RewrapAgileOnDisposeAsync()
-    {
-        MemoryStream memory = this.DatabaseStream as MemoryStream
-            ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
-
-        byte[] inner = memory.ToArray();
-
-        OfficeEncryptedPackage package = this.outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
-            ? OfficeCryptoStandard.Encrypt(inner, this.Options.Password.Span)
-            : OfficeCryptoAgile.Encrypt(inner, this.Options.Password.Span);
-
-        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(package);
-
-        _ = this.outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
-        await this.outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
-        this.outerEncryptedStream.SetLength(cfb.Length);
-        await this.outerEncryptedStream.FlushAsync().ConfigureAwait(false);
     }
 
     private static object[] NormalizePublicRow(object?[] values, string paramName)
@@ -1899,8 +1867,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         where TItem : class
     {
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
         IReadOnlyList<FkRelationship> relationships = await this.Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
 
@@ -2232,6 +2201,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
+    internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        return new ResolvedTable(entry, tableDef);
+    }
+
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -2239,8 +2215,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken,
         Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
-        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await this.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
 
         // Carry forward any client-side constraints registered for the original schema so
         // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
@@ -2313,8 +2290,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
-        CatalogEntry tempEntry = await this.GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
-        TableDef tempDef = await this.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable tempTable = await this.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry tempEntry = tempTable.Entry;
+        TableDef tempDef = tempTable.Definition;
 
         foreach (DataRow row in snapshot.Rows)
         {

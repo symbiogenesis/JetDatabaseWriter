@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.LongValues.Models;
 
 using System;
 using System.Buffers.Binary;
+using JetDatabaseWriter.Schema;
 
 /// <summary>
 /// Parsed 12-byte JET long-value descriptor stored in MEMO/OLE row bodies.
@@ -58,9 +59,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
         }
 
-        destination[0] = unchecked((byte)(this.Length & 0xFF));
-        destination[1] = unchecked((byte)((this.Length >> 8) & 0xFF));
-        destination[2] = unchecked((byte)((this.Length >> 16) & 0xFF));
+        JetTypeInfo.WriteUInt24(destination, 0, this.Length);
         destination[3] = this.StorageMode;
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), this.FirstDp);
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), this.Token);

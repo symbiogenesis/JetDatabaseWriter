@@ -1319,36 +1319,29 @@ public abstract class AccessBase : IAccessBase
                     return string.Empty;
                 }
 
-                switch (column.Type)
+                if (TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
                 {
-                    case TextType:
-                        return this.DecodeTextForFormat(page, rowStart + slice.DataStart, slice.DataLen);
-                    case BinaryType:
-                        return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
-                    case ByteType:
-                    case IntegerType:
-                    case LongIntegerType:
-                    case FloatType:
-                    case DoubleType:
-                    case DateTimeType:
-                    case MoneyType:
-                    case BigIntType:
-                    case NumericType:
-                    case GuidType:
-                    case DateTimeExtendedType:
-                    case ComplexType:
-                    case AttachmentType:
-                        int required = column.Type is ComplexType or AttachmentType ? 4 : GetFixedSize(column.Type);
-                        return required > 0 && slice.DataLen >= required
-                            ? ReadFixedString(page, rowStart + slice.DataStart, column, required)
-                            : string.Empty;
-                    case BooleanType:
-                    case OleType:
-                    case MemoType:
-                        return string.Empty;
-                    default:
-                        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(column.Type)}");
+                    return slice.DataLen >= required
+                        ? ReadFixedString(page, rowStart + slice.DataStart, column, required)
+                        : string.Empty;
                 }
+
+                if (column.Type == TextType)
+                {
+                    return this.DecodeTextForFormat(page, rowStart + slice.DataStart, slice.DataLen);
+                }
+
+                if (column.Type == BinaryType)
+                {
+                    return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
+                }
+
+                if (column.Type is BooleanType or OleType or MemoType)
+                {
+                    return string.Empty;
+                }
+
+                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(column.Type)}");
 
             default:
                 return string.Empty;

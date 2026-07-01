@@ -13,6 +13,8 @@ JetDatabaseWriter/
 ├── AccessWriter.cs                        (public write API — thin orchestrator delegating to domain modules)
 ├── AccessReaderOptions.cs
 ├── AccessWriterOptions.cs
+├── AccessQueryExtensions.cs               (public LINQ Include/ThenInclude + async terminal operators)
+├── IIncludableQueryable.cs                (public Include/ThenInclude chaining marker interface)
 ├── JetTransaction.cs
 ├── Constants.cs                           (format constants, magic numbers, page offsets)
 ├── IsExternalInit.cs                      (compiler shim for init-only properties)
@@ -32,6 +34,8 @@ JetDatabaseWriter/
 │   ├── AttachmentRecord.cs
 │   ├── ColumnDefinition.cs
 │   ├── ColumnMetadata.cs
+│   ├── ColumnPredicate.cs
+│   ├── ColumnPredicateOperator.cs
 │   ├── ColumnSize.cs
 │   ├── ComplexColumnInfo.cs
 │   ├── DatabaseStatistics.cs
@@ -43,6 +47,9 @@ JetDatabaseWriter/
 │   ├── LinkedTableInfo.cs
 │   ├── MultiValueItem.cs
 │   ├── RelationshipDefinition.cs
+│   ├── RelationshipMetadata.cs
+│   ├── RowCriteria.cs
+│   ├── RowValues.cs
 │   ├── TableProgress.cs
 │   └── TableStat.cs
 │
@@ -52,6 +59,7 @@ JetDatabaseWriter/
 │   ├── ColumnType.cs                      (public JET column-type discriminator enum)
 │   ├── ComplexColumnKind.cs
 │   ├── DatabaseFormat.cs
+│   ├── DeletedRowDataMode.cs              (internal: whether deleting a row also scrubs its payload bytes)
 │   ├── IndexKind.cs
 │   ├── IndexQueryKind.cs                  (internal index-query predicate kind)
 │   ├── IntermediateOpType.cs
@@ -106,8 +114,10 @@ JetDatabaseWriter/
 ├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
 │   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection)
+│   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
 │   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
+│   ├── OleObjectDecoder.cs                (unwraps OLE envelopes, detects file signatures and data-URI formatting)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues)
 │   ├── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)
 │   └── Models/
@@ -139,6 +149,9 @@ JetDatabaseWriter/
 │   ├── IndexPageCodec.cs                  (index page build/decode, pointers, entry bitmasks)
 │   ├── IndexPageLayout.cs                 (Jet3 / Jet4 index page layout selection)
 │   ├── IndexQueryCriteria.cs              (exact, key-prefix, and range predicate descriptor)
+│   ├── IndexPredicateTranslator.cs        (extracts index-seekable AND conjuncts from a typed predicate)
+│   ├── IndexPlanner.cs                    (chooses the best index for a predicate; builds the seek criteria)
+│   ├── IndexPlan.cs                       (chosen index + seek criteria + matched key-column count)
 │   ├── IndexCatalogReader.cs              (reads index definitions from system tables)
 │   ├── IndexEntrySplicer.cs               (stable in-memory index entry add/remove splicing)
 │   ├── IndexMaintainer.cs                 (TDEF/catalog orchestration for index maintenance)
@@ -183,6 +196,7 @@ JetDatabaseWriter/
 │   ├── TDefPageBuilder.cs                 (constructs Table Definition pages)
 │   ├── ColumnPropertyBlockBuilder.cs      (builds column property blocks)
 │   ├── ConstraintRegistry.cs              (manages column constraints — auto-increment, defaults, validation)
+│   ├── AutoNumberMaintainer.cs            (advances the per-table AutoNumber high-water value after inserts)
 │   ├── JetTypeInfo.cs                     (column type metadata — sizes, flags, CLR mapping)
 │   ├── JetExpressionConverter.cs          (expression parsing for calculated columns)
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
@@ -245,6 +259,7 @@ JetDatabaseWriter/
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
 │   ├── RelationshipManager.cs             (relationship lifecycle and TDEF FK logical-index mutation)
 │   ├── RelationshipCatalogStore.cs        (MSysRelationships row emission, loading, and rewrites)
+│   ├── RelationshipMetadataAggregator.cs  (groups MSysRelationships rows into per-relationship metadata)
 │   ├── RelationshipEnforcer.cs            (runtime FK insert/update/delete referential-integrity enforcement)
 │   ├── RelationshipSeekPlanner.cs         (parent/child FK B-tree seek-index resolution)
 │   ├── RelationshipChildRowLocator.cs     (child-row location resolution from FK-side index seeks)
@@ -263,6 +278,30 @@ JetDatabaseWriter/
 │       ├── AttachmentWrapper.cs
 │       └── ComplexColumnAllocation.cs
 │
+├── Queries/                               (read-path: LINQ IQueryable provider over a single table)
+│   ├── AccessQueryable.cs                 (composable, async-enumerable IQueryable<T> over one table)
+│   ├── AccessOrderedQueryable.cs          (IOrderedQueryable<T> marker produced only by ordering operators)
+│   ├── AccessQueryProvider.cs             (IQueryProvider: translates the expression and runs the stage pipeline)
+│   ├── AccessQueryTranslator.cs           (splits the engine-evaluable prefix from the in-memory tail)
+│   ├── AccessQueryPlan.cs                 (ordered stage pipeline plus include navigation paths)
+│   ├── IAccessQueryEngine.cs              (non-generic execution surface the provider exposes)
+│   ├── QueryStage.cs                      (base: one operator applied in written order)
+│   ├── FilterStage.cs                     (Where stage; AND-combines a leading run for index push-down)
+│   ├── OrderStage.cs                      (OrderBy/ThenBy buffer-and-sort stage)
+│   ├── SkipStage.cs                       (Skip paging stage)
+│   ├── TakeStage.cs                       (Take paging stage)
+│   ├── OrderingKey.cs                     (one sort key: selector plus direction)
+│   ├── QueryKeyComparer.cs                (null-first, type-tolerant ordering-key comparison)
+│   ├── RuntimeRowMapper.cs                (maps object?[] rows onto a runtime-resolved POCO type)
+│   ├── IncludableQueryable.cs             (adapts a composed query to IIncludableQueryable)
+│   ├── IncludeLoader.cs                   (relationship-inferred eager loading and stitching)
+│   ├── IncludeStep.cs                     (one Include/ThenInclude navigation plus inline operators)
+│   ├── IncludeOperation.cs                (base for inline filtered/ordered/paged include operators)
+│   ├── IncludeFilterOperation.cs          (Where applied to a parent's loaded children)
+│   ├── IncludeOrderOperation.cs           (OrderBy/ThenBy applied to a parent's loaded children)
+│   ├── IncludeSkipOperation.cs            (Skip applied to a parent's loaded children)
+│   └── IncludeTakeOperation.cs            (Take applied to a parent's loaded children)
+│
 ├── CompoundFile/                          (MS-CFB OLE structured storage)
 │   ├── CompoundFileReader.cs              (read .accdb wrapped in CFB container)
 │   └── CompoundFileWriter.cs              (write CFB container for Agile-encrypted output)
@@ -272,6 +311,7 @@ JetDatabaseWriter/
     ├── ByteArrayEqualityComparer.cs       (byte[] equality for dictionary keys)
     ├── BinaryBuffer.cs                    (byte-slice copy helpers)
     ├── BinaryStringParser.cs              (hex/base64 parsing helpers)
+    ├── BoxCache.cs                        (interned boxes for low-cardinality fixed-width cell values)
     ├── DaoPowerShellHostResolver.cs       (test/probe DAO PowerShell host discovery)
     ├── FileStreamFactory.cs               (central FileStream construction helpers)
     ├── StreamReadExtensions.cs            (cross-target stream read helpers)
@@ -290,7 +330,7 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 |-------|---------|----------------|
 | **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
 | **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, usage-map parsing/serialization, allocation/free-list reuse, journaling, locking, page encryption |
-| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; manage feature-specific catalog artifacts |
+| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; translate and run LINQ queries; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and orchestration |
 
 The orchestration layer is intentionally thin — `AccessReader` and `AccessWriter` act as **facades** (GoF) that compose domain modules rather than embedding logic directly. Most pure layout/codec helpers keep one-way dependencies. Several writer-owned services (`DataPageInserter`, `PageAllocator`, `TDefPageBuilder`, relationship and complex-column managers) intentionally receive `AccessWriter` as a context object so they can coordinate page I/O, encryption, transactions, catalog caches, and format-specific layouts without duplicating state.
@@ -316,8 +356,9 @@ Catalog/               → Pages/, ValueDecoding/, Schema/, Indexes/, AccessWrit
 Schema/                → Models/, Indexes/, Pages/, AccessWriter context for writer-owned builders
 Relationships/         → Catalog/, DelimitedText/, Indexes/, Pages/, Schema/, AccessReader/AccessWriter context
 ComplexColumns/        → Catalog/, Indexes/, Pages/, Schema/, ValueDecoding/, AccessReader/AccessWriter context
+Queries/               → Indexes/, Models/, Enums/, Infrastructure/, AccessReader context
 AccessBase (root)      → Pages/, Encryption/, Infrastructure/
-AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/
+AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/, Queries/
 AccessWriter (root)    → ValueEncoding/, Catalog/, Indexes/, Transactions/, Schema/,
                          LongValues/, Relationships/, ComplexColumns/, Pages/, Encryption/
 ```
@@ -361,6 +402,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `Relationships/` | `JetDatabaseWriter.Relationships` |
 | `ComplexColumns/` | `JetDatabaseWriter.ComplexColumns` |
 | `ComplexColumns/Models/` | `JetDatabaseWriter.ComplexColumns.Models` |
+| `Queries/` | `JetDatabaseWriter.Queries` |
 | `CompoundFile/` | `JetDatabaseWriter.CompoundFile` |
 | `Infrastructure/` | `JetDatabaseWriter.Infrastructure` |
 
@@ -374,7 +416,8 @@ The public interface uses **Interface Segregation** (ISP) to separate concerns:
 
 ```
 IAccessBase          (format metadata, page size, code page, async disposal)
-├── IAccessReader    (read/stream rows, schema metadata, exact index seek, complex/linked reads)
+├── IAccessReader    (read/stream rows, schema metadata, exact index seek, LINQ Query<T>,
+│                    relationship metadata, complex/linked reads)
 ├── IAccessSchema    (DDL: CreateTable, DropTable, AddColumn, DropColumn, RenameColumn,
 │                    CreateLinkedTable, CreateLinkedTextTable, CreateLinkedOdbcTable,
 │                    Create/Drop/RenameRelationship)
@@ -408,6 +451,9 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Policy** | `TypedRowFallbackPolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
 | **Registry** | `ConstraintRegistry`, `CalculatedExpressionFunctionRegistry` | Centralized constraint management and calculated-expression function dispatch — decoupled from the writer orchestrator and evaluator entry point |
+| **Query Provider / Pipeline** | `AccessQueryProvider`, `AccessQueryTranslator`, `QueryStage` subclasses | LINQ `IQueryable` provider that translates an expression tree into an ordered stage pipeline, pushes a leading filter run into index inference, and replays the unsupported tail in memory |
+| **Specification** | `RowCriteria`, `ColumnPredicate`, `RowCriteriaEvaluator` | Named-column predicate objects expressing writer update/delete filters independently of how they compile and evaluate against decoded rows |
+| **Query Planner** | `IndexPlanner`, `IndexPredicateTranslator`, `IndexPlan` | Chooses the best index for a predicate and builds a sound (superset) seek, leaving a residual client-side filter to enforce exactness |
 
 ---
 
@@ -517,6 +563,10 @@ Linked-table public APIs live on `IAccessSchema`; linked-table discovery and rea
 
 `CalculatedExpressionEvaluator` remains the row-local entry point for applying calculated-column expressions, but parsing, normalization, AST nodes, coercion, safety limits, and function dispatch are split into focused internal helpers. Supported Access/VBA functions are registered through `CalculatedExpressionFunctionRegistry` using descriptors for aliases, argument counts, domains, and evaluator delegates; the implementation lives in domain catalogs such as `CalculatedExpressionTextFunctions` and `CalculatedExpressionDateTimeFunctions`. Spreadsheet-only constructs, external references, and domain aggregates stay rejected at the parser/evaluator boundary instead of leaking into row evaluation.
 
+### 12. The LINQ query layer is read-only and degrades gracefully
+
+`Queries/` adds an `IQueryable<T>` over a single table (`AccessReader.Query<T>`). `AccessQueryProvider` translates only the operators it can run natively against the storage engine — a leading run of `Where` filters (AND-combined and pushed into index inference by `IndexPredicateTranslator`/`IndexPlanner`), `OrderBy`/`ThenBy`, `Skip`, and `Take` — into an ordered `QueryStage` pipeline that honors written order. `AccessQueryTranslator` marks the engine boundary at the first unsupported operator (notably `Select` projections): the prefix runs in the engine and the tail replays in memory through LINQ-to-Objects. Relationship-inferred eager loading (`Include`/`ThenInclude`, including filtered/ordered/paged collection includes) is a post-materialization step driven by the `MSysRelationships` catalog. Index selection is intentionally sound-but-not-exact — a seek can return a superset — so the compiled residual predicate is always reapplied to every row the seek yields.
+
 ---
 
 ## Public API surface
@@ -525,11 +575,13 @@ The public entry points are:
 
 | Type | Purpose |
 |------|---------|
-| `AccessReader` | Open and read .mdb/.accdb files — stream rows, materialize DataTables/POCOs, exact index seek, read schema, linked-table metadata/read-through, complex-column metadata/items |
-| `AccessWriter` | Create/open/write .mdb/.accdb files — CRUD, DDL, linked-table catalog rows, relationships, complex-column row APIs, transactions, storage maintenance, encryption conversion helpers |
+| `AccessReader` | Open and read .mdb/.accdb files — stream rows, materialize DataTables/POCOs, LINQ `Query<T>` with relationship-inferred eager loading, exact index seek, read schema, relationship metadata, linked-table metadata/read-through, complex-column metadata/items |
+| `AccessWriter` | Create/open/write .mdb/.accdb files — CRUD with named-column `RowValues`/`RowCriteria` filters, DDL, linked-table catalog rows, relationships, complex-column row APIs, transactions, storage maintenance, encryption conversion helpers |
 | `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file/byte-range locking, linked-source path policy, linked-text limits |
 | `AccessWriterOptions` | Writer configuration: password, full catalog schema, lock-file/byte-range locking, transaction page budget, secure erase, implicit transactional writes |
 | `JetTransaction` | Disposable transaction handle returned by `BeginTransactionAsync` |
+| `AccessQueryExtensions` | LINQ extensions for `Query<T>` results — relationship-inferred `Include`/`ThenInclude` eager loading and async terminal operators |
+| `IIncludableQueryable<TEntity, TProperty>` | Marker returned by `Include`/`ThenInclude` so a chain can carry the most recently included navigation type |
 | `Models/*` | Public DTOs for column definitions, index metadata, relationships, etc. |
 | `Enums/*` | Public enumerations (database format, encryption format, linked-table kind, secure erase mode, etc.) |
 | `Exceptions/*` | Domain-specific exceptions |

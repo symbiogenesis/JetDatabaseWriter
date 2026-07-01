@@ -98,7 +98,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        int nullMaskSz = (numCols + 7) / 8;
+        int nullMaskSz = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int nullMaskPos = rowSize - nullMaskSz;
         if (nullMaskPos < rowFields.NumCols)
         {
@@ -157,16 +157,10 @@ internal sealed class RowDecodePlan
         in RowLayout layout,
         ColumnInfo col)
     {
-        bool nullBit = false;
-        if (col.ColNum < layout.NumCols)
-        {
-            int mByte = layout.NullMaskPos + (col.ColNum / 8);
-            int mBit = col.ColNum % 8;
-            if (mByte < rowSize)
-            {
-                nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-            }
-        }
+        bool nullBit = col.ColNum < layout.NumCols
+            && JetTypeInfo.IsNullMaskBitSet(
+                page.Slice(rowStart + layout.NullMaskPos, rowSize - layout.NullMaskPos),
+                col.ColNum);
 
         if (col.Type == BooleanType && !col.IsCalculated)
         {
@@ -279,44 +273,35 @@ internal sealed class RowDecodePlan
 
         try
         {
-            switch (column.Type)
+            if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                case TextType:
-                    value = source.DecodeTextForFormat(page, start, length);
-                    return true;
-
-                case BinaryType:
-                    value = BinaryBuffer.CopySlice(page, start, length);
-                    return true;
-
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case MoneyType:
-                case BigIntType:
-                case GuidType:
-                case NumericType:
-                case DateTimeExtendedType:
-                    int required = JetTypeInfo.GetFixedSize(column.Type);
-                    if (length < required)
-                    {
-                        return false;
-                    }
-
-                    value = JetTypeInfo.ReadFixedTyped(page, start, column, column.Type == NumericType ? length : required, strictNumeric: true);
-                    return value is not DBNull;
-                case BooleanType:
-                case OleType:
-                case MemoType:
-                case AttachmentType:
-                case ComplexType:
+                if (column.Type is ComplexType or AttachmentType || length < required)
+                {
                     return false;
-                default:
-                    throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+                }
+
+                value = JetTypeInfo.ReadFixedTyped(page, start, column, column.Type == NumericType ? length : required, strictNumeric: true);
+                return value is not DBNull;
             }
+
+            if (column.Type == TextType)
+            {
+                value = source.DecodeTextForFormat(page, start, length);
+                return true;
+            }
+
+            if (column.Type == BinaryType)
+            {
+                value = BinaryBuffer.CopySlice(page, start, length);
+                return true;
+            }
+
+            if (column.Type is BooleanType or OleType or MemoType)
+            {
+                return false;
+            }
+
+            throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
         catch (Exception ex) when (ex is JetLimitationException or ArgumentException or OverflowException)
         {
@@ -529,42 +514,34 @@ internal sealed class RowDecodePlan
 
         try
         {
-            switch (column.Type)
+            if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                case TextType:
-                    return source.DecodeTextForFormat(page, start, length);
-
-                case BinaryType:
-                    return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, length));
-
-                case MemoType:
-                case OleType:
-                    return await longValueDecoder.ReadLongValueAsync(page, start, length, column.Type == OleType, cancellationToken).ConfigureAwait(false);
-
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case MoneyType:
-                case BigIntType:
-                case NumericType:
-                case GuidType:
-                case DateTimeExtendedType:
-                case ComplexType:
-                case AttachmentType:
-                    int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
-                    return length >= required
-                        ? JetTypeInfo.ReadFixedString(page, start, column, required, strictNumeric: true)
-                        : string.Empty;
-
-                case BooleanType:
-                    return string.Empty;
-
-                default:
-                    throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
+                return length >= required
+                    ? JetTypeInfo.ReadFixedString(page, start, column, required, strictNumeric: true)
+                    : string.Empty;
             }
+
+            if (column.Type == TextType)
+            {
+                return source.DecodeTextForFormat(page, start, length);
+            }
+
+            if (column.Type == BinaryType)
+            {
+                return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, length));
+            }
+
+            if (column.Type is MemoType or OleType)
+            {
+                return await longValueDecoder.ReadLongValueAsync(page, start, length, column.Type == OleType, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (column.Type == BooleanType)
+            {
+                return string.Empty;
+            }
+
+            throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
         }
         catch (JetLimitationException)
         {
@@ -591,49 +568,34 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            switch (column.Type)
+            if (column.Type == TextType)
             {
-                case TextType:
-                    byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                    return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
-                case BinaryType:
-                    return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)));
-                case MemoType:
-                {
-                    byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-                }
-
-                case OleType:
-                {
-                    byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
-                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                    return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
-                }
-
-                case BooleanType:
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case MoneyType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case GuidType:
-                case NumericType:
-                case AttachmentType:
-                case ComplexType:
-                case BigIntType:
-                case DateTimeExtendedType:
-                    return CalculatedColumnUtil.ReadPayloadString(
-                        CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
-                        JetTypeInfo.ResolveValueType(column),
-                        this.strictParsing);
-
-                default:
-                    throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
+                byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
             }
+
+            if (column.Type == BinaryType)
+            {
+                return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)));
+            }
+
+            if (column.Type is MemoType or OleType)
+            {
+                byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
+                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, column.Type == OleType);
+            }
+
+            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+            if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
+            {
+                return CalculatedColumnUtil.ReadPayloadString(
+                    CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
+                    valueType,
+                    this.strictParsing);
+            }
+
+            throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
         }
         catch (JetLimitationException)
         {
@@ -658,7 +620,7 @@ internal sealed class RowDecodePlan
         LongValueDecoder longValueDecoder,
         ref bool needsLongValue) => slice.Kind switch
         {
-            ColumnSliceKind.Bool => slice.BoolValue,
+            ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
@@ -686,42 +648,34 @@ internal sealed class RowDecodePlan
 
         try
         {
-            switch (column.Type)
+            if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                case TextType:
-                    return source.DecodeTextForFormat(page, start, length);
-
-                case BinaryType:
-                    return BinaryBuffer.CopySlice(page, start, length);
-
-                case MemoType:
-                case OleType:
-                    return DecodeLongVariableValue(page, start, length, column, longValueDecoder, ref needsLongValue);
-
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case MoneyType:
-                case BigIntType:
-                case NumericType:
-                case GuidType:
-                case DateTimeExtendedType:
-                case ComplexType:
-                case AttachmentType:
-                    int required = column.Type is ComplexType or AttachmentType ? 4 : JetTypeInfo.GetFixedSize(column.Type);
-                    return length >= required
-                        ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing)
-                        : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, this.strictParsing);
-
-                case BooleanType:
-                    return DBNull.Value;
-
-                default:
-                    throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
+                return length >= required
+                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing)
+                    : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, this.strictParsing);
             }
+
+            if (column.Type == TextType)
+            {
+                return source.DecodeTextForFormat(page, start, length);
+            }
+
+            if (column.Type == BinaryType)
+            {
+                return BinaryBuffer.CopySlice(page, start, length);
+            }
+
+            if (column.Type is MemoType or OleType)
+            {
+                return DecodeLongVariableValue(page, start, length, column, longValueDecoder, ref needsLongValue);
+            }
+
+            if (column.Type == BooleanType)
+            {
+                return DBNull.Value;
+            }
+
+            throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
         }
         catch (JetLimitationException)
         {
@@ -751,38 +705,33 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            switch (column.Type)
+            if (column.Type == TextType)
             {
-                case TextType:
-                    byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                    return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
-                case BinaryType:
-                    return CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                case MemoType:
-                case OleType:
-                    needsLongValue = true;
-                    return new CalculatedLongValueRef(start, length, column.Type == OleType);
-                case BooleanType:
-                case ByteType:
-                case IntegerType:
-                case LongIntegerType:
-                case MoneyType:
-                case FloatType:
-                case DoubleType:
-                case DateTimeType:
-                case GuidType:
-                case NumericType:
-                case AttachmentType:
-                case ComplexType:
-                case BigIntType:
-                case DateTimeExtendedType:
-                    return CalculatedColumnUtil.ReadPayloadTyped(
-                        CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
-                        JetTypeInfo.ResolveValueType(column),
-                        this.strictParsing);
-                default:
-                    throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
+                byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
             }
+
+            if (column.Type == BinaryType)
+            {
+                return CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+            }
+
+            if (column.Type is MemoType or OleType)
+            {
+                needsLongValue = true;
+                return new CalculatedLongValueRef(start, length, column.Type == OleType);
+            }
+
+            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+            if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
+            {
+                return CalculatedColumnUtil.ReadPayloadTyped(
+                    CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
+                    valueType,
+                    this.strictParsing);
+            }
+
+            throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
         }
         catch (JetLimitationException)
         {

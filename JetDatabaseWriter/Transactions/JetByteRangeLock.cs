@@ -81,6 +81,8 @@ internal sealed class JetByteRangeLock
     /// <param name="lockTimeoutMilliseconds">Maximum milliseconds to wait for a contended lock.</param>
     public static JetByteRangeLock Create(Stream stream, bool enabled, int lockTimeoutMilliseconds)
     {
+        lockTimeoutMilliseconds = AccessOptions.ValidateLockTimeoutMilliseconds(lockTimeoutMilliseconds);
+
         if (!enabled || !PlatformSupportsByteRangeLocks() || stream is not FileStream fileStream)
         {
             return new JetByteRangeLock(fileStream: null, enabled: false, lockTimeoutMilliseconds);

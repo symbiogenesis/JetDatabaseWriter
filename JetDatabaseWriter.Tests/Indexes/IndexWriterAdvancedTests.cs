@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -33,10 +34,10 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task CreateTable_WithUniqueSingleColumnIndex_RoundTripsUniquenessMetadata()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
         const string tableName = "Idx_Unique";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -45,7 +46,7 @@ public sealed class IndexWriterAdvancedTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         IndexMetadata ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
@@ -56,10 +57,10 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task CreateTable_WithMultiColumnNonPkIndex_RoundTripsAllColumnsInOrder()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
         const string tableName = "Idx_Multi";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -71,7 +72,7 @@ public sealed class IndexWriterAdvancedTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         IndexMetadata ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
@@ -84,10 +85,10 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task CreateTable_WithDescendingSingleColumnIndex_RoundTripsDescendingFlag()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
         const string tableName = "Idx_Desc";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -96,7 +97,7 @@ public sealed class IndexWriterAdvancedTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         IndexColumnReference col = Assert.Single(Assert.Single(indexes).Columns);
         Assert.Equal("Score", col.Name);
@@ -106,10 +107,10 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task CreateTable_WithMixedAscDescMultiColumn_RoundTripsPerColumnDirection()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
         const string tableName = "Idx_Mixed";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -126,7 +127,7 @@ public sealed class IndexWriterAdvancedTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IndexMetadata ix = Assert.Single(await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken));
         Assert.Equal("A", ix.Columns[0].Name);
         Assert.True(ix.Columns[0].IsAscending);
@@ -137,8 +138,8 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task CreateTable_DescendingColumnNotInColumns_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -151,9 +152,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task UniqueIndex_DuplicateInsert_ThrowsInvalidOperationException()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
 
         await writer.CreateTableAsync(
             "T",
@@ -171,9 +172,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task UniqueIndex_NonDuplicateInserts_Succeed()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -197,9 +198,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task MultiColumnIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -229,9 +230,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task UniqueMultiColumnIndex_DuplicateCompositeKey_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
 
         await writer.CreateTableAsync(
             "T",
@@ -252,9 +253,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task MultiColumnIndex_SurvivesAddColumn()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -269,7 +270,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IndexMetadata ix = Assert.Single(await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken));
         Assert.True(ix.EnforcesUniqueness);
         Assert.True(ix.HasUniqueFlag);
@@ -279,9 +280,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task DescendingIndex_SurvivesRenameColumn()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -292,7 +293,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.RenameColumnAsync("T", "Score", "Points", this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         IndexMetadata ix = Assert.Single(await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken));
         IndexColumnReference col = Assert.Single(ix.Columns);
         Assert.Equal("Points", col.Name);
@@ -304,9 +305,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task GuidIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -331,9 +332,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task UniqueGuidIndex_DuplicateInsert_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
 
         await writer.CreateTableAsync(
             "T",
@@ -352,9 +353,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task DecimalIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -381,9 +382,9 @@ public sealed class IndexWriterAdvancedTests
     [Fact]
     public async Task UniqueDecimalIndex_DuplicateInsert_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
 
         await writer.CreateTableAsync(
             "T",
@@ -425,7 +426,7 @@ public sealed class IndexWriterAdvancedTests
 
     private static async Task AssertLeafEntryCountAsync(MemoryStream stream, string tableName, string indexName, int expectedCount)
     {
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IndexMetadata index = Assert.Single(
             await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken),
             candidate => candidate.Name == indexName);
@@ -437,39 +438,4 @@ public sealed class IndexWriterAdvancedTests
         Assert.Equal(expectedCount, CountLeafEntries(fileBytes, leafOffset));
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
 }

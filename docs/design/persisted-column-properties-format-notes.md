@@ -102,7 +102,7 @@ For the four properties we care about in this PR series, the dataType is always 
 
 ## 4. Property-block subtype variation
 
-mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks and treats all three identically. The subtype likely distinguishes table vs column vs index property blocks, but neither mdbtools nor Jackcess depends on the distinction.
+mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks and treats all three identically. The exact meaning of the subtype is unconfirmed — it may distinguish table vs column vs index property blocks — but it is reverse-engineered and neither mdbtools nor Jackcess depends on (or documents) the distinction.
 
 The 2026-05-11 DAO FK baseline found that programmatic DAO table creation emits column property blocks with subtype `0x01` for the simple Short Text / Long / AutoNumber schema under test. Subtype `0x00` remains readable, but `0x01` is the closer DAO shape for newly-authored column targets.
 
