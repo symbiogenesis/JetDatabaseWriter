@@ -18,8 +18,9 @@ not a backlog.
 ## Closeout state
 
 Closed on 2026-05-31 after implementation, focused measurement, and the
-`RowDecodePlan` consolidation closeout recorded in
-[architecture-simplification.md](architecture-simplification.md). Keep this file
+`RowDecodePlan` consolidation closeout from the completed architecture
+simplification sweep (working log closed and removed from the repository
+2026-06-30; see git history for full detail). Keep this file
 as the durable evidence record for the completed read-performance pass. If a
 future workload feels slow, use the measurement commands and workload-shape
 guidance below to produce new evidence before changing the core reader.
@@ -80,8 +81,9 @@ on Windows 11, .NET SDK 10.0.300, .NET 10.0.8, BenchmarkDotNet 0.15.8, Intel
 Core Ultra 7 268V. Treat these as engineering closeout measurements rather than
 release-quality full-run numbers. A later 2026-05-30 ShortRun after the
 `RowsAsStrings()` and direct-decoder `RowDecodePlan` consolidation stayed
-neutral or better on the affected hot paths; the detailed closeout numbers are
-recorded in [architecture-simplification.md](architecture-simplification.md).
+neutral or better on the affected hot paths; the detailed ShortRun closeout
+numbers lived in the now-removed architecture simplification working log (see
+git history) and are not reproduced here.
 
 | Area | ShortRun result | Decision |
 |---|---|---|

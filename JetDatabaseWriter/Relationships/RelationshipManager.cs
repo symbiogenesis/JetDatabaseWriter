@@ -17,7 +17,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-#pragma warning disable SA1202, SA1204
+#pragma warning disable SA1204
 
 /// <summary>
 /// Foreign-key relationship management for <see cref="AccessWriter"/>:
@@ -81,13 +81,13 @@ internal sealed class RelationshipManager
         Guard.ThrowIfDisposed(this.writer.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Validate referenced user tables exist.
-        CatalogEntry primaryEntry = await this.writer.GetRequiredCatalogEntryAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        CatalogEntry foreignEntry = await this.writer.GetRequiredCatalogEntryAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
-
-        // Validate referenced columns exist on each table.
-        TableDef primaryDef = await this.writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        TableDef foreignDef = await this.writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        // Validate referenced user tables exist and load their definitions.
+        ResolvedTable primaryTable = await this.writer.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        ResolvedTable foreignTable = await this.writer.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        CatalogEntry primaryEntry = primaryTable.Entry;
+        CatalogEntry foreignEntry = foreignTable.Entry;
+        TableDef primaryDef = primaryTable.Definition;
+        TableDef foreignDef = foreignTable.Definition;
 
         for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
         {

@@ -59,6 +59,42 @@ internal static class JetTypeInfo
     };
 
     /// <summary>
+    /// Returns <see langword="true"/> when a variable-length row slot stores a
+    /// fixed-size payload for <paramref name="type"/>, and returns the required
+    /// payload byte count. Complex and attachment parent columns use a 4-byte
+    /// complex-id payload even though their logical values live in hidden child
+    /// tables.
+    /// </summary>
+    /// <param name="type">JET column-type code (see <see cref="ColumnType"/>).</param>
+    /// <param name="byteCount">Receives the required fixed-payload byte count.</param>
+    public static bool TryGetVariableSlotFixedPayloadSize(ColumnType type, out int byteCount)
+    {
+        byteCount = type switch
+        {
+            ComplexType or AttachmentType => 4,
+            ByteType or
+            IntegerType or
+            LongIntegerType or
+            MoneyType or
+            FloatType or
+            DoubleType or
+            DateTimeType or
+            GuidType or
+            NumericType or
+            BigIntType or
+            DateTimeExtendedType => GetFixedSize(type),
+            BooleanType or
+            BinaryType or
+            TextType or
+            OleType or
+            MemoType or
+            _ => 0,
+        };
+
+        return byteCount > 0;
+    }
+
+    /// <summary>
     /// Returns <see langword="true"/> for the four JET types
     /// (<c>TEXT/BINARY/MEMO/OLE</c>) that are <i>always</i> stored in the
     /// row's variable-length area. Other types may still live in the variable
@@ -509,14 +545,16 @@ internal static class JetTypeInfo
         {
             return type switch
             {
-                ByteType => row[start],
+                ByteType => BoxCache.Byte(row[start]),
 
                 // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
                 // the legacy "(short)Ru16(...)" cast throws OverflowException for
                 // values with the high bit set and ReadFixedString silently maps
                 // those to string.Empty → DBNull. The typed path keeps the value.
-                IntegerType => Ri16(row, start),
-                LongIntegerType => Ri32(row, start),
+                // BoxCache interns low-magnitude results so status/flag/enum cells
+                // do not allocate a fresh box on the untyped object-array path.
+                IntegerType => BoxCache.Int16(Ri16(row, start)),
+                LongIntegerType => BoxCache.Int32(Ri32(row, start)),
                 FloatType => ReadSingleLittleEndian(row.Slice(start, 4)),
                 DoubleType => ReadDoubleLittleEndian(row.Slice(start, 8)),
                 DateTimeType => DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))),
@@ -762,6 +800,19 @@ internal static class JetTypeInfo
         b[o + 2] = (byte)((value >> 16) & 0xFF);
     }
 
+    internal static void WriteUInt24(Span<byte> b, int o, int value)
+    {
+        Wu16(b, o, value & 0xFFFF);
+        b[o + 2] = (byte)((value >> 16) & 0xFF);
+    }
+
+    internal static void WriteUInt24BigEndian(byte[] b, int o, int value)
+    {
+        b[o] = (byte)((value >> 16) & 0xFF);
+        b[o + 1] = (byte)((value >> 8) & 0xFF);
+        b[o + 2] = (byte)(value & 0xFF);
+    }
+
     internal static void WriteField(byte[] b, int o, int fieldSize, int value)
     {
         if (fieldSize == 1)
@@ -771,6 +822,75 @@ internal static class JetTypeInfo
         else
         {
             Wu16(b, o, value);
+        }
+    }
+
+    /// <summary>
+    /// Returns the number of bytes needed to hold a row's null bitmap: one bit
+    /// per column, rounded up to a whole byte.
+    /// </summary>
+    /// <param name="columnCount">The number of columns in the row.</param>
+    internal static int GetNullMaskSizeBytes(int columnCount) => (columnCount + 7) / 8;
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the null-bitmap bit for
+    /// <paramref name="columnNumber"/> is set in <paramref name="mask"/> — the column
+    /// is present (non-null), or for a Boolean column holds <see langword="true"/>.
+    /// Returns <see langword="false"/> when the bit lies outside <paramref name="mask"/>.
+    /// </summary>
+    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
+    /// <param name="columnNumber">The zero-based column number.</param>
+    internal static bool IsNullMaskBitSet(ReadOnlySpan<byte> mask, int columnNumber)
+    {
+        if (columnNumber < 0)
+        {
+            return false;
+        }
+
+        int byteOffset = columnNumber / 8;
+        return byteOffset < mask.Length
+            && (mask[byteOffset] & (1 << (columnNumber % 8))) != 0;
+    }
+
+    /// <summary>
+    /// Sets or clears the null-bitmap bit for <paramref name="columnNumber"/> in
+    /// <paramref name="mask"/>. No-ops when the bit lies outside <paramref name="mask"/>.
+    /// </summary>
+    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
+    /// <param name="columnNumber">The zero-based column number.</param>
+    /// <param name="state">The bit value to write.</param>
+    internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
+        => SetNullMaskBit(mask.AsSpan(), columnNumber, state);
+
+    /// <summary>
+    /// Sets or clears the null-bitmap bit for <paramref name="columnNumber"/> in the
+    /// span-backed <paramref name="mask"/>. No-ops when the bit lies outside
+    /// <paramref name="mask"/>.
+    /// </summary>
+    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
+    /// <param name="columnNumber">The zero-based column number.</param>
+    /// <param name="state">The bit value to write.</param>
+    internal static void SetNullMaskBit(Span<byte> mask, int columnNumber, bool state)
+    {
+        if (columnNumber < 0)
+        {
+            return;
+        }
+
+        int byteOffset = columnNumber / 8;
+        int bitOffset = columnNumber % 8;
+        if (byteOffset >= mask.Length)
+        {
+            return;
+        }
+
+        if (state)
+        {
+            mask[byteOffset] |= (byte)(1 << bitOffset);
+        }
+        else
+        {
+            mask[byteOffset] &= (byte)~(1 << bitOffset);
         }
     }
 

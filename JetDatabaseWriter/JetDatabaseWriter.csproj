@@ -48,8 +48,12 @@
     BCL on .NET 10+. For older consumers (anything resolving the netstandard2.1 asset), pull in
     System.Linq.Async transitively so the async LINQ surface in our public API "just works"
     without requiring downstream projects to add the package themselves.
+    System.ComponentModel.DataAnnotations.Schema.TableAttribute (the [Table] escape hatch the
+    Include eager-loader honors to bind a POCO to a differently named table) is likewise in-box
+    on .NET 10+ but lives in System.ComponentModel.Annotations for netstandard2.1.
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="System.ComponentModel.Annotations" />
     <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="System.Text.Encoding.CodePages" />
   </ItemGroup>

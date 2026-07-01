@@ -82,71 +82,59 @@ internal static class CalculatedColumnUtil
 
     internal static string ReadPayloadString(ReadOnlySpan<byte> payload, ColumnType type, bool strictNumeric)
     {
-        switch (type)
+        if (type == BooleanType)
         {
-            case BooleanType:
-                return ReadBooleanPayload(payload) ? "True" : "False";
-            case NumericType:
-                object numeric = ReadNumericPayload(payload, strictNumeric);
-                return numeric is decimal decimalValue
-                    ? decimalValue.ToString("G", CultureInfo.InvariantCulture)
-                    : string.Empty;
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case MoneyType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case BinaryType:
-            case TextType:
-            case OleType:
-            case MemoType:
-            case GuidType:
-            case AttachmentType:
-            case ComplexType:
-            case BigIntType:
-            case DateTimeExtendedType:
-                int required = type is ComplexType or AttachmentType ? 4 : GetFixedSize(type);
-                return required > 0 && payload.Length >= required
-                    ? ReadFixedString(payload, 0, type, required, strictNumeric)
-                    : string.Empty;
-            default:
-                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
+            return ReadBooleanPayload(payload) ? "True" : "False";
         }
+
+        if (type == NumericType)
+        {
+            object numeric = ReadNumericPayload(payload, strictNumeric);
+            return numeric is decimal decimalValue
+                ? decimalValue.ToString("G", CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
+        if (TryGetVariableSlotFixedPayloadSize(type, out int required))
+        {
+            return payload.Length >= required
+                ? ReadFixedString(payload, 0, type, required, strictNumeric)
+                : string.Empty;
+        }
+
+        if (type is BinaryType or TextType or OleType or MemoType)
+        {
+            return string.Empty;
+        }
+
+        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
     }
 
     internal static object ReadPayloadTyped(ReadOnlySpan<byte> payload, ColumnType type, bool strictNumeric)
     {
-        switch (type)
+        if (type == BooleanType)
         {
-            case BooleanType:
-                return ReadBooleanPayload(payload);
-            case NumericType:
-                return ReadNumericPayload(payload, strictNumeric);
-            case ByteType:
-            case IntegerType:
-            case LongIntegerType:
-            case MoneyType:
-            case FloatType:
-            case DoubleType:
-            case DateTimeType:
-            case BinaryType:
-            case TextType:
-            case OleType:
-            case MemoType:
-            case GuidType:
-            case AttachmentType:
-            case ComplexType:
-            case BigIntType:
-            case DateTimeExtendedType:
-                int required = type is ComplexType or AttachmentType ? 4 : GetFixedSize(type);
-                return required > 0 && payload.Length >= required
-                    ? ReadFixedTyped(payload, 0, type, required, strictNumeric)
-                    : DBNull.Value;
-            default:
-                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
+            return ReadBooleanPayload(payload);
         }
+
+        if (type == NumericType)
+        {
+            return ReadNumericPayload(payload, strictNumeric);
+        }
+
+        if (TryGetVariableSlotFixedPayloadSize(type, out int required))
+        {
+            return payload.Length >= required
+                ? ReadFixedTyped(payload, 0, type, required, strictNumeric)
+                : DBNull.Value;
+        }
+
+        if (type is BinaryType or TextType or OleType or MemoType)
+        {
+            return DBNull.Value;
+        }
+
+        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
     }
 
     private static bool ReadBooleanPayload(ReadOnlySpan<byte> payload)

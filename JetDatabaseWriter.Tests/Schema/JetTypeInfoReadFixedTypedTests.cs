@@ -23,6 +23,38 @@ using static JetDatabaseWriter.Enums.ColumnType;
 public sealed class JetTypeInfoReadFixedTypedTests
 {
     [Theory]
+    [InlineData(ByteType, 1)]
+    [InlineData(IntegerType, 2)]
+    [InlineData(LongIntegerType, 4)]
+    [InlineData(MoneyType, 8)]
+    [InlineData(FloatType, 4)]
+    [InlineData(DoubleType, 8)]
+    [InlineData(DateTimeType, 8)]
+    [InlineData(BigIntType, 8)]
+    [InlineData(NumericType, 17)]
+    [InlineData(GuidType, 16)]
+    [InlineData(DateTimeExtendedType, 42)]
+    [InlineData(ComplexType, 4)]
+    [InlineData(AttachmentType, 4)]
+    public void TryGetVariableSlotFixedPayloadSize_FixedPayloadTypes_ReturnsRequiredSize(ColumnType columnType, int expectedSize)
+    {
+        Assert.True(JetTypeInfo.TryGetVariableSlotFixedPayloadSize(columnType, out int actualSize));
+        Assert.Equal(expectedSize, actualSize);
+    }
+
+    [Theory]
+    [InlineData(BooleanType)]
+    [InlineData(BinaryType)]
+    [InlineData(TextType)]
+    [InlineData(OleType)]
+    [InlineData(MemoType)]
+    public void TryGetVariableSlotFixedPayloadSize_NonFixedPayloadTypes_ReturnsFalse(ColumnType columnType)
+    {
+        Assert.False(JetTypeInfo.TryGetVariableSlotFixedPayloadSize(columnType, out int actualSize));
+        Assert.Equal(0, actualSize);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(127)]

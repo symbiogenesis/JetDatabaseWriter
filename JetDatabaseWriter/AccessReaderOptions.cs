@@ -4,18 +4,18 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessReader"/>.
 /// </summary>
-public sealed class AccessReaderOptions : IAccessOptions
+public sealed class AccessReaderOptions : AccessOptions
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReaderOptions"/> class.
     /// </summary>
     public AccessReaderOptions()
+        : base(useByteRangeLocks: false)
     {
     }
 
@@ -24,7 +24,9 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// </summary>
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessReaderOptions(string? plainTextPassword)
-        => this.Password = plainTextPassword.AsMemory();
+        : base(plainTextPassword, useByteRangeLocks: false)
+    {
+    }
 
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
@@ -54,55 +56,6 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// Set to <see cref="FileShare.Read"/> to block other writers while this reader has the file open.
     /// </summary>
     public FileShare FileShare { get; init; } = FileShare.ReadWrite;
-
-    /// <summary>
-    /// Gets the password for opening encrypted databases.
-    /// Empty (the default) means no decryption is attempted.
-    /// Supports Jet3 (XOR), Jet4 (RC4), and ACCDB (AES) encryption.
-    /// </summary>
-    public ReadOnlyMemory<char> Password { get; init; }
-
-    /// <summary>
-    /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
-    /// alongside the database while it is open, and deleted on dispose.
-    /// Default: true.
-    /// </summary>
-    public bool UseLockFile { get; init; } = true;
-
-    /// <summary>
-    /// Gets the user / security name written into this opener's slot in the
-    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
-    /// <see cref="Environment.UserName"/> is used. Truncated to 31 ASCII characters;
-    /// non-ASCII characters are replaced with '?' to match Access's slot format.
-    /// </summary>
-    public string? LockFileUserName { get; init; }
-
-    /// <summary>
-    /// Gets the machine / computer name written into this opener's slot in the
-    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
-    /// <see cref="Environment.MachineName"/> is used. Truncated to 31 ASCII characters;
-    /// non-ASCII characters are replaced with '?' to match Access's slot format.
-    /// </summary>
-    public string? LockFileMachineName { get; init; }
-
-    /// <summary>
-    /// Gets a value indicating whether cooperative byte-range page locks are taken
-    /// against the database file. Readers are not required to participate in JET
-    /// page locking; the option exists for symmetry with
-    /// <see cref="AccessWriterOptions.UseByteRangeLocks"/> for callers that want
-    /// fully-consistent reads against a concurrent writer that obeys the protocol.
-    /// Default: <see langword="false"/>. No-op where
-    /// <see cref="FileStream.Lock(long, long)"/> is unsupported or when the reader
-    /// was opened from a non-<see cref="FileStream"/>.
-    /// </summary>
-    public bool UseByteRangeLocks { get; init; }
-
-    /// <summary>
-    /// Gets the maximum time in milliseconds to wait when acquiring a contended
-    /// byte-range page lock before throwing <see cref="IOException"/>.
-    /// Default: <c>5000</c>.
-    /// </summary>
-    public int LockTimeoutMilliseconds { get; init; } = 5_000;
 
     /// <summary>
     /// Gets an optional allowlist of directories that linked-table source paths must stay under.

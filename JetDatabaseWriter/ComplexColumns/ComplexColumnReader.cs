@@ -309,7 +309,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         if (CatalogValueReader.TryParseInt64(tableIdStr, out long tableId))
         {
-            return (tableId & 0x00FFFFFFL) == targetTdefPage;
+            return CatalogValueReader.TdefPageFromId(tableId) == targetTdefPage;
         }
 
         return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
@@ -627,7 +627,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
                 if (CatalogValueReader.TryParseInt64(row, idxFlatTable, out long flatId))
                 {
-                    long flatTdef = flatId & 0x00FFFFFFL;
+                    long flatTdef = CatalogValueReader.TdefPageFromId(flatId);
                     if (flatTdef > 0)
                     {
                         return flatTdef;

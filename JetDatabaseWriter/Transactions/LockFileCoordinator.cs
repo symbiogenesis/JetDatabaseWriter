@@ -37,11 +37,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
         return new LockFileCoordinator(
             databasePath,
             nameof(AccessReader),
-            new LockFileSettings(
-                Enabled: options.UseLockFile,
-                RespectExisting: false,
-                UserName: options.LockFileUserName,
-                MachineName: options.LockFileMachineName));
+            options.CreateLockFileSettings(respectExisting: false));
     }
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessWriterOptions"/>.</summary>
@@ -53,11 +49,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
         return new LockFileCoordinator(
             databasePath,
             nameof(AccessWriter),
-            new LockFileSettings(
-                Enabled: options.UseLockFile,
-                RespectExisting: options.RespectExistingLockFile,
-                UserName: options.LockFileUserName,
-                MachineName: options.LockFileMachineName));
+            options.CreateLockFileSettings(options.RespectExistingLockFile));
     }
 
     /// <summary>
@@ -68,14 +60,13 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// <param name="databasePath">The database path.</param>
     /// <param name="options">The options.</param>
     public static LockFileCoordinator ForReencrypt(string databasePath, AccessWriterOptions? options)
-        => new(
-            databasePath,
-            nameof(AccessWriter),
-            new LockFileSettings(
-                Enabled: options?.UseLockFile ?? true,
-                RespectExisting: options?.RespectExistingLockFile ?? true,
-                UserName: options?.LockFileUserName,
-                MachineName: options?.LockFileMachineName));
+    {
+        LockFileSettings settings = options is null
+            ? AccessOptions.CreateDefaultLockFileSettings(respectExisting: true)
+            : options.CreateLockFileSettings(options.RespectExistingLockFile);
+
+        return new LockFileCoordinator(databasePath, nameof(AccessWriter), settings);
+    }
 
     /// <summary>Gets a value indicating whether the coordinator will maintain a lock-file slot.</summary>
     public bool IsEnabled { get; } = settings.Enabled && !string.IsNullOrEmpty(databasePath);
@@ -195,10 +186,10 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
 /// </summary>
 /// <param name="Enabled">Whether lock-file maintenance is requested by the caller.</param>
 /// <param name="RespectExisting">When <c>true</c>, opening fails if a lock-file already exists.</param>
-/// <param name="UserName">Optional user name to record in the slot.</param>
-/// <param name="MachineName">Optional machine name to record in the slot.</param>
+/// <param name="UserName">User name to record in the slot.</param>
+/// <param name="MachineName">Machine name to record in the slot.</param>
 internal readonly record struct LockFileSettings(
     bool Enabled,
-    bool RespectExisting = false,
-    string? UserName = null,
-    string? MachineName = null);
+    bool RespectExisting,
+    string UserName,
+    string MachineName);
