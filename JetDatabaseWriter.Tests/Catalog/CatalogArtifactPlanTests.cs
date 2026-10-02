@@ -37,7 +37,7 @@ public sealed class CatalogArtifactPlanTests
                 ],
                 []);
 
-            long[] tablePages = await writer.ExecuteCatalogArtifactPlanAsync(plan, cancellationToken);
+            long[] tablePages = await writer.Services.CatalogArtifacts.ExecutePlanAsync(plan, cancellationToken);
 
             Assert.Equal(2, tablePages.Length);
             Assert.True(tablePages[0] > 0);
@@ -70,7 +70,7 @@ public sealed class CatalogArtifactPlanTests
             leaveOpen: true,
             cancellationToken: cancellationToken);
 
-        long templatePage = await writer.Relationships.FindSystemTableTdefPageAsync(
+        long templatePage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(
             Constants.ComplexTypeNames.Attachment,
             cancellationToken);
         Assert.True(templatePage > 0);

@@ -12,18 +12,29 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
-/// Owns insertion of catalog entries, ACE rows, table renames, and
-/// catalog row scanning.
+/// Owns insertion of catalog entries, ACE rows, table renames, and catalog
+/// row deletion.
 /// </summary>
-/// <param name="writer">The writer.</param>
-/// <param name="indexes">The indexes.</param>
-/// <param name="longValueEncoder">The long value encoder.</param>
-internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes, LongValueEncoder longValueEncoder)
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="tableRows">Writes and tombstones catalog rows.</param>
+/// <param name="indexes">Keeps the catalog and <c>MSysACEs</c> indexes current.</param>
+/// <param name="longValueEncoder">Encodes linked-table memo fields as LVAL chains.</param>
+/// <param name="constraints">Follows table renames in the client-side constraint registry.</param>
+/// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
+internal sealed class CatalogWriter(
+    AccessBase db,
+    TableRowStore tableRows,
+    IndexMaintainer indexes,
+    LongValueEncoder longValueEncoder,
+    ConstraintRegistry constraints,
+    CatalogRowReader catalogRows)
 {
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
@@ -35,7 +46,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await db.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
@@ -51,7 +62,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
         msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
 
-        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         await this.RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -65,7 +76,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
     /// <returns>The inserted <c>MSysObjects.Id</c> value.</returns>
     internal async ValueTask<int> InsertCatalogObjectAsync(CatalogObjectArtifact artifact, CancellationToken cancellationToken = default)
     {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await db.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
 
         int objectId = artifact.ObjectIdPolicy == CatalogObjectIdPolicy.AllocateNonTable
@@ -111,7 +122,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             msys.SetValueByName(values, "Connect", artifact.Connect);
         }
 
-        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         try
         {
             await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
@@ -129,7 +140,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                 useRestrictedOwnerAcm: true,
                 useRelationshipGroupAcm: artifact.AcePolicy == CatalogObjectAcePolicy.RelationshipObject,
                 cancellationToken).ConfigureAwait(false);
-            writer.InvalidateCatalogCache();
+            db.InvalidateCatalogCache();
         }
 
         return objectId;
@@ -152,13 +163,13 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             return;
         }
 
-        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
             return;
         }
 
-        TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        TableDef acesDef = await db.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
         if (objectIdColumn is null)
         {
@@ -172,11 +183,11 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         var deletedRows = new List<(RowLocation Loc, object[] Row)>();
-        await writer.ForEachLiveTableRowAsync(
+        await db.ForEachLiveTableRowAsync(
             acesTdefPage,
             (row, _) =>
             {
-                string objectIdText = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
+                string objectIdText = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, objectIdColumn);
                 if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
                     && ids.Contains(objectId))
                 {
@@ -191,12 +202,12 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
         foreach ((RowLocation row, _) in deletedRows)
         {
-            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
         {
-            await writer.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+            await tableRows.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
             await indexes.MaintainSystemTableIndexesIncrementallyAsync(
                 acesTdefPage,
                 acesDef,
@@ -240,13 +251,13 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         bool useRelationshipGroupAcm,
         CancellationToken cancellationToken)
     {
-        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
             return;
         }
 
-        TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        TableDef acesDef = await db.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         byte[]? adminsSid = await this.HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
 
         byte[][] sids = adminsSid != null
@@ -274,7 +285,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             acesDef.SetValueByName(row, "ACM", acm);
             acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sids[i]);
-            await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await indexes.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -294,8 +305,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
     private async ValueTask RemoveUnindexedCatalogRowAsync(RowLocation loc, CancellationToken cancellationToken)
     {
-        await writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        await writer.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
+        await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        await tableRows.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -314,11 +325,11 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         }
 
         byte[]? sid = null;
-        await writer.ForEachLiveTableRowAsync(
+        await db.ForEachLiveTableRowAsync(
             acesTdefPage,
             (row, _) =>
             {
-                string hex = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, sidCol);
+                string hex = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, sidCol);
                 if (hex.Length <= 4)
                 {
                     return new ValueTask<bool>(true);
@@ -352,8 +363,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             operation: $"renaming catalog row '{oldName}' to '{newName}'",
             missingMessage: $"Catalog row for '{oldName}' was not found during rename.",
             cancellationToken).ConfigureAwait(false);
-        writer.Constraints.Rename(oldName, newName);
-        writer.InvalidateCatalogCache();
+        constraints.Rename(oldName, newName);
+        db.InvalidateCatalogCache();
     }
 
     internal async ValueTask<long> ReplaceUserTableCatalogEntryAsync(
@@ -384,7 +395,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             lvProp,
             deleted.FirstCatalogFlags,
             cancellationToken).ConfigureAwait(false);
-        writer.InvalidateCatalogCache();
+        db.InvalidateCatalogCache();
         return replacementTdefPage;
     }
 
@@ -397,8 +408,8 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         string? missingMessage,
         CancellationToken cancellationToken)
     {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await db.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();
         var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
         long? firstTdefPage = null;
@@ -440,7 +451,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
             deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
 
-            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedCatalogRows.Count == 0)
@@ -453,15 +464,15 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             return new UserTableCatalogDeletionResult(0, [], null, 0);
         }
 
-        await writer.AdjustTDefRowCountAsync(2, -deletedCatalogRows.Count, cancellationToken).ConfigureAwait(false);
-        await writer.RequireMsysObjectsIndexMaintenanceAsync(
+        await tableRows.AdjustTDefRowCountAsync(2, -deletedCatalogRows.Count, cancellationToken).ConfigureAwait(false);
+        await this.RequireMsysObjectsIndexMaintenanceAsync(
             msys,
             insertedRows: null,
             deletedRows: deletedCatalogRows,
             operation,
             cancellationToken).ConfigureAwait(false);
 
-        writer.InvalidateCatalogCache();
+        db.InvalidateCatalogCache();
         return new UserTableCatalogDeletionResult(deletedCatalogRows.Count, droppedTdefPages, firstTdefPage, firstCatalogFlags);
     }
 
@@ -474,57 +485,35 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
         return indexRow;
     }
 
-    /// <summary>
-    /// Scans all data pages belonging to <c>MSysObjects</c> (TDEF page 2) and
-    /// returns a decoded row for each live catalog entry.
-    /// </summary>
-    /// <param name="msys">The system-table data.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
+    private async ValueTask RequireMsysObjectsIndexMaintenanceAsync(
+        TableDef msys,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        string operation,
+        CancellationToken cancellationToken)
     {
-        ColumnInfo? idColumn = msys.FindColumn("Id");
-        ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
-        ColumnInfo? nameColumn = msys.FindColumn("Name");
-        ColumnInfo? typeColumn = msys.FindColumn("Type");
-        ColumnInfo? flagsColumn = msys.FindColumn("Flags");
-        if (nameColumn == null || typeColumn == null)
+        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
+            2,
+            msys,
+            insertedRows,
+            deletedRows,
+            cancellationToken).ConfigureAwait(false);
+        if (incremental)
         {
-            return [];
+            return;
         }
 
-        var result = new List<CatalogRow>();
-        await writer.ForEachLiveTableRowAsync(
-            2,
-            (row, _) =>
-            {
-                byte[] page = row.Page;
-                RowLocation location = row.Location;
-                long id = idColumn is null
-                    ? 0
-                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, idColumn));
-                long parentId = parentIdColumn is null
-                    ? 0
-                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, parentIdColumn));
+        if (db.DatabaseFormat != DatabaseFormat.Jet3Mdb)
+        {
+            throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
+        }
 
-                result.Add(new CatalogRow(
-                    PageNumber: location.PageNumber,
-                    RowIndex: location.RowIndex,
-                    Name: writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameColumn),
-                    ObjectType: CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, typeColumn)),
-                    Flags: CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, flagsColumn!)),
-                    TDefPage: CatalogValueReader.TdefPageFromId(id),
-                    Id: id,
-                    ParentId: parentId));
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        return result;
+        await indexes.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, CancellationToken cancellationToken)
     {
-        List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
             bool sameParent = row.ParentId == parentId
@@ -543,12 +532,12 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
         var usedIds = new HashSet<int>();
         int maxLow24 = 0;
-        await writer.ForEachLiveTableRowAsync(
+        await db.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
                 int id = CatalogValueReader.ParseInt32OrZero(
-                    writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, idColumn));
+                    db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, idColumn));
                 usedIds.Add(id);
                 if (id != 0)
                 {

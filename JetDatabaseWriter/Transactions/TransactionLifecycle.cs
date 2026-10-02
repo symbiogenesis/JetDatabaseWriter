@@ -11,11 +11,18 @@ using JetDatabaseWriter.Pages;
 /// <summary>
 /// Manages the explicit page-buffered transaction lifecycle for an
 /// <see cref="AccessWriter"/>: begin, auto-commit wrapping, commit replay,
-/// rollback, and dispose-time teardown.
+/// rollback, and dispose-time teardown. Owns the active transaction; the
+/// page journal it attaches lives on <see cref="AccessBase.ActiveJournal"/>
+/// because every page read and write consults it.
 /// </summary>
-/// <param name="writer">The writer.</param>
-internal sealed class TransactionLifecycle(AccessWriter writer)
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
+/// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
+internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
 {
+    /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
+    internal JetTransaction? ActiveTransaction { get; private set; }
+
     /// <summary>
     /// Begins an explicit page-buffered transaction against the owning writer.
     /// </summary>
@@ -24,29 +31,29 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        Guard.ThrowIfDisposed(writer.IsDisposed, writer);
+        Guard.ThrowIfDisposed(db.IsDisposed, db);
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (writer.ActiveTransaction is not null)
+            if (this.ActiveTransaction is not null)
             {
                 throw new InvalidOperationException(
                     "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
             }
 
-            long baseLength = writer.DatabaseLengthBytes;
-            var journal = new PageJournal(baseLength, writer.PageSize, writer.Options.MaxTransactionPageBudget);
-            var tx = new JetTransaction(writer, journal);
-            writer.ActiveJournal = journal;
-            writer.ActiveTransaction = tx;
+            long baseLength = db.DatabaseLengthBytes;
+            var journal = new PageJournal(baseLength, db.PageSize, options.MaxTransactionPageBudget);
+            var tx = new JetTransaction(this, journal);
+            db.ActiveJournal = journal;
+            this.ActiveTransaction = tx;
             return tx;
         }
         finally
         {
-            _ = writer.IoGate.Release();
+            _ = db.IoGate.Release();
         }
     }
 
@@ -60,7 +67,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
-        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
+        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || db.IsDisposed)
         {
             await work(cancellationToken).ConfigureAwait(false);
             return;
@@ -102,7 +109,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        if (!writer.Options.UseTransactionalWrites || writer.ActiveTransaction is not null || writer.IsDisposed)
+        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || db.IsDisposed)
         {
             return await work(cancellationToken).ConfigureAwait(false);
         }
@@ -138,8 +145,9 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
 
     /// <summary>
     /// Commits the supplied <paramref name="transaction"/>: detaches the
-    /// journal from the writer and replays each buffered page through the
-    /// normal page-write pipeline.
+    /// journal from the writer and replays each buffered page (in ascending
+    /// page-number order) through the normal page-write pipeline so that
+    /// per-page encryption and cooperative byte-range locks are honoured.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -149,10 +157,10 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     {
         Guard.NotNull(transaction, nameof(transaction));
 
-        Guard.ThrowIfDisposed(writer.IsDisposed, writer);
+        Guard.ThrowIfDisposed(db.IsDisposed, db);
 
         PageJournal journal;
-        await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (transaction.IsTerminated)
@@ -160,7 +168,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
                 throw new InvalidOperationException("The transaction has already been committed or rolled back.");
             }
 
-            if (!ReferenceEquals(writer.ActiveTransaction, transaction))
+            if (!ReferenceEquals(this.ActiveTransaction, transaction))
             {
                 throw new InvalidOperationException("The transaction is not active on this writer.");
             }
@@ -169,16 +177,16 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
 
             // Detach the journal first so the page-write loop below routes
             // straight to disk.
-            writer.ActiveJournal = null;
-            writer.ActiveTransaction = null;
+            db.ActiveJournal = null;
+            this.ActiveTransaction = null;
         }
         finally
         {
-            _ = writer.IoGate.Release();
+            _ = db.IoGate.Release();
         }
 
-        long? commitLockOffset = await writer.ByteRangeLock.AcquireCommitLockOffsetAsync(
-            isAccdb: writer.DatabaseFormat == Enums.DatabaseFormat.AceAccdb,
+        long? commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
+            isAccdb: db.DatabaseFormat == Enums.DatabaseFormat.AceAccdb,
             cancellationToken).ConfigureAwait(false);
 
         try
@@ -186,7 +194,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await writer.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
+                await db.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
             }
 
             await this.BumpCommitLockByteAsync(cancellationToken).ConfigureAwait(false);
@@ -200,7 +208,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
         }
         finally
         {
-            writer.ByteRangeLock.ReleaseCommitLock(commitLockOffset);
+            byteRangeLock.ReleaseCommitLock(commitLockOffset);
         }
     }
 
@@ -217,7 +225,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        await writer.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (transaction.IsTerminated)
@@ -225,18 +233,41 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
                 throw new InvalidOperationException("The transaction has already been committed or rolled back.");
             }
 
-            if (!ReferenceEquals(writer.ActiveTransaction, transaction))
+            if (!ReferenceEquals(this.ActiveTransaction, transaction))
             {
                 throw new InvalidOperationException("The transaction is not active on this writer.");
             }
 
-            writer.ActiveJournal = null;
-            writer.ActiveTransaction = null;
+            db.ActiveJournal = null;
+            this.ActiveTransaction = null;
             transaction.MarkRolledBack();
         }
         finally
         {
-            _ = writer.IoGate.Release();
+            _ = db.IoGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops any in-flight transaction so its journal does not survive
+    /// dispose. Nothing has been written to disk for an uncommitted
+    /// transaction, so this is equivalent to an implicit rollback.
+    /// </summary>
+    internal async ValueTask DisposeActiveTransactionAsync()
+    {
+        if (this.ActiveTransaction is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.ActiveTransaction.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            db.ActiveJournal = null;
+            this.ActiveTransaction = null;
         }
     }
 
@@ -246,11 +277,11 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask BumpCommitLockByteAsync(CancellationToken cancellationToken)
     {
-        byte[] page0 = await writer.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        byte[] page0 = await db.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
         try
         {
             page0[0x14] = unchecked((byte)(page0[0x14] + 1));
-            await writer.WritePageAsync(0, page0, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(0, page0, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -263,5 +294,5 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
-        => await writer.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
+        => await db.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
 }

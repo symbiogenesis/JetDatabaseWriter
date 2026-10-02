@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -16,8 +17,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Pre-write unique-index enforcement: detects duplicate keys before any
 /// disk page is mutated. Owned by <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="writer">The writer.</param>
-internal sealed class UniqueIndexChecker(AccessWriter writer)
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="snapshots">Reads decoded table rows when index pages cannot answer a uniqueness probe.</param>
+internal sealed class UniqueIndexChecker(AccessBase db, TableSnapshotReader snapshots)
 {
     /// <summary>
     /// Loads all unique / primary-key index descriptors for the given TDEF page.
@@ -32,7 +34,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
     {
         var result = new List<UniqueIndexDescriptor>();
 
-        byte[] tdefPageBytes = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tdefPageBytes = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] tdefBuffer;
         try
         {
@@ -43,9 +45,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             AccessBase.ReturnPage(tdefPageBytes);
         }
 
-        int numCols = Ru16(tdefBuffer, writer.TDef.NumCols);
-        int numIdx = Ri32(tdefBuffer, writer.TDef.NumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, writer.TDef.NumRealIdx);
+        int numCols = Ru16(tdefBuffer, db.TDef.NumCols);
+        int numIdx = Ri32(tdefBuffer, db.TDef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, db.TDef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0
             || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx > Constants.TableDefinition.MaxIndexes)
@@ -53,22 +55,22 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return result;
         }
 
-        int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
         for (int i = 0; i < numCols; i++)
         {
-            if (writer.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
+            if (db.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
             {
                 return result;
             }
         }
 
         int realIdxDescStart = namePos;
-        IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = writer.Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
+        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(db, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
-            tdefBuffer, writer.IndexLayoutInfo, anchors, tableDef.Columns, logIdxNames);
+            tdefBuffer, db.IndexLayoutInfo, anchors, tableDef.Columns, logIdxNames);
 
         foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
@@ -101,7 +103,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         object[] row,
         int[] numericTargetScales)
     {
-        bool legacyNumeric = writer.Format == Enums.DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = db.Format == Enums.DatabaseFormat.Jet4Mdb;
         int keyCount = descriptor.KeyColumns.Count;
 
         // Single-column fast path: avoid the per-column array + copy.
@@ -175,7 +177,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         // values may require LVAL traversal outside the fast path.
         if (RequiresSnapshotForPreInsert(descriptors) || !CanUseCursorFastPath(descriptors))
         {
-            using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+            using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
             this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
             return;
         }
@@ -199,9 +201,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         var cursor = new IndexCursor(
-            IndexPageLayout.ForFormat(writer.Format),
+            IndexPageLayout.ForFormat(db.Format),
             this.ReadIndexPageOwnedAsync,
-            writer.PageSizeBytes);
+            db.PageSizeBytes);
 
         int[][] numericScales = new int[descriptors.Count][];
         var seenSets = new HashSet<byte[]>[descriptors.Count];
@@ -233,7 +235,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
     private async ValueTask<byte[]> ReadIndexPageOwnedAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])page.Clone();
@@ -364,7 +366,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
                 }
                 else
                 {
-                    effectiveRow = AccessWriter.GetDbNullNormalizedItemArray(snapshot.Rows[r]);
+                    effectiveRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[r]);
                 }
 
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);

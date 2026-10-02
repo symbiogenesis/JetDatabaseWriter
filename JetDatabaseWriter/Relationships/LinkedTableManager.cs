@@ -364,117 +364,25 @@ internal static class LinkedTableManager
 
     // ════════════════════════════════════════════════════════════════
     // Linked-table creation (writer side). AccessWriter exposes thin
-    // public-API forwarders; the MSysObjects type 4 / 6 catalog rows are
-    // emitted here through the shared catalog-artifact plan.
+    // public-API forwarders and owns the auto-commit scope; the
+    // MSysObjects type 4 / 6 catalog rows are emitted here through the
+    // shared catalog-artifact plan.
     // ════════════════════════════════════════════════════════════════
 
     /// <summary>
     /// Creates a linked-table entry (MSysObjects type 6) that references a table
     /// in another Access database. No row data is stored locally.
     /// </summary>
-    /// <param name="writer">The owning writer.</param>
+    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="catalogArtifacts">Emits the catalog object row.</param>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDatabasePath">Path to the source Access database file (.mdb / .accdb).</param>
     /// <param name="foreignTableName">The name of the table in the source database.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    internal static ValueTask CreateLinkedTableAsync(
-        AccessWriter writer,
-        string linkedTableName,
-        string sourceDatabasePath,
-        string foreignTableName,
-        CancellationToken cancellationToken)
-        => writer.RunAutoCommitAsync(
-            _ => CreateLinkedTableCoreAsync(writer, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken),
-            cancellationToken);
-
-    /// <summary>
-    /// Creates a linked-ODBC table entry (MSysObjects type 4). When
-    /// <paramref name="sourceColumns"/> is supplied a column-level cached-schema
-    /// <c>LvProp</c> block is generated; otherwise a table-level block is written.
-    /// </summary>
-    /// <param name="writer">The owning writer.</param>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
-    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
-    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
-    /// <param name="sourceColumns">Optional column definitions for the remote source table.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    internal static ValueTask CreateLinkedOdbcTableAsync(
-        AccessWriter writer,
-        string linkedTableName,
-        string connectionString,
-        string foreignTableName,
-        IReadOnlyList<ColumnDefinition>? sourceColumns,
-        CancellationToken cancellationToken)
-        => writer.RunAutoCommitAsync(
-            _ => CreateLinkedOdbcTableCoreAsync(
-                writer,
-                linkedTableName,
-                connectionString,
-                foreignTableName,
-                cachedSchemaLvProp: null,
-                sourceColumns,
-                cancellationToken),
-            cancellationToken);
-
-    /// <summary>
-    /// Creates a linked-ODBC table entry (MSysObjects type 4) using a
-    /// caller-supplied Access/DAO cached-schema payload for <c>MSysObjects.LvProp</c>.
-    /// The payload is validated synchronously before any catalog mutation begins.
-    /// </summary>
-    /// <param name="writer">The owning writer.</param>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
-    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
-    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
-    /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    internal static ValueTask CreateLinkedOdbcTableAsync(
-        AccessWriter writer,
-        string linkedTableName,
-        string connectionString,
-        string foreignTableName,
-        ReadOnlyMemory<byte> cachedSchemaLvProp,
-        CancellationToken cancellationToken)
-    {
-        byte[] validatedLvProp = CopyValidatedCachedSchemaLvProp(writer, cachedSchemaLvProp, nameof(cachedSchemaLvProp));
-        return writer.RunAutoCommitAsync(
-            _ => CreateLinkedOdbcTableCoreAsync(
-                writer,
-                linkedTableName,
-                connectionString,
-                foreignTableName,
-                cachedSchemaLvProp: validatedLvProp,
-                sourceColumns: null,
-                cancellationToken),
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Creates a linked-text/CSV table entry (MSysObjects type 6) that references a
-    /// text or CSV file in a directory.
-    /// </summary>
-    /// <param name="writer">The owning writer.</param>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
-    /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
-    /// <param name="foreignFileName">The filename of the text/CSV source (e.g. <c>"data.csv"</c>).</param>
-    /// <param name="connectString">The text-driver connect string (e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>).</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    internal static ValueTask CreateLinkedTextTableAsync(
-        AccessWriter writer,
-        string linkedTableName,
-        string sourceDirectoryPath,
-        string foreignFileName,
-        string connectString,
-        CancellationToken cancellationToken)
-        => writer.RunAutoCommitAsync(
-            _ => CreateLinkedTextTableCoreAsync(writer, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken),
-            cancellationToken);
-
-    private static async ValueTask CreateLinkedTableCoreAsync(
-        AccessWriter writer,
+    internal static async ValueTask CreateLinkedTableAsync(
+        AccessBase db,
+        CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDatabasePath,
         string foreignTableName,
@@ -483,9 +391,9 @@ internal static class LinkedTableManager
         Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
         Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        writer.ThrowIfDisposedOrCancelled(cancellationToken);
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await writer.ExecuteCatalogArtifactPlanAsync(
+        await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
                 [CatalogObjectArtifact.LinkedTable(
@@ -497,8 +405,24 @@ internal static class LinkedTableManager
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask CreateLinkedOdbcTableCoreAsync(
-        AccessWriter writer,
+    /// <summary>
+    /// Creates a linked-ODBC table entry (MSysObjects type 4). When
+    /// <paramref name="cachedSchemaLvProp"/> is supplied it is stored verbatim;
+    /// otherwise a cached-schema <c>LvProp</c> block is generated, column-level
+    /// when <paramref name="sourceColumns"/> is supplied and table-level otherwise.
+    /// </summary>
+    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="catalogArtifacts">Emits the catalog object row.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="cachedSchemaLvProp">A payload already validated by <see cref="CopyValidatedCachedSchemaLvProp"/>, or <see langword="null"/>.</param>
+    /// <param name="sourceColumns">Optional column definitions for the remote source table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    internal static async ValueTask CreateLinkedOdbcTableAsync(
+        AccessBase db,
+        CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string connectionString,
         string foreignTableName,
@@ -509,7 +433,7 @@ internal static class LinkedTableManager
         Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
         Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        writer.ThrowIfDisposedOrCancelled(cancellationToken);
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
             ? connectionString
@@ -520,9 +444,9 @@ internal static class LinkedTableManager
             LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
         }
 
-        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, writer.Format);
+        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, db.Format);
 
-        await writer.ExecuteCatalogArtifactPlanAsync(
+        await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
                 [CatalogObjectArtifact.LinkedTable(
@@ -535,8 +459,21 @@ internal static class LinkedTableManager
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask CreateLinkedTextTableCoreAsync(
-        AccessWriter writer,
+    /// <summary>
+    /// Creates a linked-text/CSV table entry (MSysObjects type 6) that references a
+    /// text or CSV file in a directory.
+    /// </summary>
+    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="catalogArtifacts">Emits the catalog object row.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
+    /// <param name="foreignFileName">The filename of the text/CSV source (e.g. <c>"data.csv"</c>).</param>
+    /// <param name="connectString">The text-driver connect string (e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    internal static async ValueTask CreateLinkedTextTableAsync(
+        AccessBase db,
+        CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDirectoryPath,
         string foreignFileName,
@@ -547,9 +484,9 @@ internal static class LinkedTableManager
         Guard.NotNullOrEmpty(sourceDirectoryPath, nameof(sourceDirectoryPath));
         Guard.NotNullOrEmpty(foreignFileName, nameof(foreignFileName));
         Guard.NotNullOrEmpty(connectString, nameof(connectString));
-        writer.ThrowIfDisposedOrCancelled(cancellationToken);
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await writer.ExecuteCatalogArtifactPlanAsync(
+        await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
                 [CatalogObjectArtifact.LinkedTable(
@@ -561,7 +498,16 @@ internal static class LinkedTableManager
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static byte[] CopyValidatedCachedSchemaLvProp(AccessWriter writer, ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
+    /// <summary>
+    /// Validates and copies a caller-supplied Access/DAO cached-schema payload
+    /// for <c>MSysObjects.LvProp</c>. Runs before any catalog mutation begins.
+    /// </summary>
+    /// <param name="format">The database format, which selects the expected property-block magic.</param>
+    /// <param name="cachedSchemaLvProp">The caller-supplied payload.</param>
+    /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
+    /// <returns>A private copy of the validated payload.</returns>
+    /// <exception cref="ArgumentException">Thrown when the payload is empty, the default placeholder, or not a property block for <paramref name="format"/>.</exception>
+    internal static byte[] CopyValidatedCachedSchemaLvProp(DatabaseFormat format, ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
     {
         if (cachedSchemaLvProp.IsEmpty)
         {
@@ -574,13 +520,13 @@ internal static class LinkedTableManager
             throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
         }
 
-        uint expectedMagic = writer.Format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
+        uint expectedMagic = format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
         if (copy.Length < sizeof(uint) || JetTypeInfo.Ru32(copy, 0) != expectedMagic)
         {
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
         }
 
-        var block = ColumnPropertyBlock.Parse(copy, writer.Format);
+        var block = ColumnPropertyBlock.Parse(copy, format);
         if (block is null || block.Targets.Count == 0)
         {
             throw new ArgumentException("Cached schema LvProp must contain at least one property target.", paramName);

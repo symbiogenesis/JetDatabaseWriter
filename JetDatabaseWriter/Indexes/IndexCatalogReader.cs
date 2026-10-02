@@ -243,6 +243,56 @@ internal static class IndexCatalogReader
     }
 
     /// <summary>
+    /// Walks past column descriptors and column names to return the byte
+    /// offset of the real-index physical-descriptor section start, or -1
+    /// when the column-name walk fails.
+    /// </summary>
+    /// <param name="db">Format context supplying the per-format TDEF and column-descriptor layouts plus the column-name decoder.</param>
+    /// <param name="td">The concatenated TDEF page-chain bytes.</param>
+    /// <param name="numCols">The number of columns.</param>
+    /// <param name="numRealIdx">The number of real indexes.</param>
+    public static int LocateRealIdxDescStart(AccessBase db, byte[] td, int numCols, int numRealIdx)
+    {
+        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+        int pos = colStart + (numCols * db.ColumnDescriptor.Size);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (db.ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return -1;
+            }
+        }
+
+        return pos;
+    }
+
+    /// <summary>
+    /// Materializes the logical-idx-name list that starts at
+    /// <paramref name="logIdxNamesStart"/>. Stops early (returning the names
+    /// read so far) when a name record runs past the end of the buffer.
+    /// </summary>
+    /// <param name="db">Format context supplying the column-name decoder.</param>
+    /// <param name="td">The concatenated TDEF page-chain bytes.</param>
+    /// <param name="logIdxNamesStart">The logical-idx name section start.</param>
+    /// <param name="numIdx">The number of logical indexes.</param>
+    public static List<string> ReadLogicalIdxNames(AccessBase db, byte[] td, int logIdxNamesStart, int numIdx)
+    {
+        var list = new List<string>(numIdx);
+        int pos = logIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (db.ReadColumnName(td, ref pos, out string n) < 0)
+            {
+                break;
+            }
+
+            list.Add(n);
+        }
+
+        return list;
+    }
+
+    /// <summary>
     /// Builds the <c>ColNum → snapshot row index</c> lookup that every
     /// catalog-using path needs in order to translate a real-idx key column's
     /// <c>col_num</c> (which can outrun the snapshot index when columns have

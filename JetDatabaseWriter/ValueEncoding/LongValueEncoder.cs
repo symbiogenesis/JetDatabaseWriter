@@ -25,9 +25,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Owned by <see cref="AccessWriter"/>; the writer delegates long-value
 /// pre-encoding through this class.
 /// </summary>
-/// <param name="writer">The writer.</param>
+/// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAllocator)
+internal sealed class LongValueEncoder(AccessBase db, PageAllocator pageAllocator)
 {
     /// <summary>
     /// Pre-encode pass for row insert: any MEMO / OLE value whose payload
@@ -85,7 +85,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                     continue;
                 }
 
-                data = writer.EncodeTextForFormat(text, col.IsCompressedUnicode);
+                data = db.EncodeTextForFormat(text, col.IsCompressedUnicode);
                 if (col.IsCalculated)
                 {
                     data = CalculatedColumnUtil.Wrap(data);
@@ -114,7 +114,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             return null;
         }
 
-        byte[] data = writer.EncodeTextForFormat(text, compress);
+        byte[] data = db.EncodeTextForFormat(text, compress);
         byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }
@@ -143,7 +143,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
 
-        int pgSz = writer.PageSizeBytes;
+        int pgSz = db.PageSizeBytes;
         uint lvalToken = lvalTokenOverride ?? LongValueStore.ComputeToken(data);
 
         // One row per LVAL page. Access-authored Jet4/ACE LVAL pages use a
@@ -205,7 +205,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             }
         }
 
-        if (!writer.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        if (!db.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
         {
             return roots;
         }
@@ -217,7 +217,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 continue;
             }
 
-            ColumnSlice slice = writer.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            ColumnSlice slice = db.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
             if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
             {
                 continue;
@@ -249,7 +249,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
             return 0;
         }
 
-        byte[] lvalPage = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] lvalPage = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (lvalPage[0] != Constants.PageTypes.Data)
@@ -257,7 +257,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 return 0;
             }
 
-            foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(lvalPage))
+            foreach (RowBound rowBound in db.EnumerateLiveRowBounds(lvalPage))
             {
                 if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
                 {

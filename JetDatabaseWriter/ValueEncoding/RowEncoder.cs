@@ -19,8 +19,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Encodes in-memory value arrays into on-disk row byte layouts for a JET
 /// data page.  Extracted from <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="writer">The writer.</param>
-internal sealed class RowEncoder(AccessWriter writer)
+/// <param name="db">The database page I/O and format context.</param>
+internal sealed class RowEncoder(AccessBase db)
 {
     internal static byte[]? EncodeOleValue(object value)
     {
@@ -360,11 +360,11 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        int baseRowLength = writer.RowFields.NumCols + fixedAreaSize + varPayloadSize + writer.RowFields.Eod + (varLen * writer.RowFields.VarEntry) + writer.RowFields.VarLen + nullMaskLen;
+        int baseRowLength = db.RowFields.NumCols + fixedAreaSize + varPayloadSize + db.RowFields.Eod + (varLen * db.RowFields.VarEntry) + db.RowFields.VarLen + nullMaskLen;
 
-        int jumpSize = writer.Format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
+        int jumpSize = db.Format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
         int rowLength = baseRowLength + jumpSize;
-        int finalJump = writer.Format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
+        int finalJump = db.Format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
         if (finalJump != jumpSize)
         {
             jumpSize = finalJump;
@@ -374,8 +374,8 @@ internal sealed class RowEncoder(AccessWriter writer)
         byte[] row = new byte[rowLength];
         int pos = 0;
 
-        WriteField(row, pos, writer.RowFields.NumCols, numCols);
-        pos += writer.RowFields.NumCols;
+        WriteField(row, pos, db.RowFields.NumCols, numCols);
+        pos += db.RowFields.NumCols;
 
         if (fixedAreaSize > 0)
         {
@@ -389,7 +389,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             ArrayPool<byte>.Shared.Return(fixedArea);
         }
 
-        int currentOffset = writer.RowFields.NumCols + fixedAreaSize;
+        int currentOffset = db.RowFields.NumCols + fixedAreaSize;
 
         // Stack-allocate variable offsets for typical tables (up to 128 var columns).
         Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
@@ -405,19 +405,19 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        WriteField(row, pos, writer.RowFields.Eod, currentOffset);
-        pos += writer.RowFields.Eod;
+        WriteField(row, pos, db.RowFields.Eod, currentOffset);
+        pos += db.RowFields.Eod;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            WriteField(row, pos, writer.RowFields.VarEntry, variableOffsets[varIndex]);
-            pos += writer.RowFields.VarEntry;
+            WriteField(row, pos, db.RowFields.VarEntry, variableOffsets[varIndex]);
+            pos += db.RowFields.VarEntry;
         }
 
         pos += jumpSize;
 
-        WriteField(row, pos, writer.RowFields.VarLen, varLen);
-        pos += writer.RowFields.VarLen;
+        WriteField(row, pos, db.RowFields.VarLen, varLen);
+        pos += db.RowFields.VarLen;
         nullMask.CopyTo(row.AsSpan(pos));
 
         return row;
@@ -426,7 +426,7 @@ internal sealed class RowEncoder(AccessWriter writer)
     private bool CanStoreFixedColumn(ColumnInfo column)
     {
         int size = JetTypeInfo.GetFixedSize(column.Type);
-        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < writer.PageSizeBytes;
+        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < db.PageSizeBytes;
     }
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)
@@ -528,7 +528,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        byte[] data = writer.EncodeTextForFormat(text, compress: false);
+        byte[] data = db.EncodeTextForFormat(text, compress: false);
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
         if (wrapped.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
@@ -546,7 +546,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
-        byte[] bytes = writer.EncodeTextForFormat(value, limit, compress);
+        byte[] bytes = db.EncodeTextForFormat(value, limit, compress);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
             Array.Resize(ref bytes, maxSize);
@@ -566,7 +566,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return null;
             }
 
-            bytes = writer.AnsiEncoding.GetBytes(stringValue);
+            bytes = db.AnsiEncoding.GetBytes(stringValue);
         }
 
         if (maxSize > 0 && bytes.Length > maxSize)
@@ -584,7 +584,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        byte[] data = writer.EncodeTextForFormat(value, compress);
+        byte[] data = db.EncodeTextForFormat(value, compress);
         if (data.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");

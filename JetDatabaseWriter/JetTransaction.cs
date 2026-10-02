@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Represents an explicit, in-memory write transaction against a single
@@ -31,11 +32,11 @@ using JetDatabaseWriter.Pages;
 /// </remarks>
 public sealed class JetTransaction : IAsyncDisposable
 {
-    private readonly AccessWriter writer;
+    private readonly TransactionLifecycle lifecycle;
 
-    internal JetTransaction(AccessWriter writer, PageJournal journal)
+    internal JetTransaction(TransactionLifecycle lifecycle, PageJournal journal)
     {
-        this.writer = writer;
+        this.lifecycle = lifecycle;
         this.Journal = journal;
     }
 
@@ -60,7 +61,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous commit.</returns>
     public ValueTask CommitAsync(CancellationToken cancellationToken = default)
-        => this.writer.CommitTransactionAsync(this, cancellationToken);
+        => this.lifecycle.CommitTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Discards the journal without touching the database file. Safe to call
@@ -70,7 +71,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous rollback.</returns>
     public ValueTask RollbackAsync(CancellationToken cancellationToken = default)
-        => this.writer.RollbackTransactionAsync(this, cancellationToken);
+        => this.lifecycle.RollbackTransactionAsync(this, cancellationToken);
 
     /// <summary>
     /// Rolls back the transaction if it has not been committed. Equivalent to

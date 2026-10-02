@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 internal static class RelationshipPageReader
 {
     public static async ValueTask<byte[]> ReadOwnedAsync(
-        AccessWriter writer,
+        AccessBase db,
         long pageNumber,
         CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])page.Clone();

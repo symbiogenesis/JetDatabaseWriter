@@ -1150,7 +1150,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
 
-            long relationshipsTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(
+            long relationshipsTdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
             TableDef relationshipsDef = await writer.ReadRequiredTableDefAsync(
@@ -1168,7 +1168,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             relationshipsDef.SetValueByName(malformedRow, "szReferencedObject", parent);
             relationshipsDef.SetValueByName(malformedRow, "szRelationship", "FK_MalformedMissingColumn");
 
-            await writer.InsertSystemRowAndMaintainAsync(
+            await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
                 relationshipsTdefPage,
                 relationshipsDef,
                 Constants.SystemTableNames.Relationships,

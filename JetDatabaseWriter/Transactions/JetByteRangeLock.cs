@@ -150,7 +150,7 @@ internal sealed class JetByteRangeLock
     /// schema-changing transaction commits and increments of the page-0
     /// commit-lock byte (header offset <c>0x14</c>). Held only across the
     /// atomic-replay window inside
-    /// <see cref="AccessWriter.CommitTransactionAsync"/>.
+    /// <see cref="TransactionLifecycle.CommitTransactionAsync"/>.
     /// </summary>
     /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
     /// <param name="cancellationToken">Cancellation token.</param>

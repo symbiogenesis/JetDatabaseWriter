@@ -5,7 +5,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.AccessBase;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -13,12 +15,24 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Owns data-page allocation and row insertion mechanics for
 /// <see cref="AccessWriter"/>. Handles finding/creating target pages,
-/// writing row bytes, and patching usage-map / autonumber TDEF fields.
+/// writing row bytes, and patching usage-map / autonumber TDEF fields. Also
+/// owns the per-writer insert-page hint and the set of TDEFs whose owned-page
+/// usage maps this writer may extend.
 /// </summary>
-/// <param name="writer">The writer.</param>
+/// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAllocator)
+/// <param name="catalogRows">Reads <c>MSysObjects</c> rows to decide whether an existing table's owned-page map is writable.</param>
+internal sealed class DataPageInserter(AccessBase db, PageAllocator pageAllocator, CatalogRowReader catalogRows)
 {
+#if NET9_0_OR_GREATER
+    private readonly Lock insertPageHintLock = new();
+#else
+    private readonly object insertPageHintLock = new();
+#endif
+    private readonly HashSet<long> ownedMapWritableTdefs = [];
+    private long cachedInsertTDefPage = -1;
+    private long cachedInsertPageNumber = -1;
+
     internal static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
     {
         UsageMap.WritePointer(tdefPage, Constants.TableDefinition.OwnedPagesRowOffset, rowIndex: 0, usageMapPageNumber);
@@ -52,10 +66,10 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
-        if (writer.TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
+        if (this.TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
-            byte[] cached = await writer.ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == Constants.PageTypes.Data && Ri32(cached, writer.DataPage.TDefOff) == tdefPage && this.CanInsertRow(cached, rowLength))
+            byte[] cached = await db.ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
+            if (cached[0] == Constants.PageTypes.Data && Ri32(cached, db.DataPage.TDefOff) == tdefPage && this.CanInsertRow(cached, rowLength))
             {
                 return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
@@ -79,7 +93,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         // O(1), and the owned-map update below keeps DAO sequential scans
         // aware of the new page for tables whose maps this writer owns.
         long newPageNumber = await pageAllocator.AllocatePageAsync(this.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
-        writer.SetCachedInsertPageNumber(tdefPage, newPageNumber);
+        this.SetCachedInsertPageNumber(tdefPage, newPageNumber);
 
         // Mark the newly-appended data page in the per-table owned-pages
         // usage map. Without this, DAO's sequential / snapshot recordset
@@ -91,7 +105,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         // them surfaces "Invalid argument" from DAO.OpenDatabase. Freshly
         // created databases have low page numbers too, so the writer records
         // the TDEFs whose owned-page maps it created and can safely maintain.
-        if (await writer.CanMaintainOwnedMapAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        if (await this.CanMaintainOwnedMapAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
             await this.MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);
         }
@@ -99,21 +113,95 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
         return new PageInsertTarget
         {
             PageNumber = newPageNumber,
-            Page = await writer.ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
+            Page = await db.ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
         };
+    }
+
+    internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
+    {
+        lock (this.insertPageHintLock)
+        {
+            if (this.cachedInsertTDefPage == tdefPage && this.cachedInsertPageNumber >= 3)
+            {
+                pageNumber = this.cachedInsertPageNumber;
+                return true;
+            }
+
+            pageNumber = -1;
+            return false;
+        }
+    }
+
+    internal void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
+    {
+        lock (this.insertPageHintLock)
+        {
+            this.cachedInsertTDefPage = tdefPage;
+            this.cachedInsertPageNumber = pageNumber;
+        }
+    }
+
+    /// <summary>
+    /// Records that this writer created <paramref name="tdefPageNumber"/>'s
+    /// owned-page usage map, so appended data pages may be marked in it.
+    /// </summary>
+    /// <param name="tdefPageNumber">The TDEF page number.</param>
+    internal void RegisterOwnedMapWritableTdef(long tdefPageNumber) => this.ownedMapWritableTdefs.Add(tdefPageNumber);
+
+    internal async ValueTask<bool> CanMaintainOwnedMapAsync(long tdefPageNumber, CancellationToken cancellationToken)
+    {
+        if (db.Format == DatabaseFormat.Jet3Mdb || tdefPageNumber <= 0)
+        {
+            return false;
+        }
+
+        if (this.ownedMapWritableTdefs.Contains(tdefPageNumber))
+        {
+            return true;
+        }
+
+        if (tdefPageNumber == 2)
+        {
+            return false;
+        }
+
+        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys is null)
+        {
+            return false;
+        }
+
+        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if (row.TDefPage != tdefPageNumber || row.ObjectType != Constants.SystemObjects.UserTableType)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(row.Name) || row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            this.RegisterOwnedMapWritableTdef(tdefPageNumber);
+            return true;
+        }
+
+        return false;
     }
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
     {
-        IReadOnlyList<long> pageNumbers = await writer.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] == Constants.PageTypes.Data && Ri32(page, writer.DataPage.TDefOff) == tdefPage && this.CanInsertRow(page, rowLength))
+            byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] == Constants.PageTypes.Data && Ri32(page, db.DataPage.TDefOff) == tdefPage && this.CanInsertRow(page, rowLength))
             {
-                writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
+                this.SetCachedInsertPageNumber(tdefPage, pageNumber);
                 return new PageInsertTarget { PageNumber = pageNumber, Page = page };
             }
 
@@ -138,7 +226,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
     {
-        byte[] tdef = await writer.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] tdef = await db.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             int ownedRow = tdef[Constants.TableDefinition.OwnedPagesRowOffset];
@@ -154,7 +242,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
                 return;
             }
 
-            byte[] umPage = await writer.ReadPageAsync(ownedPage, cancellationToken).ConfigureAwait(false);
+            byte[] umPage = await db.ReadPageAsync(ownedPage, cancellationToken).ConfigureAwait(false);
             try
             {
                 bool changed = this.TrySetUsageMapBit(umPage, ownedRow, dataPageNumber);
@@ -168,7 +256,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
                     return;
                 }
 
-                await writer.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
+                await db.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -177,12 +265,12 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
             if (freePage != ownedPage && freePage != 0)
             {
-                byte[] freeUmPage = await writer.ReadPageAsync(freePage, cancellationToken).ConfigureAwait(false);
+                byte[] freeUmPage = await db.ReadPageAsync(freePage, cancellationToken).ConfigureAwait(false);
                 try
                 {
                     if (this.TrySetUsageMapBit(freeUmPage, freeRow, dataPageNumber))
                     {
-                        await writer.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
+                        await db.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -199,7 +287,7 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
     {
-        if (!UsageMap.TryGetRowBound(umPage, writer.DataPage, writer.PageSizeBytes, rowIndex, out RowBound rowBound))
+        if (!UsageMap.TryGetRowBound(umPage, db.DataPage, db.PageSizeBytes, rowIndex, out RowBound rowBound))
         {
             return false;
         }
@@ -220,23 +308,23 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal bool CanInsertRow(byte[] page, int rowLength)
     {
-        int numRows = Ru16(page, writer.DataPage.NumRows);
+        int numRows = Ru16(page, db.DataPage.NumRows);
         if (numRows >= Constants.DataPage.MaxRowsPerPage)
         {
             return false;
         }
 
         int dataStart = this.GetFirstRowStart(page, numRows);
-        int nextOffsetPos = writer.DataPage.RowsStart + ((numRows + 1) * 2);
+        int nextOffsetPos = db.DataPage.RowsStart + ((numRows + 1) * 2);
         return dataStart - nextOffsetPos >= rowLength;
     }
 
     internal int GetFirstRowStart(byte[] page, int numRows)
     {
-        int first = writer.PageSizeBytes;
+        int first = db.PageSizeBytes;
         for (int i = 0; i < numRows; i++)
         {
-            int raw = Ru16(page, writer.DataPage.RowsStart + (i * 2));
+            int raw = Ru16(page, db.DataPage.RowsStart + (i * 2));
             int start = raw & Constants.DataPage.RowOffsetMask;
             if (start > 0 && start < first)
             {
@@ -249,30 +337,30 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal byte[] CreateEmptyDataPage(long tdefPage)
     {
-        byte[] page = new byte[writer.PageSizeBytes];
+        byte[] page = new byte[db.PageSizeBytes];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        Wu16(page, 2, writer.PageSizeBytes - writer.DataPage.RowsStart);
-        Wi32(page, writer.DataPage.TDefOff, (int)tdefPage);
-        Wu16(page, writer.DataPage.NumRows, 0);
+        Wu16(page, 2, db.PageSizeBytes - db.DataPage.RowsStart);
+        Wi32(page, db.DataPage.TDefOff, (int)tdefPage);
+        Wu16(page, db.DataPage.NumRows, 0);
         return page;
     }
 
     internal async ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
     {
-        byte[] page = new byte[writer.PageSizeBytes];
+        byte[] page = new byte[db.PageSizeBytes];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
-        int row0Off = writer.PageSizeBytes - Constants.UsageMap.RowSize;
+        int row0Off = db.PageSizeBytes - Constants.UsageMap.RowSize;
         int row1Off = row0Off - Constants.UsageMap.RowSize;
 
-        Wi32(page, writer.DataPage.TDefOff, 0);
-        Wu16(page, writer.DataPage.NumRows, 2);
-        Wu16(page, writer.DataPage.RowsStart, row0Off);
-        Wu16(page, writer.DataPage.RowsStart + 2, row1Off);
+        Wi32(page, db.DataPage.TDefOff, 0);
+        Wu16(page, db.DataPage.NumRows, 2);
+        Wu16(page, db.DataPage.RowsStart, row0Off);
+        Wu16(page, db.DataPage.RowsStart + 2, row1Off);
 
-        int freeSpace = row1Off - (writer.DataPage.RowsStart + 4);
+        int freeSpace = row1Off - (db.DataPage.RowsStart + 4);
         Wu16(page, 2, freeSpace);
 
         return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -280,23 +368,23 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
     {
-        int numRows = Ru16(page, writer.DataPage.NumRows);
+        int numRows = Ru16(page, db.DataPage.NumRows);
         int firstRowStart = this.GetFirstRowStart(page, numRows);
         int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = writer.DataPage.RowsStart + (numRows * 2);
+        int rowOffsetPos = db.DataPage.RowsStart + (numRows * 2);
 
         Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
         Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, writer.DataPage.NumRows, numRows + 1);
+        Wu16(page, db.DataPage.NumRows, numRows + 1);
 
-        int freeSpace = rowStart - (writer.DataPage.RowsStart + ((numRows + 1) * 2));
+        int freeSpace = rowStart - (db.DataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
             throw new InvalidDataException("Insufficient free space remained on the target page.");
         }
 
         Wu16(page, 2, freeSpace);
-        await writer.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -312,16 +400,16 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
-        byte[] page = new byte[writer.PageSizeBytes];
+        byte[] page = new byte[db.PageSizeBytes];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
         int rowCount = indexPageGroups.Count + 2;
-        int rowStart = writer.PageSizeBytes;
+        int rowStart = db.PageSizeBytes;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, writer.DataPage.RowsStart + (rowIndex * 2), rowStart);
+            Wu16(page, db.DataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
             {
@@ -331,9 +419,9 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
         }
 
-        Wi32(page, writer.DataPage.TDefOff, 0);
-        Wu16(page, writer.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (writer.DataPage.RowsStart + (rowCount * 2));
+        Wi32(page, db.DataPage.TDefOff, 0);
+        Wu16(page, db.DataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (db.DataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
 
         return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -341,15 +429,15 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
 
     internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await db.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
 
-        int existingRowCount = Ru16(page, writer.DataPage.NumRows);
+        int existingRowCount = Ru16(page, db.DataPage.NumRows);
         int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
-        int rowStart = writer.PageSizeBytes;
+        int rowStart = db.PageSizeBytes;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, writer.DataPage.RowsStart + (rowIndex * 2), rowStart);
+            Wu16(page, db.DataPage.RowsStart + (rowIndex * 2), rowStart);
 
             if (rowIndex < 2)
             {
@@ -365,10 +453,10 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
             UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
         }
 
-        Wi32(page, writer.DataPage.TDefOff, 0);
-        Wu16(page, writer.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (writer.DataPage.RowsStart + (rowCount * 2));
+        Wi32(page, db.DataPage.TDefOff, 0);
+        Wu16(page, db.DataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (db.DataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
-        await writer.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -648,7 +648,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         int objectId,
         string objectName,
         CancellationToken cancellationToken)
-        => writer.ExecuteCatalogArtifactPlanAsync(
+        => writer.Services.CatalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
                 [new CatalogObjectArtifact(
@@ -719,7 +719,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask<bool> CatalogObjectExistsAsync(AccessWriter writer, string objectName, CancellationToken cancellationToken)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
-        List<CatalogRow> rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
+        List<CatalogRow> rows = await writer.Services.CatalogRows.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
     }
 

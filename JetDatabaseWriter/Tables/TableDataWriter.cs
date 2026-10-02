@@ -1,0 +1,606 @@
+namespace JetDatabaseWriter.Tables;
+
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
+
+/// <summary>
+/// Row DML workflows behind <see cref="Interfaces.IAccessWriter"/>: insert, update, and
+/// delete. Each workflow stages its rows, applies client-side constraints,
+/// runs foreign-key and unique-index checks before any page is mutated, then
+/// writes the rows and maintains indexes. The public facade owns the
+/// auto-commit scope around each call.
+/// </summary>
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="tableRows">Writes and tombstones the affected rows.</param>
+/// <param name="indexes">Maintains index B-trees after each batch.</param>
+/// <param name="uniqueIndexes">Runs pre-write unique-index checks.</param>
+/// <param name="autoNumbers">Advances AutoNumber high-water values after inserts.</param>
+/// <param name="constraints">Applies defaults, AutoNumber, required, validation, and calculated-column rules.</param>
+/// <param name="enforcer">Enforces and cascades foreign-key constraints.</param>
+/// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
+/// <param name="snapshots">Reads the decoded rows that update and delete predicates are evaluated against.</param>
+internal sealed class TableDataWriter(
+    AccessBase db,
+    TableRowStore tableRows,
+    IndexMaintainer indexes,
+    UniqueIndexChecker uniqueIndexes,
+    AutoNumberMaintainer autoNumbers,
+    ConstraintRegistry constraints,
+    RelationshipEnforcer enforcer,
+    ComplexColumnManager complexColumns,
+    TableSnapshotReader snapshots)
+{
+    private static object[] NormalizePublicRow(object?[] values, string paramName)
+    {
+        Guard.NotNull(values, paramName);
+
+        object[] normalized = new object[values.Length];
+        Array.Copy(values, normalized, values.Length);
+        NormalizeRowInPlace(normalized);
+        return normalized;
+    }
+
+    /// <summary>
+    /// Projects a named-column <see cref="RowValues"/> onto a positional
+    /// <c>object[]</c> in table-column order. Columns not named in the row are
+    /// left as <see cref="DBNull.Value"/> so AutoNumber columns generate and any
+    /// other omitted column stores database null. Unknown column names throw.
+    /// </summary>
+    /// <param name="tableDef">The target table definition.</param>
+    /// <param name="tableName">The table name, for error messages.</param>
+    /// <param name="row">The named-column values.</param>
+    /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
+    /// <returns>The positional row values.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="row"/> names a column not in the table.</exception>
+    private static object[] ResolveNamedRow(TableDef tableDef, string tableName, RowValues row, string paramName)
+    {
+        Guard.NotNull(row, paramName);
+
+        object[] values = new object[tableDef.Columns.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        foreach (KeyValuePair<string, object?> pair in row)
+        {
+            int columnIndex = tableDef.FindColumnIndex(pair.Key);
+            if (columnIndex < 0)
+            {
+                throw new ArgumentException(
+                    $"Column '{pair.Key}' was not found in table '{tableName}'.",
+                    paramName);
+            }
+
+            values[columnIndex] = pair.Value ?? DBNull.Value;
+        }
+
+        return values;
+    }
+
+    private static void NormalizeRowInPlace(object?[] values)
+    {
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] ??= DBNull.Value;
+        }
+    }
+
+    private static IEnumerable<TItem> SingleItem<TItem>(TItem item)
+        where TItem : class
+    {
+        yield return item;
+    }
+
+    internal async ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken)
+    {
+        object[] normalized = NormalizePublicRow(values, nameof(values));
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(normalized),
+            static (_, row) => row,
+            nameof(values),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(rows, nameof(rows));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            rows,
+            static (_, row) => NormalizePublicRow(row, nameof(rows)),
+            nameof(rows),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask InsertItemAsync<T>(string tableName, T item, CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(item, nameof(item));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(item),
+            static (tableDef, row) => RowMapper<T>.ToRow(tableDef, row),
+            nameof(item),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<int> InsertItemsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(items, nameof(items));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            items,
+            static (tableDef, item) => RowMapper<T>.ToRow(tableDef, item),
+            nameof(items),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask InsertNamedRowAsync(string tableName, RowValues row, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(row, nameof(row));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        _ = await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            SingleItem(row),
+            (tableDef, named) => ResolveNamedRow(tableDef, tableName, named, nameof(row)),
+            nameof(row),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<int> InsertNamedRowsAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(rows, nameof(rows));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        return await this.InsertMappedRowsAfterValidationAsync(
+            tableName,
+            rows,
+            (tableDef, named) => ResolveNamedRow(tableDef, tableName, named, nameof(rows)),
+            nameof(rows),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(criteria, nameof(criteria));
+        Guard.NotNull(updatedValues, nameof(updatedValues));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        if (updatedValues.Count == 0)
+        {
+            return 0;
+        }
+
+        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
+        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
+
+        var updateIndexes = new Dictionary<int, object>(updatedValues.Count);
+        foreach (KeyValuePair<string, object?> kvp in updatedValues)
+        {
+            int columnIndex = tableDef.FindColumnIndex(kvp.Key);
+            if (columnIndex < 0)
+            {
+                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
+            }
+
+            updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
+        }
+
+        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+
+        // Stage every matching row so FK / unique-index checks complete before
+        // any disk page is mutated.
+        var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
+        for (int i = 0; i < total; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object[] oldRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (!predicate.Matches(oldRow))
+            {
+                continue;
+            }
+
+            object[] newRow = (object[])oldRow.Clone();
+            foreach (KeyValuePair<int, object> update in updateIndexes)
+            {
+                newRow[update.Key] = update.Value;
+            }
+
+            await constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
+
+            pendingUpdates.Add((i, oldRow, newRow));
+        }
+
+        if (pendingUpdates.Count == 0)
+        {
+            return 0;
+        }
+
+        IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        if (rels.Count > 0)
+        {
+            var fkCtx = new FkContext(rels);
+
+            // FK-side: every updated row must (still) satisfy any FK constraint
+            // whose foreign side is THIS table.
+            foreach ((_, _, object[] newRow) in pendingUpdates)
+            {
+                await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
+            }
+
+            // PK-side: cascade or reject only when this update touches a referenced PK.
+            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingUpdates.Count);
+            foreach (FkRelationship rel in rels)
+            {
+                if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int[] pkIdx = new int[rel.PrimaryColumns.Count];
+                bool touchesPrimaryKey = false;
+                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+                {
+                    int columnIndex = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
+                    if (columnIndex < 0)
+                    {
+                        touchesPrimaryKey = false;
+                        break;
+                    }
+
+                    pkIdx[i] = columnIndex;
+                    touchesPrimaryKey |= updateIndexes.ContainsKey(columnIndex);
+                }
+
+                if (!touchesPrimaryKey)
+                {
+                    continue;
+                }
+
+                changes.Clear();
+                foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
+                {
+                    string? oldKey = RelationshipKeyBuilder.Build(oldRow, pkIdx);
+                    changes.Add((oldKey, oldRow, newRow));
+                }
+
+                await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // Pre-write unique-index enforcement: after FK checks succeed,
+        // validate that the post-update key set contains no duplicates for
+        // any unique index. The check sees the snapshot with pendingUpdates
+        // substituted at their original indices.
+        await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingUpdates, cancellationToken).ConfigureAwait(false);
+
+        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RowLocation oldLoc = locations[i];
+            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            updateDeletedHints.Add((oldLoc, oldRow));
+            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updateInsertedHints.Add((newLoc, newRow));
+        }
+
+        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
+            entry.TDefPage,
+            tableDef,
+            updateInsertedHints,
+            updateDeletedHints,
+            cancellationToken).ConfigureAwait(false);
+        if (!incremental)
+        {
+            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+
+        return pendingUpdates.Count;
+    }
+
+    internal async ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(criteria, nameof(criteria));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
+        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
+
+        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+
+        // FK enforcement: identify the rows we are about to delete; if any
+        // FK relationship names this table as the primary side, capture the
+        // deleted PK tuples and let EnforceFkOnPrimaryDeleteAsync
+        // cascade-delete dependent child rows (or throw when cascade is
+        // disabled).
+        var matchingIndices = new List<int>();
+        for (int i = 0; i < total; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object[] rowValues = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            if (predicate.Matches(rowValues))
+            {
+                matchingIndices.Add(i);
+            }
+        }
+
+        IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        if (rels.Count > 0 && matchingIndices.Count > 0)
+        {
+            var fkCtx = new FkContext(rels);
+
+            // Snapshot the typed full row of every parent we are about to
+            // delete, in primary-table column order. EnforceFkOnPrimaryDeleteAsync
+            // consumes this once per relationship (slicing the relationship's
+            // PrimaryColumns out for the FK seek / snapshot scan).
+            var deletedParentRows = new List<object?[]>(matchingIndices.Count);
+            foreach (int rowIdx in matchingIndices)
+            {
+                deletedParentRows.Add(snapshot.Rows[rowIdx].ItemArray);
+            }
+
+            await enforcer.EnforceFkOnPrimaryDeleteAsync(
+                tableName,
+                tableDef,
+                deletedParentRows,
+                fkCtx,
+                depth: 0,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        // Cascade flat-child rows for any complex columns on the parent
+        // BEFORE we mark the parent rows deleted (we need to read the
+        // parent's per-row complex-reference slots while the rows are still live).
+        if (matchingIndices.Count > 0)
+        {
+            var parentLocs = new List<RowLocation>(matchingIndices.Count);
+            foreach (int i in matchingIndices)
+            {
+                parentLocs.Add(locations[i]);
+            }
+
+            await complexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
+        }
+
+        int deleted = 0;
+        var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingIndices.Count);
+        foreach (int i in matchingIndices)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object[] oldRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            await tableRows.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            deleteHints.Add((locations[i], oldRow));
+            deleted++;
+        }
+
+        if (deleted > 0)
+        {
+            await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
+            bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
+                entry.TDefPage,
+                tableDef,
+                insertedRows: null,
+                deleteHints,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return deleted;
+    }
+
+    private async ValueTask<int> InsertMappedRowsAfterValidationAsync<TItem>(
+        string tableName,
+        IEnumerable<TItem> items,
+        Func<TableDef, TItem, object[]> mapRow,
+        string itemParamName,
+        CancellationToken cancellationToken)
+        where TItem : class
+    {
+        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = table.Entry;
+        TableDef tableDef = table.Definition;
+        IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
+
+        (List<object[]> pendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints) =
+            await this.PrepareInsertBatchAsync(
+                tableName,
+                tableDef,
+                items,
+                mapRow,
+                itemParamName,
+                cancellationToken).ConfigureAwait(false);
+
+        return await this.InsertPreparedBatchAsync(
+            tableName,
+            entry.TDefPage,
+            tableDef,
+            pendingRows,
+            autoCheckpoints,
+            fkContext,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<(List<object[]> PendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? AutoCheckpoints)> PrepareInsertBatchAsync<TItem>(
+        string tableName,
+        TableDef tableDef,
+        IEnumerable<TItem> items,
+        Func<TableDef, TItem, object[]> mapRow,
+        string itemParamName,
+        CancellationToken cancellationToken)
+        where TItem : class
+    {
+        var pendingRows = new List<object[]>();
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints = null;
+
+        try
+        {
+            foreach (TItem item in items)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Guard.NotNull(item, itemParamName);
+
+                object[] row = mapRow(tableDef, item);
+                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCheckpoints =
+                    await constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+                if (rowCheckpoints != null)
+                {
+                    (autoCheckpoints ??= []).AddRange(rowCheckpoints);
+                }
+
+                pendingRows.Add(row);
+            }
+        }
+        catch
+        {
+            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
+            throw;
+        }
+
+        return (pendingRows, autoCheckpoints);
+    }
+
+    private async ValueTask<int> InsertPreparedBatchAsync(
+        string tableName,
+        long tdefPage,
+        TableDef tableDef,
+        List<object[]> pendingRows,
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints,
+        FkContext? fkContext,
+        CancellationToken cancellationToken)
+    {
+        var batchLocations = new List<RowLocation>();
+        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
+        int inserted = 0;
+
+        try
+        {
+            // AutoNumber values are already assigned, so the unique check sees
+            // the exact keys the row writer and index maintainer will encode.
+            await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(
+                tdefPage,
+                tableDef,
+                tableName,
+                pendingRows,
+                cancellationToken).ConfigureAwait(false);
+
+            foreach (object[] row in pendingRows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (fkContext != null)
+                {
+                    await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
+                }
+
+                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+                batchLocations.Add(location);
+                batchHintRows.Add((location, row));
+
+                if (fkContext != null)
+                {
+                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkContext);
+                }
+
+                inserted++;
+            }
+
+            if (inserted > 0)
+            {
+                bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
+                    tdefPage,
+                    tableDef,
+                    batchHintRows,
+                    deletedRows: null,
+                    cancellationToken).ConfigureAwait(false);
+                if (!incremental)
+                {
+                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                }
+
+                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            await this.RollbackInsertedRowsAsync(tdefPage, batchLocations, cancellationToken).ConfigureAwait(false);
+            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
+            throw;
+        }
+
+        return inserted;
+    }
+
+    /// <summary>
+    /// Marks every row in <paramref name="locations"/> as deleted on its data
+    /// page and rewinds the owning TDEF's row count by the matching amount.
+    /// Best-effort: any exception during rollback is swallowed so the original
+    /// failure surfaces to the caller intact.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="locations">The locations.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, List<RowLocation> locations, CancellationToken cancellationToken)
+    {
+        if (locations.Count == 0)
+        {
+            return;
+        }
+
+        foreach (RowLocation loc in locations)
+        {
+            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
+        }
+
+        await tableRows.AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
+    }
+}
