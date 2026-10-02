@@ -9,12 +9,25 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Enums.ColumnType;
 
-internal sealed class RelationshipCatalogStore(AccessWriter writer)
+/// <summary>
+/// <c>MSysRelationships</c> row emission, loading, and rewrites.
+/// </summary>
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="indexes">Inserts and rewrites system-table rows with index maintenance.</param>
+/// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
+/// <param name="snapshots">Reads decoded <c>MSysRelationships</c> rows for enforcement.</param>
+internal sealed class RelationshipCatalogStore(
+    AccessBase db,
+    IndexMaintainer indexes,
+    CatalogRowReader catalogRows,
+    TableSnapshotReader snapshots)
 {
     public async ValueTask AppendRelationshipRowsAsync(
         long msysRelTdefPage,
@@ -54,7 +67,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             msysRelDef.SetValueByName(values, "szReferencedObject", relationship.PrimaryTable);
             msysRelDef.SetValueByName(values, "szRelationship", relationship.Name);
 
-            await writer.InsertSystemRowAndMaintainAsync(
+            await indexes.InsertSystemRowAndMaintainAsync(
                 msysRelTdefPage,
                 msysRelDef,
                 Constants.SystemTableNames.Relationships,
@@ -84,13 +97,13 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return results;
         }
 
-        await writer.ForEachLiveTableRowAsync(
+        await db.ForEachLiveTableRowAsync(
             msysRelTdefPage,
             (row, _) =>
             {
                 byte[] page = row.Page;
                 RowLocation location = row.Location;
-                string name = writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameCol);
+                string name = db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameCol);
                 if (string.IsNullOrEmpty(name) || !namePredicate(name))
                 {
                     return new ValueTask<bool>(true);
@@ -100,7 +113,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                 for (int column = 0; column < values.Length; column++)
                 {
                     ColumnInfo tableColumn = msysRelDef.Columns[column];
-                    string raw = writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, tableColumn);
+                    string raw = db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, tableColumn);
                     values[column] = string.IsNullOrEmpty(raw)
                         ? DBNull.Value
                         : tableColumn.Type switch
@@ -130,13 +143,13 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                 results.Add(new RelationshipRowSnapshot(
                     location,
                     name,
-                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, objCol),
-                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refObjCol),
-                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, colCol),
-                    writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refColCol),
-                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, icolCol)),
-                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, ccolCol)),
-                    CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, grbitCol)),
+                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, objCol),
+                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refObjCol),
+                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, colCol),
+                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refColCol),
+                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, icolCol)),
+                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, ccolCol)),
+                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, grbitCol)),
                     values));
                 return new ValueTask<bool>(true);
             },
@@ -150,7 +163,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
         TableDef msysRelDef,
         IReadOnlyList<object[]> rows,
         CancellationToken cancellationToken)
-        => writer.RewriteSystemTableRowsAsync(
+        => indexes.RewriteSystemTableRowsAsync(
             msysRelTdefPage,
             msysRelDef,
             Constants.SystemTableNames.Relationships,
@@ -159,13 +172,13 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
 
     public async ValueTask<IReadOnlyList<FkRelationship>> GetEnforcedRelationshipsAsync(CancellationToken cancellationToken)
     {
-        long page = await this.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        long page = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (page == 0)
         {
             return [];
         }
 
-        DataTable table = await writer.ReadTableSnapshotAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        DataTable table = await snapshots.ReadTableSnapshotAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         try
         {
             if (!table.Columns.Contains("szRelationship"))
@@ -260,28 +273,6 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
         }
     }
 
-    public async ValueTask<long> FindSystemTableTdefPageAsync(string tableName, CancellationToken cancellationToken)
-    {
-        TableDef? msys = await writer.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return 0;
-        }
-
-        List<CatalogRow> rows = await writer.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in rows)
-        {
-            if (row.ObjectType == Constants.SystemObjects.UserTableType
-                && row.TDefPage > 0
-                && string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                return row.TDefPage;
-            }
-        }
-
-        return 0;
-    }
-
     public async ValueTask<HashSet<string>> ReadExistingRelationshipNamesAsync(
         long msysRelTdefPage,
         TableDef msysRelDef,
@@ -294,11 +285,11 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
             return names;
         }
 
-        await writer.ForEachLiveTableRowAsync(
+        await db.ForEachLiveTableRowAsync(
             msysRelTdefPage,
             (row, _) =>
             {
-                string name = writer.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string name = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.IsNullOrEmpty(name))
                 {
                     names.Add(name);

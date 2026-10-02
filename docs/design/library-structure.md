@@ -9,8 +9,9 @@ This document describes the architecture and folder organization of the `JetData
 ```
 JetDatabaseWriter/
 ├── AccessBase.cs                          (shared I/O, page read, format detection, stream lifecycle)
-├── AccessReader.cs                        (public read API — thin orchestrator delegating to domain modules)
-├── AccessWriter.cs                        (public write API — thin orchestrator delegating to domain modules)
+├── AccessReader.cs                        (public read API; still hosts much of the read path itself)
+├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
+├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
 ├── AccessReaderOptions.cs
 ├── AccessWriterOptions.cs
 ├── AccessQueryExtensions.cs               (public LINQ Include/ThenInclude + async terminal operators)
@@ -73,7 +74,9 @@ JetDatabaseWriter/
 │   └── JetLimitationException.cs
 │
 ├── Catalog/                               (system-table reading/writing)
-│   ├── CatalogWriter.cs                   (InsertCatalogEntry, RewriteTable, RenameInCatalog)
+│   ├── CatalogArtifactWriter.cs           (executes CatalogArtifactPlans: table artifacts, catalog object rows, fresh MSysObjects bootstrap)
+│   ├── CatalogRowReader.cs                (read-only MSysObjects row scans and system-table lookup)
+│   ├── CatalogWriter.cs                   (MSysObjects / MSysACEs row inserts, renames, and deletions)
 │   ├── CatalogValueReader.cs              (safe MSys* row access and tolerant invariant scalar parsing)
 │   └── Models/
 │       ├── CatalogArtifactPlan.cs
@@ -278,6 +281,12 @@ JetDatabaseWriter/
 │       ├── AttachmentWrapper.cs
 │       └── ComplexColumnAllocation.cs
 │
+├── Tables/                                (writer-side table workflows and row primitives)
+│   ├── TableDataWriter.cs                 (row DML: insert / update / delete batches)
+│   ├── TableSchemaEditor.cs               (table DDL: create / drop table, add / drop / rename column, page reclaim)
+│   ├── TableRowStore.cs                   (row primitives: write row bytes, mark deleted, adjust TDEF row count)
+│   └── TableSnapshotReader.cs             (uncached reader snapshots of the writer's own database)
+│
 ├── Queries/                               (read-path: LINQ IQueryable provider over a single table)
 │   ├── AccessQueryable.cs                 (composable, async-enumerable IQueryable<T> over one table)
 │   ├── AccessOrderedQueryable.cs          (IOrderedQueryable<T> marker produced only by ordering operators)
@@ -330,40 +339,73 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 |-------|---------|----------------|
 | **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
 | **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, usage-map parsing/serialization, allocation/free-list reuse, journaling, locking, page encryption |
-| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; translate and run LINQ queries; manage feature-specific catalog artifacts |
-| **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and orchestration |
+| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Tables/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; run writer DML/DDL workflows; translate and run LINQ queries; manage feature-specific catalog artifacts |
+| **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`, `WriterServices`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and composition |
 
-The orchestration layer is intentionally thin — `AccessReader` and `AccessWriter` act as **facades** (GoF) that compose domain modules rather than embedding logic directly. Most pure layout/codec helpers keep one-way dependencies. Several writer-owned services (`DataPageInserter`, `PageAllocator`, `TDefPageBuilder`, relationship and complex-column managers) intentionally receive `AccessWriter` as a context object so they can coordinate page I/O, encryption, transactions, catalog caches, and format-specific layouts without duplicating state.
+`AccessWriter` is a **facade** (GoF). Each public method checks only its API shape, opens the auto-commit scope, and forwards to one writer service: `TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, or `TransactionLifecycle`. It owns no workflow logic.
+
+`WriterServices` is the writer's **composition root**. It builds every writer collaborator once and passes each one two kinds of dependency through its constructor:
+
+- the `AccessBase` page I/O and format context (page read/write/append, the journal hook, format layouts, TDEF parsing, catalog lookup); and
+- the specific sibling services it calls, such as `TableRowStore`, `IndexMaintainer`, `CatalogRowReader`, or `ConstraintRegistry`.
+
+No collaborator receives `AccessWriter` or `WriterServices`, and none finds a sibling through another object. `WriterServiceGraphTests` fails if any library type outside the facade holds or accepts either type, or if the collaborator graph reachable from `WriterServices` contains a cycle. The one deliberate two-way link is the public `JetTransaction` handle, which calls back into the `TransactionLifecycle` that issued it, the same owner/handle shape as `DbConnection` and `DbTransaction`.
+
+`AccessReader` has not been through the same split. It still hosts much of the read path directly, and read-side collaborators (`ComplexColumnReader`, `LongValueDecoder`, `IncludeLoader`, `AccessQueryProvider`, the index queries, and the reader half of `LinkedTableManager`) take `AccessReader` itself as their context.
 
 ---
 
 ## Dependency graph
 
-Dependency flow is acyclic. The current high-level dependency map is:
+Two graphs matter, and only one of them is acyclic.
+
+**Writer collaborator graph (acyclic, tested).** `AccessWriter` holds `WriterServices`; `WriterServices` constructs every writer collaborator; each collaborator depends only on the `AccessBase` context and on narrower collaborators passed to its constructor. Nothing points back at the facade or the composition root. Roughly, from the top:
 
 ```
-Infrastructure/        → (nothing — leaf)
-CompoundFile/          → Infrastructure/
-DelimitedText/         → (nothing — leaf parser/codec module)
-Pages/                 → Infrastructure/, Catalog.Models/, AccessWriter context for writer-owned services
-Encryption/            → CompoundFile/, Infrastructure/, Pages/
-Transactions/          → Pages/, Infrastructure/, AccessWriter context for lifecycle orchestration
-LongValues/            → Pages/
-ValueDecoding/         → Schema/, Catalog.Models/, LongValues/, AccessBase/AccessReader context for row/text/LVAL decoding
-ValueEncoding/         → Schema/, LongValues/, ValueEncoding.Models/   [never depends on ValueDecoding/]
-Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/, AccessWriter context for maintenance
-Catalog/               → Pages/, ValueDecoding/, Schema/, Indexes/, AccessWriter context for writes
-Schema/                → Models/, Indexes/, Pages/, AccessWriter context for writer-owned builders
-Relationships/         → Catalog/, DelimitedText/, Indexes/, Pages/, Schema/, AccessReader/AccessWriter context
-ComplexColumns/        → Catalog/, Indexes/, Pages/, Schema/, ValueDecoding/, AccessReader/AccessWriter context
-Queries/               → Indexes/, Models/, Enums/, Infrastructure/, AccessReader context
-AccessBase (root)      → Pages/, Encryption/, Infrastructure/
-AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/, Queries/
-AccessWriter (root)    → ValueEncoding/, Catalog/, Indexes/, Transactions/, Schema/,
-                         LongValues/, Relationships/, ComplexColumns/, Pages/, Encryption/
+AccessWriter → WriterServices
+  TableDataWriter     → TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
+                        ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
+  TableSchemaEditor   → TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
+                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, TableSnapshotReader
+  RelationshipManager → IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
+  RelationshipEnforcer → TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
+  ComplexColumnManager → TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry
+  CatalogArtifactWriter → PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
+  CatalogWriter       → TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
+  IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
+  DataPageInserter    → PageAllocator, CatalogRowReader
+  TransactionLifecycle → JetByteRangeLock
+  (every collaborator) → AccessBase
 ```
 
-No project-level circular dependencies exist. `Infrastructure/` and pure layout/value helpers remain stable dependencies. Some storage, schema, and decode service classes are not leaf packages; they are context-owned collaborators scoped by domain, so they may receive `AccessReader`, `AccessWriter`, or `AccessBase` context when they need coordinated page I/O, text decoding, LVAL resolution, transactions, or format-specific layouts.
+**Folder map (not layered).** Folders are domain groupings, not layers. Measured from `using` directives, they reference each other as follows (`context` marks a dependency on `AccessBase` or `AccessReader` as the page I/O and format context):
+
+```
+Infrastructure/   → (nothing — leaf)
+CompoundFile/     → Infrastructure/
+DelimitedText/    → Infrastructure/
+LongValues/       → Pages/, Schema/
+Pages/            → Catalog/, Schema/, Infrastructure/; AccessBase context
+Transactions/     → Pages/, Infrastructure/; AccessBase context
+Encryption/       → CompoundFile/, Schema/, Transactions/, Infrastructure/
+ValueDecoding/    → Catalog/, LongValues/, Pages/, Schema/, Infrastructure/; AccessBase/AccessReader context
+ValueEncoding/    → Catalog/, LongValues/, Pages/, Schema/, ValueDecoding.Models/; AccessBase context
+Schema/           → Catalog/, Encryption/, Indexes/, Pages/, Infrastructure/; AccessBase context
+Indexes/          → Catalog/, Pages/, Schema/, Tables/, ValueEncoding/, Infrastructure/; AccessBase/AccessReader context
+Catalog/          → Indexes/, Pages/, Schema/, Tables/, ValueEncoding/, Infrastructure/; AccessBase context
+ComplexColumns/   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Tables/, Infrastructure/; AccessBase/AccessReader context
+Relationships/    → Catalog/, ComplexColumns/, DelimitedText/, Indexes/, Pages/, Schema/, Tables/, Infrastructure/; AccessBase/AccessReader context
+Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, Relationships/, Schema/,
+                    ValueDecoding/, ValueEncoding/, Infrastructure/; AccessBase context (AccessReader for snapshots)
+Queries/          → Indexes/, Infrastructure/; AccessReader context
+AccessBase (root)     → Pages/, Encryption/, Schema/, Indexes/, Transactions/, ValueDecoding/, Infrastructure/
+AccessReader (root)   → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/, Queries/
+AccessWriter (root)   → WriterServices, Tables/, Relationships/, ComplexColumns/, Catalog/, Transactions/, Encryption/, Schema/
+WriterServices (root) → every writer collaborator
+```
+
+Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Pages` ↔ `Schema`, and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`). The acyclicity guarantee applies to the writer collaborator graph above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
 
 ---
 
@@ -402,6 +444,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `Relationships/` | `JetDatabaseWriter.Relationships` |
 | `ComplexColumns/` | `JetDatabaseWriter.ComplexColumns` |
 | `ComplexColumns/Models/` | `JetDatabaseWriter.ComplexColumns.Models` |
+| `Tables/` | `JetDatabaseWriter.Tables` |
 | `Queries/` | `JetDatabaseWriter.Queries` |
 | `CompoundFile/` | `JetDatabaseWriter.CompoundFile` |
 | `Infrastructure/` | `JetDatabaseWriter.Infrastructure` |
@@ -433,7 +476,8 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 
 | Pattern | Where applied | Rationale |
 |---------|--------------|-----------|
-| **Facade** (GoF) | `AccessReader`, `AccessWriter` | Thin orchestrators that delegate to domain modules; keeps public API surface small |
+| **Facade** (GoF) | `AccessWriter` (and, partially, `AccessReader`) | `AccessWriter` forwards each public operation to one writer service inside the auto-commit scope; keeps the public API surface small |
+| **Composition Root** | `WriterServices` | Builds the writer's collaborators once and injects each one's dependencies through its constructor; no collaborator can reach the facade or another service through a shared object |
 | **Symmetric Codec** | `ValueEncoding/` ↔ `ValueDecoding/`, `LongValueEncoder` ↔ `LongValueDecoder` | Matched encode/decode pairs (same pattern as protobuf's `CodedOutputStream`/`CodedInputStream`) |
 | **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-erase page reclamation |
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
@@ -444,6 +488,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
+| **Workflow Service** | `TableDataWriter`, `TableSchemaEditor`, `CatalogArtifactWriter` | Own the writer's DML, DDL, and catalog-plan workflows so the facade holds none |
 | **Catalog Store** | `RelationshipCatalogStore` | Keeps MSysRelationships row emission/loading/rewrites separate from TDEF logical-index mutation |
 | **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
 | **Streaming Parser** | `DelimitedTextReader` | Parses linked CSV/delimited text records one at a time with bounded memory, quote handling, and line tracking |
@@ -466,7 +511,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
 | **Open/Closed (OCP)** | Adding a new column type means extending `TypedValueParser`, `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
 | **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
-| **Dependency Inversion (DIP)** | Orchestrators depend on domain modules via composition; codec logic is delegated, not embedded |
+| **Dependency Inversion (DIP)** | Writer collaborators receive their dependencies through constructors from `WriterServices`; they depend on the `AccessBase` page I/O and format context, not on the facade that owns them |
 
 ### Package design principles (Robert C. Martin)
 
@@ -474,8 +519,8 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 |-----------|-------------|
 | **Common Closure (CCP)** | Classes that change together live together. All index concerns in `Indexes/`; all encryption in `Encryption/` |
 | **Common Reuse (CRP)** | Classes used together live together. `CatalogEntry`, `CatalogRow`, `TableDef` always consumed as a group → `Catalog/Models/` |
-| **Acyclic Dependencies (ADP)** | The dependency graph is kept cycle-free; writer-owned services compose through `AccessWriter` rather than through cross-domain back-references |
-| **Stable Dependencies (SDP)** | Pure helpers (`Infrastructure/`, layout structs, codec primitives) stay stable. Writer-owned services can depend on the facade context when they need coordinated state. |
+| **Acyclic Dependencies (ADP)** | Applied at the class level to the writer: the collaborator graph built by `WriterServices` has no cycles, and `WriterServiceGraphTests` enforces it. Folders are domain groupings and do reference each other in both directions (see the dependency map). |
+| **Stable Dependencies (SDP)** | Pure helpers (`Infrastructure/`, layout structs, codec primitives) stay stable. Writer services depend on `AccessBase` for coordinated page I/O and format state, which is more stable than any service and never depends on one. |
 
 ---
 
@@ -517,9 +562,13 @@ Visibility is controlled via the C# `internal` keyword on classes — not by stu
 
 ## Key architectural decisions
 
-### 1. Thin orchestrators over god classes
+### 1. A thin writer facade over a composition root
 
-`AccessReader` and `AccessWriter` are **facades** — they compose and delegate to domain modules (`RowEncoder`, `LongValueEncoder`, `LongValueStore`, `DataPageInserter`, `TransactionLifecycle`, `CatalogWriter`, `UniqueIndexChecker`, `ConstraintRegistry`, `LongValueDecoder`). The orchestrators own the workflow; the domain modules own the logic.
+`AccessWriter` is a **facade**: every public method forwards to one service (`TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, `TransactionLifecycle`) inside the auto-commit scope. The facade keeps only what is genuinely its own: opening and creating databases, the Agile-encryption re-wrap and lock-file lifetime, the catalog cache override, and the static encryption helpers.
+
+The writer used to be the shared context that its collaborators reached through. Each manager took `AccessWriter` and found its siblings through internal `Relationships`, `ComplexColumns`, and `Constraints` properties, so the class graph was cyclic and the facade could not shrink. `WriterServices` now wires the graph explicitly, and the services depend on `AccessBase`, not on the facade.
+
+`AccessReader` is not yet a thin facade. It still hosts much of the read path, and its collaborators still take `AccessReader` as their context. The same split (a reader composition root plus services that depend on `AccessBase`) is the next step.
 
 ### 2. ValueEncoding and ValueDecoding share neutral format domains
 
@@ -545,11 +594,11 @@ The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes
 
 ### 7. Writer-owned services stay in their domain
 
-Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `RelationshipManager`, and `ComplexColumnManager` live beside the disk-format concern they manipulate, even when they receive `AccessWriter` as a context object. This keeps the folder structure domain-first while avoiding a large writer god class.
+Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `RelationshipManager`, and `ComplexColumnManager` live beside the disk-format concern they manipulate. Each receives the `AccessBase` page I/O and format context plus the specific siblings it calls, injected by `WriterServices`. Writer workflows that span domains (row DML, table DDL, row-level storage primitives, and snapshot reads) live in `Tables/`. This keeps the folder structure domain-first without making the facade the shared context.
 
 ### 8. Usage-map parsing stays with page ownership
 
-`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `AccessReader` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows; `PageAllocator` decides when to promote the global free map and allocate reference pages; `AccessWriter` and `IndexMaintainer` decide which index pages to emit or reclaim.
+`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `AccessReader` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
 
 ### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 

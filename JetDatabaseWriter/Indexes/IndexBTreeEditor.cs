@@ -13,9 +13,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
 /// </summary>
-/// <param name="writer">The writer.</param>
+/// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAllocator)
+internal sealed class IndexBTreeEditor(AccessBase db, PageAllocator pageAllocator)
 {
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
         IndexPageLayout layout,
@@ -48,7 +48,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return false;
             }
 
-            allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes));
+            allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes));
             walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
         }
 
@@ -61,12 +61,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         IndexBTreeBuildResult build;
         try
         {
-            long provisionalFirstPage = writer.PhysicalPageCount;
-            build = IndexBTreeBuilder.Build(layout, writer.PageSizeBytes, tdefPage, spliced, provisionalFirstPage);
+            long provisionalFirstPage = db.PhysicalPageCount;
+            build = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, spliced, provisionalFirstPage);
             long firstNewPage = await pageAllocator.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
             if (firstNewPage != provisionalFirstPage)
             {
-                build = IndexBTreeBuilder.Build(layout, writer.PageSizeBytes, tdefPage, spliced, firstNewPage);
+                build = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, spliced, firstNewPage);
             }
         }
         catch (ArgumentOutOfRangeException)
@@ -77,13 +77,13 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         long expectedPage = build.FirstPageNumber;
         foreach (byte[] page in build.Pages)
         {
-            await writer.WritePageAsync(expectedPage, page, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(expectedPage, page, cancellationToken).ConfigureAwait(false);
             expectedPage++;
         }
 
         byte[] currentTdef = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
-        await writer.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -122,7 +122,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] pageBytes = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])pageBytes.Clone();
@@ -143,10 +143,10 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> TryAppendContiguousAsync(IReadOnlyList<byte[]> pages, CancellationToken cancellationToken)
     {
-        long expected = writer.PhysicalPageCount;
+        long expected = db.PhysicalPageCount;
         for (int i = 0; i < pages.Count; i++)
         {
-            long appended = await writer.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
+            long appended = await db.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
             if (appended != expected)
             {
                 return false;
@@ -170,7 +170,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     {
         byte[] bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
         IndexPageCodec.WritePrevPage(layout, bytes, prevPage);
-        await writer.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -185,7 +185,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
     {
         byte[] bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
         IndexPageCodec.WriteNextPage(layout, bytes, nextPage);
-        await writer.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -246,7 +246,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
                 pageBytesAll[p] = IndexPageCodec.BuildLeafPage(
                     layout,
-                    writer.PageSizeBytes,
+                    db.PageSizeBytes,
                     tdefPage,
                     splitPages[p],
                     prevPage: thisPrev,
@@ -297,7 +297,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 long prev = p == 0 ? firstPrev : pageNumbers[p - 1];
                 long next = p == n - 1 ? lastNext : pageNumbers[p + 1];
                 byte[]? built = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, writer.PageSizeBytes, tdefPage, splitInts[p], prev, next, tails[p]);
+                    layout, db.PageSizeBytes, tdefPage, splitInts[p], prev, next, tails[p]);
                 if (built is null)
                 {
                     return null;
@@ -380,7 +380,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             byte[] page = IndexPageCodec.BuildLeafPage(
                 layout,
-                writer.PageSizeBytes,
+                db.PageSizeBytes,
                 parentTdefPage: 0,
                 entries,
                 enablePrefixCompression: true,
@@ -462,7 +462,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return 0;
             }
 
-            long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, page, writer.PageSizeBytes);
+            long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, page, db.PageSizeBytes);
             if (firstChild <= 0)
             {
                 return 0;
@@ -526,7 +526,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         int originalTailPrefLen = Ru16(tailLeaf, layout.PrefLenOffset);
 
-        List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, writer.PageSizeBytes);
+        List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, db.PageSizeBytes);
 
         // Every new key must sort strictly after the current tail max.
         // Empty tail leaf trivially satisfies the predicate.
@@ -560,7 +560,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         {
             rewritten = IndexPageCodec.BuildLeafPage(
                 layout,
-                writer.PageSizeBytes,
+                db.PageSizeBytes,
                 tdefPage,
                 spliced,
                 prevPage: tailPrev,
@@ -576,7 +576,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        await writer.WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -647,7 +647,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return false;
         }
 
-        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
+        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
         if (existingLeafEntries.Count == 0)
         {
             // Empty leaf — descent shouldn't normally land here. Bail.
@@ -676,7 +676,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
         byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
-            layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
+            layout, db.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
             IndexEntry newLast = spliced[^1];
@@ -692,12 +692,12 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 }
             }
 
-            await writer.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
             if (ancestorWrites is not null)
             {
                 foreach ((long pn, byte[] bytes) in ancestorWrites)
                 {
-                    await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                    await db.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -705,7 +705,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         }
 
         // Bails only if a single entry exceeds page payload area.
-        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, writer.PageSizeBytes, spliced);
+        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, db.PageSizeBytes, spliced);
         if (splitPages is null)
         {
             return false;
@@ -714,7 +714,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // First page reuses the original leaf page; remaining pages are
         // freshly appended at end-of-file.
         int splitCount = splitPages.Count;
-        long firstFreshPage = writer.PhysicalPageCount;
+        long firstFreshPage = db.PhysicalPageCount;
         long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
         byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
@@ -747,11 +747,11 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             await this.PatchPrevPointerAsync(layout, leafNext, lastSplitPage, cancellationToken).ConfigureAwait(false);
         }
 
-        await writer.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
+        await db.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
 
         foreach ((long pn, byte[] bytes) in splitAncestorWrites)
         {
-            await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -801,7 +801,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexPageCodec.DecodeIntermediateEntries(layout, page, writer.PageSizeBytes);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
             if (entries.Count == 0)
             {
                 return 0;
@@ -820,7 +820,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 }
 
                 long tail = IndexPageCodec.ReadTailPage(layout, page);
-                long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, writer.PageSizeBytes, layout);
+                long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, db.PageSizeBytes, layout);
                 if (nextChild <= 0)
                 {
                     return 0;
@@ -887,7 +887,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             int originalPrefLen = Ru16(pageBytes, layout.PrefLenOffset);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, writer.PageSizeBytes, tdefPage, newEntries, prev, next, tail, originalPrefLen);
+                layout, db.PageSizeBytes, tdefPage, newEntries, prev, next, tail, originalPrefLen);
             if (rebuilt is null)
             {
                 return null;
@@ -965,7 +965,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         int originalPrefLen = Ru16(parentBytes, layout.PrefLenOffset);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
-            layout, writer.PageSizeBytes, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
+            layout, db.PageSizeBytes, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
         if (rebuiltParent is null)
         {
             // Parent overflow on insertion of the new summary entries —
@@ -1128,7 +1128,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
         // boundary pass can re-link survivors across contiguous dead runs.
         var emptyingLeafSiblings = new Dictionary<long, (long Prev, long Next)>();
 
-        long nextAllocatedPageNumber = writer.PhysicalPageCount;
+        long nextAllocatedPageNumber = db.PhysicalPageCount;
 
         // Single I/O pass: read each target leaf once, splice its change-set,
         // and capture everything the processing pass needs (sibling pointers,
@@ -1146,7 +1146,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 return false;
             }
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, writer.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
             if (existing.Count == 0)
             {
                 return false;
@@ -1222,7 +1222,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
             // ── Try in-place rewrite first ──
             byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
-                layout, writer.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
+                layout, db.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
             if (rebuilt != null)
             {
                 if (existingPageRewrites.ContainsKey(group.LeafPage))
@@ -1247,7 +1247,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
-            SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, writer.PageSizeBytes, spliced);
+            SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, db.PageSizeBytes, spliced);
             if (splitPages is null)
             {
                 return false;
@@ -1398,7 +1398,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
 
         foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
         {
-            await writer.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
         }
 
         // If the root intermediate split, patch the real-idx first_dp slot
@@ -1410,7 +1410,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             byte[] tdefBytes = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage));
-            await writer.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -1555,7 +1555,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             return IndexPageCodec.ReadTailPage(layout, rewriteBytes);
         }
 
-        byte[] raw = await writer.ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
+        byte[] raw = await db.ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
         try
         {
             return IndexPageCodec.ReadTailPage(layout, raw);
@@ -1756,7 +1756,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
             }
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, writer.PageSizeBytes, tdefPage, newEntries, origPrev, origNext, newTail);
+                layout, db.PageSizeBytes, tdefPage, newEntries, origPrev, origNext, newTail);
             if (rebuilt is null)
             {
                 // Intermediate overflow → greedy left-fill split into N pages
@@ -1766,7 +1766,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                 // root over the split pages and signal the caller to patch
                 // first_dp. Per-page tail_page is computed just below.
                 List<List<DecodedIntermediateEntry>>? splitInts =
-                    IndexHelpers.TryGreedySplitIntermediateInN(layout, writer.PageSizeBytes, tdefPage, newEntries);
+                    IndexHelpers.TryGreedySplitIntermediateInN(layout, db.PageSizeBytes, tdefPage, newEntries);
                 if (splitInts is null)
                 {
                     // Single entry too big for any intermediate page — bail.
@@ -1880,7 +1880,7 @@ internal sealed class IndexBTreeEditor(AccessWriter writer, PageAllocator pageAl
                     try
                     {
                         newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                            layout, writer.PageSizeBytes, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
+                            layout, db.PageSizeBytes, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
                     }
                     catch (ArgumentOutOfRangeException)
                     {

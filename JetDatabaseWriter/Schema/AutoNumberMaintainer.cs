@@ -16,8 +16,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// reissues a value that already exists on disk. Owned by
 /// <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="writer">The writer.</param>
-internal sealed class AutoNumberMaintainer(AccessWriter writer)
+/// <param name="db">The database page I/O and format context.</param>
+internal sealed class AutoNumberMaintainer(AccessBase db)
 {
     /// <summary>
     /// Scans <paramref name="rows"/> for the largest value written to any
@@ -65,7 +65,7 @@ internal sealed class AutoNumberMaintainer(AccessWriter writer)
             return;
         }
 
-        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
             uint current = Ru32(page, Constants.TableDefinition.AutoNumberOffset);
@@ -76,7 +76,7 @@ internal sealed class AutoNumberMaintainer(AccessWriter writer)
             }
 
             Wi32(page, Constants.TableDefinition.AutoNumberOffset, unchecked((int)next));
-            await writer.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

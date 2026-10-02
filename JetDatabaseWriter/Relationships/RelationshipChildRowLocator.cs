@@ -10,7 +10,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipChildRowLocator(AccessWriter writer)
+internal sealed class RelationshipChildRowLocator(AccessBase db)
 {
     public async ValueTask<List<(RowLocation Loc, TPayload Payload)>?> TrySeekChildLocationsAsync<TPayload>(
         CatalogEntry childEntry,
@@ -20,8 +20,8 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
     {
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, TPayload Payload)>();
         var cursor = new IndexCursor(
-            (page, token) => RelationshipPageReader.ReadOwnedAsync(writer, page, token),
-            writer.PageSizeBytes);
+            (page, token) => RelationshipPageReader.ReadOwnedAsync(db, page, token),
+            db.PageSizeBytes);
 
         foreach ((object?[] oldPrimaryKey, TPayload? payload) in requests)
         {
@@ -67,15 +67,15 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
         foreach (KeyValuePair<long, HashSet<int>> pageRows in byPage)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await writer.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
+            byte[] page = await db.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer.DataPage.TDefOff) != childEntry.TDefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, db.DataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return null;
                 }
 
-                foreach (RowBound rowBound in writer.EnumerateLiveRowBounds(page))
+                foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
                 {
                     if (!pageRows.Value.Contains(rowBound.RowIndex))
                     {

@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
@@ -24,26 +25,28 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// create/drop/rename workflow and per-TDEF FK logical-index mutation.
 /// MSysRelationships row operations live in <see cref="RelationshipCatalogStore"/>,
 /// and runtime referential-integrity enforcement lives in <see cref="RelationshipEnforcer"/>.
-/// Owned by an <see cref="AccessWriter"/> instance via a private field;
-/// AccessWriter exposes thin forwarders for the public CRUD entry points.
+/// The public facade owns the auto-commit scope around each workflow.
 /// </summary>
-internal sealed class RelationshipManager
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="indexes">Rebuilds FK index leaves after the per-TDEF entries change.</param>
+/// <param name="pageAllocator">Allocates FK leaf pages and grows or shrinks TDEF chains.</param>
+/// <param name="catalogArtifacts">Emits the relationship's <c>MSysObjects</c> row.</param>
+/// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
+/// <param name="catalog">Reads and rewrites <c>MSysRelationships</c> rows.</param>
+internal sealed class RelationshipManager(
+    AccessBase db,
+    IndexMaintainer indexes,
+    PageAllocator pageAllocator,
+    CatalogArtifactWriter catalogArtifacts,
+    CatalogRowReader catalogRows,
+    RelationshipCatalogStore catalog)
 {
-    private readonly AccessWriter writer;
-    private readonly IndexMaintainer indexes;
-    private readonly PageAllocator pageAllocator;
-    private readonly RelationshipCatalogStore catalog;
-
-    public RelationshipManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
-    {
-        this.writer = writer;
-        this.indexes = indexes;
-        this.pageAllocator = pageAllocator;
-        this.catalog = new RelationshipCatalogStore(writer);
-        this.Enforcer = new RelationshipEnforcer(writer, indexes, this.catalog);
-    }
-
-    internal RelationshipEnforcer Enforcer { get; }
+    private readonly AccessBase db = db;
+    private readonly IndexMaintainer indexes = indexes;
+    private readonly PageAllocator pageAllocator = pageAllocator;
+    private readonly CatalogArtifactWriter catalogArtifacts = catalogArtifacts;
+    private readonly CatalogRowReader catalogRows = catalogRows;
+    private readonly RelationshipCatalogStore catalog = catalog;
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — lifecycle orchestration
@@ -59,6 +62,9 @@ internal sealed class RelationshipManager
     /// <param name="relationship">The relationship to create.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown when a key column is missing from its table.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists.</exception>
     /// <remarks>
     /// Per <see href="docs/design/index-and-relationship-format-notes.md" /> §7. The
     /// MSysRelationships catalog rows are what the Microsoft Access
@@ -69,21 +75,18 @@ internal sealed class RelationshipManager
     /// Jet4 / ACE; on Jet3 they are skipped and Microsoft Access regenerates
     /// them on the next Compact &amp; Repair pass.
     /// </remarks>
-    public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default)
-        => this.writer.RunAutoCommitAsync(_ => this.CreateRelationshipCoreAsync(relationship, cancellationToken), cancellationToken);
-
-    private async ValueTask CreateRelationshipCoreAsync(RelationshipDefinition relationship, CancellationToken cancellationToken)
+    internal async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken)
     {
         Guard.NotNull(relationship, nameof(relationship));
         Guard.NotNullOrEmpty(relationship.Name, "relationship.Name");
         Guard.NotNullOrEmpty(relationship.PrimaryTable, "relationship.PrimaryTable");
         Guard.NotNullOrEmpty(relationship.ForeignTable, "relationship.ForeignTable");
-        Guard.ThrowIfDisposed(this.writer.IsDisposed, this);
+        Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         // Validate referenced user tables exist and load their definitions.
-        ResolvedTable primaryTable = await this.writer.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        ResolvedTable foreignTable = await this.writer.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        ResolvedTable primaryTable = await this.db.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        ResolvedTable foreignTable = await this.db.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
         CatalogEntry primaryEntry = primaryTable.Entry;
         CatalogEntry foreignEntry = foreignTable.Entry;
         TableDef primaryDef = primaryTable.Definition;
@@ -107,7 +110,7 @@ internal sealed class RelationshipManager
         }
 
         // Locate MSysRelationships (system table — not in the user-table cache).
-        long msysRelTdefPage = await this.catalog.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
@@ -116,7 +119,7 @@ internal sealed class RelationshipManager
                 "catalog databases may require an Access-authored source before calling CreateRelationshipAsync.");
         }
 
-        TableDef msysRelDef = await this.writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject duplicate relationship names (case-insensitive).
         HashSet<string> existingNames = await this.catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
@@ -127,7 +130,7 @@ internal sealed class RelationshipManager
 
         await this.catalog.AppendRelationshipRowsAsync(msysRelTdefPage, msysRelDef, relationship, cancellationToken).ConfigureAwait(false);
 
-        await this.writer.ExecuteCatalogArtifactPlanAsync(
+        await this.catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
                 [CatalogObjectArtifact.Relationship(relationship.Name)]),
@@ -142,7 +145,7 @@ internal sealed class RelationshipManager
         // different (20-byte) logical-idx layout that this library does not
         // yet exercise — skip silently to keep the catalog row emission
         // working on .mdb (Access 97) databases.
-        if (this.writer.Format != DatabaseFormat.Jet3Mdb)
+        if (this.db.Format != DatabaseFormat.Jet3Mdb)
         {
             await this.EmitFkPerTdefEntriesAsync(
                 relationship,
@@ -159,11 +162,11 @@ internal sealed class RelationshipManager
             // would fail to match a parent row that was inserted before the
             // relationship existed. Re-read TDEFs because the emit mutates
             // both sides' TDEF pages in place.
-            TableDef primaryDefAfter = await this.writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            TableDef primaryDefAfter = await this.db.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
             await this.indexes.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry.TDefPage != primaryEntry.TDefPage)
             {
-                TableDef foreignDefAfter = await this.writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+                TableDef foreignDefAfter = await this.db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
                 await this.indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -255,7 +258,7 @@ internal sealed class RelationshipManager
         {
             byte[] leaf = IndexPageCodec.BuildLeafPage(
                 IndexPageLayout.Jet4,
-                this.writer.PageSizeBytes,
+                this.db.PageSizeBytes,
                 primaryTdefPage,
                 [],
                 enablePrefixCompression: false);
@@ -267,7 +270,7 @@ internal sealed class RelationshipManager
         {
             byte[] leaf = IndexPageCodec.BuildLeafPage(
                 IndexPageLayout.Jet4,
-                this.writer.PageSizeBytes,
+                this.db.PageSizeBytes,
                 foreignTdefPage,
                 [],
                 enablePrefixCompression: false);
@@ -338,7 +341,7 @@ internal sealed class RelationshipManager
         }
 
         int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-        List<string> existingNames = this.ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
 
         int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
         FkSidePlan plan = sharedSlot >= 0
@@ -400,7 +403,7 @@ internal sealed class RelationshipManager
 
         int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
         int fkLogicalIdxNum = pkLogicalIdxNum + 1;
-        List<string> existingNames = this.ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
 
         return (
             new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
@@ -459,22 +462,22 @@ internal sealed class RelationshipManager
         byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
         int nameRecordSize = 2 + nameBytes.Length;
 
-        int deltaRealIdxSkip = sidePlan.AllocatesNewRealIdx ? this.writer.TDef.RealIdxEntrySz : 0;
+        int deltaRealIdxSkip = sidePlan.AllocatesNewRealIdx ? this.db.TDef.RealIdxEntrySz : 0;
         int deltaRealIdxPhys = sidePlan.AllocatesNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         // Build the rewritten page.
-        byte[] newTd = new byte[LogicalTDefChain.GetLogicalCapacity(this.writer.PageSizeBytes, currentEnd + totalGrowth)];
-        Buffer.BlockCopy(td, 0, newTd, 0, this.writer.TDef.BlockEnd);
+        byte[] newTd = new byte[LogicalTDefChain.GetLogicalCapacity(this.db.PageSizeBytes, currentEnd + totalGrowth)];
+        Buffer.BlockCopy(td, 0, newTd, 0, this.db.TDef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
-        int oldRealIdxSkipLen = numRealIdx * this.writer.TDef.RealIdxEntrySz;
-        Buffer.BlockCopy(td, this.writer.TDef.BlockEnd, newTd, this.writer.TDef.BlockEnd, oldRealIdxSkipLen);
-        int newRealIdxSkipEnd = this.writer.TDef.BlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
+        int oldRealIdxSkipLen = numRealIdx * this.db.TDef.RealIdxEntrySz;
+        Buffer.BlockCopy(td, this.db.TDef.BlockEnd, newTd, this.db.TDef.BlockEnd, oldRealIdxSkipLen);
+        int newRealIdxSkipEnd = this.db.TDef.BlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
 
         // Column descriptors.
-        int oldColStart = this.writer.TDef.BlockEnd + oldRealIdxSkipLen;
-        int colDescBlockLen = numCols * this.writer.ColumnDescriptor.Size;
+        int oldColStart = this.db.TDef.BlockEnd + oldRealIdxSkipLen;
+        int colDescBlockLen = numCols * this.db.ColumnDescriptor.Size;
         Buffer.BlockCopy(td, oldColStart, newTd, newRealIdxSkipEnd, colDescBlockLen);
 
         // Column names (variable length).
@@ -573,10 +576,10 @@ internal sealed class RelationshipManager
         }
 
         // Update header counts.
-        Wi32(newTd, this.writer.TDef.NumCols + 2, numIdx + 1);
+        Wi32(newTd, this.db.TDef.NumCols + 2, numIdx + 1);
         if (sidePlan.AllocatesNewRealIdx)
         {
-            Wi32(newTd, this.writer.TDef.NumRealIdx, numRealIdx + 1);
+            Wi32(newTd, this.db.TDef.NumRealIdx, numRealIdx + 1);
         }
 
         // tdef_len at offset 8 = (newEnd - 8). The page header (8 bytes) is
@@ -591,29 +594,6 @@ internal sealed class RelationshipManager
     }
 
     /// <summary>
-    /// Walks past column descriptors and column names to return the byte
-    /// offset of the real-index physical-descriptor section start, or -1
-    /// when the column-name walk fails.
-    /// </summary>
-    /// <param name="td">Parsed table definition.</param>
-    /// <param name="numCols">The number of cols.</param>
-    /// <param name="numRealIdx">The number of real index.</param>
-    internal int LocateRealIdxDescStart(byte[] td, int numCols, int numRealIdx)
-    {
-        int colStart = this.writer.TDef.BlockEnd + (numRealIdx * this.writer.TDef.RealIdxEntrySz);
-        int pos = colStart + (numCols * this.writer.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (this.writer.ReadColumnName(td, ref pos, out _) < 0)
-            {
-                return -1;
-            }
-        }
-
-        return pos;
-    }
-
-    /// <summary>
     /// Returns the byte length of the existing logical-idx-name section, or
     /// -1 if the walk fails.
     /// </summary>
@@ -625,37 +605,13 @@ internal sealed class RelationshipManager
         int pos = logIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
-            if (this.writer.ReadColumnName(td, ref pos, out _) < 0)
+            if (this.db.ReadColumnName(td, ref pos, out _) < 0)
             {
                 return -1;
             }
         }
 
         return pos - logIdxNamesStart;
-    }
-
-    /// <summary>
-    /// Materializes the existing logical-idx-name list (used to avoid name
-    /// collisions when appending a new FK index entry).
-    /// </summary>
-    /// <param name="td">Parsed table definition.</param>
-    /// <param name="logIdxNamesStart">The log index names start.</param>
-    /// <param name="numIdx">The number of index.</param>
-    internal List<string> ReadLogicalIdxNames(byte[] td, int logIdxNamesStart, int numIdx)
-    {
-        var list = new List<string>(numIdx);
-        int pos = logIdxNamesStart;
-        for (int i = 0; i < numIdx; i++)
-        {
-            if (this.writer.ReadColumnName(td, ref pos, out string n) < 0)
-            {
-                break;
-            }
-
-            list.Add(n);
-        }
-
-        return list;
     }
 
     private static string MakeUniqueParentRelationshipLogicalName(IReadOnlyList<string> existing)
@@ -767,28 +723,27 @@ internal sealed class RelationshipManager
 
     /// <summary>
     /// Asynchronously deletes a foreign-key relationship and its Jet4 / ACE
-    /// per-TDEF logical-index entries inside an auto-commit operation.
+    /// per-TDEF logical-index entries.
     /// </summary>
     /// <param name="relationshipName">The case-insensitive relationship name to delete.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default)
-        => this.writer.RunAutoCommitAsync(_ => this.DropRelationshipCoreAsync(relationshipName, cancellationToken), cancellationToken);
-
-    private async ValueTask DropRelationshipCoreAsync(string relationshipName, CancellationToken cancellationToken)
+    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when no relationship has the supplied name.</exception>
+    internal async ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(relationshipName, nameof(relationshipName));
-        Guard.ThrowIfDisposed(this.writer.IsDisposed, this);
+        Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        long msysRelTdefPage = await this.catalog.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
                 "The database does not contain a 'MSysRelationships' table; nothing to drop.");
         }
 
-        TableDef msysRelDef = await this.writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         List<RelationshipRowSnapshot> allRows = await this.catalog.CollectRowsAsync(
             msysRelTdefPage,
             msysRelDef,
@@ -810,7 +765,7 @@ internal sealed class RelationshipManager
         }
 
         // Jet4/ACE only — Jet3 never received the per-TDEF FK logical-idx entries.
-        if (this.writer.Format != DatabaseFormat.Jet3Mdb)
+        if (this.db.Format != DatabaseFormat.Jet3Mdb)
         {
             await this.ForEachRelationshipFkPairAsync(
                 matches,
@@ -858,20 +813,19 @@ internal sealed class RelationshipManager
 
     /// <summary>
     /// Asynchronously renames a foreign-key relationship and its Jet4 / ACE
-    /// per-TDEF logical-index name cookies inside an auto-commit operation.
+    /// per-TDEF logical-index name cookies.
     /// </summary>
     /// <param name="oldName">The case-insensitive existing relationship name.</param>
     /// <param name="newName">The new relationship name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default)
-        => this.writer.RunAutoCommitAsync(_ => this.RenameRelationshipCoreAsync(oldName, newName, cancellationToken), cancellationToken);
-
-    private async ValueTask RenameRelationshipCoreAsync(string oldName, string newName, CancellationToken cancellationToken)
+    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when <paramref name="newName"/> is already taken, no relationship is named <paramref name="oldName"/>, or <c>MSysRelationships</c> has no <c>szRelationship</c> column.</exception>
+    internal async ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(oldName, nameof(oldName));
         Guard.NotNullOrEmpty(newName, nameof(newName));
-        Guard.ThrowIfDisposed(this.writer.IsDisposed, this);
+        Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
@@ -879,14 +833,14 @@ internal sealed class RelationshipManager
             return; // No-op; matches Microsoft Access' designer behaviour.
         }
 
-        long msysRelTdefPage = await this.catalog.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
                 "The database does not contain a 'MSysRelationships' table; nothing to rename.");
         }
 
-        TableDef msysRelDef = await this.writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject collision with an existing name (case-insensitive).
         HashSet<string> existing = await this.catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
@@ -940,7 +894,7 @@ internal sealed class RelationshipManager
         // Update the TDEF logical-idx name cookies on both sides so the
         // on-disk index name matches the catalog row. Jet3 never received
         // FK logical-idx entries, so this is a no-op there.
-        if (this.writer.Format != DatabaseFormat.Jet3Mdb)
+        if (this.db.Format != DatabaseFormat.Jet3Mdb)
         {
             await this.ForEachRelationshipFkPairAsync(
                 matches,
@@ -987,7 +941,7 @@ internal sealed class RelationshipManager
             return baseName;
         }
 
-        List<string> existing = this.ReadLogicalIdxNames(pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existing = IndexCatalogReader.ReadLogicalIdxNames(this.db, pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
         return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
     }
 
@@ -1053,7 +1007,7 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, this.writer.TDef.NumCols + 2, layout.NumIdx - 1);
+        Wi32(td, this.db.TDef.NumCols + 2, layout.NumIdx - 1);
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
@@ -1130,16 +1084,16 @@ internal sealed class RelationshipManager
         // [_writer._tdef.BlockEnd, _writer._tdef.BlockEnd + numRealIdx * _writer._tdef.RealIdxEntrySz). We
         // collapse out the LAST N × _writer._tdef.RealIdxEntrySz bytes of that block by
         // left-shifting everything that follows.
-        int oldSkipEnd = this.writer.TDef.BlockEnd + (layout.NumRealIdx * this.writer.TDef.RealIdxEntrySz);
-        int newSkipEnd = oldSkipEnd - (reclaim * this.writer.TDef.RealIdxEntrySz);
+        int oldSkipEnd = this.db.TDef.BlockEnd + (layout.NumRealIdx * this.db.TDef.RealIdxEntrySz);
+        int newSkipEnd = oldSkipEnd - (reclaim * this.db.TDef.RealIdxEntrySz);
         Buffer.BlockCopy(td, oldSkipEnd, td, newSkipEnd, layout.CurrentEnd - oldSkipEnd);
-        int endAfterStep1 = layout.CurrentEnd - (reclaim * this.writer.TDef.RealIdxEntrySz);
+        int endAfterStep1 = layout.CurrentEnd - (reclaim * this.db.TDef.RealIdxEntrySz);
 
         // After step 1 the real-idx physical descriptor section starts at
         // (realIdxDescStart - reclaim * _writer._tdef.RealIdxEntrySz). We need to drop the
         // trailing N × 52 bytes of physical descriptors. Compute the new
         // boundaries.
-        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * this.writer.TDef.RealIdxEntrySz);
+        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * this.db.TDef.RealIdxEntrySz);
         int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
         int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
@@ -1153,7 +1107,7 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, this.writer.TDef.NumRealIdx, layout.NumRealIdx - reclaim);
+        Wi32(td, this.db.TDef.NumRealIdx, layout.NumRealIdx - reclaim);
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
@@ -1251,8 +1205,8 @@ internal sealed class RelationshipManager
         CancellationToken cancellationToken)
         => LogicalTDefChain.ReadRequiredAsync(
             startPage,
-            this.writer.PageSizeBytes,
-            this.writer.ReadPageAsync,
+            this.db.PageSizeBytes,
+            this.db.ReadPageAsync,
             AccessBase.ReturnPage,
             retainPageNumbers: true,
             cancellationToken);
@@ -1266,7 +1220,7 @@ internal sealed class RelationshipManager
             logicalBytes,
             usedLength,
             this.pageAllocator.AllocatePageAsync,
-            this.writer.WritePageAsync,
+            this.db.WritePageAsync,
             this.pageAllocator.DeallocatePageAsync,
             cancellationToken);
 
@@ -1309,14 +1263,14 @@ internal sealed class RelationshipManager
     private bool TryParseFkTDefLayout(byte[] td, out FkTDefLayout layout)
     {
         layout = default;
-        if (td.Length < this.writer.TDef.BlockEnd || td[0] != Constants.PageTypes.TableDefinition)
+        if (td.Length < this.db.TDef.BlockEnd || td[0] != Constants.PageTypes.TableDefinition)
         {
             return false;
         }
 
-        int numCols = Ru16(td, this.writer.TDef.NumCols);
-        int numIdx = Ri32(td, this.writer.TDef.NumCols + 2);
-        int numRealIdx = Ri32(td, this.writer.TDef.NumRealIdx);
+        int numCols = Ru16(td, this.db.TDef.NumCols);
+        int numIdx = Ri32(td, this.db.TDef.NumCols + 2);
+        int numRealIdx = Ri32(td, this.db.TDef.NumRealIdx);
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
             || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
@@ -1324,7 +1278,7 @@ internal sealed class RelationshipManager
             return false;
         }
 
-        int realIdxDescStart = this.LocateRealIdxDescStart(td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(this.db, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             return false;
@@ -1443,7 +1397,7 @@ internal sealed class RelationshipManager
         for (int i = 0; i <= matchEntryIdx; i++)
         {
             int before = namePos;
-            if (this.writer.ReadColumnName(td, ref namePos, out _) < 0)
+            if (this.db.ReadColumnName(td, ref namePos, out _) < 0)
             {
                 nameStart = -1;
                 nameLen = 0;
@@ -1524,16 +1478,16 @@ internal sealed class RelationshipManager
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            CatalogEntry? pkEntry = await this.writer.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
-            CatalogEntry? fkEntry = await this.writer.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? pkEntry = await this.db.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? fkEntry = await this.db.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
             if (pkEntry == null || fkEntry == null)
             {
                 // Catalog row references a missing table — skip TDEF work.
                 continue;
             }
 
-            TableDef pkDef = await this.writer.ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
-            TableDef fkDef = await this.writer.ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+            TableDef pkDef = await this.db.ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+            TableDef fkDef = await this.db.ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
 
             // Reconstruct the FK column list in icolumn order, then resolve
             // to col_num for col_map matching.
@@ -1571,13 +1525,4 @@ internal sealed class RelationshipManager
                 StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Pk),
                 StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Fk));
     }
-
-    /// <summary>
-    /// Locates a system or user table's TDEF page number by name (case-insensitive)
-    /// by scanning every <c>MSysObjects</c> row. Returns <c>0</c> when not found.
-    /// </summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<long> FindSystemTableTdefPageAsync(string tableName, CancellationToken cancellationToken)
-        => this.catalog.FindSystemTableTdefPageAsync(tableName, cancellationToken);
 }

@@ -18,7 +18,7 @@ public sealed class SystemTableIndexMaintenanceTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
-        long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
+        long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_001);
@@ -26,14 +26,14 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
         tableDef.SetValueByName(row, "FInheritable", false);
 
-        await writer.InsertSystemRowAndMaintainAsync(
+        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
             tdefPage,
             tableDef,
             Constants.SystemTableNames.Aces,
             row,
             cancellationToken: ct);
 
-        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.LastSystemTableIndexMaintenancePath);
+        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Indexes.LastSystemTableIndexMaintenancePath);
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public sealed class SystemTableIndexMaintenanceTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
-        long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
+        long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
         TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ColumnName", "SyntheticComplexColumn");
@@ -51,14 +51,14 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ConceptualTableID", 70_003);
         tableDef.SetValueByName(row, "FlatTableID", 70_004);
 
-        await writer.InsertSystemRowAndMaintainAsync(
+        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
             tdefPage,
             tableDef,
             Constants.SystemTableNames.ComplexColumns,
             row,
             cancellationToken: ct);
 
-        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.LastSystemTableIndexMaintenancePath);
+        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Indexes.LastSystemTableIndexMaintenancePath);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class SystemTableIndexMaintenanceTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
 
-        long tdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
+        long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         await CorruptFirstIndexRootPageTypeAsync(writer, tdefPage, ct);
 
@@ -78,7 +78,7 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "FInheritable", false);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            writer.InsertSystemRowAndMaintainAsync(
+            writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
                 tdefPage,
                 tableDef,
                 Constants.SystemTableNames.Aces,
@@ -100,7 +100,7 @@ public sealed class SystemTableIndexMaintenanceTests
             [new ColumnDefinition("Id", typeof(int))],
             ct);
 
-        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
+        long acesTdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         await CorruptFirstIndexRootPageTypeAsync(writer, acesTdefPage, ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>

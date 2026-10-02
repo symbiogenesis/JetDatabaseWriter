@@ -10,7 +10,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipSeekPlanner(AccessWriter writer)
+internal sealed class RelationshipSeekPlanner(AccessBase db)
 {
     private readonly record struct SeekIndexCore(
         long FirstDp,
@@ -41,13 +41,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
                 return null;
             }
 
-            CatalogEntry? foreignEntry = await writer.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? foreignEntry = await db.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry == null)
             {
                 return null;
             }
 
-            TableDef foreignDef = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            TableDef foreignDef = await db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             int[] foreignRowIndexes = new int[rel.ForeignColumns.Count];
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
@@ -124,18 +124,18 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        if (writer.Format == DatabaseFormat.Jet3Mdb)
+        if (db.Format == DatabaseFormat.Jet3Mdb)
         {
             return null;
         }
 
-        CatalogEntry? entry = await writer.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry? entry = await db.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
         {
             return null;
         }
 
-        TableDef definition = await writer.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        TableDef definition = await db.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         int[] columnNumbers = new int[columnNames.Count];
         var columnTypes = new ColumnType[columnNames.Count];
@@ -175,7 +175,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
             columnTypes,
             numericScales,
             hit.Value.AscendingFlags,
-            writer.Format == DatabaseFormat.Jet4Mdb);
+            db.Format == DatabaseFormat.Jet4Mdb);
     }
 
     private async ValueTask<(long FirstDp, IReadOnlyList<bool> AscendingFlags)?> TryFindCoveringRealIdxAsync(
@@ -183,22 +183,22 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         int[] targetColumnNumbers,
         CancellationToken cancellationToken)
     {
-        byte[] tableDefinition = await RelationshipPageReader.ReadOwnedAsync(writer, tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tableDefinition = await RelationshipPageReader.ReadOwnedAsync(db, tdefPage, cancellationToken).ConfigureAwait(false);
 
         if (tableDefinition[0] != Constants.PageTypes.TableDefinition || Ru32(tableDefinition, 4) != 0)
         {
             return null;
         }
 
-        int numColumns = Ru16(tableDefinition, writer.TDef.NumCols);
-        int numRealIndexes = Ri32(tableDefinition, writer.TDef.NumRealIdx);
+        int numColumns = Ru16(tableDefinition, db.TDef.NumCols);
+        int numRealIndexes = Ri32(tableDefinition, db.TDef.NumRealIdx);
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
             || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {
             return null;
         }
 
-        int realIndexDescriptorStart = this.LocateRealIdxDescStart(tableDefinition, numColumns, numRealIndexes);
+        int realIndexDescriptorStart = IndexCatalogReader.LocateRealIdxDescStart(db, tableDefinition, numColumns, numRealIndexes);
         if (realIndexDescriptorStart < 0)
         {
             return null;
@@ -228,20 +228,5 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
         }
 
         return null;
-    }
-
-    private int LocateRealIdxDescStart(byte[] tableDefinition, int numColumns, int numRealIndexes)
-    {
-        int columnStart = writer.TDef.BlockEnd + (numRealIndexes * writer.TDef.RealIdxEntrySz);
-        int position = columnStart + (numColumns * writer.ColumnDescriptor.Size);
-        for (int column = 0; column < numColumns; column++)
-        {
-            if (writer.ReadColumnName(tableDefinition, ref position, out _) < 0)
-            {
-                return -1;
-            }
-        }
-
-        return position;
     }
 }

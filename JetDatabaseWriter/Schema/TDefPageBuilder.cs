@@ -19,8 +19,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Builds table-definition (TDEF) pages and the bootstrap bytes for a new,
 /// empty database file.
 /// </summary>
-/// <param name="writer">The writer.</param>
-internal sealed class TDefPageBuilder(AccessWriter writer)
+/// <param name="db">The database page I/O and format context.</param>
+internal sealed class TDefPageBuilder(AccessBase db)
 {
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
@@ -148,44 +148,44 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
     public (byte[][] Pages, int[] FirstDpLogicalOffsets, int[] UsedPagesLogicalOffsets) BuildTDefPagesWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
-        int logicalCapacity = Math.Max(writer.PageSizeBytes * 32, writer.PageSizeBytes);
+        int logicalCapacity = Math.Max(db.PageSizeBytes * 32, db.PageSizeBytes);
         byte[] page = new byte[logicalCapacity];
         int numCols = tableDef.Columns.Count;
         int numIdx = indexes.Count;
-        bool jet4 = writer.Format != DatabaseFormat.Jet3Mdb;
+        bool jet4 = db.Format != DatabaseFormat.Jet3Mdb;
         int numRealIdx = numIdx;
 
-        int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
         int nameLenSize = jet4 ? 2 : 1;
 
         page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
-        page[writer.TDef.NumCols - 5] = 0x4E;
-        Wu16(page, writer.TDef.NumCols - 4, numCols);
-        Wu16(page, writer.TDef.NumCols, numCols);
-        Wi32(page, writer.TDef.NumCols + 2, numIdx);
-        Wi32(page, writer.TDef.NumRealIdx, numRealIdx);
+        page[db.TDef.NumCols - 5] = 0x4E;
+        Wu16(page, db.TDef.NumCols - 4, numCols);
+        Wu16(page, db.TDef.NumCols, numCols);
+        Wi32(page, db.TDef.NumCols + 2, numIdx);
+        Wi32(page, db.TDef.NumRealIdx, numRealIdx);
 
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
-            int o = colStart + (i * writer.ColumnDescriptor.Size);
+            int o = colStart + (i * db.ColumnDescriptor.Size);
 
             if (!col.IsFixed)
             {
                 numVarCols++;
             }
 
-            page[o + writer.ColumnDescriptor.TypeOff] = (byte)col.Type;
+            page[o + db.ColumnDescriptor.TypeOff] = (byte)col.Type;
             if (jet4)
             {
                 Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
 
-            Wu16(page, o + writer.ColumnDescriptor.NumOff, col.ColNum);
-            Wu16(page, o + writer.ColumnDescriptor.VarOff, col.VarIdx);
+            Wu16(page, o + db.ColumnDescriptor.NumOff, col.ColNum);
+            Wu16(page, o + db.ColumnDescriptor.VarOff, col.VarIdx);
 
             if (jet4)
             {
@@ -198,24 +198,24 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Wu16(page, o + 9, col.ColNum);
             }
 
-            page[o + writer.ColumnDescriptor.FlagsOff] = col.Flags;
-            Wu16(page, o + writer.ColumnDescriptor.FixedOff, col.FixedOff);
-            Wu16(page, o + writer.ColumnDescriptor.SzOff, col.Size);
+            page[o + db.ColumnDescriptor.FlagsOff] = col.Flags;
+            Wu16(page, o + db.ColumnDescriptor.FixedOff, col.FixedOff);
+            Wu16(page, o + db.ColumnDescriptor.SzOff, col.Size);
 
             if (col.Type is AttachmentType or ComplexType)
             {
-                Wi32(page, o + writer.ColumnDescriptor.MiscOff, col.Misc);
+                Wi32(page, o + db.ColumnDescriptor.MiscOff, col.Misc);
             }
-            else if (col.Type == NumericType && writer.Format != DatabaseFormat.Jet3Mdb)
+            else if (col.Type == NumericType && db.Format != DatabaseFormat.Jet3Mdb)
             {
                 if (!col.IsCalculated)
                 {
-                    page[o + writer.ColumnDescriptor.MiscOff] = col.NumericPrecision;
-                    page[o + writer.ColumnDescriptor.MiscOff + 1] = col.NumericScale;
+                    page[o + db.ColumnDescriptor.MiscOff] = col.NumericPrecision;
+                    page[o + db.ColumnDescriptor.MiscOff + 1] = col.NumericScale;
                 }
                 else
                 {
-                    page[o + writer.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
             else if (jet4 && (col.Type == TextType || col.Type == MemoType))
@@ -236,27 +236,27 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                Wi32(page, o + writer.ColumnDescriptor.MiscOff, 0x00000409);
-                page[o + writer.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                Wi32(page, o + db.ColumnDescriptor.MiscOff, 0x00000409);
+                page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
             }
             else if (jet4 && col.IsCalculated)
             {
-                page[o + writer.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
             }
             else if (jet4)
             {
                 if (col.Misc != 0)
                 {
-                    Wi32(page, o + writer.ColumnDescriptor.MiscOff, col.Misc);
+                    Wi32(page, o + db.ColumnDescriptor.MiscOff, col.Misc);
                 }
 
                 if (col.ExtraFlags != 0)
                 {
-                    page[o + writer.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
 
-            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : writer.AnsiEncoding.GetBytes(col.Name);
+            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : db.AnsiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException(
@@ -278,14 +278,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             namePos += nameBytes.Length;
         }
 
-        Wu16(page, writer.TDef.NumCols - 2, numVarCols);
+        Wu16(page, db.TDef.NumCols - 2, numVarCols);
 
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         int[] usedPagesOffsets = numIdx > 0 ? new int[numIdx] : [];
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            IndexSectionAnchors anchors = writer.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
             int totalIdxBytesLowerBound = anchors.LogIdxNamesStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
@@ -297,7 +297,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             for (int i = 0; i < numIdx; i++)
             {
                 ResolvedIndex ri = indexes[i];
-                int phys = writer.IndexLayoutInfo.RealIdxPhysOffset(realIdxPhysStart, i);
+                int phys = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (jet4)
                 {
                     Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
@@ -305,7 +305,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
                 for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
                 {
-                    int so = writer.IndexLayoutInfo.ColMapSlotOffset(phys, slot);
+                    int so = db.IndexLayoutInfo.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         Wu16(page, so, ri.ColumnNumbers[slot]);
@@ -340,18 +340,18 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     flagsByte |= Constants.TableDefinition.RequiredIndexFlag;
                 }
 
-                page[writer.IndexLayoutInfo.FlagsAbsoluteOffset(phys)] = flagsByte;
+                page[db.IndexLayoutInfo.FlagsAbsoluteOffset(phys)] = flagsByte;
                 if (jet4)
                 {
-                    usedPagesOffsets[i] = writer.IndexLayoutInfo.FirstDpAbsoluteOffset(phys) - 4;
+                    usedPagesOffsets[i] = db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys) - 4;
                 }
 
-                firstDpOffsets[i] = writer.IndexLayoutInfo.FirstDpAbsoluteOffset(phys);
+                firstDpOffsets[i] = db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys);
 
-                int log = writer.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
+                int log = db.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
                 if (jet4)
                 {
-                    Wi32(page, log - writer.IndexLayoutInfo.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
+                    Wi32(page, log - db.IndexLayoutInfo.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
                 }
 
                 Wi32(page, log + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset, i);
@@ -371,7 +371,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             int npos = anchors.LogIdxNamesStart;
             for (int i = 0; i < numIdx; i++)
             {
-                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : writer.AnsiEncoding.GetBytes(indexes[i].Name);
+                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : db.AnsiEncoding.GetBytes(indexes[i].Name);
                 if (npos + nameLenSize + nameBytes.Length > page.Length)
                 {
                     throw new NotSupportedException(
@@ -420,7 +420,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         {
             Wi32(page, 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
             int tdefLen = Math.Max(0, namePos - 8);
-            Wu16(page, 2, Math.Max(0, writer.PageSizeBytes - tdefLen - 8));
+            Wu16(page, 2, Math.Max(0, db.PageSizeBytes - tdefLen - 8));
         }
 
         (byte[][]? pages, int[]? logicalFirstDpOffsets) = this.SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
@@ -478,7 +478,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             return;
         }
 
-        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         long updated;
 
         try
@@ -496,15 +496,15 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-openrecordset-hypothesis.md.
-            int numRealIdx = Ri32(page, writer.TDef.NumRealIdx);
+            int numRealIdx = Ri32(page, db.TDef.NumRealIdx);
             if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {
-                int slotEnd = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
+                int slotEnd = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
                 {
                     for (int i = 0; i < numRealIdx; i++)
                     {
-                        int countOff = writer.TDef.BlockEnd + (i * writer.TDef.RealIdxEntrySz) + 4;
+                        int countOff = db.TDef.BlockEnd + (i * db.TDef.RealIdxEntrySz) + 4;
                         uint cur = Ru32(page, countOff);
                         long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
                         Wi32(page, countOff, unchecked((int)(uint)next));
@@ -512,7 +512,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 }
             }
 
-            await writer.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+            await db.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -521,7 +521,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
     }
 
     public (int PageIndex, int PageOffset) LogicalToPhysicalTDefOffset(int logicalOffset)
-        => LogicalTDefChain.LogicalToPhysicalOffset(writer.PageSizeBytes, logicalOffset);
+        => LogicalTDefChain.LogicalToPhysicalOffset(db.PageSizeBytes, logicalOffset);
 
     /// <summary>
     /// Builds a minimal, empty JET database as a byte array.
@@ -816,5 +816,5 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         byte Flags);
 
     private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
-        => (LogicalTDefChain.MaterializePages(logical, usedLength, writer.PageSizeBytes), firstDpLogicalOffsets);
+        => (LogicalTDefChain.MaterializePages(logical, usedLength, db.PageSizeBytes), firstDpLogicalOffsets);
 }

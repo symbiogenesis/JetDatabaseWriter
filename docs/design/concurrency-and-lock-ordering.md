@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-06-16
+Last updated: 2026-10-02
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -29,14 +29,14 @@ closing section).
 | 1 | `operationGate` | `AsyncReentrantOperationGate` | [AccessReader.cs#L80](../../JetDatabaseWriter/AccessReader.cs#L80) | Reader instance | Drains in-flight reader operations against async disposal |
 | 2 | `IoGate` | `SemaphoreSlim(1,1)` | [AccessBase.cs#L120](../../JetDatabaseWriter/AccessBase.cs#L120) | Shared base (reader + writer) | Serializes seek-based stream I/O and journal attach/detach |
 | 3 | `ByteRangeLockCore` | `JetByteRangeLock` | [AccessBase.cs#L99](../../JetDatabaseWriter/AccessBase.cs#L99) | Shared base | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
-| 4 | `stateLock` | `ReaderWriterLockSlim` | [AccessWriter.cs#L51](../../JetDatabaseWriter/AccessWriter.cs#L51) | Writer instance | The two-field insert-page hint cache only |
+| 4 | `insertPageHintLock` | `Lock` / `object` | [DataPageInserter.cs#L28](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L28) | Writer instance (`DataPageInserter`) | The two-field insert-page hint cache only |
 | 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [AccessBase.cs#L113](../../JetDatabaseWriter/AccessBase.cs#L113) | Shared base | The `ownedDataPagesByTdef` dictionary only |
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs#L20](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs#L20) | Internal to #1 | The gate's own drain bookkeeping |
 
-> Note: there are **two** unrelated fields named `stateLock`. #4 is the writer's
-> `ReaderWriterLockSlim` that guards the insert-page cache; #7 is the gate's
-> private bookkeeping lock. They never interact.
+> Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
+> state (the writer's insert-page hint and the reader gate's drain bookkeeping).
+> They never interact.
 
 ## Acquisition-order hierarchy (outermost → innermost)
 
@@ -49,7 +49,7 @@ order. Never acquire one earlier in this list while holding one later in it.
 3. ByteRangeLockCore per-page     (one durable page write; INSIDE IoGate)
 
 — leaf locks (never held across an await, never nested under each other) —
-   stateLock                      (insert-page cache; pure memory)
+   insertPageHintLock             (insert-page cache; pure memory)
    ownedDataPagesCacheLock        (owned-page dictionary; pure memory)
 
 — cross-process, lifetime-scoped (not part of per-operation nesting) —
@@ -59,15 +59,15 @@ order. Never acquire one earlier in this list while holding one later in it.
 
 The only pair that genuinely nests on a hot path is **`IoGate` (outer) →
 `ByteRangeLockCore` per-page (inner)**, inside
-[`WritePageAsync`](../../JetDatabaseWriter/AccessBase.cs#L1037) and
-[`AppendPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L1069). Everything else
+[`WritePageAsync`](../../JetDatabaseWriter/AccessBase.cs#L698) and
+[`AppendPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L730). Everything else
 is either strictly outer (the operation gate), a leaf, or lifetime-scoped.
 
 ### Key invariant: do not hold `IoGate` across a page-write call
 
-[`WritePageAsync`](../../JetDatabaseWriter/AccessBase.cs#L1037) and
-[`AppendPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L1069) always acquire
-`IoGate` themselves; [`ReadPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L684)
+[`WritePageAsync`](../../JetDatabaseWriter/AccessBase.cs#L698) and
+[`AppendPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L730) always acquire
+`IoGate` themselves; [`ReadPageAsync`](../../JetDatabaseWriter/AccessBase.cs#L345)
 acquires it on its seek-and-read path (the positionless `RandomAccess` fast path
 — uncached `FileStream` reads outside a transaction — bypasses the gate because
 it never touches the shared stream position). Callers must **not** already hold
@@ -75,14 +75,14 @@ it never touches the shared stream position). Callers must **not** already hold
 transaction commit path depends on this: it takes `IoGate` only to detach the
 journal, then **releases it before** the replay loop so each replayed
 `WritePageAsync` can re-acquire it. See
-[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L148).
+[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L156).
 
 ## Annotated call paths
 
 ### Writer auto-commit (default `UseTransactionalWrites = true`)
 
-`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L1823)
-→ [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L61)
+`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L781)
+→ [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L68)
 → `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
 
 ```
@@ -93,7 +93,7 @@ work phase (row encode, index maintenance, page allocation)
   └─ no durable locks held: every WritePageAsync/AppendPageAsync sees
      ActiveJournal and buffers into the in-memory journal while holding only
      IoGate for the buffer swap.
-  └─ stateLock and ownedDataPagesCacheLock may be taken briefly (leaf, memory only).
+  └─ insertPageHintLock and ownedDataPagesCacheLock may be taken briefly (leaf, memory only).
 
 CommitTransactionAsync
   ├─ IoGate ──▶ detach journal (ActiveJournal = ActiveTransaction = null) ──▶ release IoGate
@@ -123,7 +123,7 @@ WritePageAsync
 
 Every public reader method opens with
 `using AsyncReentrantOperationGate.Lease operation = this.EnterOperation();`
-([EnterOperation](../../JetDatabaseWriter/AccessReader.cs#L2472)).
+([EnterOperation](../../JetDatabaseWriter/AccessReader.cs#L2304)).
 
 ```
 operationGate lease  (reentrant: nested reader calls on the same async flow join the root)
@@ -135,7 +135,7 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
 
 ### Disposal
 
-Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L2183):
+Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L2015):
 
 ```
 operationGate.TryBeginDispose(out waitForOperations)
@@ -146,14 +146,13 @@ operationGate.TryBeginDispose(out waitForOperations)
   └─ operationGate.CompleteDispose()
 ```
 
-Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L1857) (no
+Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L688) (no
 operation gate; the writer is single-writer by construction):
 
 ```
 lockFileCoordinator.DisposeAfterAsync(
-    DisposeActiveTransactionAsync,             (implicit rollback of any open tx)
-    RewrapAndCloseOuterEncryptedStreamAsync,   (Agile re-encrypt on close)
-    DisposeStateLockAsync,                      (dispose the ReaderWriterLockSlim)
+    TransactionLifecycle.DisposeActiveTransactionAsync,  (implicit rollback of any open tx)
+    RewrapAndCloseOuterEncryptedStreamAsync,             (Agile re-encrypt on close)
     base.DisposeAsync)
   └─ release .ldb / .laccdb slot  (always last)
 ```
@@ -165,7 +164,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | `operationGate` | Yes | `AsyncLocal<int> operationDepth`; nested calls on one async flow join the active root operation |
 | `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it across a `*PageAsync` call |
 | `ByteRangeLockCore` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
-| `stateLock` | No | `LockRecursionPolicy.NoRecursion` |
+| `insertPageHintLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
 
 ## Rules for new code
@@ -174,7 +173,7 @@ lockFileCoordinator.DisposeAfterAsync(
    in the hierarchy is taken first and released last.
 2. Never hold `IoGate` when calling `ReadPageAsync` / `WritePageAsync` /
    `AppendPageAsync` — they take it themselves on their gated paths.
-3. Keep `stateLock` and `ownedDataPagesCacheLock` as leaf locks: pure in-memory
+3. Keep `insertPageHintLock` and `ownedDataPagesCacheLock` as leaf locks: pure in-memory
    work, no `await` and no other lock acquired while held.
 4. Per-page byte-range locks go **inside** `IoGate`, never the reverse.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLockCore`
@@ -183,8 +182,9 @@ lockFileCoordinator.DisposeAfterAsync(
 
 ## Why these are not consolidated
 
-The audit suggested collapsing the `ReaderWriterLockSlim`, the `SemaphoreSlim`,
-and the operation gate behind one async primitive. We deliberately keep them
+The audit suggested collapsing the insert-page cache lock (then a
+`ReaderWriterLockSlim`), the `SemaphoreSlim`, and the operation gate behind one
+async primitive. We deliberately keep them
 separate because their responsibilities do not actually overlap:
 
 - **`IoGate`** serializes *backing-stream I/O*. It must be an async-aware mutex
@@ -193,15 +193,14 @@ separate because their responsibilities do not actually overlap:
   unbounded concurrent reentrant operations and only blocks *new* top-level
   operations once disposal starts. Merging it into `IoGate` would serialize
   reads that are intentionally allowed to overlap.
-- **`stateLock`** guards a two-field insert-page hint cache
-  ([`TryGetCachedInsertPageNumber`](../../JetDatabaseWriter/AccessWriter.cs#L3717) /
-  [`SetCachedInsertPageNumber`](../../JetDatabaseWriter/AccessWriter.cs#L3737)).
+- **`insertPageHintLock`** guards a two-field insert-page hint cache
+  ([`TryGetCachedInsertPageNumber`](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L120) /
+  [`SetCachedInsertPageNumber`](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L135)).
   It is a pure-memory leaf lock with no I/O; routing it through the I/O mutex
   would add contention for no benefit.
 
 A single "do everything" primitive would conflate I/O serialization, a
 read-concurrency drain, and a memory-cache guard — increasing contention and
-coupling. The genuine simplification opportunity, if any, is the reverse: the
-insert-page cache is small enough that its `ReaderWriterLockSlim` could become a
-plain `lock` or `Interlocked` pair. That is optional and tracked only as a note,
-not active work.
+coupling. The genuine simplification went the other way: the insert-page cache
+moved from the writer facade into `DataPageInserter`, its only consumer, and its
+`ReaderWriterLockSlim` became a plain `lock`, which also removed a disposal step.

@@ -8,13 +8,13 @@ using Xunit;
 public sealed class RelationshipRuntimePolicyTests
 {
     [Fact]
-    public void CascadeDepthPolicy_AllowsConfiguredLimit() => RelationshipCascadePolicy.ThrowIfDepthExceeded(AccessWriter.CascadeMaxDepth);
+    public void CascadeDepthPolicy_AllowsConfiguredLimit() => RelationshipCascadePolicy.ThrowIfDepthExceeded(RelationshipCascadePolicy.MaxDepth);
 
     [Fact]
     public void CascadeDepthPolicy_RejectsBeyondConfiguredLimit()
     {
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
-            () => RelationshipCascadePolicy.ThrowIfDepthExceeded(AccessWriter.CascadeMaxDepth + 1));
+            () => RelationshipCascadePolicy.ThrowIfDepthExceeded(RelationshipCascadePolicy.MaxDepth + 1));
 
         Assert.Contains("cascade depth", exception.Message, StringComparison.OrdinalIgnoreCase);
     }

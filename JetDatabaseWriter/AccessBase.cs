@@ -771,6 +771,21 @@ public abstract class AccessBase : IAccessBase
         return userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
+    internal async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
+        => await this.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Table '{tableName}' was not found.");
+
+    internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
+        => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+
+    internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await this.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        return new ResolvedTable(entry, tableDef);
+    }
+
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private protected abstract ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default);
@@ -1345,6 +1360,49 @@ public abstract class AccessBase : IAccessBase
 
             default:
                 return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Reads <paramref name="columnOrdinals"/>'s typed values out of a single
+    /// row at <paramref name="loc"/> on a data page belonging to
+    /// <paramref name="tableDef"/>. Returns <see langword="null"/> when the
+    /// row layout cannot be parsed OR when any requested column needs
+    /// long-value (Memo, Ole) or complex (Complex, Attachment)
+    /// traversal outside this inline reader; the cascade-seek caller falls back to the snapshot
+    /// path in that case. Index-key column types (the focus of this helper)
+    /// usually include scalar fixed and var-inline kinds. Memo is indexable
+    /// but routes through the snapshot path when pre-write uniqueness checks
+    /// need existing-row values; OLE / Attachment / Complex columns are
+    /// rejected by <see cref="Indexes.Helpers.IndexHelpers.ResolveIndexes"/>.
+    /// </summary>
+    /// <param name="loc">The row location.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="columnOrdinals">The column ordinals.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
+        RowLocation loc,
+        TableDef tableDef,
+        int[] columnOrdinals,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await this.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (pageBytes[0] != Constants.PageTypes.Data)
+            {
+                return null;
+            }
+
+            var decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
+            object?[] result = new object?[columnOrdinals.Length];
+            return decodePlan.TryDecodePartialColumns(this, pageBytes, loc.RowStart, loc.RowSize, result)
+                ? result
+                : null;
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
         }
     }
 
