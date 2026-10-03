@@ -122,7 +122,7 @@ await using var reader = await AccessReader.OpenAsync("database.mdb", cancellati
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
 
-A reader opened from a path reads each page on the calling thread when that thread is a thread-pool thread with no synchronization context, which is where most `await` continuations run in console, ASP.NET Core and worker apps; that is several times faster than handing each read to another thread. Elsewhere, such as on a UI thread, page reads stay off the calling thread. Cancellation is checked before every page read, so a cancelled scan stops at its next page, but a page read that has started runs to completion.
+A reader opened from a path reads each page on the calling thread when that thread is a thread-pool thread with no synchronization context, which is where most `await` continuations run in console, ASP.NET Core and worker apps; in our measurements that made each page read about twice as fast as handing it to another thread. Elsewhere, such as on a UI thread, page reads stay off the calling thread. Cancellation is checked before every page read, so a cancelled scan stops at its next page, but a page read that has started runs to completion.
 
 ### From a Stream
 
@@ -148,7 +148,7 @@ byte[] modified = ms.ToArray();
 
 > The stream must be readable and seekable. For `AccessWriter`, it must also be writable.
 
-If you open a `FileStream` yourself for `AccessReader`, open it without `FileOptions.Asynchronous`. The reader reads every page through the stream, and on Windows an overlapped read costs several times a synchronous one even when the page is already in the OS cache. `AccessReader.OpenAsync(path)` opens its file that way.
+If you open a `FileStream` yourself for `AccessReader`, open it without `FileOptions.Asynchronous`. The reader reads every page through the stream, and on Windows, in our measurements, a page read on an overlapped handle took about twice as long as one on a synchronous handle, even when the page was already in the OS cache. `AccessReader.OpenAsync(path)` opens its file that way.
 
 ---
 
