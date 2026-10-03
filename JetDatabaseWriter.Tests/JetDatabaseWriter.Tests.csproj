@@ -43,6 +43,7 @@
     <Compile Remove="Scaffold\NavigationResolverTests.cs" />
     <Compile Remove="Scaffold\ScaffoldCompilation.cs" />
     <Compile Remove="Scaffold\ScaffoldedEntityColumnMappingTests.cs" />
+    <Compile Remove="Scaffold\ScaffoldNamesTests.cs" />
     <Compile Remove="Scaffold\ScaffoldRunnerTests.cs" />
   </ItemGroup>
 

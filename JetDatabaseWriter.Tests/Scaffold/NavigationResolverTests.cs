@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Scaffold;
 
+using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Scaffold;
@@ -103,6 +104,47 @@ public sealed class NavigationResolverTests
 
         ScaffoldNavigation childNav = Assert.Single(result["Child"]);
         Assert.Equal("Parent", childNav.PreferredName);
+    }
+
+    [Fact]
+    public void Resolve_ClassNameMap_UsesAllocatedNames()
+    {
+        var classNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DateTime"] = "DateTimeEntity",
+            ["Order Details"] = "OrderDetails2",
+        };
+        var relationships = new List<RelationshipMetadata>
+        {
+            new()
+            {
+                Name = "DateTimeOrderDetails",
+                PrimaryTable = "DateTime",
+                PrimaryColumns = ["Id"],
+                ForeignTable = "Order Details",
+                ForeignColumns = ["DateTimeId"],
+            },
+            new()
+            {
+                Name = "SkippedParentOrderDetails",
+                PrimaryTable = "Skipped",
+                PrimaryColumns = ["Id"],
+                ForeignTable = "order details",
+                ForeignColumns = ["SkippedId"],
+            },
+        };
+
+        Dictionary<string, List<ScaffoldNavigation>> result = NavigationResolver.Resolve(classNames, relationships);
+
+        ScaffoldNavigation parentNav = Assert.Single(result["DateTime"]);
+        Assert.True(parentNav.IsCollection);
+        Assert.Equal("OrderDetails2", parentNav.TargetClassName);
+        Assert.Equal("OrderDetails2s", parentNav.PreferredName);
+
+        ScaffoldNavigation childNav = Assert.Single(result["Order Details"]);
+        Assert.False(childNav.IsCollection);
+        Assert.Equal("DateTimeEntity", childNav.TargetClassName);
+        Assert.Equal("DateTime", childNav.PreferredName);
     }
 
     [Theory]
