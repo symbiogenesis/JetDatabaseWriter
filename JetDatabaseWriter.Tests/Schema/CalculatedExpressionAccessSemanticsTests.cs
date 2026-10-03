@@ -656,6 +656,92 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A date becomes text (<c>&amp;</c>, <c>CStr</c>, <c>Format</c> without a format, a
+    /// Text result column) in VBA's General Date form for en-US, as OLE Automation's
+    /// VarBstrFromDate gives it (measured with oleaut32, LCID 1033): no zero padding, a
+    /// 12-hour clock, no time part at midnight, and no date part on day 0 (1899-12-30).
+    /// </summary>
+    /// <param name="expression">The expression, over D = 2020-01-31 06:00, E = 2020-01-01 and D2 = 2020-01-31.</param>
+    /// <param name="expected">The expected text.</param>
+    [Theory]
+    [InlineData("[D]", "1/31/2020 6:00:00 AM")]
+    [InlineData("[D] & \"\"", "1/31/2020 6:00:00 AM")]
+    [InlineData("\"x\" & [D]", "x1/31/2020 6:00:00 AM")]
+    [InlineData("CStr([D2])", "1/31/2020")]
+    [InlineData("CStr([E])", "1/1/2020")]
+    [InlineData("CStr(#2020-01-31 12:00:00#)", "1/31/2020 12:00:00 PM")]
+    [InlineData("CStr(#2020-01-31 13:05:09#)", "1/31/2020 1:05:09 PM")]
+    [InlineData("CStr(#2020-01-31 00:00:01#)", "1/31/2020 12:00:01 AM")]
+    [InlineData("CStr(#2001-10-05 09:03:04#)", "10/5/2001 9:03:04 AM")]
+    [InlineData("CStr(CDate(0.25))", "6:00:00 AM")]
+    [InlineData("CStr(CDate(0))", "12:00:00 AM")]
+    [InlineData("CStr(CDate(-1))", "12/29/1899")]
+    [InlineData("CStr(CDate(-1.75))", "12/29/1899 6:00:00 PM")]
+    [InlineData("CStr(#0100-01-01#)", "1/1/100")]
+    [InlineData("CStr([D] + 1)", "2/1/2020 6:00:00 AM")]
+    [InlineData("Format([D])", "1/31/2020 6:00:00 AM")]
+    [InlineData("Format([D], \"General Date\")", "1/31/2020 6:00:00 AM")]
+    [InlineData("FormatDateTime([D2], 0)", "1/31/2020")]
+    [InlineData("FormatDateTime([D], vbGeneralDate)", "1/31/2020 6:00:00 AM")]
+    [InlineData("Len([D])", "20")]
+    [InlineData("CStr(DateValue(CDate(0.25)))", "6:00:00 AM")]
+    [InlineData("IIf([D] Like \"1/31/2020 6:*\", \"y\", \"n\")", "y")]
+    public void DateToText_IsEnUsGeneralDate(string expression, string expected)
+    {
+        object result = EvaluateDates(expression, typeof(string));
+
+        Assert.Equal(expected, result);
+    }
+
+    /// <summary>
+    /// General Date text drops fractions of a second the way VarBstrFromDate does: more
+    /// than half a second rounds up, carrying into the next day, and half a second or
+    /// less rounds down.
+    /// </summary>
+    /// <param name="millisecond">The milliseconds past 2020-01-31 at <paramref name="hour"/>:<paramref name="minute"/>:<paramref name="second"/>.</param>
+    /// <param name="hour">The hour.</param>
+    /// <param name="minute">The minute.</param>
+    /// <param name="second">The second.</param>
+    /// <param name="expected">The expected text.</param>
+    [Theory]
+    [InlineData(400, 0, 0, 0, "1/31/2020")]
+    [InlineData(500, 0, 0, 0, "1/31/2020")]
+    [InlineData(600, 0, 0, 0, "1/31/2020 12:00:01 AM")]
+    [InlineData(600, 6, 0, 0, "1/31/2020 6:00:01 AM")]
+    [InlineData(600, 23, 59, 59, "2/1/2020")]
+    public void DateToText_RoundsToTheNearestSecond(int millisecond, int hour, int minute, int second, string expected)
+    {
+        var value = new DateTime(2020, 1, 31, hour, minute, second, millisecond);
+
+        object result = EvaluateDeclared("CStr([T])", typeof(string), ("T", typeof(DateTime), value));
+
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("ja-JP")]
+    [InlineData("en-GB")]
+    public void DateToText_IgnoresTheCurrentCulture(string cultureName)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        CultureInfo previousUi = CultureInfo.CurrentUICulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(cultureName);
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(cultureName);
+
+            Assert.Equal("1/31/2020 6:00:00 AM", EvaluateDates("[D] & \"\"", typeof(string)));
+            Assert.Equal("1/31/2020 1:05:09 PM", EvaluateDates("CStr(#2020-01-31 13:05:09#)", typeof(string)));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+            CultureInfo.CurrentUICulture = previousUi;
+        }
+    }
+
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(
             expression,

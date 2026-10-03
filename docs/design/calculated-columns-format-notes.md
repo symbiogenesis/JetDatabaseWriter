@@ -234,6 +234,18 @@ Delivered:
   (`&`, `CStr` and Text result columns); `+` concatenates when both operands
   are text; and two text operands compare as text even when they look
   numeric (`"10" < "9"`).
+- A date becomes text (`&`, `CStr`, `Like`, `Len`, `Format` with no format or
+  `"General Date"`, `FormatDateTime(d, vbGeneralDate)`, a Text result column
+  or a Text column's default) in VBA's General Date form for en-US, as OLE
+  Automation's `VarBstrFromDate` gives it (measured with oleaut32 on Windows,
+  LCID 1033), whatever the current culture: `1/31/2020 6:00:00 AM`, with no
+  zero padding and a 12-hour clock. A date at midnight has no time part
+  (`1/31/2020`), and a time on day 0 (1899-12-30) has no date part
+  (`6:00:00 AM`; day 0 at midnight is `12:00:00 AM`). More than half a second
+  rounds up to the next second. Access itself formats with the Windows
+  locale, so a non-US Access installation writes other text; this library
+  always uses the en-US form. The other named formats (`Short Date`,
+  `Long Time` and so on) still use .NET's invariant patterns.
 - Conversions follow OLE Automation's `VariantChangeType`, which VBA uses
   (measured with oleaut32 on Windows; Access itself was not checked): a
   Boolean is 255 or 0 in a Byte result column and in `CByte`, and a number or

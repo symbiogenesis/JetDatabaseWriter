@@ -169,6 +169,8 @@ public sealed class ConstraintRegistryTests
     [InlineData("#2026-04-24 13:05:30#", ColumnType.DateTimeType, typeof(DateTime), "2026-04-24 13:05:30")]
     [InlineData("#2020-01-31#+1", ColumnType.DateTimeType, typeof(DateTime), "2020-02-01 00:00:00")]
     [InlineData("=#2020-01-31 06:00# - 0.25", ColumnType.DateTimeType, typeof(DateTime), "2020-01-31 00:00:00")]
+    [InlineData("#2020-01-31 18:30:05#", ColumnType.TextType, typeof(string), "1/31/2020 6:30:05 PM")]
+    [InlineData("=#2020-01-31# & \"\"", ColumnType.TextType, typeof(string), "1/31/2020")]
     [InlineData("{guid 12345678-1234-1234-1234-1234567890ab}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     [InlineData("{guid {12345678-1234-1234-1234-1234567890AB}}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     public async Task ApplyAsync_HydratedDefaultValue_FillsNull(string expression, ColumnType type, Type expectedType, string expectedText)

@@ -31,7 +31,7 @@ internal static class CalculatedExpressionFormattingFunctions
         {
             return upperFormat switch
             {
-                "GENERAL DATE" => dateTime.ToString("G", CultureInfo.InvariantCulture),
+                "" or "GENERAL DATE" => ToGeneralDateText(dateTime),
                 "LONG DATE" => dateTime.ToString("D", CultureInfo.InvariantCulture),
                 "SHORT DATE" => dateTime.ToString("d", CultureInfo.InvariantCulture),
                 "LONG TIME" => dateTime.ToString("T", CultureInfo.InvariantCulture),
@@ -68,7 +68,7 @@ internal static class CalculatedExpressionFormattingFunctions
 
     private static string FormatDateTime(DateTime value, int formatType) => formatType switch
     {
-        0 => value.ToString("G", CultureInfo.InvariantCulture),
+        0 => ToGeneralDateText(value),
         1 => value.ToString("D", CultureInfo.InvariantCulture),
         2 => value.ToString("d", CultureInfo.InvariantCulture),
         3 => value.ToString("T", CultureInfo.InvariantCulture),
