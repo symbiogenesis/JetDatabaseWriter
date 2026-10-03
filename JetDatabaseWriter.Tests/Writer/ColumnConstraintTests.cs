@@ -665,13 +665,10 @@ public sealed class ColumnConstraintTests
             new("Name", typeof(string), maxLength: 20) { DefaultValue = "a \"b\"" },
             new("Flag", typeof(bool)) { DefaultValue = true },
             new("When", typeof(DateTime)) { DefaultValue = when },
-        ];
 
-        // Jet3 has no Numeric type.
-        if (format != DatabaseFormat.Jet3Mdb)
-        {
-            columns.Add(new("Amount", typeof(decimal)) { DefaultValue = 12.34m, NumericPrecision = 10, NumericScale = 2 });
-        }
+            // A Currency column on Jet3, which has no Decimal type.
+            new("Amount", typeof(decimal)) { DefaultValue = 12.34m, NumericPrecision = 10, NumericScale = 2 },
+        ];
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -690,10 +687,7 @@ public sealed class ColumnConstraintTests
         Assert.Equal("a \"b\"", row["Name"]);
         Assert.Equal(true, row["Flag"]);
         Assert.Equal(when, row["When"]);
-        if (format != DatabaseFormat.Jet3Mdb)
-        {
-            Assert.Equal(12.34m, row["Amount"]);
-        }
+        Assert.Equal(12.34m, row["Amount"]);
     }
 
     /// <summary>Gets each floating-point and date CLR default case in every format.</summary>

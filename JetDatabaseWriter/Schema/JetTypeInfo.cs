@@ -401,6 +401,64 @@ internal static class JetTypeInfo
     }
 
     /// <summary>
+    /// The decimal places a Currency value keeps: it is a 64-bit integer count
+    /// of ten-thousandths.
+    /// </summary>
+    internal const byte CurrencyScale = 4;
+
+    /// <summary>
+    /// The digits a Currency value holds before the decimal point; the largest
+    /// is 922,337,203,685,477.5807.
+    /// </summary>
+    internal const byte CurrencyIntegerDigits = 15;
+
+    /// <summary>
+    /// Returns the column type <paramref name="format"/> stores a column of
+    /// <paramref name="declaredType"/> as, and checks a <c>Numeric</c>
+    /// column's precision and scale. Jet3 (Access 97) has no Decimal type, so
+    /// a decimal column there is stored as Currency, whose fixed scale of
+    /// <see cref="CurrencyScale"/> and <see cref="CurrencyIntegerDigits"/>
+    /// integer digits must hold the declared scale and precision. Every other
+    /// type, and every type on Jet4 and ACCDB, is stored as declared. A
+    /// descriptor type carried over by a schema rewrite
+    /// (<see cref="ColumnDefinition.ColumnTypeOverride"/>) is kept, so a Jet3
+    /// Numeric column that an earlier build wrote stays Numeric.
+    /// </summary>
+    /// <param name="definition">The column definition.</param>
+    /// <param name="declaredType">The type <see cref="TypeCodeFromDefinition"/> returned for it.</param>
+    /// <param name="format">The database format.</param>
+    /// <returns>The column type to write into the descriptor.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">A <c>Numeric</c> column's precision is not 1..28 or its scale is above its precision.</exception>
+    /// <exception cref="NotSupportedException">A Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
+    internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, DatabaseFormat format)
+    {
+        if (declaredType != NumericType)
+        {
+            return declaredType;
+        }
+
+        byte precision = ResolveNumericPrecision(definition);
+        byte scale = ResolveNumericScale(definition);
+        if (format != DatabaseFormat.Jet3Mdb || definition.ColumnTypeOverride is not null)
+        {
+            return NumericType;
+        }
+
+        int integerDigits = precision - scale;
+        if (scale > CurrencyScale || integerDigits > CurrencyIntegerDigits)
+        {
+            throw new NotSupportedException(
+                $"Column '{definition.Name}': Jet3 (Access 97) databases have no Decimal type, so a decimal column is stored as Currency, "
+                + $"which holds {CurrencyIntegerDigits} digits before the decimal point and {CurrencyScale} after it. "
+                + $"Decimal({precision},{scale}) needs {integerDigits} before it and {scale} after it. "
+                + $"Declare a NumericScale of at most {CurrencyScale} and a NumericPrecision of at most NumericScale + {CurrencyIntegerDigits}, "
+                + "set IsCurrency, or use a double column.");
+        }
+
+        return MoneyType;
+    }
+
+    /// <summary>
     /// Validates and returns the precision (1..28) declared on a
     /// <c>Numeric</c> column definition. Defaults to <c>18</c> when the
     /// caller leaves <see cref="ColumnDefinition.NumericPrecision"/> at its

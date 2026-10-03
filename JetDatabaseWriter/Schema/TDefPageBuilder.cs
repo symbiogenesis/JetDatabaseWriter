@@ -24,20 +24,23 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
 {
     /// <summary>
     /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
-    /// and returns its column type: calculated, Large Number and Date/Time
-    /// Extended columns need ACCDB, and a calculated column needs an
+    /// and returns the column type it is stored as: calculated, Large Number
+    /// and Date/Time Extended columns need ACCDB, a calculated column needs an
     /// expression, a supported result type and no AutoNumber, Attachment,
-    /// multi-value or Hyperlink flag. The expression itself is not parsed here.
+    /// multi-value or Hyperlink flag, and a decimal column on Jet3, which has
+    /// no Decimal type, is stored as Currency
+    /// (<see cref="JetTypeInfo.ResolveStorageType"/>). The expression itself
+    /// is not parsed here.
     /// </summary>
     /// <param name="definition">The column definition.</param>
     /// <param name="format">The database format.</param>
     /// <returns>The column's type code.</returns>
-    /// <exception cref="NotSupportedException">The format cannot hold the column.</exception>
-    /// <exception cref="ArgumentException">A calculated column has no expression, or the definition's flags conflict.</exception>
+    /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
+    /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, or (<see cref="ArgumentOutOfRangeException"/>) a decimal column's precision or scale is out of range.</exception>
     internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format)
     {
         ValidateCalculatedColumn(definition, format);
-        ColumnType type = TypeCodeFromDefinition(definition);
+        ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition), format);
 
         if (type == BigIntType && format != DatabaseFormat.AceAccdb)
         {
@@ -227,6 +230,9 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
             }
             else if (col.Type == NumericType && db.Format != DatabaseFormat.Jet3Mdb)
             {
+                // Jet3 has no Numeric type: a decimal column there is created as
+                // Currency, and a Jet3 Numeric column an earlier build wrote keeps
+                // its zero precision and scale through a schema rewrite.
                 if (!col.IsCalculated)
                 {
                     page[o + db.ColumnDescriptor.MiscOff] = col.NumericPrecision;

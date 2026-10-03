@@ -494,6 +494,8 @@ new ColumnDefinition("UnitPrice", typeof(decimal)) { IsCurrency = true },
 new ColumnDefinition("Weight",    typeof(decimal)) { NumericPrecision = 10, NumericScale = 3 },
 ```
 
+Jet3 (Access 97) databases have no Decimal type, so on a Jet3 `.mdb` a `decimal` column is created as Currency. Its values then keep four decimal places whatever `NumericScale` says, and the precision and scale are not stored. Currency holds 15 digits before the decimal point and 4 after, so a declared `NumericScale` above 4, or a `NumericPrecision` more than 15 above `NumericScale`, throws `NotSupportedException` before anything is written. That includes the default Decimal(18,0): on Jet3, declare a precision and scale that fit, such as Decimal(19,4) or Decimal(10,2), or set `IsCurrency`.
+
 #### Column constraints
 
 `ColumnDefinition` accepts four optional constraints in addition to `Name`/`ClrType`/`MaxLength`:

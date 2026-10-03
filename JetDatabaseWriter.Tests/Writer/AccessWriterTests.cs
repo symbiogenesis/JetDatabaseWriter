@@ -481,7 +481,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         {
             new("Id", typeof(int)),
             new("Name", typeof(string), maxLength: 50),
-            new("Amount", typeof(decimal)),
+
+            // Jet3 stores a decimal as Currency, which cannot hold the default Decimal(18,0).
+            new("Amount", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 },
         };
 
         await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -776,7 +778,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("DateCol", typeof(DateTime)),
             new("DoubleCol", typeof(double)),
             new("BoolCol", typeof(bool)),
-            new("DecimalCol", typeof(decimal)),
+
+            // Jet3 stores a decimal as Currency, which cannot hold the default Decimal(18,0).
+            new("DecimalCol", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 },
         };
 
         await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
