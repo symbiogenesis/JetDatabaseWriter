@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="AccessWriter"/>. Handles finding/creating target pages,
 /// writing row bytes, and patching usage-map / autonumber TDEF fields. Also
 /// owns the per-writer insert-page hint and the set of TDEFs whose owned-page
-/// usage maps this writer may extend.
+/// usage maps this writer may extend (both restored when a transaction rolls back).
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
@@ -139,6 +139,34 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
             this.cachedInsertTDefPage = tdefPage;
             this.cachedInsertPageNumber = pageNumber;
         }
+    }
+
+    /// <summary>
+    /// Captures the insert-page hint and the writable owned-map set. A
+    /// transaction takes this when it begins: inside it, both can come to name
+    /// pages the transaction appended, which rollback discards.
+    /// </summary>
+    /// <returns>The state to pass to <see cref="RestoreState"/>.</returns>
+    internal DataPageInserterState CaptureState()
+    {
+        lock (this.insertPageHintLock)
+        {
+            return new DataPageInserterState(this.cachedInsertTDefPage, this.cachedInsertPageNumber, [.. this.ownedMapWritableTdefs]);
+        }
+    }
+
+    /// <summary>Puts the insert-page hint and the writable owned-map set back to <paramref name="state"/>.</summary>
+    /// <param name="state">A state from <see cref="CaptureState"/>.</param>
+    internal void RestoreState(DataPageInserterState state)
+    {
+        lock (this.insertPageHintLock)
+        {
+            this.cachedInsertTDefPage = state.HintTDefPage;
+            this.cachedInsertPageNumber = state.HintPageNumber;
+        }
+
+        this.ownedMapWritableTdefs.Clear();
+        this.ownedMapWritableTdefs.UnionWith(state.OwnedMapWritableTdefs);
     }
 
     /// <summary>

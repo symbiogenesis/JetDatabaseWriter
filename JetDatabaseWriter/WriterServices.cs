@@ -60,7 +60,7 @@ internal sealed class WriterServices
         var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
         this.Relationships = new RelationshipManager(db, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
-        this.Transactions = new TransactionLifecycle(db, options, byteRangeLock);
+        this.Transactions = new TransactionLifecycle(db, options, byteRangeLock, catalog, dataPages, constraints);
         this.Data = new TableDataWriter(
             db,
             catalog,

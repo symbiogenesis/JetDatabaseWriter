@@ -144,6 +144,7 @@ JetDatabaseWriter/
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
 │   ├── PageJournal.cs                     (before-image journaling for rollback)
 │   └── Models/
+│       ├── DataPageInserterState.cs       (insert hint + writable owned-map set, restored on rollback)
 │       ├── PageInsertTarget.cs
 │       ├── RowBound.cs
 │       ├── RowLayout.cs
@@ -242,6 +243,7 @@ JetDatabaseWriter/
 │   │   └── CalculatedFunctionInvocation.cs         (bound function invocation context)
 │   └── Models/
 │       ├── ColumnConstraint.cs
+│       ├── ConstraintRegistrySnapshot.cs  (registry contents + AutoNumber counters, restored on rollback)
 │       ├── ColumnInfo.cs
 │       ├── ColumnPropertyBlock.cs
 │       ├── ColumnPropertyEntry.cs
@@ -424,7 +426,7 @@ AccessWriter → WriterServices
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
   DataPageInserter    → PageAllocator, CatalogRowReader
   TableCatalog        → CatalogRowReader
-  TransactionLifecycle → JetByteRangeLock
+  TransactionLifecycle → JetByteRangeLock, TableCatalog, DataPageInserter, ConstraintRegistry
   (every collaborator) → DatabaseFile
 ```
 

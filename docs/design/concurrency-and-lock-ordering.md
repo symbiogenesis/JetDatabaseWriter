@@ -75,19 +75,20 @@ it never touches the shared stream position). Callers must **not** already hold
 transaction commit path depends on this: it takes `IoGate` only to detach the
 journal, then **releases it before** the replay loop so each replayed
 `WritePageAsync` can re-acquire it. See
-[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L156).
+[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L185).
 
 ## Annotated call paths
 
 ### Writer auto-commit (`UseTransactionalWrites = true`)
 
 `InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L732)
-→ [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L68)
+→ [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L95)
 → `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
 
 ```
 BeginTransactionAsync
-  └─ IoGate ──▶ set ActiveJournal / ActiveTransaction ──▶ release IoGate
+  └─ IoGate ──▶ capture writer state (insertPageHintLock briefly)
+              ──▶ set ActiveJournal / ActiveTransaction ──▶ release IoGate
 
 work phase (row encode, index maintenance, page allocation)
   └─ no durable locks held: every WritePageAsync/AppendPageAsync sees
@@ -103,11 +104,18 @@ CommitTransactionAsync
   │           └─ IoGate ──▶ ByteRangeLock per-page ──▶ seek/write/flush ──▶ release both
   │     FlushDurableAsync
   └─ release commit-lock (finally)
+
+RollbackTransactionAsync  (auto-commit calls it when the work throws)
+  └─ IoGate ──▶ detach journal ──▶ restore writer state (catalog invalidated,
+                insertPageHintLock briefly, constraint registry) ──▶ release IoGate
 ```
 
 The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
-outside an already-held `IoGate`.
+outside an already-held `IoGate`. Capturing and restoring the writer state is
+memory-only, so the leaf `insertPageHintLock` is the only lock taken inside
+`IoGate` there. A commit that fails restores the same state from its `catch`,
+after `IoGate` has been released.
 
 ### Writer non-transactional (default `UseTransactionalWrites = false`)
 
