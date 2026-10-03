@@ -31,19 +31,63 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     private static bool IsRawOleColumn(ColumnInfo column) => column.Type == ColumnType.OleType && !column.IsCalculated;
 
     /// <summary>
+    /// Returns the column mask that selects <paramref name="columnNames"/> in
+    /// <paramref name="td"/>, or <see langword="null"/> for every column.
+    /// </summary>
+    /// <param name="td">The table definition.</param>
+    /// <param name="columnNames">The column names, or <see langword="null"/>.</param>
+    private static bool[]? SelectColumns(TableDef td, IReadOnlyCollection<string>? columnNames)
+    {
+        if (columnNames is null)
+        {
+            return null;
+        }
+
+        bool[] wanted = new bool[td.Columns.Count];
+        foreach (string name in columnNames)
+        {
+            int index = td.FindColumnIndex(name);
+            if (index >= 0)
+            {
+                wanted[index] = true;
+            }
+        }
+
+        return wanted;
+    }
+
+    /// <summary>
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
     /// Centralises the common scan-all-pages-and-decode-rows pattern used by catalog/system-table readers.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
+        long tdefPage,
+        TableDef td,
+        CancellationToken cancellationToken)
+        => this.EnumerateRowsForTdefAsync(tdefPage, td, wantedColumnNames: null, cancellationToken);
+
+    /// <summary>
+    /// Yields the rows of the table at <paramref name="tdefPage"/> as strings,
+    /// decoding only the columns named in <paramref name="wantedColumnNames"/>;
+    /// every other column is <see cref="string.Empty"/>. A catalog scan names the
+    /// columns it reads, so it never decodes, or reads the LVAL pages of, an
+    /// <c>LvProp</c>, <c>LvModule</c> or <c>LvExtra</c> blob it does not use.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="wantedColumnNames">The names of the columns to decode (case-insensitive), or <see langword="null"/> for every column. Names the table lacks are ignored.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
         long tdefPage,
         TableDef td,
+        IReadOnlyCollection<string>? wantedColumnNames,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        var decodePlan = RowDecodePlan.CreateStrings(td, strictParsing);
+        var decodePlan = RowDecodePlan.CreateStrings(td, strictParsing, SelectColumns(td, wantedColumnNames));
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();

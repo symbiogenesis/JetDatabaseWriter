@@ -31,6 +31,9 @@ internal static class LinkedTableManager
     private const int MaxLinkedTableMetadataRows = 4096;
     private static readonly char[] PathSeparators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
 
+    /// <summary>The <c>MSysObjects</c> columns <see cref="GetLinkedTablesAsync"/> reads; the LvProp, LvModule and LvExtra blobs are not decoded.</summary>
+    private static readonly string[] LinkedTableCatalogColumns = ["Name", "Type", "Flags", "Database", "ForeignName", "Connect"];
+
     /// <summary>
     /// Normalises the caller-supplied allowlist of directories that linked-table
     /// source paths must reside under. Relative entries are resolved against the
@@ -127,7 +130,7 @@ internal static class LinkedTableManager
 
         var result = new List<LinkedTableInfo>();
 
-        await foreach (string[] row in catalog.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in catalog.EnumerateMSysObjectsRowsAsync(msys, LinkedTableCatalogColumns, cancellationToken).ConfigureAwait(false))
         {
             if (!CatalogValueReader.TryParseInt32(row, idxType, out int objType))
             {

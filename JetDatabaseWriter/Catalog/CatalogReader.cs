@@ -108,6 +108,16 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
         rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
     /// <summary>
+    /// Enumerates every row of MSysObjects, decoding only the named columns as
+    /// strings; every other column is <see cref="string.Empty"/>.
+    /// </summary>
+    /// <param name="msys">The system-table data.</param>
+    /// <param name="columnNames">The columns to decode.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal IAsyncEnumerable<string[]> EnumerateMSysObjectsRowsAsync(TableDef msys, IReadOnlyCollection<string> columnNames, CancellationToken cancellationToken) =>
+        rows.EnumerateRowsForTdefAsync(2, msys, columnNames, cancellationToken);
+
+    /// <summary>
     /// Reads and parses the stored <c>MSysObjects.LvProp</c> bytes of the catalog
     /// row whose <c>Id</c> is exactly <paramref name="tdefPage"/> (see
     /// <see cref="ColumnPropertyReader.ReadLvPropForTableAsync"/>). Returns
