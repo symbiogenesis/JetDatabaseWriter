@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -17,16 +18,27 @@ using Xunit;
 /// Table-scan read-ahead keeps a second page read in flight while the caller
 /// decodes the current page. It must return the same rows as a sequential
 /// scan at every page-cache size, including caches smaller than the two pages
-/// in flight and no cache at all, and on AES-encrypted files, where the two
-/// reads can decrypt pages on two threads at once.
+/// in flight and no cache at all, on AES-encrypted files, where the two
+/// reads can decrypt pages on two threads at once, and at the default cache
+/// size with a long value longer than the cache.
 /// </summary>
 public sealed class TableScanReadAheadTests : IDisposable
 {
     private const string PlainTable = "Plain";
     private const string LongValueTable = "LongValues";
     private const string Password = "read-ahead";
+    private const string LargeMemoTable = "LargeMemo";
     private const int PlainRowCount = 400;
     private const int LongValueRowCount = 120;
+    private const int LargeMemoRowCount = 30;
+
+    /// <summary>
+    /// 1,500,000 characters: at least 370 4 KB LVAL pages even with Unicode
+    /// compression, and about 750 2 KB pages on Jet3.
+    /// </summary>
+    private const int LargeMemoLength = 1_500_000;
+
+    private static readonly string LargeMemo = MakeLargeMemo();
 
     private readonly List<string> paths = [];
 
@@ -90,6 +102,54 @@ public sealed class TableScanReadAheadTests : IDisposable
         // Long-value tables stay sequential because read-ahead measured no gain on them.
         Assert.False(await ReadsAheadAsync(reader, LongValueTable));
         await AssertScansMatchAsync(reader, LongValueTable, expected);
+    }
+
+    /// <summary>
+    /// A MEMO chain longer than the default 256-page cache evicts the data page a
+    /// scan is still on while the value is decoded. When the cache handed evicted
+    /// pages back to the shared pool (bug 1), the next page read overwrote that data
+    /// page and every row after the MEMO was lost. The other tests here use small
+    /// caches and short chains; this one keeps the default options.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Scans_LongValueChainLongerThanDefaultCache_ReturnEveryRow(DatabaseFormat format)
+    {
+        string path = await this.CreateLargeMemoDatabaseAsync(format);
+        var options = new AccessReaderOptions { UseLockFile = false };
+        int lvalPages = CountLvalPages(path, format);
+        Assert.True(lvalPages > options.PageCacheSize, $"The MEMO spans {lvalPages} LVAL pages, no more than the {options.PageCacheSize}-page default cache.");
+
+        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        List<string> expected = [.. Enumerable.Range(1, LargeMemoRowCount).Select(id => LargeMemoSignature(id, LargeMemoBody(id)))];
+
+        var rows = new List<string>();
+        await foreach (object[] row in reader.Rows(LargeMemoTable, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            rows.Add(LargeMemoSignature((int)row[0], row[1] as string));
+        }
+
+        Assert.Equal(expected, rows);
+
+        var typed = new List<string>();
+        await foreach (LargeMemoRow row in reader.Rows<LargeMemoRow>(LargeMemoTable, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            typed.Add(LargeMemoSignature(row.Id, row.Body));
+        }
+
+        Assert.Equal(expected, typed);
+
+        var strings = new List<string>();
+        await foreach (string[] row in reader.RowsAsStrings(LargeMemoTable, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            strings.Add(LargeMemoSignature(int.Parse(row[0], CultureInfo.InvariantCulture), row[1]));
+        }
+
+        Assert.Equal(expected, strings);
+        Assert.Equal(LargeMemoRowCount, await reader.GetRealRowCountAsync(LargeMemoTable, TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -294,6 +354,47 @@ public sealed class TableScanReadAheadTests : IDisposable
         return text.ToString();
     }
 
+    private static string LargeMemoBody(int id) => id == 1 ? LargeMemo : "small-" + id.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Describes a row without copying the 1.5M-character MEMO into assertion
+    /// messages: the id, then "intact" or the length of the wrong value.
+    /// </summary>
+    /// <param name="id">The row id.</param>
+    /// <param name="body">The MEMO value read back.</param>
+    private static string LargeMemoSignature(int id, string? body) =>
+        id.ToString(CultureInfo.InvariantCulture) + "|"
+        + (string.Equals(body, LargeMemoBody(id), StringComparison.Ordinal)
+            ? "intact"
+            : "wrong, " + (body?.Length ?? -1).ToString(CultureInfo.InvariantCulture) + " chars");
+
+    private static string MakeLargeMemo()
+    {
+        char[] text = new char[LargeMemoLength];
+        for (int i = 0; i < text.Length; i++)
+        {
+            text[i] = (char)('a' + (i % 26));
+        }
+
+        return new string(text);
+    }
+
+    private static int CountLvalPages(string path, DatabaseFormat format)
+    {
+        int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        byte[] file = File.ReadAllBytes(path);
+        int count = 0;
+        for (int offset = 0; offset + pageSize <= file.Length; offset += pageSize)
+        {
+            if (LongValueStore.IsLvalPage(file.AsSpan(offset, pageSize)))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     private static byte[] Blob(int id)
     {
         int length = (id % 3) switch
@@ -361,7 +462,46 @@ public sealed class TableScanReadAheadTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Creates a table whose first row holds a 1.5M-character MEMO and whose
+    /// other 29 rows hold short ones, as in the bug 1 report.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>The database path.</returns>
+    private async Task<string> CreateLargeMemoDatabaseAsync(DatabaseFormat format)
+    {
+        string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
+        string path = Path.Combine(Path.GetTempPath(), $"ReadAheadLargeMemo_{Guid.NewGuid():N}{extension}");
+        this.paths.Add(path);
+        this.paths.Add(Path.ChangeExtension(path, format == DatabaseFormat.AceAccdb ? ".laccdb" : ".ldb"));
+
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            path,
+            format,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(
+            LargeMemoTable,
+            [
+                new ColumnDefinition("Id", typeof(int)),
+                new ColumnDefinition("Body", typeof(string)),
+            ],
+            TestContext.Current.CancellationToken);
+        _ = await writer.InsertRowsAsync(
+            LargeMemoTable,
+            Enumerable.Range(1, LargeMemoRowCount).Select(id => new object?[] { id, LargeMemoBody(id) }),
+            TestContext.Current.CancellationToken);
+        return path;
+    }
+
     private sealed record ScanResult(List<string> Rows, List<string> Strings);
+
+    private sealed class LargeMemoRow
+    {
+        public int Id { get; set; }
+
+        public string? Body { get; set; }
+    }
 
     private sealed class ScanRow
     {

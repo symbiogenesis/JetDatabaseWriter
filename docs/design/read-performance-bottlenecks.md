@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -29,11 +29,13 @@ guidance below to produce new evidence before changing the core reader.
 
 - Row decode results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.Reader.AccessReaderRowDecodeBenchmarks-report-github.md`
 - Open-floor results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.AccessReaderOpenBenchmarks-report-github.md`
-- DataTable strategy benchmarks: `JetDatabaseWriter.Benchmarks/DataTableMaterializationBenchmarks.cs`
-- Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
-- Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderTableScanReadAheadBenchmarks.cs`
+- DataTable strategy benchmarks: `JetDatabaseWriter.Benchmarks/Reader/DataTableMaterializationBenchmarks.cs`
+- Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
+- Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderTableScanReadAheadBenchmarks.cs`
 - Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
-- Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs`
+- Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
+- Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
+- Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
 - Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
@@ -71,7 +73,12 @@ release-quality benchmark results justify reopening a specific area.
 - Synthetic benchmark databases are generated under `%TEMP%\JetBench\` by
   `SyntheticDatabases.cs`: `Numeric` has 25K rows / 9 columns, `TextHeavy` has
   25K rows / 6 columns, `Wide` has 10K rows / 40 columns, and `Memos` has 5K
-  rows with an integer plus MEMO payload.
+  rows with an integer plus MEMO payload. `LargeLongValues` has 30 rows whose
+  three 1.5M-character MEMOs (about 370 LVAL pages each) and three 2 MB OLE
+  values (about 490 pages each) are each longer than the default 256-page cache;
+  every other long-value fixture fits in the cache, which is how the evicted-page
+  bug (bug 1 in `docs/todo.md`) went unmeasured. The numeric database also has an
+  `AccdbAesCfbWrapped`-encrypted copy.
 - The `OpenAsync` floor is settled at roughly 1.1 ms / 41 KB. Do not spend
   optimization time on lazy catalog loading or catalog span rewrites without new
   measurements that contradict that floor.
@@ -95,6 +102,8 @@ git history) and are not reproduced here.
 | Owned-page discovery | Recognized per-table usage maps are about 2.3 ms for cold first-row/full-scan; forced whole-file fallback is about 15.7-15.8 ms on the same large-file shape. | Recognized maps avoid the O(total file pages) cold-start path. Keep the whole-file scan as a safety fallback for unfamiliar or invalid maps. |
 | Table-scan read-ahead | Warm full scans improve when page-read optimization is enabled: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as an automatic but narrowly guarded throughput benefit with opt-out; do not add tunable depth or LVAL-heavy read-ahead now. |
 | Read-ahead eligibility (2026-10-02, Arm64, .NET 10.0.12, in-process ShortRun, two interleaved before/after runs) | Warm `Auto` scans of the 25K-row numeric table: page cache disabled 9.9-10.3 ms before, 8.6-8.7 ms after read-ahead was allowed; 2-page cache 10.4-10.5 ms before, 8.7-8.9 ms after; 256-page cache unchanged at 8.8-9.0 ms. A 5,000-row MEMO table (62-73 ms) and a 2,000-row single-page OLE table (22.5-26 ms) moved by less than the run-to-run noise when read-ahead was allowed, at every cache size. | Allow read-ahead at any page-cache size, including none. Keep MEMO, OLE, complex and attachment tables sequential: the cache-ownership hazard behind that exclusion is gone, but it measured no gain. |
+| Long values longer than the cache (2026-10-03, Arm64, .NET 10.0.12, in-process ShortRun on a shared machine) | `AccessReaderLargeLongValueBenchmarks`: a warm `Rows()` scan of the 30 `LargeLongValues` rows took 45-54 ms and allocated 30 MB at page-cache sizes 0, 8 and 256, in both `Disabled` and `Auto`. `Rows<T>()` was within the noise of `Rows()`, and opening a fresh reader for the scan added 22-30 ms. Every case returned all 30 rows with every value at full length. | No change. Setup checks the row count and value lengths, so a return of the evicted-page bug shows as an NA row rather than a fast result. `Auto` and `Disabled` were within this run's noise of each other on these values. |
+| Concurrent scans (same run) | `AccessReaderConcurrentScanBenchmarks`: N simultaneous `Rows()` scans of the 25K-row numeric table. On one shared reader: 9.1 ms at N=1, 10.6 ms at 2, 12.8-13.2 ms at 4 and 24 ms at 8. One reader per scan: 9.3-12.4 ms, 13.2-13.6 ms, 24 ms and 42-45 ms, allocating up to 23% more. The AES-encrypted copy was within the noise of the plain file at every N. | A shared reader scales better on this shape: scans running in near lockstep hit pages another scan has just cached, while separate readers each read and decode every page. Neither the shared reader's I/O gate nor the AES transform lock showed as a bottleneck at up to 8 scans. |
 
 ## Historical baseline
 
@@ -411,6 +420,8 @@ dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *DataTa
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderOwnedPageDiscoveryBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderTableScanReadAheadBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderReadAheadEligibilityBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderLargeLongValueBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderConcurrentScanBenchmarks* --job short
 ```
 
 Summary decisions from the refresh:

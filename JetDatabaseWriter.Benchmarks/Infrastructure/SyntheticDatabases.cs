@@ -50,7 +50,30 @@ internal static class SyntheticDatabases
     /// <summary>Small table used to isolate owned-page discovery cost.</summary>
     public const string OwnedPageDiscoveryTargetTable = "OwnedMapTarget";
 
-    private const int NumericRows = 25_000;
+    /// <summary>
+    /// Table whose large MEMO and OLE values each span more LVAL pages than the
+    /// default 256-page reader cache (Id, Body MEMO, Blob OLE).
+    /// </summary>
+    public const string LargeLongValueTable = "LargeLongValues";
+
+    /// <summary>Rows in <see cref="LargeLongValueTable"/>.</summary>
+    public const int LargeLongValueRows = 30;
+
+    /// <summary>Characters in each large MEMO: the 3 rows whose Id is a multiple of 10.</summary>
+    public const int LargeMemoLength = 1_500_000;
+
+    /// <summary>Bytes in each large OLE value: the 3 rows whose Id ends in 5.</summary>
+    public const int LargeOleLength = 2_000_000;
+
+    /// <summary>Characters in each of the other rows' MEMO values, and bytes in their OLE values.</summary>
+    public const int SmallLongValueLength = 100;
+
+    /// <summary>Password of <see cref="AesNumericDbPath"/>.</summary>
+    public const string AesPassword = "JetBench";
+
+    /// <summary>Rows in <see cref="NumericTable"/>.</summary>
+    public const int NumericRows = 25_000;
+
     private const int TextRows = 25_000;
     private const int WideRows = 10_000;
     private const int WideColumnCount = 40;
@@ -81,6 +104,17 @@ internal static class SyntheticDatabases
         TempRoot,
         $"OwnedPageDiscovery_{OwnedPageDiscoveryTargetRows}_{OwnedPageDiscoveryFillerRows}_fallback_v1.accdb");
 
+    public static string LargeLongValueDbPath => Path.Combine(TempRoot, "LargeLongValue_v1.accdb");
+
+    /// <summary>Gets the path of an <c>AccdbAesCfbWrapped</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
+    public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_aes_v1.accdb");
+
+    /// <summary>Gets the total MEMO characters in <see cref="LargeLongValueTable"/>.</summary>
+    public static long LargeLongValueMemoChars { get; } = SumLargeLongValueLengths(IsLargeMemoRow, LargeMemoLength);
+
+    /// <summary>Gets the total OLE bytes in <see cref="LargeLongValueTable"/>.</summary>
+    public static long LargeLongValueOleBytes { get; } = SumLargeLongValueLengths(IsLargeOleRow, LargeOleLength);
+
     /// <summary>
     /// Ensures all synthetic DBs exist on disk. Skips files that already
     /// exist (cache by path). Safe to call from <c>[GlobalSetup]</c>.
@@ -109,6 +143,85 @@ internal static class SyntheticDatabases
                 OwnedPageDiscoveryFallbackDbPath,
                 OwnedPageDiscoveryTargetTable).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Ensures <see cref="LargeLongValueDbPath"/> exists: 30 rows whose large MEMO
+    /// and OLE values each span more LVAL pages than the default 256-page reader
+    /// cache. The other rows hold short values, so a scan that loses the rows
+    /// after a large value (as the page-cache eviction bug did) is visible.
+    /// </summary>
+    /// <returns>A task that completes when the file exists.</returns>
+    public static async Task EnsureLargeLongValueAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        if (File.Exists(LargeLongValueDbPath))
+        {
+            return;
+        }
+
+        string building = Path.ChangeExtension(LargeLongValueDbPath, ".building.accdb");
+        File.Delete(building);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(building, DatabaseFormat.AceAccdb).ConfigureAwait(false))
+        {
+            await writer.CreateTableAsync(
+                LargeLongValueTable,
+                [
+                    new("Id", typeof(int)),
+                    new("Body", typeof(string)),
+                    new("Blob", typeof(byte[])),
+                ]).ConfigureAwait(false);
+
+            // One row per insert keeps at most one large value in memory.
+            for (int id = 1; id <= LargeLongValueRows; id++)
+            {
+                await writer.InsertRowAsync(
+                    LargeLongValueTable,
+                    [
+                        id,
+                        MakeMemoBody(id, IsLargeMemoRow(id) ? LargeMemoLength : SmallLongValueLength),
+                        MakeOlePayload(id, IsLargeOleRow(id) ? LargeOleLength : SmallLongValueLength),
+                    ]).ConfigureAwait(false);
+            }
+        }
+
+        File.Move(building, LargeLongValueDbPath);
+    }
+
+    /// <summary>
+    /// Ensures <see cref="AesNumericDbPath"/> exists: a copy of the numeric
+    /// database encrypted as <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>
+    /// with <see cref="AesPassword"/>.
+    /// </summary>
+    /// <returns>A task that completes when the file exists.</returns>
+    public static async Task EnsureAesNumericAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        await EnsureNumericAsync().ConfigureAwait(false);
+        if (File.Exists(AesNumericDbPath))
+        {
+            return;
+        }
+
+        string building = Path.ChangeExtension(AesNumericDbPath, ".building.accdb");
+        File.Copy(NumericDbPath, building, overwrite: true);
+        await AccessWriter.EncryptAsync(building, AesPassword.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped).ConfigureAwait(false);
+        File.Move(building, AesNumericDbPath);
+    }
+
+    public static bool IsLargeMemoRow(int id) => id % 10 == 0;
+
+    public static bool IsLargeOleRow(int id) => id % 10 == 5;
+
+    private static long SumLargeLongValueLengths(Func<int, bool> isLargeRow, int largeLength)
+    {
+        long total = 0;
+        for (int id = 1; id <= LargeLongValueRows; id++)
+        {
+            total += isLargeRow(id) ? largeLength : SmallLongValueLength;
+        }
+
+        return total;
     }
 
     private static async Task EnsureNumericAsync()

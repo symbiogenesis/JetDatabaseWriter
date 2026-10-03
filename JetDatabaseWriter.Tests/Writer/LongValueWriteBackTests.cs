@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -23,6 +25,33 @@ using Xunit;
 public sealed class LongValueWriteBackTests
 {
     private const string TableName = "Items";
+    private const int LargeMemoRowCount = 30;
+
+    /// <summary>
+    /// 1,500,000 characters of a-z: at least 370 4 KB LVAL pages even with
+    /// Unicode compression, and about 750 2 KB pages on Jet3.
+    /// </summary>
+    private static readonly string LargeMemo = string.Create(1_500_000, 0, static (text, _) =>
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            text[i] = (char)('a' + (i % 26));
+        }
+    });
+
+    /// <summary>How the update in the long-chain test is driven.</summary>
+    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
+    public enum WriteMode
+    {
+        /// <summary>No transaction; every page write goes straight to the stream.</summary>
+        Direct = 0,
+
+        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps the update in its own transaction.</summary>
+        AutoCommit = 1,
+
+        /// <summary>The update runs inside an explicit transaction that is committed.</summary>
+        ExplicitCommit = 2,
+    }
 
     private enum OlePayload
     {
@@ -79,6 +108,20 @@ public sealed class LongValueWriteBackTests
                 {
                     data.Add(format, payload.ToString(), rewrite.ToString());
                 }
+            }
+        }
+
+        return data;
+    }
+
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndWriteModes()
+    {
+        var data = new TheoryData<DatabaseFormat, WriteMode>();
+        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+        {
+            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            {
+                data.Add(format, mode);
             }
         }
 
@@ -186,6 +229,53 @@ public sealed class LongValueWriteBackTests
 
         DataRow row = await ReadSnapshotRowAsync(ms, id: 1);
         Assert.Equal(payload, Assert.IsType<byte[]>(row["Blob"]));
+    }
+
+    /// <summary>
+    /// An update deletes each row and inserts it again in scan order, so the first
+    /// row's 1.5M-character MEMO, a chain longer than the reader's default 256-page
+    /// cache, goes through the snapshot read, the long-value release and a new
+    /// chain, and is again followed by the other 29 rows. Read back with the
+    /// default reader options, the MEMO and every row after it must be intact.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the update is driven.</param>
+    [Theory]
+    [MemberData(nameof(FormatsAndWriteModes))]
+    public async Task UpdateRowsAsync_MemoChainLongerThanDefaultCache_KeepsMemo(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await CreateLargeMemoDatabaseAsync(format);
+
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            ms,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit
+                ? await writer.BeginTransactionAsync(TestContext.Current.CancellationToken)
+                : null;
+            int updated = await writer.UpdateRowsAsync(TableName, RowCriteria.All(), new RowValues { ["Note"] = "changed" }, TestContext.Current.CancellationToken);
+            Assert.Equal(LargeMemoRowCount, updated);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(TestContext.Current.CancellationToken);
+            }
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        var actual = new SortedDictionary<int, string>();
+        await foreach (object[] row in reader.Rows(TableName, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            int id = (int)row[0];
+            Assert.True(actual.TryAdd(id, LargeMemoSignature(id, row[1] as string, row[2] as string)), $"Row {id} was read twice.");
+        }
+
+        List<string> expected = [.. Enumerable.Range(1, LargeMemoRowCount).Select(id => LargeMemoSignature(id, "changed", LargeMemoBody(id)))];
+        Assert.Equal(expected, actual.Values);
+        Assert.Equal(LargeMemoRowCount, await reader.GetRealRowCountAsync(TableName, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -476,6 +566,45 @@ public sealed class LongValueWriteBackTests
 
         return ms;
     }
+
+    private static async Task<MemoryStream> CreateLargeMemoDatabaseAsync(DatabaseFormat format)
+    {
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string), maxLength: 50),
+                    new ColumnDefinition("Body", typeof(string)),
+                ],
+                TestContext.Current.CancellationToken);
+            _ = await writer.InsertRowsAsync(
+                TableName,
+                Enumerable.Range(1, LargeMemoRowCount).Select(id => new object[] { id, LargeMemoNote(id), LargeMemoBody(id) }),
+                TestContext.Current.CancellationToken);
+        }
+
+        return ms;
+    }
+
+    private static string LargeMemoNote(int id) => "n" + id.ToString(CultureInfo.InvariantCulture);
+
+    private static string LargeMemoBody(int id) => id == 1 ? LargeMemo : "small-" + id.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Describes a row without copying the 1.5M-character MEMO into assertion
+    /// messages: the id, the note, then "intact" or the length of the wrong MEMO.
+    /// </summary>
+    /// <param name="id">The row id.</param>
+    /// <param name="note">The Note value read back.</param>
+    /// <param name="body">The MEMO value read back.</param>
+    private static string LargeMemoSignature(int id, string? note, string? body) =>
+        id.ToString(CultureInfo.InvariantCulture) + "|" + note + "|"
+        + (string.Equals(body, LargeMemoBody(id), StringComparison.Ordinal)
+            ? "intact"
+            : "wrong, " + (body?.Length ?? -1).ToString(CultureInfo.InvariantCulture) + " chars");
 
     private static int IndexOf(byte[] haystack, byte[] needle) => haystack.AsSpan().IndexOf(needle);
 
