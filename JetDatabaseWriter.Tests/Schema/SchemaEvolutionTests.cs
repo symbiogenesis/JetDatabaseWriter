@@ -183,7 +183,7 @@ public sealed class SchemaEvolutionTests
                 table,
                 [
                     new("Id", typeof(int)),
-                    new ColumnDefinition("Amount", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+                    new ColumnDefinition("Amount", typeof(decimal)) { IsCurrency = true },
                 ],
                 TestContext.Current.CancellationToken);
 
@@ -255,7 +255,7 @@ public sealed class SchemaEvolutionTests
                 table,
                 [
                     new("Id", typeof(int)),
-                    new ColumnDefinition("Amount", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+                    new ColumnDefinition("Amount", typeof(decimal)) { IsCurrency = true },
                 ],
                 TestContext.Current.CancellationToken);
 
@@ -370,7 +370,7 @@ public sealed class SchemaEvolutionTests
             new("Real", typeof(float)),
             new("Ratio", typeof(double)),
             new("When", typeof(DateTime)),
-            new("Price", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+            new("Price", typeof(decimal)) { IsCurrency = true },
             new("Name", typeof(string), maxLength: 30) { IsNullable = false },
             new("Memo", typeof(string)),
             new("Link", typeof(string)) { IsHyperlink = true },

@@ -165,6 +165,31 @@ public sealed record ColumnDefinition
     public bool IsDateTimeExtended { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether a <see cref="decimal"/> column should be
+    /// authored as Access <c>Currency</c> instead of <c>Decimal</c>. Currency is
+    /// a 64-bit integer count of ten-thousandths: four decimal places, from
+    /// -922,337,203,685,477.5808 to 922,337,203,685,477.5807. Supported on every
+    /// format.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A value with more than four decimal places is rounded half to even to four
+    /// places, and a value outside the range throws <see cref="OverflowException"/>
+    /// when it is written. <see cref="NumericPrecision"/> and <see cref="NumericScale"/>
+    /// are ignored.
+    /// </para>
+    /// <para>
+    /// The <see cref="ClrType"/> must be <see cref="decimal"/>, and the column cannot
+    /// also be <see cref="IsAttachment"/> or <see cref="IsMultiValue"/>, because Access
+    /// has no multi-value Currency type; otherwise <c>CreateTableAsync</c> and
+    /// <c>AddColumnAsync</c> throw <see cref="ArgumentException"/>. Readers report the
+    /// type through <see cref="ColumnMetadata.IsCurrency"/>, so copying a column's
+    /// metadata into a definition creates the same type.
+    /// </para>
+    /// </remarks>
+    public bool IsCurrency { get; init; }
+
+    /// <summary>
     /// Gets an optional client-side validation predicate invoked for every non-null value
     /// an insert supplies or an update assigns, before the row is written. Returning
     /// <c>false</c> raises an <see cref="ArgumentException"/>.

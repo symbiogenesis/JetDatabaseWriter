@@ -207,6 +207,7 @@ internal sealed class SchemaReader(
                 Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, db.Format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
+                IsCurrency = ResolveValueType(col) == MoneyType,
                 IsCalculated = isCalc,
                 CalculationExpression = calcExpr,
                 CalculatedResultType = (byte)(calcResultType != default ? calcResultType : col.CalculatedResultType),

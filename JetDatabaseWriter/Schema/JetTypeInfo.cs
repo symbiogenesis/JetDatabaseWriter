@@ -234,6 +234,14 @@ internal static class JetTypeInfo
             throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
         }
 
+        // Access has no multi-value Currency template (MSysComplexType_*).
+        if (column.IsCurrency && (column.IsAttachment || column.IsMultiValue))
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' cannot be both Currency and {(column.IsAttachment ? "Attachment" : "MultiValue")}; Access has no multi-value Currency type.",
+                nameof(column));
+        }
+
         if (column.IsAttachment)
         {
             return ComplexType;
@@ -247,6 +255,18 @@ internal static class JetTypeInfo
         if (column.ColumnTypeOverride is ColumnType descriptorType)
         {
             return descriptorType;
+        }
+
+        if (column.IsCurrency)
+        {
+            if (column.ClrType != typeof(decimal))
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' has IsCurrency = true but CLR type '{column.ClrType}' is not decimal.",
+                    nameof(column));
+            }
+
+            return MoneyType;
         }
 
         if (column.IsDateTimeExtended)
