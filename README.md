@@ -324,6 +324,8 @@ foreach (ComplexColumnInfo c in complex)
 
 Returns an empty list for tables without complex columns and for older Jet3 / Jet4 (`.mdb`) files.
 
+`GetColumnMetadataAsync` names each complex column by subtype in `TypeName`: `"Attachment"`, `"Version History"`, or `"Multi-value "` plus the element type (`"Multi-value Text"`, `"Multi-value Long Integer"`), and `"Complex"` when `MSysComplexColumns` cannot resolve it. `ClrType` is `byte[]` for all of them (see the cells below).
+
 #### Reading and writing complex column rows
 
 For ACE `.accdb` files, attachments and multi-value items can be inserted into an existing parent row and read back via spec-compliant APIs:

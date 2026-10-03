@@ -27,7 +27,11 @@ public sealed record ComplexColumnInfo
     /// </summary>
     public int ComplexId { get; init; }
 
-    /// <summary>Gets the classification of the complex column (attachment, multi-value, or version-history).</summary>
+    /// <summary>
+    /// Gets the classification of the complex column (attachment, multi-value, or version-history),
+    /// from its <c>MSysComplexType_*</c> template, or from its flat table's schema when it has no
+    /// template (<see cref="ComplexTypeObjectId"/> 0).
+    /// </summary>
     public ComplexColumnKind Kind { get; init; }
 
     /// <summary>

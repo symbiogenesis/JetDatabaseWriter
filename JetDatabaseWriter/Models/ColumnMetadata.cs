@@ -10,7 +10,12 @@ public sealed record ColumnMetadata
     /// <summary>Gets or initializes the column name.</summary>
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>Gets or initializes the Access-friendly type name (e.g., "Text", "Long Integer", "Date/Time").</summary>
+    /// <summary>
+    /// Gets or initializes the Access-friendly type name (e.g., "Text", "Long Integer", "Date/Time").
+    /// A complex column is named by its subtype: "Attachment", "Version History", or "Multi-value"
+    /// followed by its element type's name (e.g., "Multi-value Text", "Multi-value Long Integer");
+    /// "Complex" when <c>MSysComplexColumns</c> cannot resolve it.
+    /// </summary>
     public string TypeName { get; init; } = string.Empty;
 
     /// <summary>Gets or initializes the CLR type that best represents this column.</summary>
