@@ -304,12 +304,15 @@ internal sealed class TableDataWriter(
         {
             var fkCtx = new FkContext(rels);
 
-            // FK-side: every updated row must (still) satisfy any FK constraint
-            // whose foreign side is THIS table.
-            foreach ((_, _, object[] newRow) in pendingUpdates)
+            // FK-side: as in Access, only a foreign key this update changes
+            // must name a parent row; keys it leaves alone are not re-checked.
+            var rowChanges = new List<(object[] OldRow, object[] NewRow)>(pendingUpdates.Count);
+            foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
             {
-                await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
+                rowChanges.Add((oldRow, newRow));
             }
+
+            await enforcer.EnforceFkOnForeignUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
 
             // PK-side: cascade or reject only when this update touches a referenced PK.
             var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingUpdates.Count);

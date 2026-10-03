@@ -760,6 +760,8 @@ await writer.DropTableAsync("Orders");
 
 **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` and `CascadeDeletes` honour the cascade flags. See the Limitations section for caveats.
 
+An insert must give each non-null foreign key a value the primary table has; a null foreign key is never checked. An update is checked, as in Access, only on the rows whose foreign key it changes: assigning other columns, or assigning a key the value it already has, does not check the key, so such an update succeeds even on a row whose key has no parent. Changing a key to a value with no parent row throws `InvalidOperationException` before any row is written.
+
 ```csharp
 // Single-column FK
 await writer.CreateRelationshipAsync(new RelationshipDefinition(
