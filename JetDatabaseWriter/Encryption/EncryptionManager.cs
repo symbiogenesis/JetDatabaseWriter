@@ -290,14 +290,26 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Applies or removes the fixed RC4 mask Access uses for page-0 header
-    /// bytes <c>0x18..0x97</c>. The transform is symmetric.
+    /// Applies or removes the fixed RC4 mask Access uses for Jet4 / ACE
+    /// page-0 header bytes <c>0x18..0x97</c>. The transform is symmetric, and
+    /// on bytes <c>0x18..0x95</c> it matches the 126-byte Jet3 mask, so an
+    /// unmask-edit-mask round trip of those bytes is right on Jet3 too.
     /// </summary>
     /// <param name="headerPage">The header page.</param>
-    internal static void TransformHeaderMask(byte[] headerPage)
+    internal static void TransformHeaderMask(byte[] headerPage) => TransformHeaderMask(headerPage, DatabaseFormat.AceAccdb);
+
+    /// <summary>
+    /// Applies or removes the fixed RC4 mask Access uses for the page-0
+    /// header of <paramref name="format"/>: bytes <c>0x18..0x95</c> on Jet3,
+    /// <c>0x18..0x97</c> on Jet4 / ACE. The transform is symmetric.
+    /// </summary>
+    /// <param name="headerPage">The header page.</param>
+    /// <param name="format">The database format.</param>
+    internal static void TransformHeaderMask(byte[] headerPage, DatabaseFormat format)
     {
         Guard.NotNull(headerPage, nameof(headerPage));
-        int length = Math.Min(Constants.DatabaseHeader.MaskLength, headerPage.Length - Constants.DatabaseHeader.MaskStart);
+        int maskLength = format == DatabaseFormat.Jet3Mdb ? Constants.DatabaseHeader.Jet3MaskLength : Constants.DatabaseHeader.MaskLength;
+        int length = Math.Min(maskLength, headerPage.Length - Constants.DatabaseHeader.MaskStart);
         if (length > 0)
         {
             Rc4Transform(headerPage, Constants.DatabaseHeader.MaskStart, length, HeaderRc4Key);

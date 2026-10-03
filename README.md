@@ -462,6 +462,8 @@ For large databases, prefer streaming each table from `ListTablesAsync()` with `
 ## Writing Data
 
 > Supports Jet3, Jet4, and ACE formats — `.mdb` (Access 97+) or `.accdb`.
+>
+> Jet3 stores text and object names in the database's code page. New Jet3 files use Windows-1252, as Access 97 does, so a character outside it is written as its closest match or `?` (`Łódź` becomes `Lódz`, `中文` becomes `??`). Jet4 and ACE store text as UTF-16.
 
 ```csharp
 await using var writer = await AccessWriter.OpenAsync("database.mdb");

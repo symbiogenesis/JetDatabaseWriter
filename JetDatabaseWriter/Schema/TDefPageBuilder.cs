@@ -602,13 +602,39 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         BuildGlobalUsageMapPage(db, pgSz, format);
         BuildMSysObjectsTDef(db, pgSz * 2, format, fullCatalogSchema);
 
-        if (format != DatabaseFormat.Jet3Mdb)
+        if (format == DatabaseFormat.Jet3Mdb)
+        {
+            WriteJet3HeaderDefaults(db);
+        }
+        else
         {
             WriteJet4AceHeaderDefaults(db);
-            EncryptionManager.TransformHeaderMask(db);
         }
 
+        EncryptionManager.TransformHeaderMask(db, format);
         return db;
+    }
+
+    /// <summary>
+    /// Writes the unmasked page-0 fields Access 97 writes in a new database,
+    /// as found in the Access 97 fixtures: code page 1252 and sort order 0x0409.
+    /// The encoding key and the 20-byte password area stay zero, so the file
+    /// is unencrypted and has no password. The 2 bytes at 0x56, which vary from
+    /// file to file and whose meaning is unknown, stay zero.
+    /// </summary>
+    /// <param name="db">The database image, page 0 unmasked.</param>
+    private static void WriteJet3HeaderDefaults(byte[] db)
+    {
+        db[0x19] = 0x01;
+        db[0x1C] = 0x01;
+        db[0x1D] = 0x01;
+        Wi32(db, 0x20, 2);
+        Wi32(db, 0x24, 3);
+        Wi32(db, 0x28, 4);
+        Wi32(db, 0x2C, 5);
+        db[0x38] = 0x01;
+        Wu16(db, Constants.DatabaseHeader.Jet3SortOrder, 0x0409);
+        Wu16(db, Constants.DatabaseHeader.CodePage, 1252);
     }
 
     private static void WriteJet4AceHeaderDefaults(byte[] db)

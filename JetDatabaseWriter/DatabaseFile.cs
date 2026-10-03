@@ -92,6 +92,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
         // of a corrupted byte. ACE / ACCDB stores text as UTF-16 in user data
         // so the codepage there is largely cosmetic, but Jet3 .mdb files (and
         // Jet4 catalog names) need it correct to round-trip non-ASCII names.
+        // An unknown code page falls back to UTF-8: Jet3 files that earlier
+        // builds of this library created left the header unmasked, so its raw
+        // zeros decode as code page 17019, and they hold UTF-8 text.
         this.CodePage = EncryptionManager.DecodeHeaderCodePage(header, this.Format);
         if (this.CodePage <= 0)
         {

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -110,6 +111,102 @@ public sealed class CreateDatabaseTests
         Assert.Equal((byte)'4', bytes[0x9C]);
         Assert.Equal((byte)'.', bytes[0x9D]);
         Assert.Equal((byte)'0', bytes[0x9E]);
+    }
+
+    // ── Jet3 header: masked like Access 97, code page 1252 ────────────
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Jet3_MasksHeaderRegionLikeAccess()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var ms = new MemoryStream();
+        await using (await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: ct))
+        {
+        }
+
+        byte[] bytes = ms.ToArray();
+
+        // Unmasked, the encoding key is 0, so its raw bytes are the keystream:
+        // a raw-zero key would read as a non-zero key 0x4EBC8AFB.
+        Assert.Equal(new byte[] { 0xFB, 0x8A, 0xBC, 0x4E }, bytes.AsSpan(0x3E, 4).ToArray());
+
+        // Access masks 126 bytes on Jet3 (0x18..0x95), so 0x96..0x97 stay raw zero.
+        Assert.Equal(0, bytes[0x96]);
+        Assert.Equal(0, bytes[0x97]);
+
+        // Unmasked, the header carries Access 97's defaults (code page 1252 at
+        // 0x3C, sort order 0x0409 at 0x3A, ...). Compare with an Access 97 file;
+        // 0x56..0x57 differ from file to file.
+        byte[] unmasked = UnmaskJet3Header(bytes);
+        byte[] access = UnmaskJet3Header(await File.ReadAllBytesAsync(TestDatabases.Jet3Test, ct));
+        Assert.Equal(0xE4, unmasked[0x3C]);
+        Assert.Equal(0x04, unmasked[0x3D]);
+        for (int offset = 0x14; offset < 0x96; offset++)
+        {
+            if (offset is not (0x56 or 0x57))
+            {
+                Assert.True(access[offset] == unmasked[offset], $"Unmasked header byte 0x{offset:X2} is 0x{unmasked[offset]:X2}; Access 97 writes 0x{access[offset]:X2}.");
+            }
+        }
+
+        ms.Position = 0;
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, ct));
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
+        Assert.Equal(1252, reader.CodePage);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Jet3_StoresTextAsWindows1252()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: ct))
+        {
+            Assert.Equal(1252, writer.CodePage);
+            await writer.CreateTableAsync("Cafés", [new ColumnDefinition("Name", typeof(string), maxLength: 50)], ct);
+            await writer.InsertRowAsync("Cafés", ["Café"], ct);
+        }
+
+        byte[] bytes = ms.ToArray();
+        Assert.True(IndexOf(bytes, [0x43, 0x61, 0x66, 0xE9]) >= 0, "The Windows-1252 bytes of \"Café\" are missing.");
+        Assert.True(IndexOf(bytes, [0x43, 0x61, 0x66, 0xC3, 0xA9]) < 0, "\"Café\" was stored as UTF-8.");
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
+        Assert.Equal(["Cafés"], await reader.ListTablesAsync(ct));
+        DataTable table = await reader.ReadDataTableAsync("Cafés", cancellationToken: ct);
+        Assert.Equal("Café", table.Rows[0]["Name"]);
+    }
+
+    [Fact]
+    public async Task OpenAsync_LegacyUnmaskedJet3Header_StillRoundTripsUtf8Text()
+    {
+        // Jet3 files created before the header was masked have raw zeros in
+        // 0x18..0x95. Their code page decodes as an unknown one, so they keep
+        // reading and writing text as UTF-8, as they always did.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: ct))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Name", typeof(string), maxLength: 50)], ct);
+        }
+
+        ms.Position = 0x18;
+        ms.Write(new byte[0x96 - 0x18]);
+
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            Assert.Equal(65001, writer.CodePage);
+            await writer.InsertRowAsync("T", ["Café"], ct);
+        }
+
+        Assert.True(IndexOf(ms.ToArray(), [0x43, 0x61, 0x66, 0xC3, 0xA9]) >= 0, "The legacy file's text is no longer UTF-8.");
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
+        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal("Café", table.Rows[0]["Name"]);
     }
 
     // ── Round-trip: create → create table → verify columns ────────────
@@ -474,6 +571,19 @@ public sealed class CreateDatabaseTests
         Assert.Equal(2, rows[1][0]);
         Assert.Equal("Bob", rows[1][1]);
     }
+
+    /// <summary>Returns page-0 bytes <c>0..0x95</c> with the 126-byte Jet3 header mask removed.</summary>
+    /// <param name="file">The database file.</param>
+    private static byte[] UnmaskJet3Header(byte[] file)
+    {
+        // TransformHeaderMask masks up to 128 bytes from 0x18, so a 0x96-byte
+        // copy gets exactly the 126 bytes Access masks on Jet3.
+        byte[] header = file.AsSpan(0, 0x96).ToArray();
+        EncryptionManager.TransformHeaderMask(header);
+        return header;
+    }
+
+    private static int IndexOf(byte[] haystack, byte[] needle) => haystack.AsSpan().IndexOf(needle);
 
     private static void TryDeleteFile(string path)
     {
