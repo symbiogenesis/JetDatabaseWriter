@@ -17,6 +17,7 @@ using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
 /// Row DML workflows behind <see cref="Interfaces.IAccessWriter"/>: insert, update, and
@@ -249,6 +250,10 @@ internal sealed class TableDataWriter(
             }
 
             await constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
+
+            // The row is deleted and re-inserted, so every carried MEMO / OLE
+            // value must have been read; refuse before any page is touched.
+            UnreadableLongValue.ThrowIfAny(newRow, tableName);
 
             pendingUpdates.Add((i, oldRow, newRow));
         }

@@ -363,8 +363,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.services.Tables.ReadAllTablesAsync(progress, cancellationToken);
 
     /// <summary>
-    /// Reads every row of <paramref name="tableName"/> with complex columns left as
-    /// their raw references, for the writer's schema-rewrite snapshots.
+    /// Reads every row of <paramref name="tableName"/> for the writer's snapshots,
+    /// whose rows updates, cascades and schema rewrites insert again. Complex
+    /// columns stay as their raw references, OLE cells hold the stored bytes
+    /// exactly (no package unwrap or signature slicing), and a MEMO / OLE value
+    /// whose stored data cannot be read becomes an
+    /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
+    /// refuses to store, instead of a placeholder. MEMO / OLE columns are
+    /// therefore typed <see cref="object"/>.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>

@@ -13,6 +13,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
 /// Runtime foreign-key enforcement for insert, update, and delete, including
@@ -433,19 +434,28 @@ internal sealed class RelationshipEnforcer(
                     $"{affectedIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
             }
 
+            // Build every rewritten child row first so an unreadable MEMO / OLE
+            // value refuses the cascade before any child row is deleted.
+            object[][] rewrittenRows = new object[affectedIndices.Count][];
             for (int affectedIndex = 0; affectedIndex < affectedIndices.Count; affectedIndex++)
             {
-                int rowIndex = affectedIndices[affectedIndex];
                 object[] newPkSubset = movingChanges[affectedOldKeys[affectedIndex]].NewPkSubset;
-                object[] rowValues = TableSnapshotReader.GetDbNullNormalizedItemArray(childSnap.Rows[rowIndex]);
+                object[] rowValues = TableSnapshotReader.GetDbNullNormalizedItemArray(childSnap.Rows[affectedIndices[affectedIndex]]);
 
                 for (int column = 0; column < rel.ForeignColumns.Count; column++)
                 {
                     rowValues[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
                 }
 
+                UnreadableLongValue.ThrowIfAny(rowValues, rel.ForeignTable);
+                rewrittenRows[affectedIndex] = rowValues;
+            }
+
+            for (int affectedIndex = 0; affectedIndex < affectedIndices.Count; affectedIndex++)
+            {
+                int rowIndex = affectedIndices[affectedIndex];
                 await tableRows.MarkRowDeletedAsync(locations[rowIndex].PageNumber, locations[rowIndex].RowIndex, cancellationToken).ConfigureAwait(false);
-                await tableRows.InsertRowDataAsync(childEntry.TDefPage, childDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await tableRows.InsertRowDataAsync(childEntry.TDefPage, childDef, rewrittenRows[affectedIndex], updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
 
             await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);

@@ -10,6 +10,7 @@ using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -57,6 +58,10 @@ internal sealed class TableRowStore(
                 $"Expected {tableDef.Columns.Count} values for table row but received {values.Length}.",
                 nameof(values));
         }
+
+        // Callers that rewrite snapshot rows check before deleting the old row;
+        // this guard keeps a placeholder from ever reaching the page.
+        UnreadableLongValue.ThrowIfAny(values, tableName: null);
 
         // Push any oversized MEMO / OLE / Attachment payload to LVAL pages
         // before serializing the row. The pre-encode pass appends LVAL pages to

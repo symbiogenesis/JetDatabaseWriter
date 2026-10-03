@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -115,6 +116,62 @@ internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
             default:
                 LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
                 return chain.Data ?? [];
+        }
+    }
+
+    /// <summary>
+    /// Reads the stored bytes of a MEMO / OLE value from its inline payload,
+    /// single LVAL row or LVAL chain. Unlike <see cref="ReadLongValueRawBytesAsync"/>,
+    /// a value that cannot be resolved throws instead of returning an empty
+    /// array, so callers that write the value back never persist a loss.
+    /// </summary>
+    /// <param name="row">The page holding the row.</param>
+    /// <param name="start">The offset of the 12-byte long-value descriptor.</param>
+    /// <param name="len">The length of the column slice.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidDataException">The descriptor is truncated or its LVAL data cannot be read.</exception>
+    internal async ValueTask<byte[]> ReadLongValueBytesExactAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
+    {
+        if (!LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor))
+        {
+            throw new InvalidDataException($"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
+        }
+
+        if (descriptor.Length <= 0)
+        {
+            return [];
+        }
+
+        switch (descriptor.StorageMode)
+        {
+            case Constants.LongValue.InlineStorageMode:
+                int valueStart = start + Constants.LongValue.HeaderSize;
+                int inlineLen = Math.Min(descriptor.Length, row.Length - valueStart);
+                if (inlineLen <= 0)
+                {
+                    throw new InvalidDataException($"the inline value claims {descriptor.Length} byte(s) but none fit in the page");
+                }
+
+                return BinaryBuffer.CopySlice(row, valueStart, inlineLen);
+
+            case Constants.LongValue.SinglePageStorageMode:
+                LvalRowLocation location = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+                if (location.Failed)
+                {
+                    throw new InvalidDataException($"the LVAL row could not be located: {location.Error}");
+                }
+
+                int size = Math.Min(location.Size, descriptor.Length);
+                if (size <= 0)
+                {
+                    throw new InvalidDataException($"the LVAL row is empty but the descriptor claims {descriptor.Length} byte(s)");
+                }
+
+                return BinaryBuffer.CopySlice(location.Page, location.Start, size);
+
+            default:
+                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
+                return chain.Data ?? throw new InvalidDataException($"the LVAL chain could not be read: {chain.Error}");
         }
     }
 

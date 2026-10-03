@@ -24,7 +24,7 @@ internal sealed class RowDecodePlan
     private readonly bool hasDeletedColumns;
     private readonly bool hasVarColumns;
 
-    private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing)
+    private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing, bool preserveLongValueBytes = false)
     {
         Guard.NotNull(tableDef, nameof(tableDef));
 
@@ -34,12 +34,33 @@ internal sealed class RowDecodePlan
         this.strictParsing = strictParsing;
         this.hasDeletedColumns = tableDef.HasDeletedColumns;
         this.hasVarColumns = tableDef.HasVarColumns;
+        this.PreservesLongValueBytes = preserveLongValueBytes;
     }
 
     internal int ColumnCount => this.columns.Count;
 
+    /// <summary>
+    /// Gets a value indicating whether MEMO / OLE values are decoded for a
+    /// write-back: OLE cells carry the stored bytes exactly (no OLE package
+    /// unwrap or file-signature slicing), and a value whose stored bytes cannot
+    /// be read decodes to an <see cref="UnreadableLongValue"/>, which the writer
+    /// refuses to store, instead of a placeholder such as <c>"(memo)"</c>, an
+    /// empty array or <see cref="DBNull"/>.
+    /// </summary>
+    internal bool PreservesLongValueBytes { get; }
+
     internal static RowDecodePlan CreateTyped(TableDef tableDef, bool[]? wantedColumns, bool strictParsing)
         => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing);
+
+    /// <summary>
+    /// Creates a typed plan for the writer's row snapshots, whose values are
+    /// re-inserted by updates, cascades and schema rewrites. See
+    /// <see cref="PreservesLongValueBytes"/>.
+    /// </summary>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
+    internal static RowDecodePlan CreateTypedForWriteBack(TableDef tableDef, bool strictParsing)
+        => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing, preserveLongValueBytes: true);
 
     internal static RowDecodePlan CreateStrings(TableDef tableDef, bool strictParsing)
         => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing);
@@ -218,6 +239,10 @@ internal sealed class RowDecodePlan
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
 
+    /// <summary>Gets the name of the column at <paramref name="columnIndex"/>, for error messages.</summary>
+    /// <param name="columnIndex">The column index.</param>
+    internal string GetColumnName(int columnIndex) => this.columns[columnIndex].Name;
+
     internal bool TryDecodeDirect<T>(
         DatabaseFile source,
         byte[] page,
@@ -234,6 +259,7 @@ internal sealed class RowDecodePlan
         int length,
         ColumnInfo column,
         LongValueDecoder longValueDecoder,
+        bool preserveBytes,
         ref bool needsLongValue)
     {
         bool isOle = column.Type == OleType;
@@ -245,12 +271,24 @@ internal sealed class RowDecodePlan
             int inlineLength = Math.Min(valueLength, page.Length - valueStart);
             if (inlineLength <= 0)
             {
+                if (preserveBytes && valueLength > 0)
+                {
+                    // Let the exact long-value reader report the truncation.
+                    needsLongValue = true;
+                    return new LongValueRef(start, length, isOle);
+                }
+
                 return isOle ? Array.Empty<byte>() : string.Empty;
             }
 
-            return isOle
-                ? OleObjectDecoder.DecodeOleValueBytes(page, valueStart, inlineLength)
-                : longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
+            if (!isOle)
+            {
+                return longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
+            }
+
+            return preserveBytes
+                ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)
+                : OleObjectDecoder.DecodeOleValueBytes(page, valueStart, inlineLength);
         }
 
         needsLongValue = true;
@@ -680,7 +718,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type is MemoType or OleType)
             {
-                return DecodeLongVariableValue(page, start, length, column, longValueDecoder, ref needsLongValue);
+                return DecodeLongVariableValue(page, start, length, column, longValueDecoder, this.PreservesLongValueBytes, ref needsLongValue);
             }
 
             if (column.Type == BooleanType)
@@ -696,16 +734,28 @@ internal sealed class RowDecodePlan
         }
         catch (ArgumentException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
+            return this.MalformedVariableValue(column, exception);
         }
         catch (IndexOutOfRangeException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
+            return this.MalformedVariableValue(column, exception);
         }
         catch (OverflowException exception)
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
+            return this.MalformedVariableValue(column, exception);
         }
+    }
+
+    private object MalformedVariableValue(ColumnInfo column, Exception exception)
+    {
+        // A write-back snapshot must not turn an unreadable MEMO / OLE value
+        // into DBNull, which an update or schema rewrite would then store.
+        if (this.PreservesLongValueBytes && column.Type is MemoType or OleType)
+        {
+            return new UnreadableLongValue(column.Name, exception.Message);
+        }
+
+        return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
     }
 
     private object? DecodeCalculatedTypedVariableValue(

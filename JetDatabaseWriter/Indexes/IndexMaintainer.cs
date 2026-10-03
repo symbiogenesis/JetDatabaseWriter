@@ -14,6 +14,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -109,6 +110,11 @@ internal sealed class IndexMaintainer(
         IReadOnlyList<object[]> rows,
         CancellationToken cancellationToken)
     {
+        foreach (object[] row in rows)
+        {
+            UnreadableLongValue.ThrowIfAny(row, tableName);
+        }
+
         var dataPageNumbers = new List<long>();
         await db.ForEachOwnedDataPageAsync(
             tdefPage,

@@ -119,18 +119,18 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="tableName">The linked table name.</param>
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
-    /// <param name="preserveComplexReferences">Whether complex columns keep their raw references (schema-rewrite snapshots).</param>
+    /// <param name="forWriteBack">Whether to read the writer's write-back snapshot (<see cref="AccessReader.ReadDataTableForSchemaRewriteAsync"/>) instead of the public typed read.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<DataTable?> TryReadDataTableAsync(
         string tableName,
         uint? maxRows,
         IProgress<long>? progress,
-        bool preserveComplexReferences,
+        bool forWriteBack,
         CancellationToken cancellationToken) =>
         this.TryReadLinkedTableAsync(
             tableName,
             link => LinkedTableManager.ReadLinkedTextDataTableAsync(policy, link, maxRows, progress, cancellationToken),
-            (source, link) => preserveComplexReferences
+            (source, link) => forWriteBack
                 ? source.ReadDataTableForSchemaRewriteAsync(link.SourceObjectName, cancellationToken)
                 : source.ReadTableAsync(link.SourceObjectName, maxRows, progress, cancellationToken),
             cancellationToken);
