@@ -342,6 +342,134 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("[Price]Price2", row["Label"]);
     }
 
+    /// <summary>
+    /// Dropping a column a calculated expression names is refused before
+    /// anything is written, and the writer, or the explicit transaction, stays
+    /// usable: the next insert still evaluates the expression.
+    /// </summary>
+    /// <param name="mode">How the writer runs the drop and the insert after it.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(WriteModes))]
+    public async Task DropColumn_NamedByCalculatedExpression_ThrowsAndLeavesTableUnchanged(WriteMode mode)
+    {
+        await using MemoryStream ms = await CreatePriceTableAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.DropColumnAsync("T", "Price", Ct));
+
+                Assert.Contains("'Price'", exception.Message, StringComparison.Ordinal);
+                Assert.Contains("'Total'", exception.Message, StringComparison.Ordinal);
+                Assert.Contains("[Price]*[Qty]", exception.Message, StringComparison.Ordinal);
+
+                await writer.InsertRowAsync("T", [2, 3d, 2, null, null, null, null], Ct);
+            });
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", Ct);
+        Assert.Equal(["Id", "Price", "Qty", "Total", "Label", "Bare", "Twice"], meta.Select(c => c.Name));
+        Assert.Equal("[Price]*[Qty]", Expression(meta, "Total"));
+        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        AssertPriceRow(rows, 1, total: 5, label: "[Price] is 2.5", bare: 3.5, twice: 10);
+        AssertPriceRow(rows, 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "validation rule")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "default value")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "validation rule")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "default value")]
+    [InlineData(DatabaseFormat.AceAccdb, "validation rule")]
+    [InlineData(DatabaseFormat.AceAccdb, "default value")]
+    public async Task DropColumn_NamedByAnotherColumnsValidationRuleOrDefault_Throws(DatabaseFormat format, string property)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        string expression = property == "validation rule" ? "Len([Code]) > 0" : "[Code] & \"-n\"";
+        ColumnDefinition other = property == "validation rule"
+            ? new("Other", typeof(string), maxLength: 20) { ValidationRuleExpression = expression }
+            : new("Other", typeof(string), maxLength: 20) { DefaultValueExpression = expression };
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("D", [new("Id", typeof(int)), new("Code", typeof(string), maxLength: 10), other], Ct);
+            await writer.InsertRowAsync("D", [1, "ABC", "x"], Ct);
+
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.DropColumnAsync("D", "code", Ct));
+
+            Assert.Contains($"the {property} of column 'Other'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["Id", "Code", "Other"], (await reader.GetColumnMetadataAsync("D", Ct)).Select(c => c.Name));
+        Assert.Equal("1|ABC|x", string.Join("|", Assert.Single((await reader.ReadDataTableAsync("D", cancellationToken: Ct)).AsEnumerable()).ItemArray));
+    }
+
+    /// <summary>
+    /// A column named only inside another expression's string literals, or
+    /// only by its own rule, can be dropped.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DropColumn_NamedOnlyInStringLiteralOrByItsOwnRule_Succeeds(DatabaseFormat format)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync(
+                "D",
+                [
+                    new("Id", typeof(int)),
+                    new("Code", typeof(string), maxLength: 10) { ValidationRuleExpression = "Len([Code]) = 3" },
+                    new("Note", typeof(string), maxLength: 20) { DefaultValueExpression = "\"[Code]\" & 'Code'" },
+                ],
+                Ct);
+            await writer.InsertRowAsync("D", [1, "ABC", null], Ct);
+            await writer.DropColumnAsync("D", "Code", Ct);
+            await writer.InsertRowAsync("D", [2, null], Ct);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("D", Ct);
+        Assert.Equal(["Id", "Note"], meta.Select(c => c.Name));
+        Assert.Equal("\"[Code]\" & 'Code'", meta[1].DefaultValueExpression);
+        Assert.Equal(
+            ["1|[Code]Code", "2|[Code]Code"],
+            (await reader.ReadDataTableAsync("D", cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Note"]}").Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task DropColumn_TheCalculatedColumnItselfOrOneNoLongerNamed_Succeeds()
+    {
+        await using MemoryStream ms = await CreatePriceTableAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            // Twice names Total, so Total can go only after Twice.
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropColumnAsync("T", "Total", Ct));
+            await writer.DropColumnAsync("T", "Twice", Ct);
+            await writer.DropColumnAsync("T", "Total", Ct);
+            await writer.InsertRowAsync("T", [2, 3d, 2, null, null], Ct);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["Id", "Price", "Qty", "Label", "Bare"], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
+        DataRow row = FindRow(await reader.ReadDataTableAsync("T", cancellationToken: Ct), 2);
+        Assert.Equal("[Price] is 3", row["Label"]);
+        Assert.Equal(4d, Convert.ToDouble(row["Bare"], CultureInfo.InvariantCulture));
+    }
+
     private static string? Expression(IReadOnlyList<ColumnMetadata> meta, string column)
         => Assert.Single(meta, c => c.Name == column).CalculationExpression;
 
