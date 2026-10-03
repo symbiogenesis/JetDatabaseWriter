@@ -589,6 +589,48 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
+    /// Returns the per-row complex reference every surviving complex column of
+    /// <paramref name="row"/> holds (one with a <see cref="ColumnDefinition.ComplexId"/>,
+    /// which keeps its flat table), or <see langword="null"/> when the row has
+    /// no such column, or one of them is null or holds another reference.
+    /// </summary>
+    /// <param name="row">The projected row.</param>
+    /// <param name="complexColumns">The indexes of the projected complex columns.</param>
+    /// <param name="newDefs">The projected column list.</param>
+    private static int? SharedComplexReference(object[] row, List<int> complexColumns, List<ColumnDefinition> newDefs)
+    {
+        int? shared = null;
+        foreach (int i in complexColumns)
+        {
+            if (newDefs[i].ComplexId == 0)
+            {
+                continue;
+            }
+
+            if (row[i] is not ComplexIdRef { Id: > 0 } reference || (shared is int previous && previous != reference.Id))
+            {
+                return null;
+            }
+
+            shared = reference.Id;
+        }
+
+        return shared;
+    }
+
+    private static void FillNullComplexSlots(object[] row, List<int> complexColumns, int reference)
+    {
+        var value = new ComplexIdRef(reference);
+        foreach (int i in complexColumns)
+        {
+            if (row[i] is null or DBNull)
+            {
+                row[i] = value;
+            }
+        }
+    }
+
+    /// <summary>
     /// Rejects a Jet3 table of more than 255 columns before anything is
     /// written: a Jet3 row stores <c>num_cols</c> in one byte, and Access
     /// allows 255 fields per table.
@@ -867,11 +909,17 @@ internal sealed class TableSchemaEditor(
 
     /// <summary>
     /// Gives every projected row a per-row complex reference in each complex
-    /// column, as an insert does: a complex column the rewrite adds, or a slot
-    /// an earlier build left null, gets a fresh reference shared by the row's
-    /// null complex slots. The references come from the table's complex
-    /// counter, and the TDEF complex AutoNumber the rewrite carries to the
-    /// rebuilt table covers them.
+    /// column, as an insert does. A complex column the rewrite adds has a new,
+    /// empty flat table, so it takes the reference the row already holds when
+    /// every other complex column of the row holds that one and no other row
+    /// does, which keeps Access's one reference per row. Any other row with a
+    /// null complex slot gets a fresh reference, shared by its null slots: a
+    /// row whose complex columns are null, differ or repeat another row's
+    /// reference was written by an earlier build, and an existing column's
+    /// flat table may already hold rows for any reference the row's other
+    /// columns use. Fresh references come from the table's complex counter,
+    /// and the TDEF complex AutoNumber the rewrite carries to the rebuilt
+    /// table covers them.
     /// </summary>
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="tableDef">Its current definition.</param>
@@ -894,9 +942,44 @@ internal sealed class TableSchemaEditor(
             }
         }
 
-        List<object[]> needing = complexColumns.Count == 0
-            ? []
-            : rows.FindAll(row => complexColumns.Exists(i => row[i] is null or DBNull));
+        if (complexColumns.Count == 0)
+        {
+            return;
+        }
+
+        // The reference each row's surviving complex columns share, and how
+        // many rows share each one.
+        int?[] shared = new int?[rows.Count];
+        var holders = new Dictionary<int, int>();
+        for (int r = 0; r < rows.Count; r++)
+        {
+            if (SharedComplexReference(rows[r], complexColumns, newDefs) is int reference)
+            {
+                shared[r] = reference;
+                holders[reference] = holders.TryGetValue(reference, out int count) ? count + 1 : 1;
+            }
+        }
+
+        List<object[]> needing = [];
+        for (int r = 0; r < rows.Count; r++)
+        {
+            object[] row = rows[r];
+            if (!complexColumns.Exists(i => row[i] is null or DBNull))
+            {
+                continue;
+            }
+
+            // A shared reference leaves only the added columns null.
+            if (shared[r] is int reference && holders[reference] == 1)
+            {
+                FillNullComplexSlots(row, complexColumns, reference);
+            }
+            else
+            {
+                needing.Add(row);
+            }
+        }
+
         if (needing.Count == 0)
         {
             return;
@@ -905,14 +988,7 @@ internal sealed class TableSchemaEditor(
         int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needing.Count, cancellationToken).ConfigureAwait(false);
         for (int k = 0; k < needing.Count; k++)
         {
-            var reference = new ComplexIdRef(first + k);
-            foreach (int i in complexColumns)
-            {
-                if (needing[k][i] is null or DBNull)
-                {
-                    needing[k][i] = reference;
-                }
-            }
+            FillNullComplexSlots(needing[k], complexColumns, first + k);
         }
     }
 

@@ -205,14 +205,16 @@ internal sealed class ConstraintRegistry(
     /// the columns a row leaves out) gets its CLR or persisted default, or
     /// null when it has none. An AutoNumber column generates its next value,
     /// a complex column gets the row's complex reference, and a calculated
-    /// column is computed, for any of the three.
+    /// column is computed, for any of the three. The row's complex reference
+    /// is shared by all its complex columns: one the caller supplies in any
+    /// of them, else the next from the table's counter.
     /// </remarks>
     /// <param name="tableName">The table name.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values, in table-column order. Every <see cref="DbDefault"/> is replaced, so it never reaches the row encoder.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">A NOT NULL column is null after defaults and AutoNumber values are applied.</exception>
-    /// <exception cref="ArgumentException">A validation rule rejects a value.</exception>
+    /// <exception cref="ArgumentException">A validation rule rejects a value, or the row's complex columns are given different references or one outside 1 to <see cref="int.MaxValue"/>.</exception>
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
@@ -232,9 +234,17 @@ internal sealed class ConstraintRegistry(
 
         List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = null;
         CalculatedExpressionEvaluationContext? defaultContext = null;
-        int? rowReference = null;
         try
         {
+            // Access gives every row one per-row complex reference, shared by
+            // all its complex columns, when the row is inserted. A reference
+            // the caller supplies is the row's, and the counter moves past it.
+            int? rowReference = SuppliedComplexReference(tableName, list, values);
+            if (rowReference is int supplied)
+            {
+                await this.KeepComplexCounterAboveAsync(tableName, tableDef, list, supplied, checkpoints = [], cancellationToken).ConfigureAwait(false);
+            }
+
             for (int i = 0; i < list.Count; i++)
             {
                 ColumnConstraint c = list[i];
@@ -250,18 +260,12 @@ internal sealed class ConstraintRegistry(
 
                 if (c.IsComplexReference)
                 {
-                    // Access gives every row one per-row complex reference,
-                    // shared by all its complex columns, when the row is
-                    // inserted. A reference the caller supplies is kept, and
-                    // the counter moves past it.
+                    // A null complex column gets the row's reference: the one
+                    // supplied, or else the next from the table's counter.
                     if (isNull)
                     {
                         rowReference ??= await this.NextComplexReferenceAsync(tableName, tableDef, list, 1, checkpoints ??= [], cancellationToken).ConfigureAwait(false);
                         values[i] = new ComplexIdRef(rowReference.Value);
-                    }
-                    else if (TryGetComplexReference(value!, out long supplied))
-                    {
-                        await this.KeepComplexCounterAboveAsync(tableName, tableDef, list, supplied, checkpoints ??= [], cancellationToken).ConfigureAwait(false);
                     }
 
                     continue;
@@ -499,6 +503,48 @@ internal sealed class ConstraintRegistry(
         }
 
         return requested;
+    }
+
+    /// <summary>
+    /// Returns the per-row complex reference the caller supplied in the row's
+    /// complex columns, or <see langword="null"/> when they hold none. Every
+    /// complex column of a row shares one reference, so all the ones supplied
+    /// must be equal, as Jackcess requires.
+    /// </summary>
+    /// <param name="tableName">The table name, for error messages.</param>
+    /// <param name="constraints">The column constraints, in table-column order.</param>
+    /// <param name="values">The row, in table-column order.</param>
+    /// <returns>The supplied reference, or <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentException">Two complex columns hold different references, or one holds a reference outside 1 to <see cref="int.MaxValue"/>.</exception>
+    private static int? SuppliedComplexReference(string tableName, List<ColumnConstraint> constraints, object[] values)
+    {
+        int? shared = null;
+        string? sharedColumn = null;
+        for (int i = 0; i < constraints.Count; i++)
+        {
+            ColumnConstraint c = constraints[i];
+            if (!c.IsComplexReference || values[i] is null or DBNull || !TryGetComplexReference(values[i], out long supplied))
+            {
+                continue;
+            }
+
+            if (supplied is < 1 or > int.MaxValue)
+            {
+                throw new ArgumentException(
+                    $"Column '{c.Name}' on table '{tableName}' holds {supplied}, which is not a per-row complex reference; references run from 1 to {int.MaxValue}.");
+            }
+
+            if (shared is int previous && previous != supplied)
+            {
+                throw new ArgumentException(
+                    $"Columns '{sharedColumn}' and '{c.Name}' on table '{tableName}' hold different complex references ({previous} and {supplied}); all the complex columns of a row share one.");
+            }
+
+            shared = (int)supplied;
+            sharedColumn = c.Name;
+        }
+
+        return shared;
     }
 
     private static bool TryGetComplexReference(object value, out long reference)

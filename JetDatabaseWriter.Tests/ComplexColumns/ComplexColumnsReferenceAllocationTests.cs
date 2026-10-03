@@ -382,6 +382,109 @@ public sealed class ComplexColumnsReferenceAllocationTests
         Assert.Equal(3, docs.ComplexAutoNumber);
     }
 
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_ComplexColumnBesideAnother_SharesEachRowsReference(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
+        {
+            await writer.CreateTableAsync("Docs", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }], Ct);
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value], [2, DBNull.Value]], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.AddColumnAsync("Docs", new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct);
+                await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct);
+                await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct);
+            });
+        }
+
+        // Each row keeps one reference for all its complex columns, as Access does.
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(["1|1|1", "2|2|2", "3|3|3"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
+        Assert.Equal(3, docs.ComplexAutoNumber);
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["2:two.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => $"{a.ConceptualTableId}:{a.FileName}"));
+        Assert.Equal(["2:42"], (await reader.GetMultiValueItemsAsync("Docs", "Tags", Ct)).Select(i => FormattableString.Invariant($"{i.ConceptualTableId}:{i.Value}")));
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_ComplexColumn_RowsWithoutOneUniqueReference_GetFreshReferences(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [.. Enumerable.Range(1, 5).Select(id => new object?[] { id, DBNull.Value, DBNull.Value })], Ct);
+        }
+
+        // Shapes an earlier build could leave: a null slot (row 1), complex
+        // columns holding different references (row 2) and two rows holding
+        // the same one (rows 3 and 4). An existing column's flat table may
+        // hold rows for any of those references, so only row 5's reference
+        // is safe for the new column to share.
+        await SetComplexSlotsAsync(
+            ms,
+            "Docs",
+            r => (int)r[0] is 1 or 2 or 4,
+            (r, column) => ((int)r[0], column) switch
+            {
+                (1, "Tags") => null,
+                (2, "Tags") => 6,
+                (4, _) => 3,
+                _ => (int)r[0],
+            });
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+                await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct));
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(
+            ["1|1|7|7", "2|2|6|8", "3|3|3|9", "4|3|3|10", "5|5|5|5"],
+            docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}|{Slot(docs, r, "Labels")}"));
+        Assert.Equal(10, docs.ComplexAutoNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task InsertRow_SuppliedReference_IsSharedByTheRowsComplexColumns(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
+        {
+            await CreateDocsAsync(writer);
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.InsertRowAsync("Docs", [1, 7, DBNull.Value], Ct);
+                await writer.InsertRowAsync("Docs", [2, DBNull.Value, DBNull.Value], Ct);
+                await writer.InsertRowAsync("Docs", new RowValues { ["Id"] = 3, ["Tags"] = 20 }, Ct);
+                await writer.InsertRowAsync("Docs", [4, 30, 30], Ct);
+
+                // A row's complex columns share one reference, so two
+                // different ones are rejected, as Jackcess rejects them.
+                ArgumentException differ = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("Docs", [5, 40, 41], Ct));
+                Assert.Contains("'Files'", differ.Message, StringComparison.Ordinal);
+                Assert.Contains("'Tags'", differ.Message, StringComparison.Ordinal);
+                _ = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("Docs", [5, 0, DBNull.Value], Ct));
+                _ = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("Docs", [5, DBNull.Value, -1], Ct));
+
+                await writer.InsertRowAsync("Docs", [5, DBNull.Value, DBNull.Value], Ct);
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(
+            ["1|7|7", "2|8|8", "3|20|20", "4|30|30", "5|31|31"],
+            docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
+        Assert.Equal(31, docs.ComplexAutoNumber);
+    }
+
     [Fact]
     public void TDefHeaderLayout_ComplexAutoNumber_IsAceOnly()
     {
