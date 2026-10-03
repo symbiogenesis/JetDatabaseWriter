@@ -6,7 +6,6 @@ using System.Text;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 

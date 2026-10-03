@@ -18,13 +18,14 @@ using Xunit;
 /// <c>ThenInclude</c> branches), and a leading <c>Where</c> filter ahead of the chain. Table
 /// names match the POCO type names so the query's name convention resolves each relationship.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
     public async Task ThenInclude_ReferenceThenReference_LoadsNestedParent()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwOrder> orders = await reader.Query<JdwOrder>("JdwOrder")
@@ -50,7 +51,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
         // Orders 1 and 2 reference customer 10: the reference loader hands both the same
         // customer instance, so the nested Region loads once and is visible through both.
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwOrder> orders = await reader.Query<JdwOrder>("JdwOrder")
@@ -69,7 +70,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
     public async Task ThenInclude_CollectionThenCollection_LoadsNestedChildren()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwRegion> regions = await reader.Query<JdwRegion>("JdwRegion")
@@ -95,7 +96,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
     public async Task ThenInclude_CollectionThenReference_LoadsBackReference()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwRegion> regions = await reader.Query<JdwRegion>("JdwRegion")
@@ -117,7 +118,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
         // customer loads once and carries BOTH its Region (reference) and its Orders
         // (collection). Without prefix merging, the second chain would overwrite the first.
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwOrder> orders = await reader.Query<JdwOrder>("JdwOrder")
@@ -136,7 +137,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
     public async Task Where_FiltersRoots_ThenLoadsChain()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwOrder> orders = await reader.Query<JdwOrder>("JdwOrder")
@@ -149,6 +150,18 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
         Assert.Equal(3, only.Id);
         Assert.Equal("Bob", only.Customer!.Name);
         Assert.Equal("South", only.Customer.Region!.Name);
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
     }
 
     private async Task<MemoryStream> BuildAsync(CancellationToken ct)
@@ -177,33 +190,21 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
 
         await writer.InsertRowsAsync(
             "JdwRegion",
-            new[] { new object[] { 100, "North" }, new object[] { 101, "South" } },
+            [[100, "North"], [101, "South"]],
             ct);
         await writer.InsertRowsAsync(
             "JdwCustomer",
-            new[] { new object[] { 10, 100, "Alice" }, new object[] { 11, 101, "Bob" } },
+            [[10, 100, "Alice"], [11, 101, "Bob"]],
             ct);
         await writer.InsertRowsAsync(
             "JdwOrder",
-            new[] { new object[] { 1, 10, "o1" }, new object[] { 2, 10, "o2" }, new object[] { 3, 11, "o3" } },
+            [[1, 10, "o1"], [2, 10, "o2"], [3, 11, "o3"]],
             ct);
 
         return temp;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    public sealed class JdwRegion
+    internal sealed class JdwRegion
     {
         public int Id { get; set; }
 
@@ -212,7 +213,9 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
         public List<JdwCustomer> Customers { get; set; } = [];
     }
 
-    public sealed class JdwCustomer
+#pragma warning disable CA1812 // Only the include loader creates it, through reflection.
+    internal sealed class JdwCustomer
+#pragma warning restore CA1812
     {
         public int Id { get; set; }
 
@@ -225,7 +228,7 @@ public sealed class EntityQueryThenIncludeTests(DatabaseCache db) : IClassFixtur
         public List<JdwOrder> Orders { get; set; } = [];
     }
 
-    public sealed class JdwOrder
+    internal sealed class JdwOrder
     {
         public int Id { get; set; }
 

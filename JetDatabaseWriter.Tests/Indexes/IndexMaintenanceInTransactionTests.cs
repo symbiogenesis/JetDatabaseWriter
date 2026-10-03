@@ -37,8 +37,10 @@ public sealed class IndexMaintenanceInTransactionTests
 
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
 
-    // A capacity-0 page cache, so reads through a writer's DatabaseFile see
-    // the pages its transaction has pending rather than a stale cached copy.
+    /// <summary>
+    /// A capacity-0 page cache, so reads through a writer's DatabaseFile see
+    /// the pages its transaction has pending rather than a stale cached copy.
+    /// </summary>
     private static readonly AccessReaderOptions UncachedReaderOptions = new() { UseLockFile = false, PageCacheSize = 0 };
 
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;

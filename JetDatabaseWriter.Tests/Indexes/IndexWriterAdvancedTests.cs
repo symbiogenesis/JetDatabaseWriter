@@ -437,5 +437,4 @@ public sealed class IndexWriterAdvancedTests
         Assert.Equal(0x01, fileBytes[leafOffset + 1]);
         Assert.Equal(expectedCount, CountLeafEntries(fileBytes, leafOffset));
     }
-
 }

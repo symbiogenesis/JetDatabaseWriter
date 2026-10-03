@@ -19,13 +19,14 @@ using Xunit;
 /// silently comes back empty (the §1b defect). Table names match the POCO type names so
 /// the query's name convention resolves the relationship.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EntityQueryKeyTypeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
     public async Task Include_Reference_MatchesWhenChildKeyIsDoubleAndParentColumnIsInteger()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwChild> children = await reader.Query<JdwChild>("JdwChild")
@@ -45,7 +46,7 @@ public sealed class EntityQueryKeyTypeTests(DatabaseCache db) : IClassFixture<Da
     public async Task Include_Collection_MatchesWhenParentKeyIsDoubleAndChildColumnIsInteger()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwParent> parents = await reader.Query<JdwParent>("JdwParent")
@@ -57,6 +58,18 @@ public sealed class EntityQueryKeyTypeTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal(2, parents[0].Children.Count);
         Assert.Single(parents[1].Children);
         Assert.All(parents[0].Children, c => Assert.Equal(parents[0].Id, c.ParentId));
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
     }
 
     private async Task<MemoryStream> BuildAsync(CancellationToken ct)
@@ -76,28 +89,16 @@ public sealed class EntityQueryKeyTypeTests(DatabaseCache db) : IClassFixture<Da
             new RelationshipDefinition("FK_JdwChild_JdwParent", "JdwParent", "Id", "JdwChild", "ParentId"),
             ct);
 
-        await writer.InsertRowsAsync("JdwParent", new[] { new object[] { 1, "Alice" }, new object[] { 2, "Bob" } }, ct);
+        await writer.InsertRowsAsync("JdwParent", [[1, "Alice"], [2, "Bob"]], ct);
         await writer.InsertRowsAsync(
             "JdwChild",
-            new[] { new object[] { 10, 1, "a1" }, new object[] { 11, 1, "a2" }, new object[] { 12, 2, "b1" } },
+            [[10, 1, "a1"], [11, 1, "a2"], [12, 2, "b1"]],
             ct);
 
         return temp;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    public sealed class JdwParent
+    internal sealed class JdwParent
     {
         public double Id { get; set; }
 
@@ -106,7 +107,7 @@ public sealed class EntityQueryKeyTypeTests(DatabaseCache db) : IClassFixture<Da
         public List<JdwChild> Children { get; set; } = [];
     }
 
-    public sealed class JdwChild
+    internal sealed class JdwChild
     {
         public int Id { get; set; }
 

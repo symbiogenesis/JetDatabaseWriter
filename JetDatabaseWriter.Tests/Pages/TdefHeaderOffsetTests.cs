@@ -60,7 +60,7 @@ public sealed class TdefHeaderOffsetTests
         int numVarCols,
         int numCols)
     {
-        const int RowCount = 700;
+        const int rowCount = 700;
         var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
@@ -78,8 +78,8 @@ public sealed class TdefHeaderOffsetTests
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
         {
-            var rows = new List<object?[]>(RowCount);
-            for (int i = 0; i < RowCount; i++)
+            var rows = new List<object?[]>(rowCount);
+            for (int i = 0; i < rowCount; i++)
             {
                 rows.Add([DBNull.Value, i]);
             }
@@ -90,8 +90,8 @@ public sealed class TdefHeaderOffsetTests
         byte[] bytes = ms.ToArray();
         int o = FindTdefOffset(bytes, format, "ZqAutoFx");
 
-        Assert.Equal((uint)RowCount, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(o + numRows)));
-        Assert.Equal((uint)RowCount, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(o + autoNumber)));
+        Assert.Equal((uint)rowCount, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(o + numRows)));
+        Assert.Equal((uint)rowCount, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(o + autoNumber)));
         Assert.Equal(UserTableType, bytes[o + tableType]);
         Assert.Equal(2, BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(o + maxCols)));
         Assert.Equal(0, BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(o + numVarCols)));
@@ -101,16 +101,16 @@ public sealed class TdefHeaderOffsetTests
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, this.ct);
         TableStat stat = (await reader.GetTableStatsAsync(this.ct)).Single(s => s.Name == "Fixed");
-        Assert.Equal(RowCount, stat.RowCount);
+        Assert.Equal(rowCount, stat.RowCount);
         Assert.Equal(2, stat.ColumnCount);
 
-        var ids = new List<int>(RowCount);
+        var ids = new List<int>(rowCount);
         await foreach (object[] row in reader.Rows("Fixed", cancellationToken: this.ct))
         {
             ids.Add((int)row[0]);
         }
 
-        Assert.Equal(Enumerable.Range(1, RowCount), ids.Order());
+        Assert.Equal(Enumerable.Range(1, rowCount), ids.Order());
     }
 
     /// <summary>
@@ -140,7 +140,7 @@ public sealed class TdefHeaderOffsetTests
 
             _ = await writer.InsertRowsAsync(
                 "People",
-                new List<object?[]> { new object?[] { DBNull.Value, "a" }, new object?[] { DBNull.Value, "b" }, new object?[] { DBNull.Value, "c" }, new object?[] { DBNull.Value, "d" } },
+                [[DBNull.Value, "a"], [DBNull.Value, "b"], [DBNull.Value, "c"], [DBNull.Value, "d"]],
                 this.ct);
             Assert.Equal(1, await writer.DeleteRowsAsync("People", "Name", "d", this.ct));
         }

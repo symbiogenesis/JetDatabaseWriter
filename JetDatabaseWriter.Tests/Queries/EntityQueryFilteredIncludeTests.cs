@@ -18,13 +18,14 @@ using Xunit;
 /// rows. Table names match the POCO type names so the query's name convention resolves the
 /// relationship.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
     public async Task FilteredInclude_Where_KeepsMatchingChildrenPerParent()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -45,7 +46,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
     public async Task OrderedInclude_Take_KeepsTopChildrenPerParent()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -65,7 +66,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
     public async Task FilteredOrderedPagedInclude_AppliesWhereOrderSkipTakeInOrder()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -90,7 +91,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
     public async Task OrderedInclude_OrderByThenBy_AppliesCompositeOrder()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -107,7 +108,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
     public async Task FilteredInclude_ThenInclude_DescendsOnlyIntoKeptRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -131,7 +132,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
     public async Task FilteredInclude_AfterRootWhere_AppliesBothFilters()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
@@ -145,14 +146,14 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         // Only Alice's orders with amount >= 150 (200 and 150) are kept.
         Assert.Equal(2, alice.Orders.Count);
         Assert.All(alice.Orders, o => Assert.True(o.Amount >= 150));
-        Assert.Equal([11, 13], alice.Orders.Select(o => o.Id).OrderBy(id => id));
+        Assert.Equal([11, 13], alice.Orders.Select(o => o.Id).Order());
     }
 
     [Fact]
     public async Task FilteredThenInclude_AppliesOperatorsAtNestedLevel()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<FiRegion> regions = await reader.Query<FiRegion>("FiRegion")
@@ -171,6 +172,18 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         Assert.Equal([11, 13], alice.Orders.Select(o => o.Id));
         FiOrder onlyBob = Assert.Single(bob.Orders);
         Assert.Equal(20, onlyBob.Id);
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
     }
 
     private async Task<MemoryStream> BuildAsync(CancellationToken ct)
@@ -199,44 +212,31 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
 
         await writer.InsertRowsAsync(
             "FiRegion",
-            new[] { new object[] { 100, "North" } },
+            [[100, "North"]],
             ct);
         await writer.InsertRowsAsync(
             "FiCustomer",
-            new[] { new object[] { 1, 100, "Alice" }, new object[] { 2, 100, "Bob" } },
+            [[1, 100, "Alice"], [2, 100, "Bob"]],
             ct);
         await writer.InsertRowsAsync(
             "FiOrder",
-            new[]
-            {
-                new object[] { 10, 1, 50 },
-                new object[] { 11, 1, 200 },
-                new object[] { 12, 1, 100 },
-                new object[] { 13, 1, 150 },
-                new object[] { 14, 1, 75 },
-                new object[] { 15, 1, 125 },
-                new object[] { 16, 1, 100 },
-                new object[] { 20, 2, 300 },
-                new object[] { 21, 2, 25 },
-            },
+            [
+                [10, 1, 50],
+                [11, 1, 200],
+                [12, 1, 100],
+                [13, 1, 150],
+                [14, 1, 75],
+                [15, 1, 125],
+                [16, 1, 100],
+                [20, 2, 300],
+                [21, 2, 25],
+            ],
             ct);
 
         return temp;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    public sealed class FiRegion
+    internal sealed class FiRegion
     {
         public int Id { get; set; }
 
@@ -245,7 +245,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         public List<FiCustomer> Customers { get; set; } = [];
     }
 
-    public sealed class FiCustomer
+    internal sealed class FiCustomer
     {
         public int Id { get; set; }
 
@@ -258,7 +258,9 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         public List<FiOrder> Orders { get; set; } = [];
     }
 
-    public sealed class FiOrder
+#pragma warning disable CA1812 // Only the include loader creates it, through reflection.
+    internal sealed class FiOrder
+#pragma warning restore CA1812
     {
         public int Id { get; set; }
 

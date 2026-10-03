@@ -19,13 +19,14 @@ using Xunit;
 /// inferred. Tables use distinctive names so their POCO type names map back to the
 /// related table by the query's name convention.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
     public async Task Include_Collection_LoadsChildrenGroupedByForeignKey()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwParent> parents = await reader.Query<JdwParent>("JdwParent")
@@ -43,7 +44,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
     public async Task Include_Reference_LoadsParentByKey()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwChild> children = await reader.Query<JdwChild>("JdwChild")
@@ -63,7 +64,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
     public async Task Where_FiltersRoots_BeforeInclude()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwParent> parents = await reader.Query<JdwParent>("JdwParent")
@@ -80,7 +81,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
     public async Task Query_WithoutInclude_StreamsRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         var ids = new List<int>();
@@ -98,7 +99,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
     public async Task Include_UnrelatedType_Throws()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -111,7 +112,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         // 25 parents, 2 children: the distinct foreign keys are a small share of the
         // parent table, so the cost guard resolves parents via index seeks.
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildSizedAsync(parentCount: 25, childCount: 2, ct);
+        await using MemoryStream temp = await this.BuildSizedAsync(parentCount: 25, childCount: 2, ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwChild> children = await reader.Query<JdwChild>("JdwChild").Include(c => c.Parent).ToListAsync(ct);
@@ -128,7 +129,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         // 2 parents, 12 children: the distinct parent keys are a small share of the
         // child table, so the cost guard groups children via foreign-key index seeks.
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildSizedAsync(parentCount: 2, childCount: 12, ct);
+        await using MemoryStream temp = await this.BuildSizedAsync(parentCount: 2, childCount: 12, ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<JdwParent> parents = await reader.Query<JdwParent>("JdwParent").Include(p => p.Children).ToListAsync(ct);
@@ -138,6 +139,18 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal(6, parents[0].Children.Count);
         Assert.Equal(6, parents[1].Children.Count);
         Assert.All(parents[0].Children, c => Assert.Equal(1, c.ParentId));
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
     }
 
     private async Task<MemoryStream> BuildSizedAsync(int parentCount, int childCount, CancellationToken ct)
@@ -160,7 +173,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         var parents = new List<object[]>(parentCount);
         for (int i = 1; i <= parentCount; i++)
         {
-            parents.Add(new object[] { i, $"P{i}" });
+            parents.Add([i, $"P{i}"]);
         }
 
         await writer.InsertRowsAsync("JdwParent", parents, ct);
@@ -168,7 +181,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         var children = new List<object[]>(childCount);
         for (int i = 0; i < childCount; i++)
         {
-            children.Add(new object[] { 100 + i, (i % 2) + 1, $"c{i}" });
+            children.Add([100 + i, (i % 2) + 1, $"c{i}"]);
         }
 
         await writer.InsertRowsAsync("JdwChild", children, ct);
@@ -192,28 +205,16 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
             new RelationshipDefinition("FK_JdwChild_JdwParent", "JdwParent", "Id", "JdwChild", "ParentId"),
             ct);
 
-        await writer.InsertRowsAsync("JdwParent", new[] { new object[] { 1, "Alice" }, new object[] { 2, "Bob" } }, ct);
+        await writer.InsertRowsAsync("JdwParent", [[1, "Alice"], [2, "Bob"]], ct);
         await writer.InsertRowsAsync(
             "JdwChild",
-            new[] { new object[] { 10, 1, "a1" }, new object[] { 11, 1, "a2" }, new object[] { 12, 2, "b1" } },
+            [[10, 1, "a1"], [11, 1, "a2"], [12, 2, "b1"]],
             ct);
 
         return temp;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    public sealed class JdwParent
+    internal sealed class JdwParent
     {
         public int Id { get; set; }
 
@@ -222,7 +223,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         public List<JdwChild> Children { get; set; } = [];
     }
 
-    public sealed class JdwChild
+    internal sealed class JdwChild
     {
         public int Id { get; set; }
 
@@ -235,7 +236,9 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         public Nonexistent? Stray { get; set; }
     }
 
-    public sealed class Nonexistent
+#pragma warning disable CA1812 // A navigation the include must reject; never instantiated.
+    internal sealed class Nonexistent
+#pragma warning restore CA1812
     {
         public int Id { get; set; }
     }

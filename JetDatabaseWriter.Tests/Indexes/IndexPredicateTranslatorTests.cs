@@ -56,7 +56,9 @@ public sealed class IndexPredicateTranslatorTests
     [Fact]
     public void ConstantOnLeft_FlipsOperator()
     {
+#pragma warning disable SA1131 // The constant-on-the-left shape is what this test feeds the translator.
         RowCriteria criteria = Extract(r => 10 < r.Score);
+#pragma warning restore SA1131
 
         ColumnPredicate predicate = Assert.Single(criteria.Predicates);
         Assert.Equal("Score", predicate.ColumnName);
@@ -67,7 +69,9 @@ public sealed class IndexPredicateTranslatorTests
     [Fact]
     public void CapturedVariable_IsEvaluated()
     {
+#pragma warning disable RCS1118 // A local, not a const: the lambda must capture a closure field.
         int threshold = 7;
+#pragma warning restore RCS1118
         RowCriteria criteria = Extract(r => r.Score > threshold);
 
         ColumnPredicate predicate = Assert.Single(criteria.Predicates);
@@ -102,7 +106,7 @@ public sealed class IndexPredicateTranslatorTests
     [Fact]
     public void MethodCall_IsNotPushed()
     {
-        RowCriteria criteria = Extract(r => r.Name.StartsWith("A", StringComparison.Ordinal));
+        RowCriteria criteria = Extract(r => r.Name.StartsWith('A'));
 
         Assert.Empty(criteria.Predicates);
     }
@@ -132,7 +136,9 @@ public sealed class IndexPredicateTranslatorTests
         Assert.Equal(end, criteria.Predicates[1].Operand);
     }
 
+#pragma warning disable CA1812 // Only appears in expression trees, never instantiated.
     private sealed class Row
+#pragma warning restore CA1812
     {
         public int Id { get; set; }
 

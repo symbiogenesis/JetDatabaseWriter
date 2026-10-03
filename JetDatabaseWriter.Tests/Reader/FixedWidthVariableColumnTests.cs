@@ -21,7 +21,7 @@ public sealed class FixedWidthVariableColumnTests
         const long expectedBig = 9_223_372_036_854_770_000L;
         const decimal expectedAmount = 123.45m;
         var expectedGuid = Guid.Parse("12345678-9abc-def0-1234-56789abcdef0");
-        var expectedExtended = new DateTime(2021, 6, 14, 22, 45, 12, 345, DateTimeKind.Unspecified).AddTicks(6789);
+        DateTime expectedExtended = new DateTime(2021, 6, 14, 22, 45, 12, 345, DateTimeKind.Unspecified).AddTicks(6789);
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,

@@ -86,8 +86,8 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
 
         // The query is not ordered until an ordering operator runs, so ThenBy/
         // ThenByDescending (which require IOrderedQueryable) are not reachable.
-        Assert.IsNotAssignableFrom<IOrderedQueryable<JdwItem>>(root);
-        Assert.IsNotAssignableFrom<IOrderedQueryable<JdwItem>>(filtered);
+        Assert.IsNotType<IOrderedQueryable<JdwItem>>(root, exactMatch: false);
+        Assert.IsNotType<IOrderedQueryable<JdwItem>>(filtered, exactMatch: false);
     }
 
     [Fact]
@@ -101,8 +101,8 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
 
         // OrderBy establishes an ordering, so the result is an IOrderedQueryable and a
         // further ThenBy keeps that contract.
-        Assert.IsAssignableFrom<IOrderedQueryable<JdwItem>>(ordered);
-        Assert.IsAssignableFrom<IOrderedQueryable<JdwItem>>(ordered.ThenBy(i => i.Name));
+        Assert.IsType<IOrderedQueryable<JdwItem>>(ordered, exactMatch: false);
+        Assert.IsType<IOrderedQueryable<JdwItem>>(ordered.ThenBy(i => i.Name), exactMatch: false);
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
             .Where(s => s >= 30)
             .ToListAsync(ct);
 
-        Assert.Equal([30, 30, 40, 50], scores.OrderBy(s => s).ToArray());
+        Assert.Equal([30, 30, 40, 50], scores.Order().ToArray());
     }
 
     [Fact]
@@ -460,7 +460,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        List<JdwItem> rows = reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToList();
+        var rows = reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToList();
 
         Assert.Equal([1, 2, 3, 4, 5, 6], rows.Select(i => i.Id).ToArray());
     }

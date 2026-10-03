@@ -16,6 +16,7 @@ using Xunit;
 /// Each test starts from a copy of <c>NorthwindTraders.accdb</c> (which already has the
 /// <c>MSysRelationships</c> catalog table).
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class RelationshipReaderTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
