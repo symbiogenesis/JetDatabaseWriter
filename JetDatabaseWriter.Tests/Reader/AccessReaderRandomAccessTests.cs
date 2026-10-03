@@ -261,6 +261,14 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     /// A caller with a <see cref="SynchronizationContext"/>, such as a UI thread,
     /// never waits on the disk: its page reads still run on the thread pool.
     /// </summary>
+    /// <remarks>
+    /// Read-ahead is off. With it, the library's <c>ConfigureAwait(false)</c>
+    /// continuations start prefetches on pool threads, where they complete
+    /// inline, so whether any row still waits depends on timing: under a loaded
+    /// full test run, every prefetch finished before the scan reached its page.
+    /// Without it, every page the scan moves onto is read from the context's
+    /// thread, so the move waits for the offloaded read.
+    /// </remarks>
     [Fact]
     public async Task Rows_OnThreadWithSynchronizationContext_DoNotReadInline()
     {
@@ -272,6 +280,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             new AccessReaderOptions
             {
                 PageCacheSize = 0,
+                PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
                 UseLockFile = false,
             },
             TestContext.Current.CancellationToken);
