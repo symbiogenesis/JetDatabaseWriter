@@ -15,17 +15,17 @@ None of the bugs from my earlier report is fixed at `HEAD` (6eab703). The five c
 - **Bug 1: a large MEMO dropped the rows after it on the same data page.** One ~1.4 MB MEMO row plus 29 small rows made `Rows()` return 1 of 30 rows. `ReaderPageCache` gave evicted pages back to the shared pool while a scan still read them, so the next page read overwrote the scan's data page. It now leaves evicted pages to the GC, and `LruCache` no longer has an eviction callback. `AccessReaderCacheTests.Rows_WhenLongValueChainEvictsCurrentDataPage_ReturnsEveryRow` covers it.
   - Follow-up: the read-ahead guards in `TableReader.ShouldReadAheadTablePages` (a cache of at least 3 pages, and no MEMO, OLE or complex columns) worked around this bug. They can probably be relaxed now, after benchmarking.
 - **Bug 3: any commit on a Jet4 `.mdb` made it reopen as ACCDB.** `TransactionLifecycle.CommitTransactionAsync` incremented page-0 offset `0x14` after every commit, treating it as a "commit lock byte". That byte is the format version (0 = Jet3, 1 = Jet4, 2 or more = ACE), so two commits turned a Jet3 or Jet4 file into ACCDB, and every ACCDB commit changed its ACE version. `BumpCommitLockByteAsync` is gone, along with the tests that asserted the bump. The cooperative commit-lock byte-range sentinel is unchanged. `JetTransactionTests.Commit_PreservesPageZeroFormatVersionByte` covers Jet3, Jet4 and ACCDB.
+- **Bug 9: a cancelled `InsertRowsAsync` left its rows on disk without index entries.** `TableDataWriter.InsertPreparedBatchAsync` ran its cleanup on the cancelled token, so the cleanup threw on its first page read and the rows written so far stayed live. A cancel could also land inside a single row's writes, after the data page and before the TDEF row count, leaving a row the cleanup never recorded. Cancellation is now checked only between rows. Each row write and the index maintenance after the loop run to completion once started, and the cleanup runs without a token. It now also swallows I/O failures, as its doc comment always claimed. `AccessWriterTests.InsertRows_CancelledWhileWritingRows_RollsBackBatch` and `InsertRows_CancelledDuringIndexMaintenance_CompletesBatch` cover it.
 
 ## Open: data loss and corruption, reproduced by me at `HEAD`
 | # | Scenario | Result | Where |
 |---|---|---|---|
-| 2 | In a transaction: delete Id=1, then update Id=2 | Row 3 lost, row 2 duplicated | [TableDataWriter.cs:226-229](JetDatabaseWriter/Tables/TableDataWriter.cs#L226-L229) |
-| 4 | Update a NOT NULL column to null | Accepted | [TableDataWriter.cs:250](JetDatabaseWriter/Tables/TableDataWriter.cs#L250) runs only the calculated-column checks |
+| 2 | In a transaction: delete Id=1, then update Id=2 | Row 3 lost, row 2 duplicated | [TableDataWriter.cs:227-230](JetDatabaseWriter/Tables/TableDataWriter.cs#L227-L230) |
+| 4 | Update a NOT NULL column to null | Accepted | [TableDataWriter.cs:251](JetDatabaseWriter/Tables/TableDataWriter.cs#L251) runs only the calculated-column checks |
 | 5 | **New:** in a transaction, CreateTable + 3 inserts + AddColumn | **0 rows** after commit | [TableSchemaEditor.cs:401](JetDatabaseWriter/Tables/TableSchemaEditor.cs#L401) copies the table from a reader that can't see the transaction |
 | 6 | **New:** in a transaction, Insert(4) + AddColumn on an existing table | Row 4 lost | same |
 | 7 | **New:** create a relationship in a transaction, then insert a violating row | Accepted and committed | [RelationshipCatalogStore.cs:181](JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs#L181) |
 | 8 | **New:** `UseTransactionalWrites=true` with a cascade delete | The child table's primary-key and foreign-key indexes point to the wrong rows (seek 1 → `(2,8)`) | [IndexMaintainer.cs:432-434](JetDatabaseWriter/Indexes/IndexMaintainer.cs#L432-L434) |
-| 9 | **New:** `InsertRowsAsync` cancelled partway | Rows stay on disk and the index doesn't contain them | [TableDataWriter.cs:578](JetDatabaseWriter/Tables/TableDataWriter.cs#L578) runs the cleanup with the cancelled token |
 | 10 | **New:** insert in a transaction, roll back, insert again | `EndOfStreamException` | Rollback only drops the pending writes ([TransactionLifecycle.cs:241-243](JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L241-L243)) and leaves the writer's other cached state stale |
 | 11 | **New:** create and use a table in a transaction, then roll back | Inserting into it throws `EndOfStream`, and re-creating it says "already exists" | same: the table catalog isn't invalidated |
 | 12 | `ReadTableAsync<T>` where `T` has an Attachment property | 0 rows, while `Rows<T>` returns 2 | [TableReader.cs:419-446](JetDatabaseWriter/Tables/TableReader.cs#L419-L446) |
@@ -79,7 +79,6 @@ Bugs 2, 5, 6, 7 and 8 have the same cause. The writer still reads its own file t
 2. **Rollback should reset writer state.** Inject `TableCatalog`, `DataPageInserter` and `ConstraintRegistry` into `TransactionLifecycle`, and invalidate or restore them on rollback (fixes bugs 10–11 and the disabled-constraints problem).
 3. **One-line and small fixes:**
    - run the full constraint pass on update (bug 4);
-   - run insert cleanup with `CancellationToken.None` (bug 9);
    - read only page 0 to detect encryption;
    - refuse to open flat-Agile files in the writer;
    - keep every column property in RenameColumn.

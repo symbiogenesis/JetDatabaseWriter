@@ -182,6 +182,71 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    /// <summary>
+    /// Cancelling a batch insert while its rows are being written rolls back
+    /// every row the batch wrote. The rollback used to run on the cancelled
+    /// token, so it threw on its first page write and left those rows live on
+    /// disk with no primary-key index entries.
+    /// </summary>
+    /// <param name="pageWritesBeforeCancel">How many page writes the batch makes before the token is cancelled.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(1)] // after the first row's data-page write, before its TDEF row-count write
+    [InlineData(2)] // between the first and second rows
+    [InlineData(7)]
+    public async Task InsertRows_CancelledWhileWritingRows_RollsBackBatch(int pageWritesBeforeCancel)
+    {
+        await using var stream = new CancelAfterWritesStream();
+        using var cts = new CancellationTokenSource();
+
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream))
+        {
+            stream.CancelAfterWrites(pageWritesBeforeCancel, cts);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await writer.InsertRowsAsync("T", CancellationTestBatch(), cts.Token));
+            stream.Disarm();
+        }
+
+        await AssertCancellationTestTableAsync(stream, expectedIds: [0]);
+    }
+
+    /// <summary>
+    /// Cancelling a batch insert after all of its rows are written, while the
+    /// indexes are being updated, completes the batch: abandoning index
+    /// maintenance halfway would leave the indexes out of step with the rows.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task InsertRows_CancelledDuringIndexMaintenance_CompletesBatch()
+    {
+        // Measure the batch's page writes on an identical database, then cancel
+        // the real batch one write before its last, which is an index write.
+        int batchPageWrites;
+        await using (var twin = new CancelAfterWritesStream())
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(twin))
+        {
+            twin.CancelAfterWrites(int.MaxValue, cancellation: null);
+            _ = await writer.InsertRowsAsync("T", CancellationTestBatch(), TestContext.Current.CancellationToken);
+            batchPageWrites = twin.WritesSinceArmed;
+            twin.Disarm();
+        }
+
+        await using var stream = new CancelAfterWritesStream();
+        using var cts = new CancellationTokenSource();
+
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream))
+        {
+            stream.CancelAfterWrites(batchPageWrites - 1, cts);
+            int inserted = await writer.InsertRowsAsync("T", CancellationTestBatch(), cts.Token);
+            stream.Disarm();
+
+            Assert.True(cts.IsCancellationRequested);
+            Assert.Equal(50, inserted);
+        }
+
+        await AssertCancellationTestTableAsync(stream, expectedIds: [.. Enumerable.Range(0, 51)]);
+    }
+
     // ── UpdateRows ────────────────────────────────────────────────────
 
     [Theory]
@@ -2083,5 +2148,156 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     {
         stream.Position = 0;
         return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates a fresh ACCDB in <paramref name="stream"/> holding table <c>T</c>
+    /// with a primary key on <c>Id</c> and one row, <c>Id = 0</c>.
+    /// </summary>
+    /// <param name="stream">The stream to create the database in.</param>
+    private static async Task<AccessWriter> CreateCancellationTestTableAsync(Stream stream)
+    {
+        AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+        try
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("PK", "Id") { IsPrimaryKey = true }],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [0], TestContext.Current.CancellationToken);
+            return writer;
+        }
+        catch
+        {
+            await writer.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static List<object?[]> CancellationTestBatch() => [.. Enumerable.Range(1, 50).Select(i => new object?[] { i })];
+
+    /// <summary>
+    /// Asserts that table <c>T</c>'s rows, its primary-key index, and its TDEF
+    /// row count all hold exactly <paramref name="expectedIds"/>.
+    /// </summary>
+    /// <param name="stream">The stream holding the database.</param>
+    /// <param name="expectedIds">The <c>Id</c> values expected, in ascending order.</param>
+    private static async Task AssertCancellationTestTableAsync(Stream stream, int[] expectedIds)
+    {
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        var tableIds = new List<int>();
+        await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            tableIds.Add((int)row[0]);
+        }
+
+        var indexIds = new List<int>();
+        await foreach (object[] row in reader.FromIndex("T", "PK").ToRowsAsync(TestContext.Current.CancellationToken))
+        {
+            indexIds.Add((int)row[0]);
+        }
+
+        tableIds.Sort();
+        Assert.Equal(expectedIds, tableIds);
+        Assert.Equal(expectedIds, indexIds);
+        Assert.Equal(expectedIds.Length, await GetStatsRowCountAsync(reader, "T"));
+    }
+
+    /// <summary>
+    /// An in-memory stream that, once armed, cancels a token after a set
+    /// number of writes, so a write operation sees cancellation partway
+    /// through.
+    /// </summary>
+    private sealed class CancelAfterWritesStream : Stream
+    {
+        private readonly MemoryStream inner = new();
+        private int cancelAfter = -1;
+        private CancellationTokenSource? cancellation;
+
+        public override bool CanRead => this.inner.CanRead;
+
+        public override bool CanSeek => this.inner.CanSeek;
+
+        public override bool CanWrite => this.inner.CanWrite;
+
+        public override long Length => this.inner.Length;
+
+        public override long Position
+        {
+            get => this.inner.Position;
+            set => this.inner.Position = value;
+        }
+
+        public int WritesSinceArmed { get; private set; }
+
+        public void CancelAfterWrites(int writes, CancellationTokenSource? cancellation)
+        {
+            this.cancelAfter = writes;
+            this.cancellation = cancellation;
+            this.WritesSinceArmed = 0;
+        }
+
+        public void Disarm() => this.cancelAfter = -1;
+
+        public override void Flush() => this.inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => this.inner.FlushAsync(CancellationToken.None);
+
+        public override int Read(byte[] buffer, int offset, int count) => this.inner.Read(buffer, offset, count);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            this.inner.ReadAsync(buffer, CancellationToken.None);
+
+        public override long Seek(long offset, SeekOrigin origin) => this.inner.Seek(offset, origin);
+
+        public override void SetLength(long value) => this.inner.SetLength(value);
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            this.inner.Write(buffer, offset, count);
+            this.RecordWrite();
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await this.inner.WriteAsync(buffer, CancellationToken.None);
+            this.RecordWrite();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private void RecordWrite()
+        {
+            if (this.cancelAfter < 0)
+            {
+                return;
+            }
+
+            this.WritesSinceArmed++;
+            if (this.WritesSinceArmed == this.cancelAfter)
+            {
+                this.cancellation?.Cancel();
+            }
+        }
     }
 }

@@ -81,7 +81,7 @@ each longer than many entire classes:
 
 Moved unchanged out of `AccessWriter` in the facade split:
 
-- [`TableDataWriter.UpdateRowsAsync`](../JetDatabaseWriter/Tables/TableDataWriter.cs#L197) — ~146 lines.
+- [`TableDataWriter.UpdateRowsAsync`](../JetDatabaseWriter/Tables/TableDataWriter.cs#L198) — ~146 lines.
 - [`CatalogArtifactWriter.CreateCatalogTableArtifactAsync`](../JetDatabaseWriter/Catalog/CatalogArtifactWriter.cs#L230) — ~139 lines.
 
 These methods interleave several distinct phases (descent, validation, splice, page rewrite,

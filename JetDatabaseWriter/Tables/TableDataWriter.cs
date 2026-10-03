@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tables;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -536,6 +537,10 @@ internal sealed class TableDataWriter(
                 pendingRows,
                 cancellationToken).ConfigureAwait(false);
 
+            // Cancellation is honoured only between rows. A row write that is
+            // interrupted partway leaves a live row the rollback below cannot
+            // find, and abandoned index maintenance leaves the indexes out of
+            // step with the rows, so both run to completion once started.
             foreach (object[] row in pendingRows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -545,7 +550,7 @@ internal sealed class TableDataWriter(
                     await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
                 }
 
-                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: CancellationToken.None).ConfigureAwait(false);
                 batchLocations.Add(location);
                 batchHintRows.Add((location, row));
 
@@ -564,18 +569,18 @@ internal sealed class TableDataWriter(
                     tableDef,
                     batchHintRows,
                     deletedRows: null,
-                    cancellationToken).ConfigureAwait(false);
+                    CancellationToken.None).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
                 }
 
-                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, CancellationToken.None).ConfigureAwait(false);
             }
         }
         catch
         {
-            await this.RollbackInsertedRowsAsync(tdefPage, batchLocations, cancellationToken).ConfigureAwait(false);
+            await this.RollbackInsertedRowsAsync(tdefPage, batchLocations).ConfigureAwait(false);
             ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
             throw;
         }
@@ -586,24 +591,32 @@ internal sealed class TableDataWriter(
     /// <summary>
     /// Marks every row in <paramref name="locations"/> as deleted on its data
     /// page and rewinds the owning TDEF's row count by the matching amount.
-    /// Best-effort: any exception during rollback is swallowed so the original
-    /// failure surfaces to the caller intact.
+    /// Takes no cancellation token, because the batch it undoes may have
+    /// failed through cancellation. Best-effort: an I/O failure during
+    /// rollback is swallowed so the original failure surfaces to the caller
+    /// intact.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="locations">The locations.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, List<RowLocation> locations, CancellationToken cancellationToken)
+    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, List<RowLocation> locations)
     {
         if (locations.Count == 0)
         {
             return;
         }
 
-        foreach (RowLocation loc in locations)
+        try
         {
-            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
-        }
+            foreach (RowLocation loc in locations)
+            {
+                await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, CancellationToken.None).ConfigureAwait(false);
+            }
 
-        await tableRows.AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
+            await tableRows.AdjustTDefRowCountAsync(tdefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Best-effort rollback; surface the original failure.
+        }
     }
 }
