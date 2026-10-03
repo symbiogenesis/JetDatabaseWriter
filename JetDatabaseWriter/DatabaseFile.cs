@@ -907,6 +907,16 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Returns the location of every live row on the data pages owned by
+    /// <paramref name="tdefPage"/>. To change rows it has read, a writer
+    /// workflow uses <see cref="Tables.TableSnapshotReader.ReadRowsAsync"/>
+    /// instead, which pairs each decoded row with the location it came from;
+    /// matching these locations to separately decoded rows by position breaks
+    /// as soon as one row cannot be decoded.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         var result = new List<RowLocation>();

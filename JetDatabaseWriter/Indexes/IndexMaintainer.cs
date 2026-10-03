@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -443,11 +442,8 @@ internal sealed class IndexMaintainer(
             return;
         }
 
-        // Snapshot rows + locations in matching order (same page-walk semantics as
-        // the existing UpdateRowsAsync/DeleteRowsAsync rely on).
-        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        List<RowLocation> locations = await db.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
+        // Every live row, decoded from the location its index entry points at.
+        List<LocatedRow> rows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         bool tdefDirty = false;
         long[][]? rebuiltIndexPageGroups = db.Format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
@@ -479,18 +475,18 @@ internal sealed class IndexMaintainer(
                     $"real index {rieKey} names a column the table does not have");
             }
 
-            List<IndexEntry> entries = new(rowCount);
+            List<IndexEntry> entries = new(rows.Count);
             object?[] cells = new object?[keyColInfos.Count];
-            for (int r = 0; r < rowCount; r++)
+            foreach ((RowLocation location, object[] values) in rows)
             {
                 for (int k = 0; k < keyColInfos.Count; k++)
                 {
-                    object cell = snapshot.Rows[r][keyColInfos[k].SnapIdx];
+                    object cell = values[keyColInfos[k].SnapIdx];
                     cells[k] = cell is DBNull ? null : cell;
                 }
 
                 byte[] composite = this.EncodeCompositeKey(keyColInfos, cells);
-                entries.Add(new IndexEntry(composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
+                entries.Add(new IndexEntry(composite, location.PageNumber, (byte)location.RowIndex));
             }
 
             entries.Sort(static (a, b) => IndexHelpers.CompareKeyBytes(a.Key, b.Key));

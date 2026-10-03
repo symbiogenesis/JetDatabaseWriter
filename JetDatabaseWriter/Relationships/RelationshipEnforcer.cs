@@ -268,23 +268,21 @@ internal sealed class RelationshipEnforcer(
                 }
             }
 
-            using DataTable childSnap = await snapshots.ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            List<RowLocation> locations = await db.GetLiveRowLocationsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
-            int total = Math.Min(childSnap.Rows.Count, locations.Count);
+            List<LocatedRow> childRows = await snapshots.ReadRowsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
             HashSet<string> deletedSet = RelationshipKeyBuilder.BuildSetFromProjectedKeys(parentPkRows);
 
-            var matchingRowIndices = new List<int>();
-            for (int index = 0; index < total; index++)
+            var matchingRows = new List<LocatedRow>();
+            foreach (LocatedRow childRow in childRows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? childKey = RelationshipKeyBuilder.Build(childSnap.Rows[index].ItemArray, fkIdx);
+                string? childKey = RelationshipKeyBuilder.Build(childRow.Values, fkIdx);
                 if (childKey != null && deletedSet.Contains(childKey))
                 {
-                    matchingRowIndices.Add(index);
+                    matchingRows.Add(childRow);
                 }
             }
 
-            if (matchingRowIndices.Count == 0)
+            if (matchingRows.Count == 0)
             {
                 continue;
             }
@@ -293,13 +291,15 @@ internal sealed class RelationshipEnforcer(
             {
                 throw new InvalidOperationException(
                     $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                    $"{matchingRowIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
+                    $"{matchingRows.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
             }
 
-            var childDeletedRows = new List<object?[]>(matchingRowIndices.Count);
-            foreach (int rowIndex in matchingRowIndices)
+            var childDeletedRows = new List<object?[]>(matchingRows.Count);
+            var cascadeLocations = new List<RowLocation>(matchingRows.Count);
+            foreach ((RowLocation location, object[] values) in matchingRows)
             {
-                childDeletedRows.Add(childSnap.Rows[rowIndex].ItemArray);
+                childDeletedRows.Add(values);
+                cascadeLocations.Add(location);
             }
 
             await this.EnforceFkOnPrimaryDeleteAsync(
@@ -310,19 +310,13 @@ internal sealed class RelationshipEnforcer(
                 depth + 1,
                 cancellationToken).ConfigureAwait(false);
 
-            var cascadeLocations = new List<RowLocation>(matchingRowIndices.Count);
-            foreach (int rowIndex in matchingRowIndices)
-            {
-                cascadeLocations.Add(locations[rowIndex]);
-            }
-
             await complexColumns.CascadeDeleteComplexChildrenAsync(childDef, cascadeLocations, cancellationToken).ConfigureAwait(false);
 
             int deleted = 0;
-            foreach (int rowIndex in matchingRowIndices)
+            foreach (RowLocation location in cascadeLocations)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await tableRows.MarkRowDeletedAsync(locations[rowIndex].PageNumber, locations[rowIndex].RowIndex, cancellationToken).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
                 deleted++;
             }
 
@@ -406,23 +400,19 @@ internal sealed class RelationshipEnforcer(
                 }
             }
 
-            using DataTable childSnap = await snapshots.ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            List<RowLocation> locations = await db.GetLiveRowLocationsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
-            int total = Math.Min(childSnap.Rows.Count, locations.Count);
-            var affectedIndices = new List<int>();
-            var affectedOldKeys = new List<string>();
-            for (int index = 0; index < total; index++)
+            List<LocatedRow> childRows = await snapshots.ReadRowsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var affectedRows = new List<(LocatedRow Row, string OldKey)>();
+            foreach (LocatedRow childRow in childRows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? childKey = RelationshipKeyBuilder.Build(childSnap.Rows[index].ItemArray, fkIdx);
+                string? childKey = RelationshipKeyBuilder.Build(childRow.Values, fkIdx);
                 if (childKey != null && movingChanges.ContainsKey(childKey))
                 {
-                    affectedIndices.Add(index);
-                    affectedOldKeys.Add(childKey);
+                    affectedRows.Add((childRow, childKey));
                 }
             }
 
-            if (affectedIndices.Count == 0)
+            if (affectedRows.Count == 0)
             {
                 continue;
             }
@@ -431,16 +421,17 @@ internal sealed class RelationshipEnforcer(
             {
                 throw new InvalidOperationException(
                     $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                    $"{affectedIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
+                    $"{affectedRows.Count} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
             }
 
             // Build every rewritten child row first so an unreadable MEMO / OLE
             // value refuses the cascade before any child row is deleted.
-            object[][] rewrittenRows = new object[affectedIndices.Count][];
-            for (int affectedIndex = 0; affectedIndex < affectedIndices.Count; affectedIndex++)
+            object[][] rewrittenRows = new object[affectedRows.Count][];
+            for (int affectedIndex = 0; affectedIndex < affectedRows.Count; affectedIndex++)
             {
-                object[] newPkSubset = movingChanges[affectedOldKeys[affectedIndex]].NewPkSubset;
-                object[] rowValues = TableSnapshotReader.GetDbNullNormalizedItemArray(childSnap.Rows[affectedIndices[affectedIndex]]);
+                (LocatedRow childRow, string oldKey) = affectedRows[affectedIndex];
+                object[] newPkSubset = movingChanges[oldKey].NewPkSubset;
+                object[] rowValues = (object[])childRow.Values.Clone();
 
                 for (int column = 0; column < rel.ForeignColumns.Count; column++)
                 {
@@ -451,10 +442,10 @@ internal sealed class RelationshipEnforcer(
                 rewrittenRows[affectedIndex] = rowValues;
             }
 
-            for (int affectedIndex = 0; affectedIndex < affectedIndices.Count; affectedIndex++)
+            for (int affectedIndex = 0; affectedIndex < affectedRows.Count; affectedIndex++)
             {
-                int rowIndex = affectedIndices[affectedIndex];
-                await tableRows.MarkRowDeletedAsync(locations[rowIndex].PageNumber, locations[rowIndex].RowIndex, cancellationToken).ConfigureAwait(false);
+                RowLocation location = affectedRows[affectedIndex].Row.Location;
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
                 await tableRows.InsertRowDataAsync(childEntry.TDefPage, childDef, rewrittenRows[affectedIndex], updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
 

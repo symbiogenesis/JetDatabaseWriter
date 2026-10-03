@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -225,19 +224,16 @@ internal sealed class TableDataWriter(
             updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
         }
 
-        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-
-        List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        List<LocatedRow> rows = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // Stage every matching row so FK / unique-index checks complete before
         // any disk page is mutated.
         var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
-        for (int i = 0; i < total; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            object[] oldRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
+            object[] oldRow = rows[i].Values;
             if (!predicate.Matches(oldRow))
             {
                 continue;
@@ -317,16 +313,16 @@ internal sealed class TableDataWriter(
 
         // Pre-write unique-index enforcement: after FK checks succeed,
         // validate that the post-update key set contains no duplicates for
-        // any unique index. The check sees the snapshot with pendingUpdates
-        // substituted at their original indices.
-        await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingUpdates, cancellationToken).ConfigureAwait(false);
+        // any unique index. The check sees the table's rows with
+        // pendingUpdates substituted at their original positions.
+        await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
 
         var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
         var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RowLocation oldLoc = locations[i];
+            RowLocation oldLoc = rows[i].Location;
             await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((oldLoc, oldRow));
             RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -358,40 +354,36 @@ internal sealed class TableDataWriter(
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-
-        List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        List<LocatedRow> rows = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // FK enforcement: identify the rows we are about to delete; if any
         // FK relationship names this table as the primary side, capture the
         // deleted PK tuples and let EnforceFkOnPrimaryDeleteAsync
         // cascade-delete dependent child rows (or throw when cascade is
         // disabled).
-        var matchingIndices = new List<int>();
-        for (int i = 0; i < total; i++)
+        var matchingRows = new List<LocatedRow>();
+        foreach (LocatedRow row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] rowValues = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
-            if (predicate.Matches(rowValues))
+            if (predicate.Matches(row.Values))
             {
-                matchingIndices.Add(i);
+                matchingRows.Add(row);
             }
         }
 
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        if (rels.Count > 0 && matchingIndices.Count > 0)
+        if (rels.Count > 0 && matchingRows.Count > 0)
         {
             var fkCtx = new FkContext(rels);
 
-            // Snapshot the typed full row of every parent we are about to
-            // delete, in primary-table column order. EnforceFkOnPrimaryDeleteAsync
+            // The typed full row of every parent we are about to delete, in
+            // primary-table column order. EnforceFkOnPrimaryDeleteAsync
             // consumes this once per relationship (slicing the relationship's
             // PrimaryColumns out for the FK seek / snapshot scan).
-            var deletedParentRows = new List<object?[]>(matchingIndices.Count);
-            foreach (int rowIdx in matchingIndices)
+            var deletedParentRows = new List<object?[]>(matchingRows.Count);
+            foreach (LocatedRow row in matchingRows)
             {
-                deletedParentRows.Add(snapshot.Rows[rowIdx].ItemArray);
+                deletedParentRows.Add(row.Values);
             }
 
             await enforcer.EnforceFkOnPrimaryDeleteAsync(
@@ -406,25 +398,24 @@ internal sealed class TableDataWriter(
         // Cascade flat-child rows for any complex columns on the parent
         // BEFORE we mark the parent rows deleted (we need to read the
         // parent's per-row complex-reference slots while the rows are still live).
-        if (matchingIndices.Count > 0)
+        if (matchingRows.Count > 0)
         {
-            var parentLocs = new List<RowLocation>(matchingIndices.Count);
-            foreach (int i in matchingIndices)
+            var parentLocs = new List<RowLocation>(matchingRows.Count);
+            foreach (LocatedRow row in matchingRows)
             {
-                parentLocs.Add(locations[i]);
+                parentLocs.Add(row.Location);
             }
 
             await complexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
         }
 
         int deleted = 0;
-        var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingIndices.Count);
-        foreach (int i in matchingIndices)
+        var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingRows.Count);
+        foreach ((RowLocation location, object[] oldRow) in matchingRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] oldRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[i]);
-            await tableRows.MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
-            deleteHints.Add((locations[i], oldRow));
+            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            deleteHints.Add((location, oldRow));
             deleted++;
         }
 

@@ -8,8 +8,10 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -340,6 +342,58 @@ public sealed class TransactionReadVisibilityTests
         }
 
         Assert.Equal(["2|updated|", "3|r3|", "4|r4|40"], await ReadRowsAsync(ms, "T", new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() }));
+    }
+
+    [Theory]
+    [MemberData(nameof(AllFormatsAndModes))]
+    public async Task DeleteAndUpdate_PastARowTheDecoderSkips_ChangeOnlyTheMatchingRows(DatabaseFormat format, WriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, format, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("T", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), maxLength: 50)], Ct);
+            for (int id = 1; id <= 4; id++)
+            {
+                await writer.InsertRowAsync("T", [id, "r" + id], Ct);
+            }
+        }
+
+        // Zero row 1's column count. The row stays live on its page, but no
+        // decoder can read it, so every snapshot of the table skips it.
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
+        {
+            CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", Ct);
+            TableDef tableDef = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, "T", Ct);
+            List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, Ct);
+            RowLocation first = locations[0];
+            Assert.Equal(1, (await harness.Database.TryReadColumnValuesTypedAsync(first, tableDef, [0], Ct))?[0]);
+
+            byte[] page = await harness.Database.ReadPageCopyAsync(first.PageNumber, Ct);
+            page.AsSpan(first.RowStart, harness.Database.RowFields.NumCols).Clear();
+            await harness.Database.WritePageAsync(first.PageNumber, page, Ct);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(1, await writer.DeleteRowsAsync("T", "Id", 3, Ct));
+                Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", 4, new Dictionary<string, object?> { ["Name"] = "u4" }, Ct));
+            });
+        }
+
+        Assert.Equal(["2|r2", "4|u4"], await ReadRowsAsync(ms, "T"));
+        if (format == DatabaseFormat.Jet3Mdb)
+        {
+            return;
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: Ct);
+        IndexMetadata primaryKey = Assert.Single(await reader.ListIndexesAsync("T", Ct), ix => ix.Kind == IndexKind.PrimaryKey);
+        Assert.Equal(["2|r2"], await SeekAsync(reader, "T", primaryKey.Name, 2));
+        Assert.Empty(await SeekAsync(reader, "T", primaryKey.Name, 3));
+        Assert.Equal(["4|u4"], await SeekAsync(reader, "T", primaryKey.Name, 4));
     }
 
     private static TheoryData<DatabaseFormat, WriteMode> Combine(params DatabaseFormat[] formats)

@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -179,8 +179,8 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
         // values may require LVAL traversal outside the fast path.
         if (RequiresSnapshotForPreInsert(descriptors) || !CanUseCursorFastPath(descriptors))
         {
-            using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-            this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
+            List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingRows, replaceAtRowIndex: null);
             return;
         }
 
@@ -254,14 +254,14 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
-    /// <param name="snapshot">The snapshot.</param>
-    /// <param name="updates">The updates.</param>
+    /// <param name="existingRows">The table's live rows, as read for the update.</param>
+    /// <param name="updates">The updates; each <c>Index</c> is a position in <paramref name="existingRows"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask CheckUniqueIndexesPreUpdateAsync(
         long tdefPage,
         TableDef tableDef,
         string tableName,
-        DataTable snapshot,
+        IReadOnlyList<LocatedRow> existingRows,
         List<(int Index, object[] OldRow, object[] NewRow)> updates,
         CancellationToken cancellationToken)
     {
@@ -282,7 +282,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             replaceAt[idx] = newRow;
         }
 
-        this.CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
+        this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingInsertRows: [], replaceAtRowIndex: replaceAt);
     }
 
     private static bool RequiresSnapshotForPreInsert(IReadOnlyList<UniqueIndexDescriptor> descriptors)
@@ -333,20 +333,19 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="descriptors">The descriptors.</param>
-    /// <param name="snapshot">The snapshot.</param>
+    /// <param name="existingRows">The table's live rows.</param>
     /// <param name="pendingInsertRows">The pending insert rows.</param>
-    /// <param name="replaceAtSnapshotIndex">The replace at snapshot index.</param>
+    /// <param name="replaceAtRowIndex">Post-update rows keyed by their position in <paramref name="existingRows"/>.</param>
     /// <exception cref="InvalidOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
     private void CheckUniqueIndexesCore(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
-        DataTable snapshot,
+        IReadOnlyList<LocatedRow> existingRows,
         List<object[]> pendingInsertRows,
-        Dictionary<int, object[]>? replaceAtSnapshotIndex)
+        Dictionary<int, object[]>? replaceAtRowIndex)
     {
-        int snapshotRowCount = snapshot.Rows.Count;
+        int existingRowCount = existingRows.Count;
         int pendingCount = pendingInsertRows.Count;
-        int totalRows = snapshotRowCount + pendingCount;
 
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
@@ -359,17 +358,11 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
 
             var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
 
-            for (int r = 0; r < snapshotRowCount; r++)
+            for (int r = 0; r < existingRowCount; r++)
             {
-                object[] effectiveRow;
-                if (replaceAtSnapshotIndex != null && replaceAtSnapshotIndex.TryGetValue(r, out object[]? rep))
-                {
-                    effectiveRow = rep;
-                }
-                else
-                {
-                    effectiveRow = TableSnapshotReader.GetDbNullNormalizedItemArray(snapshot.Rows[r]);
-                }
+                object[] effectiveRow = replaceAtRowIndex != null && replaceAtRowIndex.TryGetValue(r, out object[]? rep)
+                    ? rep
+                    : existingRows[r].Values;
 
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
 
@@ -392,8 +385,6 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
                         "The conflict was detected before any row was written; the table is unchanged.");
                 }
             }
-
-            _ = totalRows;
         }
     }
 }

@@ -399,7 +399,7 @@ Helpers now live on `UniqueIndexChecker` and are called from `AccessWriter`:
 - `LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, tableName, ct)` — parses the whole TDEF chain (a wide table's index section sits on a continuation page) for unique real-idx slots (real-idx `flags & 0x01` OR an associated logical-idx with `index_type = 0x01` PK discriminator) and returns one `UniqueIndexDescriptor` per slot, including a best-effort logical-idx name for the error message.
 - `EncodeCompositeKeyForUniqueCheck(descriptor, row, numericTargetScales)` — encodes one row's composite key using the same `IndexKeyEncoder` path the W5 rebuild uses, with NUMERIC scales sourced from the column descriptor. Returns `null` on `NotSupportedException` so the caller can skip the check for that index.
 - `CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, pendingRows, ct)` — loads the table snapshot once, then for each unique index encodes existing rows + pending rows into a `HashSet<byte[]>` keyed by composite key bytes. First collision throws `InvalidOperationException` with the message *"Unique index violation on table 'X': duplicate key for index 'Y'. The conflict was detected before any row was written; the table is unchanged."*
-- `CheckUniqueIndexesPreUpdateAsync(tdefPage, tableDef, tableName, snapshot, updates, ct)` — reuses the caller-loaded snapshot and substitutes the post-update payloads at their original snapshot indices before encoding.
+- `CheckUniqueIndexesPreUpdateAsync(tdefPage, tableDef, tableName, existingRows, updates, ct)` — reuses the located rows `UpdateRowsAsync` read (`TableSnapshotReader.ReadRowsAsync`) and substitutes the post-update payloads at those rows' positions before encoding.
 
 Wiring:
 
