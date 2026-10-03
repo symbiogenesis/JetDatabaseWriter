@@ -680,12 +680,17 @@ internal sealed class ComplexColumnManager(
         }
 
         // MultiValue: a single `value` column whose CLR type is the user-declared element type.
+        // The declared precision and scale are the items' own, so a Decimal element
+        // stores them on this column (Access's Decimal(18,0) when none is declared);
+        // other element types ignore them.
         Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("Value", elementType, maxLength: parentColumn.MaxLength)
         {
             DescriptorExtraFlagsOverride = 0x10,
             DescriptorMiscOverride = 0x00000409,
+            NumericPrecision = parentColumn.NumericPrecision,
+            NumericScale = parentColumn.NumericScale,
         };
         ColumnDefinition[] mvCols = [fk, valueCol, scalar];
         IndexDefinition[] mvIndexes =
