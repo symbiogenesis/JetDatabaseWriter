@@ -147,57 +147,37 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             : await this.JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<Dictionary<string, string>> ReadColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
+    /// <summary>
+    /// Returns the <see cref="ColumnMetadata.TypeName"/> of each complex column
+    /// of <paramref name="tableName"/>, keyed by its <c>ComplexID</c> (the
+    /// descriptor's <see cref="ColumnInfo.Misc"/>), so a renamed column keeps
+    /// its name: "Attachment", "Version History", or "Multi-value" and the
+    /// element type's display name ("Multi-value Text", "Multi-value Long
+    /// Integer"). The element type comes from the flat table's value column,
+    /// else from the <c>MSysComplexType_*</c> template name. A column whose
+    /// kind or element type cannot be resolved is left out, and the caller
+    /// reports it as "Complex". Best-effort: a damaged catalog yields an empty map.
+    /// </summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<Dictionary<int, string>> ReadColumnTypeNamesAsync(string tableName, CancellationToken cancellationToken)
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        try
+        var result = new Dictionary<int, string>();
+        foreach (ComplexColumnInfo column in await this.TryGetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false))
         {
-            long tdefPage = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-            if (tdefPage <= 0)
+            string? typeName = column.Kind switch
             {
-                return result;
-            }
+                ComplexColumnKind.Attachment => "Attachment",
+                ComplexColumnKind.VersionHistory => "Version History",
+                ComplexColumnKind.MultiValue => await this.DescribeMultiValueTypeAsync(column, cancellationToken).ConfigureAwait(false),
+                ComplexColumnKind.Unknown => null,
+                _ => null,
+            };
 
-            TableDef? td = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            if (td == null)
+            if (typeName != null)
             {
-                return result;
+                result[column.ComplexId] = typeName;
             }
-
-            int idxCol = td.FindColumnIndex("ColumnName");
-            int idxConceptualTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
-
-            if (idxCol < 0)
-            {
-                return result;
-            }
-
-            ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
-
-            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
-            {
-                if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName))
-                {
-                    continue;
-                }
-
-                string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
-                result[colName] = "Attachment";
-            }
-        }
-        catch (InvalidDataException ex)
-        {
-            this.TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
-        }
-        catch (IndexOutOfRangeException ex)
-        {
-            this.TraceBestEffortFallback(nameof(ReadColumnSubtypesAsync), ex);
         }
 
         return result;
@@ -303,6 +283,59 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         return ComplexColumnKind.Unknown;
     }
 
+    /// <summary>
+    /// Classifies a complex column from its flat table's schema, for a column
+    /// with no type template (<c>ComplexTypeObjectID</c> 0, as files written
+    /// before the template tables existed hold): a <c>FileData</c> column marks
+    /// an attachment; leaving out the foreign key and the AutoNumber key, one
+    /// value column marks a multi-value column, and a Memo plus a Date/Time
+    /// column a version history.
+    /// </summary>
+    /// <param name="flat">The flat table's definition.</param>
+    /// <param name="columnName">The parent's complex column name.</param>
+    private static ComplexColumnKind ClassifyFlatTable(TableDef flat, string columnName)
+    {
+        if (flat.FindColumnIndex("FileData") >= 0)
+        {
+            return ComplexColumnKind.Attachment;
+        }
+
+        int fkIndex = FindForeignKeyIndex(flat, columnName);
+        var valueTypes = new List<ColumnType>(2);
+        for (int i = 0; i < flat.Columns.Count; i++)
+        {
+            if (i != fkIndex && (flat.Columns[i].Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
+            {
+                valueTypes.Add(flat.Columns[i].Type);
+            }
+        }
+
+        return valueTypes.Count switch
+        {
+            1 => ComplexColumnKind.MultiValue,
+            2 when valueTypes.Contains(MemoType) && valueTypes.Contains(DateTimeType) => ComplexColumnKind.VersionHistory,
+            _ => ComplexColumnKind.Unknown,
+        };
+    }
+
+    /// <summary>
+    /// Returns the value column type a multi-value <c>MSysComplexType_*</c>
+    /// template declares, or <see langword="null"/> for any other name.
+    /// </summary>
+    /// <param name="templateName">The template table name.</param>
+    private static ColumnType? TemplateElementType(string templateName) => templateName switch
+    {
+        Constants.ComplexTypeNames.UnsignedByte => ByteType,
+        Constants.ComplexTypeNames.Short => IntegerType,
+        Constants.ComplexTypeNames.Long => LongIntegerType,
+        Constants.ComplexTypeNames.IEEESingle => FloatType,
+        Constants.ComplexTypeNames.IEEEDouble => DoubleType,
+        Constants.ComplexTypeNames.GUID => GuidType,
+        Constants.ComplexTypeNames.Decimal => NumericType,
+        Constants.ComplexTypeNames.Text => TextType,
+        _ => null,
+    };
+
     private static bool TryGetCell(Dictionary<int, Dictionary<int, byte[]>>? complexData, int columnIndex, int complexId, out byte[] cell)
     {
         if (complexId > 0
@@ -345,6 +378,13 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         return cells;
     }
 
+    /// <summary>
+    /// Finds a multi-value flat table's value column: the column named
+    /// <c>value</c>, else the first column that is neither the foreign key
+    /// nor the flat table's AutoNumber key.
+    /// </summary>
+    /// <param name="flat">The flat table's definition.</param>
+    /// <param name="fkIndex">The foreign key's index.</param>
     private static int FindValueColumnIndex(TableDef flat, int fkIndex)
     {
         int index = flat.FindColumnIndex("value");
@@ -355,7 +395,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
 
         for (int i = 0; i < flat.Columns.Count; i++)
         {
-            if (i != fkIndex)
+            if (i != fkIndex && (flat.Columns[i].Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
             {
                 return i;
             }
@@ -462,7 +502,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
             string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
 
-            result.Add(new ComplexColumnInfo
+            var info = new ComplexColumnInfo
             {
                 ColumnName = string.IsNullOrEmpty(columnName) ? parent.Name : columnName,
                 ComplexId = complexId,
@@ -472,10 +512,66 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
                 ConceptualTableId = conceptualId,
                 ComplexTypeObjectId = typeObjectId,
                 ComplexTypeName = typeName,
-            });
+            };
+
+            if (info.Kind == ComplexColumnKind.Unknown)
+            {
+                info = info with { Kind = await this.ClassifyFromFlatTableAsync(info, cancellationToken).ConfigureAwait(false) };
+            }
+
+            result.Add(info);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Classifies <paramref name="column"/> from its flat table's schema
+    /// (<see cref="ClassifyFlatTable"/>), or returns
+    /// <see cref="ComplexColumnKind.Unknown"/> when the flat table cannot be read.
+    /// </summary>
+    /// <param name="column">A column its template name did not classify.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<ComplexColumnKind> ClassifyFromFlatTableAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
+    {
+        try
+        {
+            FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
+            return flat == null ? ComplexColumnKind.Unknown : ClassifyFlatTable(flat.Definition, column.ColumnName);
+        }
+        catch (InvalidDataException ex)
+        {
+            this.TraceBestEffortFallback(nameof(ClassifyFromFlatTableAsync), ex);
+            return ComplexColumnKind.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// Returns "Multi-value" and the display name of <paramref name="column"/>'s
+    /// element type: the type of its flat table's value column, else the one
+    /// its type template declares; <see langword="null"/> when neither resolves.
+    /// </summary>
+    /// <param name="column">A multi-value column.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<string?> DescribeMultiValueTypeAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
+    {
+        ColumnType? elementType = null;
+        try
+        {
+            FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
+            if (flat != null)
+            {
+                int valueIndex = FindValueColumnIndex(flat.Definition, FindForeignKeyIndex(flat.Definition, column.ColumnName));
+                elementType = valueIndex >= 0 ? flat.Definition.Columns[valueIndex].Type : null;
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            this.TraceBestEffortFallback(nameof(DescribeMultiValueTypeAsync), ex);
+        }
+
+        elementType ??= TemplateElementType(column.ComplexTypeName);
+        return elementType is ColumnType type ? "Multi-value " + GetTypeDisplayName(type) : null;
     }
 
     private async ValueTask<Dictionary<long, string>> BuildObjectNameLookupAsync(CancellationToken cancellationToken)
@@ -619,10 +715,12 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             }
 
             ComplexColumnKind kind = info?.Kind ?? ComplexColumnKind.Unknown;
-            bool isAttachment = kind == ComplexColumnKind.Attachment
-                || (kind == ComplexColumnKind.Unknown && flat.Definition.FindColumnIndex("FileData") >= 0);
+            if (kind == ComplexColumnKind.Unknown)
+            {
+                kind = ClassifyFlatTable(flat.Definition, columnName);
+            }
 
-            Dictionary<int, byte[]> cells = isAttachment
+            Dictionary<int, byte[]> cells = kind == ComplexColumnKind.Attachment
                 ? GroupCells(
                     await this.ReadAttachmentsAsync(flat, columnName, cancellationToken).ConfigureAwait(false),
                     static attachment => attachment.ConceptualTableId,

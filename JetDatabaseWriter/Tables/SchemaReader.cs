@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tables;
 
-using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -170,12 +169,10 @@ internal sealed class SchemaReader(
             return linkedMetadata ?? [];
         }
 
-        Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
-        bool hasComplex = resolved.Definition.Columns.Any(c => c.Type is ComplexType or AttachmentType);
-        if (hasComplex)
-        {
-            complexSubtypes = await complexColumns.ReadColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
-        }
+        // Complex columns are named by subtype, keyed by ComplexID (the descriptor's misc slot).
+        Dictionary<int, string>? complexTypeNames = resolved.Definition.Columns.Any(c => c.Type is ComplexType or AttachmentType)
+            ? await complexColumns.ReadColumnTypeNamesAsync(tableName, cancellationToken).ConfigureAwait(false)
+            : null;
 
         ColumnPropertyBlock? properties = await catalog.ReadLvPropForTableAsync(
             resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -192,9 +189,11 @@ internal sealed class SchemaReader(
             return new ColumnMetadata
             {
                 Name = col.Name,
-                TypeName = (col.Type == ComplexType && complexSubtypes.TryGetValue(col.Name, out string? subtype))
-                    ? subtype
-                    : ResolveTypeName(col),
+                TypeName = col.Type is ComplexType or AttachmentType
+                    && complexTypeNames != null
+                    && complexTypeNames.TryGetValue(col.Misc, out string? complexTypeName)
+                        ? complexTypeName
+                        : ResolveTypeName(col),
                 ClrType = ResolveClrType(col),
                 MaxLength = GetMetadataMaxLength(col),
                 IsNullable = ResolveIsNullable(col, target),
