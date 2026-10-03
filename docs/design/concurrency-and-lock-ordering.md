@@ -26,7 +26,7 @@ closing section).
 
 | # | Primitive | Type | Declared in | Scope | Protects |
 |---|-----------|------|-------------|-------|----------|
-| 1 | `operationGate` (`ReaderServices.Operations`) | `AsyncReentrantOperationGate` | [ReaderServices.cs#L35](../../JetDatabaseWriter/ReaderServices.cs#L35) | Reader instance; entered by each reader service's public operations | Drains in-flight reader operations against async disposal |
+| 1 | `operationGate` (`ReaderServices.Operations`) | `AsyncReentrantOperationGate` | [ReaderServices.cs#L34](../../JetDatabaseWriter/ReaderServices.cs#L34) | Reader instance; entered by each reader service's public operations | Drains in-flight reader operations against async disposal |
 | 2 | `IoGate` | `SemaphoreSlim(1,1)` | [DatabaseFile.cs#L190](../../JetDatabaseWriter/DatabaseFile.cs#L190) | One open database file (reader or writer) | Serializes seek-based stream I/O and journal attach/detach |
 | 3 | `ByteRangeLock` | `JetByteRangeLock` | [DatabaseFile.cs#L177](../../JetDatabaseWriter/DatabaseFile.cs#L177) | One open database file | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
 | 4 | `insertPageHintLock` | `Lock` / `object` | [DataPageInserter.cs#L28](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L28) | Writer instance (`DataPageInserter`) | The two-field insert-page hint cache only |
@@ -67,15 +67,15 @@ order. Never acquire one earlier in this list while holding one later in it.
 
 The only pair that genuinely nests on a hot path is **`IoGate` (outer) →
 `ByteRangeLock` per-page (inner)**, inside
-[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L688) and
-[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L720). Everything else
+[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L750) and
+[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782). Everything else
 is either strictly outer (the operation gate), a leaf, or lifetime-scoped.
 
 ### Key invariant: do not hold `IoGate` across a page-write call
 
-[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L688) and
-[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L720) always acquire
-`IoGate` themselves; [`ReadPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L359)
+[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L750) and
+[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782) always acquire
+`IoGate` themselves; [`ReadPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L377)
 acquires it on its seek-and-read path (the positionless `RandomAccess` fast path
 — uncached `FileStream` reads outside a transaction — bypasses the gate because
 it never touches the shared stream position). Callers must **not** already hold
@@ -89,7 +89,7 @@ journal, then **releases it before** the replay loop so each replayed
 
 ### Writer auto-commit (`UseTransactionalWrites = true`)
 
-`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L776)
+`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L771)
 → [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L95)
 → `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
 
@@ -144,7 +144,7 @@ WritePageAsync
 Every public reader operation opens with
 `using AsyncReentrantOperationGate.Lease operation = operations.Enter();` in the
 reader service that implements it (for example
-[TableReader.cs#L127](../../JetDatabaseWriter/Tables/TableReader.cs#L127)). The
+[TableReader.cs#L126](../../JetDatabaseWriter/Tables/TableReader.cs#L126)). The
 LINQ provider and the index-query handles call those services directly, so they
 enter the same gate.
 
@@ -160,7 +160,7 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
 
 ### Disposal
 
-Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L384):
+Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L402):
 
 ```
 operationGate.TryBeginDispose(out waitForOperations)
@@ -172,7 +172,7 @@ operationGate.TryBeginDispose(out waitForOperations)
   └─ operationGate.CompleteDispose()
 ```
 
-Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L695) (no
+Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L690) (no
 operation gate; the writer is single-writer by construction):
 
 ```

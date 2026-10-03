@@ -13,11 +13,12 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Column names are matched case-insensitively against the target table. Columns
-/// that are not named are left to the engine's default — an AutoNumber column
-/// generates its next value, and any other omitted column is stored as database
-/// null. Both <see langword="null"/> and <see cref="DBNull.Value"/> represent
-/// database null.
+/// Column names are matched case-insensitively against the target table. On insert,
+/// columns that are not named are left to the engine's default: an AutoNumber column
+/// generates its next value, and any other omitted column stores its default value, or
+/// database null when it has none. <see langword="null"/> and <see cref="DBNull.Value"/>
+/// are equivalent: on insert they behave like an omitted column, and on update they
+/// set the column to database null.
 /// </para>
 /// <para>
 /// Instances support collection-initializer syntax and a fluent <see cref="Set"/>
@@ -83,7 +84,7 @@ public sealed class RowValues : IEnumerable<KeyValuePair<string, object?>>
 
     /// <summary>Assigns a value to a column and returns this instance for chaining.</summary>
     /// <param name="columnName">The column name (case-insensitive).</param>
-    /// <param name="value">The value to assign. <see langword="null"/> and <see cref="DBNull.Value"/> both mean database null.</param>
+    /// <param name="value">The value to assign. <see langword="null"/> and <see cref="DBNull.Value"/> are equivalent; see the remarks for how inserts and updates treat them.</param>
     /// <returns>This instance.</returns>
     public RowValues Set(string columnName, object? value)
     {

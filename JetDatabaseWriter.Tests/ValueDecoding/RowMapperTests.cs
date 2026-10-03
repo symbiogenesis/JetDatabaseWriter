@@ -55,76 +55,48 @@ public class RowMapperTests
         public override string ToString() => "EmptyPoco";
     }
 
-    // ── BuildIndex ────────────────────────────────────────────────────
+    // ── TryGetAccessor ────────────────────────────────────────────────
 
     [Fact]
-    public void BuildIndex_MatchingHeaders_ReturnsNonNullEntries()
+    public void TryGetAccessor_MatchingHeaders_ReturnsNonNullEntries()
+    {
+        Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor("Id"));
+        Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor("Name"));
+        Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor("Price"));
+    }
+
+    [Fact]
+    public void TryGetAccessor_CaseInsensitive_MatchesRegardlessOfCase()
+    {
+        Assert.Equal("Id", RowMapper<SimpleProduct>.TryGetAccessor("ID")!.Property.Name);
+        Assert.Equal("Name", RowMapper<SimpleProduct>.TryGetAccessor("nAmE")!.Property.Name);
+        Assert.Equal("Price", RowMapper<SimpleProduct>.TryGetAccessor("PRICE")!.Property.Name);
+    }
+
+    [Fact]
+    public void TryGetAccessor_UnmatchedHeaders_ReturnsNullForThose()
+    {
+        Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor("Id"));
+        Assert.Null(RowMapper<SimpleProduct>.TryGetAccessor("UnknownColumn"));
+        Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor("Price"));
+    }
+
+    [Fact]
+    public void TryGetAccessor_ReadOnlyProperty_IsNotIncluded()
+    {
+        Assert.NotNull(RowMapper<ReadOnlyPoco>.TryGetAccessor("Id"));
+        Assert.Null(RowMapper<ReadOnlyPoco>.TryGetAccessor("Computed"));
+    }
+
+    // ── Build — basic ─────────────────────────────────────────────────
+
+    [Fact]
+    public void Build_AllColumnsMatch_SetsAllProperties()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-
-        Assert.Equal(3, index.Length);
-        Assert.NotNull(index[0]);
-        Assert.NotNull(index[1]);
-        Assert.NotNull(index[2]);
-    }
-
-    [Fact]
-    public void BuildIndex_CaseInsensitive_MatchesRegardlessOfCase()
-    {
-        var headers = new List<string> { "ID", "nAmE", "PRICE" };
-
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-
-        Assert.Equal("Id", index[0]!.Property.Name);
-        Assert.Equal("Name", index[1]!.Property.Name);
-        Assert.Equal("Price", index[2]!.Property.Name);
-    }
-
-    [Fact]
-    public void BuildIndex_UnmatchedHeaders_ReturnsNullForThose()
-    {
-        var headers = new List<string> { "Id", "UnknownColumn", "Price" };
-
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-
-        Assert.NotNull(index[0]);
-        Assert.Null(index[1]);
-        Assert.NotNull(index[2]);
-    }
-
-    [Fact]
-    public void BuildIndex_EmptyHeaders_ReturnsEmptyArray()
-    {
-        var headers = new List<string>();
-
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-
-        Assert.Empty(index);
-    }
-
-    [Fact]
-    public void BuildIndex_ReadOnlyProperty_IsNotIncluded()
-    {
-        var headers = new List<string> { "Id", "Computed" };
-
-        RowMapper<ReadOnlyPoco>.Accessor?[] index = RowMapper<ReadOnlyPoco>.BuildIndex(headers);
-
-        Assert.NotNull(index[0]);
-        Assert.Null(index[1]);
-    }
-
-    // ── Map — basic ───────────────────────────────────────────────────
-
-    [Fact]
-    public void Map_AllColumnsMatch_SetsAllProperties()
-    {
-        var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [42, "Widget", 9.99m];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(42, result.Id);
         Assert.Equal("Widget", result.Name);
@@ -132,56 +104,52 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void Map_UnmatchedColumn_IsIgnored()
+    public void Build_UnmatchedColumn_IsIgnored()
     {
         var headers = new List<string> { "Id", "UnknownColumn", "Name" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [1, "extra-value", "Gadget"];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(1, result.Id);
         Assert.Equal("Gadget", result.Name);
         Assert.Equal(0m, result.Price);
     }
 
-    // ── Map — nulls ──────────────────────────────────────────────────
+    // ── Build — nulls ────────────────────────────────────────────────
 
     [Fact]
-    public void Map_NullValue_LeavesPropertyAtDefault()
+    public void Build_NullValue_LeavesPropertyAtDefault()
     {
         var headers = new List<string> { "Id", "Name" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [1, null!];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(string.Empty, result.Name);
     }
 
     [Fact]
-    public void Map_DBNullValue_LeavesPropertyAtDefault()
+    public void Build_DBNullValue_LeavesPropertyAtDefault()
     {
         var headers = new List<string> { "Id", "Name" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [1, DBNull.Value];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(string.Empty, result.Name);
     }
 
-    // ── Map — nullable properties ────────────────────────────────────
+    // ── Build — nullable properties ──────────────────────────────────
 
     [Fact]
-    public void Map_NullableProperty_WithValue_SetsProperty()
+    public void Build_NullableProperty_WithValue_SetsProperty()
     {
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
         var date = new DateTime(2025, 6, 15);
         object[] row = [7, "Test", date];
 
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        NullableProduct result = RowMapper<NullableProduct>.Build(headers)(row);
 
         Assert.Equal(7, result.Id);
         Assert.Equal("Test", result.Name);
@@ -189,87 +157,82 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void Map_NullableProperty_WithNull_StaysNull()
+    public void Build_NullableProperty_WithNull_StaysNull()
     {
         var headers = new List<string> { "Id", "CreatedDate" };
-        RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
         object[] row = [1, DBNull.Value];
 
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        NullableProduct result = RowMapper<NullableProduct>.Build(headers)(row);
 
         Assert.Equal(1, result.Id);
         Assert.Null(result.CreatedDate);
     }
 
-    // ── Map — type coercion ──────────────────────────────────────────
+    // ── Build — type coercion ────────────────────────────────────────
 
     [Fact]
-    public void Map_IntToLong_ConvertsSuccessfully()
+    public void Build_IntToLong_ConvertsSuccessfully()
     {
         var headers = new List<string> { "Id", "Price" };
-        RowMapper<TypeMismatchPoco>.Accessor?[] index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
         object[] row = [42, 19.99m];
 
-        TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Map(row, index);
+        TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Build(headers)(row);
 
         Assert.Equal(42L, result.Id);
         Assert.Equal(19.99, result.Price);
     }
 
-    // ── Map — row/index length mismatches ────────────────────────────
+    // ── Build — row/header length mismatches ─────────────────────────
 
     [Fact]
-    public void Map_RowShorterThanIndex_MapsAvailableValues()
+    public void Build_RowShorterThanIndex_MapsAvailableValues()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [5]; // only one value
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(5, result.Id);
         Assert.Equal(string.Empty, result.Name);
     }
 
     [Fact]
-    public void Map_RowLongerThanIndex_IgnoresExtraValues()
+    public void Build_RowLongerThanIndex_IgnoresExtraValues()
     {
         var headers = new List<string> { "Id" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [5, "extra1", "extra2"];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(5, result.Id);
         Assert.Equal(string.Empty, result.Name);
     }
 
-    // ── Map — empty POCO ─────────────────────────────────────────────
+    // ── Build — empty POCO ───────────────────────────────────────────
 
     [Fact]
-    public void Map_EmptyPoco_ReturnsNewInstance()
+    public void Build_EmptyPoco_ReturnsNewInstance()
     {
         var headers = new List<string> { "Id", "Name" };
-        RowMapper<EmptyPoco>.Accessor?[] index = RowMapper<EmptyPoco>.BuildIndex(headers);
         object[] row = [1, "test"];
 
-        EmptyPoco result = RowMapper<EmptyPoco>.Map(row, index);
+        EmptyPoco result = RowMapper<EmptyPoco>.Build(headers)(row);
 
         Assert.NotNull(result);
     }
 
-    // ── Map — multiple rows share same index ─────────────────────────
+    // ── Build — multiple rows share one delegate ─────────────────────
 
     [Fact]
-    public void Map_MultipleRows_ProducesIndependentInstances()
+    public void Build_MultipleRows_ProducesIndependentInstances()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        Func<object?[], SimpleProduct> map = RowMapper<SimpleProduct>.Build(headers);
         object[] row1 = [1, "Alpha", 10m];
         object[] row2 = [2, "Beta", 20m];
 
-        SimpleProduct result1 = RowMapper<SimpleProduct>.Map(row1, index);
-        SimpleProduct result2 = RowMapper<SimpleProduct>.Map(row2, index);
+        SimpleProduct result1 = map(row1);
+        SimpleProduct result2 = map(row2);
 
         Assert.Equal(1, result1.Id);
         Assert.Equal("Alpha", result1.Name);
@@ -278,16 +241,15 @@ public class RowMapperTests
         Assert.NotSame(result1, result2);
     }
 
-    // ── Map — value already correct type (fast path) ─────────────────
+    // ── Build — value already correct type (fast path) ───────────────
 
     [Fact]
-    public void Map_ValueAlreadyCorrectType_SkipsConversion()
+    public void Build_ValueAlreadyCorrectType_SkipsConversion()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [99, "Direct", 5.5m];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(99, result.Id);
         Assert.Equal("Direct", result.Name);
@@ -385,15 +347,14 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void ToRow_RoundTrips_WithMap()
+    public void ToRow_RoundTrips_WithBuild()
     {
         TableDef td = MakeTableDef("Id", "Name", "Price");
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var original = new SimpleProduct { Id = 42, Name = "Gadget", Price = 19.99m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(td, original);
-        SimpleProduct roundTripped = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct roundTripped = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(original.Id, roundTripped.Id);
         Assert.Equal(original.Name, roundTripped.Name);
@@ -401,11 +362,10 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void NullableProduct_ToRow_ThenMap_RoundTrips()
+    public void NullableProduct_ToRow_ThenBuild_RoundTrips()
     {
         TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
         var original = new NullableProduct
         {
             Id = 99,
@@ -414,7 +374,7 @@ public class RowMapperTests
         };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, original);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        NullableProduct result = RowMapper<NullableProduct>.Build(headers)(row);
 
         Assert.Equal(original.Id, result.Id);
         Assert.Equal(original.Name, result.Name);
@@ -422,15 +382,14 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void NullableProduct_WithAllNulls_ToRow_ThenMap_StaysNull()
+    public void NullableProduct_WithAllNulls_ToRow_ThenBuild_StaysNull()
     {
         TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        RowMapper<NullableProduct>.Accessor?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
         var original = new NullableProduct { Id = null, Name = null, CreatedDate = null };
 
         object[] row = RowMapper<NullableProduct>.ToRow(td, original);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+        NullableProduct result = RowMapper<NullableProduct>.Build(headers)(row);
 
         Assert.Null(result.Id);
         Assert.Null(result.Name);
@@ -471,16 +430,15 @@ public class RowMapperTests
         }
     }
 
-    // ── Map — all DBNull row ─────────────────────────────────────────
+    // ── Build — all DBNull row ───────────────────────────────────────
 
     [Fact]
-    public void Map_AllDBNullValues_LeavesAllPropertiesAtDefault()
+    public void Build_AllDBNullValues_LeavesAllPropertiesAtDefault()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [DBNull.Value, DBNull.Value, DBNull.Value];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
@@ -488,74 +446,66 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void Map_AllNullValues_LeavesAllPropertiesAtDefault()
+    public void Build_AllNullValues_LeavesAllPropertiesAtDefault()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [null!, null!, null!];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
         Assert.Equal(0m, result.Price);
     }
 
-    // ── Map — inconvertible type ─────────────────────────────────────
+    // ── Build — inconvertible type ───────────────────────────────────
 
     [Fact]
-    public void Map_InconvertibleType_ThrowsOnConversion()
+    public void Build_InconvertibleType_ThrowsOnConversion()
     {
         var headers = new List<string> { "Id", "Price" };
-        RowMapper<TypeMismatchPoco>.Accessor?[] index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
+        Func<object?[], TypeMismatchPoco> map = RowMapper<TypeMismatchPoco>.Build(headers);
 
         // "not-a-number" cannot be converted to long
         object[] row = ["not-a-number", 1.0m];
 
-        Assert.ThrowsAny<Exception>(() => RowMapper<TypeMismatchPoco>.Map(row, index));
+        Assert.ThrowsAny<Exception>(() => map(row));
     }
 
-    // ── Map — empty row ──────────────────────────────────────────────
+    // ── Build — empty row ────────────────────────────────────────────
 
     [Fact]
-    public void Map_EmptyRow_ReturnsDefaultInstance()
+    public void Build_EmptyRow_ReturnsDefaultInstance()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = [];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
         Assert.Equal(0m, result.Price);
     }
 
-    // ── BuildIndex — duplicate headers pick first ────────────────────
+    // ── TryGetAccessor — duplicate headers ───────────────────────────
 
     [Fact]
-    public void BuildIndex_DuplicateHeaders_AllGetAccessors()
+    public void TryGetAccessor_DuplicateHeaders_AllGetAccessors()
     {
         var headers = new List<string> { "Id", "Id", "Name" };
 
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
-
-        Assert.Equal(3, index.Length);
-        Assert.NotNull(index[0]);
-        Assert.NotNull(index[1]); // second "Id" also matches
-        Assert.NotNull(index[2]);
+        Assert.All(headers, header => Assert.NotNull(RowMapper<SimpleProduct>.TryGetAccessor(header)));
     }
 
-    // ── Map — type coercion: string to int via ChangeType ────────────
+    // ── Build — type coercion: string to int via ChangeType ──────────
 
     [Fact]
-    public void Map_StringToInt_ConvertsSuccessfully()
+    public void Build_StringToInt_ConvertsSuccessfully()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        RowMapper<SimpleProduct>.Accessor?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
         object[] row = ["123", "Test", "45.67"];
 
-        SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
+        SimpleProduct result = RowMapper<SimpleProduct>.Build(headers)(row);
 
         Assert.Equal(123, result.Id);
         Assert.Equal("Test", result.Name);

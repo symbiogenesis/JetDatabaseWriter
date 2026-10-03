@@ -30,7 +30,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pages">The reader's page cache, which index and data pages are read through.</param>
 /// <param name="rows">Decodes the rows an index points at.</param>
 /// <param name="catalog">Resolves tables by name.</param>
-/// <param name="complexColumns">Loads attachment payloads for complex columns.</param>
+/// <param name="complexColumns">Builds the complex-column cells (every attachment or multi-value item of a row) that replace each row's complex reference.</param>
 /// <param name="tables">Scans the table when no index covers a predicate.</param>
 /// <param name="operations">The reader's operation gate.</param>
 internal sealed class IndexRowReader(

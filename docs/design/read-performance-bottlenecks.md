@@ -57,9 +57,10 @@ release-quality benchmark results justify reopening a specific area.
   preflight and per-column string materialization instead of a separate row
   parser.
 - `RowMapper<T>.Build(headers, sourceTypes?)` builds an expression-tree
-  `Func<object?[], T>`. `BuildIndex` and `Map` remain for fallback paths and
-  tests, type mismatches flow through `CoerceToTarget`, and the `ToRow` /
-  `Accessor` API remains available for writer-side mapping.
+  `Func<object?[], T>` that typed reads use when no direct page-to-POCO decoder
+  applies (and that index and linked-table reads always use); type mismatches flow through
+  `CoerceToTarget`, and the `ToRow` / `Accessor` API remains available for
+  writer-side mapping.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
   for primitive projections. The compiled delegate still asks `RowDecodePlan`
   to parse row layout and resolve column slices, so direct and fallback decode

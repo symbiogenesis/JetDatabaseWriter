@@ -20,7 +20,7 @@ using Xunit;
 /// Round-trip tests for scaffolded entities whose table and column names are not valid C#
 /// identifiers (<c>tbl People</c>, <c>Person ID</c>, <c>Last Name</c>). The scaffolder emits
 /// <c>[Table("...")]</c> and <c>[Column("...")]</c> for every renamed name; the generated source
-/// is compiled and the resulting type is used to insert, read and query the original table.
+/// is compiled and the resulting type is used to insert into and read back the original table.
 /// </summary>
 public sealed class ScaffoldedEntityColumnMappingTests
 {

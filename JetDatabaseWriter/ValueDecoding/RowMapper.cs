@@ -36,30 +36,12 @@ internal static class RowMapper<T>
     private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = [];
 
     /// <summary>
-    /// Gets the column name to compiled accessor map, built from <see cref="EntityMap"/> on
+    /// Gets the column name to accessor map, built from <see cref="EntityMap"/> on
     /// first use. It is built lazily rather than by the static initializer so that a mapping
     /// error, such as two properties naming one column, surfaces as its own exception
     /// instead of a <see cref="TypeInitializationException"/> that poisons the type.
     /// </summary>
     private static Dictionary<string, Accessor> PropertyMap => field ??= BuildPropertyMap();
-
-    /// <summary>
-    /// Builds the index mapping from column headers to compiled property accessors.
-    /// Returns an array whose length equals <paramref name="headers"/>.Count.
-    /// Each element is either an <see cref="Accessor"/> for a matched property, or <c>null</c> if no match.
-    /// </summary>
-    /// <param name="headers">The headers.</param>
-    public static Accessor?[] BuildIndex(IReadOnlyList<string> headers)
-    {
-        int count = headers.Count;
-        var index = new Accessor?[count];
-        for (int i = 0; i < count; i++)
-        {
-            PropertyMap.TryGetValue(headers[i], out index[i]);
-        }
-
-        return index;
-    }
 
     /// <summary>
     /// Returns a boolean mask the same length as <paramref name="headers"/> indicating
@@ -83,7 +65,7 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
-    /// Returns the compiled <see cref="Accessor"/> for the property mapped to the
+    /// Returns the <see cref="Accessor"/> for the property mapped to the
     /// column <paramref name="header"/> (case-insensitive), or
     /// <see langword="null"/> when no property matches. Used by the
     /// direct-decoder builder.
@@ -170,7 +152,7 @@ internal static class RowMapper<T>
             {
                 // Mixed/unknown source type: defer to the shared coercion
                 // helper, then assign only when it returns a non-null result
-                // (matches Map's "skip on Hyperlink.Parse failure" semantics).
+                // ("skip on Hyperlink.Parse failure").
                 // Reuse `valueLocal` as the in/out slot so we don't need a
                 // second local — the original `value` is no longer needed
                 // after the coerce call.
@@ -218,24 +200,6 @@ internal static class RowMapper<T>
         }
 
         return Build(headers, types);
-    }
-
-    /// <summary>
-    /// Convenience overload that pulls the header list from <c>td.Columns</c>
-    /// and the CLR source types from the cached <see cref="TableDef.ClrTypes"/>
-    /// projection (populated by <c>InitializeColumnMetadata</c>).
-    /// </summary>
-    /// <param name="td">Parsed table definition.</param>
-    public static Func<object?[], T> Build(TableDef td)
-    {
-        Guard.NotNull(td, nameof(td));
-        string[] headers = new string[td.Columns.Count];
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            headers[i] = td.Columns[i].Name;
-        }
-
-        return Build(headers, td.ClrTypes);
     }
 
     /// <summary>
@@ -307,7 +271,7 @@ internal static class RowMapper<T>
 
     /// <summary>
     /// Runtime coercion fallback used by <see cref="Build(IReadOnlyList{string}, IReadOnlyList{Type}?)"/>
-    /// and <see cref="Map"/> for columns whose source type is unknown or differs
+    /// for columns whose source type is unknown or differs
     /// from the property's underlying type. Returns <see langword="null"/> when a
     /// Hyperlink-typed property cannot parse the supplied string (signals "skip
     /// this assignment").
@@ -337,42 +301,6 @@ internal static class RowMapper<T>
         return Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
     }
 
-    /// <summary>
-    /// Maps a single row to a new instance of <typeparamref name="T"/> using the
-    /// pre-built <paramref name="index"/>. Reflection-driven path retained for
-    /// tests and ad-hoc callers; hot read paths should use <see cref="Build(IReadOnlyList{string}, IReadOnlyList{Type}?)"/>.
-    /// </summary>
-    /// <param name="row">The row values or row bytes.</param>
-    /// <param name="index">The index.</param>
-    public static T Map(IReadOnlyList<object?> row, Accessor?[] index)
-    {
-        T item = new();
-        int len = Math.Min(row.Count, index.Length);
-
-        for (int i = 0; i < len; i++)
-        {
-            Accessor? acc = index[i];
-            if (acc == null)
-            {
-                continue;
-            }
-
-            object? value = row[i];
-            if (value is null or DBNull)
-            {
-                continue;
-            }
-
-            object? coerced = CoerceToTarget(value, acc.TargetType);
-            if (coerced != null)
-            {
-                acc.Setter(item, coerced);
-            }
-        }
-
-        return item;
-    }
-
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {
         IReadOnlyList<EntityProperty> properties = EntityMap.For(typeof(T)).Properties;
@@ -386,29 +314,13 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
-    /// Pre-compiled property accessor holding a setter, getter, and pre-resolved target type.
+    /// Property accessor holding the mapped property and its pre-resolved target type.
     /// </summary>
-    internal sealed class Accessor
+    /// <param name="prop">The mapped property.</param>
+    internal sealed class Accessor(PropertyInfo prop)
     {
-        public Accessor(PropertyInfo prop)
-        {
-            this.Property = prop;
-            this.TargetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+        public Type TargetType { get; } = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
 
-            ParameterExpression instance = Expression.Parameter(typeof(T), "i");
-            ParameterExpression value = Expression.Parameter(typeof(object), "v");
-            this.Setter = Expression.Lambda<Action<T, object>>(
-                Expression.Assign(
-                    Expression.Property(instance, prop),
-                    Expression.Convert(value, prop.PropertyType)),
-                instance,
-                value).Compile();
-        }
-
-        public Action<T, object> Setter { get; }
-
-        public Type TargetType { get; }
-
-        internal PropertyInfo Property { get; }
+        internal PropertyInfo Property { get; } = prop;
     }
 }

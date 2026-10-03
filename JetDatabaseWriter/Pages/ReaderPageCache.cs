@@ -48,9 +48,6 @@ internal sealed class ReaderPageCache : IDisposable
         }
     }
 
-    /// <summary>Gets a value indicating whether pages are cached at all.</summary>
-    internal bool IsEnabled => this.pageCache is not null;
-
     /// <summary>Gets the number of page reads served from the cache.</summary>
     internal long Hits => this.pageCache?.Hits ?? 0;
 

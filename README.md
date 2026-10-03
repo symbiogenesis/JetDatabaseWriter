@@ -742,9 +742,9 @@ If the transaction is disposed without a `CommitAsync` call (for example, becaus
 
 `CommitAsync` is not atomic and is not a durable write-ahead log. The journal holds the new contents of each changed page; commit writes them directly over the target stream in page-number order, then flushes it. The transaction ends whether or not `CommitAsync` succeeds:
 
-- If it fails before writing the first page (cancellation, or a byte-range commit-lock timeout), the file is unchanged and `IsRolledBack` is `true`.
+- If it fails before the first page write starts (cancellation, or a byte-range commit-lock timeout), the file is unchanged and `IsRolledBack` is `true`.
 - Once the first page write starts, cancellation is ignored and the commit runs to completion.
-- If the process, stream, or device fails after that, pages already written are left in place and no recovery pass is attempted. `CommitAsync` surfaces the exception with both `IsCommitted` and `IsRolledBack` `false`; treat the file as damaged and restore it from a copy.
+- If anything fails after that (the process, stream or device, or a per-page byte-range lock timeout), pages already written are left in place and no recovery pass is attempted. `CommitAsync` surfaces the exception with both `IsCommitted` and `IsRolledBack` `false`; treat the file as damaged and restore it from a copy.
 
 WAL-style crash recovery is out of scope for the current file-format writer.
 

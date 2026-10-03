@@ -134,7 +134,8 @@ JetDatabaseWriter/
 │       ├── CalculatedLongValueRef.cs
 │       ├── ColumnSlice.cs
 │       ├── ColumnSliceKind.cs
-│       └── LongValueRef.cs
+│       ├── LongValueRef.cs
+│       └── UnreadableLongValue.cs         (MEMO/OLE value the writer's snapshot could not read; writing it throws)
 │
 ├── Pages/                                 (page-level I/O & layout)
 │   ├── DataPageLayout.cs                  (byte offsets, page structure, format-version layouts)
@@ -425,7 +426,8 @@ AccessWriter → WriterServices
   TableDataWriter     → TableCatalog, TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
                         ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
   TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
-                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader
+                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader,
+                        AutoNumberMaintainer
   RelationshipManager → TableCatalog, IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
   ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
@@ -449,21 +451,22 @@ AccessWriter → WriterServices
 Infrastructure/   → (nothing — leaf)
 CompoundFile/     → Infrastructure/
 DelimitedText/    → Infrastructure/
+Mapping/          → Infrastructure/
 LongValues/       → Pages/, Schema/
 Pages/            → Catalog/, Schema/, Infrastructure/; DatabaseFile
-Transactions/     → Pages/, Infrastructure/; DatabaseFile
+Transactions/     → Catalog/, Pages/, Schema/, Infrastructure/; DatabaseFile
 Encryption/       → CompoundFile/, Schema/, Transactions/, Infrastructure/
-ValueDecoding/    → Catalog/, LongValues/, Pages/, Schema/, Infrastructure/; DatabaseFile
+ValueDecoding/    → Catalog/, LongValues/, Mapping/, Pages/, Schema/, Infrastructure/; DatabaseFile
 ValueEncoding/    → Catalog/, LongValues/, Pages/, Schema/, ValueDecoding.Models/; DatabaseFile
 Schema/           → Catalog/, Encryption/, Indexes/, Pages/, Infrastructure/; DatabaseFile
-Indexes/          → Catalog/, Pages/, Schema/, Tables/, ValueEncoding/, Infrastructure/; DatabaseFile
+Indexes/          → Catalog/, Mapping/, Pages/, Schema/, Tables/, ValueDecoding.Models/, ValueEncoding/, Infrastructure/; DatabaseFile
 Catalog/          → Indexes/, Pages/, Schema/, Tables/, ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 ComplexColumns/   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Tables/, ValueDecoding/, Infrastructure/; DatabaseFile
 Relationships/    → Catalog/, ComplexColumns/, DelimitedText/, Indexes/, Pages/, Schema/, Tables/, ValueDecoding/,
                     Infrastructure/; DatabaseFile; opens a reader (linked sources)
 Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, Relationships/, Schema/,
                     ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
-Queries/          → Indexes/, Tables/, Infrastructure/
+Queries/          → Indexes/, Mapping/, Tables/, Infrastructure/
 DatabaseFile (root)   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
 AccessBase (root)     → DatabaseFile
 AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
@@ -513,6 +516,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `ComplexColumns/Models/` | `JetDatabaseWriter.ComplexColumns.Models` |
 | `Tables/` | `JetDatabaseWriter.Tables` |
 | `Queries/` | `JetDatabaseWriter.Queries` |
+| `Mapping/` | `JetDatabaseWriter.Mapping` |
 | `CompoundFile/` | `JetDatabaseWriter.CompoundFile` |
 | `Infrastructure/` | `JetDatabaseWriter.Infrastructure` |
 
@@ -633,7 +637,7 @@ Internal access goes to the internal types, not through the facades. Tests that 
 
 ### 1. Thin facades over composition roots and one database file
 
-`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file and byte-range-lock lifetime, disposal order, and for the writer the auto-commit scope, the Agile-encryption re-wrap, and the static encryption helpers.
+`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file and byte-range-lock lifetime, disposal order, and for the writer the refusal of flat-Agile files on open, the auto-commit scope, the Agile-encryption re-wrap, and the static encryption helpers.
 
 Both used to be the shared context their collaborators reached through. Writer managers took `AccessWriter` and found their siblings through internal `Relationships`, `ComplexColumns`, and `Constraints` properties. Reader helpers (`ComplexColumnReader`, `LongValueDecoder`, the index queries, the LINQ provider, `IncludeLoader`, and the reader half of `LinkedTableManager`) took `AccessReader` itself, and some called its public methods back. Page I/O lived in the `AccessBase` base class, so even a service that only read pages held the facade object. `ReaderServices` and `WriterServices` now wire each graph explicitly. Page I/O moved out of `AccessBase` into `DatabaseFile`, which every service depends on instead, and the user-table catalog moved into the shared `TableCatalog`.
 

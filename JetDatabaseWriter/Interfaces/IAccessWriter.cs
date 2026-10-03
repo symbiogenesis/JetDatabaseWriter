@@ -42,7 +42,7 @@ public interface IAccessWriter : IAccessBase
     /// Values must be in the same order as the table's columns.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
+    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a column with a default value stores that default, and any other column stores database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
@@ -50,7 +50,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped and unmapped columns are written as null.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber or its default value, or database null when it has neither.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="item">The object whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -62,7 +62,7 @@ public interface IAccessWriter : IAccessBase
     /// Asynchronously inserts multiple rows into the specified table in a single operation.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
+    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a column with a default value stores that default, and any other column stores database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
@@ -70,7 +70,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped and unmapped columns are written as null.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber or its default value, or database null when it has neither.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="items">Collection of objects whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

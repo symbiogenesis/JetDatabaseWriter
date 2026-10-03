@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Benchmarks.ValueDecoding;
 
+using System;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -8,7 +9,7 @@ using JetDatabaseWriter.ValueDecoding;
 [MemoryDiagnoser]
 public class RowMapperBenchmarks
 {
-    private RowMapper<SampleEntity>.Accessor?[] index = null!;
+    private Func<object?[], SampleEntity> factory = null!;
     private object[] row = null!;
     private string[] headers = null!;
     private TableDef tableDef = null!;
@@ -18,7 +19,7 @@ public class RowMapperBenchmarks
     public void Setup()
     {
         this.headers = ["Id", "Name", "Value", "Description", "IsActive"];
-        this.index = RowMapper<SampleEntity>.BuildIndex(this.headers);
+        this.factory = RowMapper<SampleEntity>.Build(this.headers);
         this.row = [42, "TestName", 3.14, "A description", true];
         this.tableDef = new TableDef
         {
@@ -42,10 +43,7 @@ public class RowMapperBenchmarks
     }
 
     [Benchmark]
-    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(this.headers);
-
-    [Benchmark]
-    public SampleEntity Map() => RowMapper<SampleEntity>.Map(this.row, this.index);
+    public SampleEntity Map() => this.factory(this.row);
 
     [Benchmark]
     public object[] ToRow() => RowMapper<SampleEntity>.ToRow(this.tableDef, this.entity);
@@ -55,7 +53,7 @@ public class RowMapperBenchmarks
     {
         // Int64 -> Int32 forces Convert.ChangeType path
         object[] row = [42L, "TestName", 3.14f, "Desc", true];
-        return RowMapper<SampleEntity>.Map(row, this.index);
+        return this.factory(row);
     }
 
     public class SampleEntity

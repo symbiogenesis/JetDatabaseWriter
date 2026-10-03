@@ -22,12 +22,4 @@ public sealed class BinaryBufferTests
 
         Assert.Empty(copied);
     }
-
-    [Fact]
-    public void CopyTail_CopiesFromStartToEnd()
-    {
-        byte[] copied = BinaryBuffer.CopyTail([0, 1, 2, 3], 2);
-
-        Assert.Equal([2, 3], copied);
-    }
 }

@@ -328,7 +328,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
         if (cell is string value)
         {
-            return BinaryStringParser.TryDecodeBase64DataUri(value, out byte[] decoded) ? decoded : [];
+            return BinaryStringParser.TryDecodeBase64DataUri(value, null, out byte[] decoded) ? decoded : [];
         }
 
         return [];
