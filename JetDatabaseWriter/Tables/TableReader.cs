@@ -278,51 +278,9 @@ internal sealed class TableReader(
             yield break;
         }
 
-        CatalogEntry entry = resolved.Entry;
-        TableDef td = resolved.Definition;
-
-        // Bind the compiled mapper directly against the per-table column
-        // headers + ClrTypes; avoids the GetColumnMetadataAsync round-trip
-        // and the second async-iterator state machine that the previous
-        // implementation built by re-entering Rows().
-        string[] headers = new string[td.Columns.Count];
-        for (int i = 0; i < td.Columns.Count; i++)
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, progress, cancellationToken).ConfigureAwait(false))
         {
-            headers[i] = td.Columns[i].Name;
-        }
-
-        // Try to compile a direct page → T decoder that skips the per-row
-        // object?[] buffer and primitive boxing entirely. The builder returns
-        // null when any bound column requires the slow path (Memo/Ole
-        // LVAL chain, Complex/Attachment, Hyperlink prop).
-        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
-            ? null
-            : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
-
-        if (directDecoder != null)
-        {
-            await foreach (T? item in this.EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken).ConfigureAwait(false))
-            {
-                yield return item;
-            }
-
-            yield break;
-        }
-
-        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
-
-        // Skip per-row decode of columns the mapper never reads. For wide
-        // tables and narrow DTOs this can eliminate the bulk of the per-row
-        // decode + boxing cost. We suppress the projection when the table has
-        // complex/attachment columns, because complex resolution needs the
-        // parent-id LongInteger which may not be in the projection set.
-        bool[]? wantedColumns = td.HasComplexColumns
-            ? null
-            : RowMapper<T>.GetBoundColumnMask(headers);
-
-        await foreach (T? mapped in this.EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return mapped;
+            yield return item;
         }
     }
 
@@ -402,48 +360,25 @@ internal sealed class TableReader(
         cancellationToken.ThrowIfCancellationRequested();
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved != null)
+        if (resolved == null)
         {
-            List<string> resolvedHeaders = resolved.Definition.Columns.ConvertAll(column => column.Name);
-            var projectedColumns = new List<ColumnInfo>(resolvedHeaders.Count);
-            RowMapper<T>.Accessor?[] fullIndex = RowMapper<T>.BuildIndex(resolvedHeaders);
+            IReadOnlyList<T>? linkedRows = await linked.TryReadTableAsync<T>(tableName, maxRows, cancellationToken).ConfigureAwait(false);
+            return linkedRows ?? [];
+        }
 
-            for (int i = 0; i < resolvedHeaders.Count; i++)
+        // Materialize through the same scan Rows<T> streams from, so both
+        // APIs pick the same decoder, projection and complex-column pass.
+        var items = new List<T>();
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, progress: null, cancellationToken).ConfigureAwait(false))
+        {
+            items.Add(item);
+            if (maxRows.HasValue && items.Count >= maxRows.Value)
             {
-                if (fullIndex[i] != null)
-                {
-                    projectedColumns.Add(resolved.Definition.Columns[i]);
-                }
-            }
-
-            bool canUseDirectMap = projectedColumns.TrueForAll(static column => column.Type is not ComplexType and not AttachmentType);
-
-            if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
-            {
-                Func<object?[], T> fullFactory = RowMapper<T>.Build(resolved.Definition);
-                return await this.ReadMappedTableAsync(
-                    resolved.Entry.TDefPage,
-                    resolved.Definition,
-                    fullFactory,
-                    maxRows,
-                    cancellationToken).ConfigureAwait(false);
-            }
-
-            bool canProject = canUseDirectMap && projectedColumns.Count < resolvedHeaders.Count;
-
-            if (canProject)
-            {
-                return await this.ReadProjectedTableAsync<T>(
-                    resolved.Entry.TDefPage,
-                    resolved.Definition,
-                    projectedColumns,
-                    maxRows,
-                    cancellationToken).ConfigureAwait(false);
+                break;
             }
         }
 
-        IReadOnlyList<T>? linkedRows = await linked.TryReadTableAsync<T>(tableName, maxRows, cancellationToken).ConfigureAwait(false);
-        return linkedRows ?? [];
+        return items;
     }
 
     /// <summary>
@@ -727,118 +662,61 @@ internal sealed class TableReader(
         }
     }
 
-    private async ValueTask<List<T>> ReadMappedTableAsync<T>(
-        long tdefPage,
-        TableDef td,
-        Func<object?[], T> factory,
-        uint? maxRows,
+    /// <summary>
+    /// The mapped-row scan behind <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
+    /// and <see cref="ReadTableAsync{T}(string, uint?, CancellationToken)"/> for a
+    /// native table: uses a compiled direct page-to-<typeparamref name="T"/>
+    /// decoder when every bound column supports it, and otherwise decodes rows
+    /// into a pooled buffer (resolving complex columns and Hyperlinks) and maps them.
+    /// </summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">The table name, used to load complex-column data.</param>
+    /// <param name="resolved">The resolved table.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    private IAsyncEnumerable<T> EnumerateMappedRowsAsync<T>(
+        string tableName,
+        ResolvedTable resolved,
+        IProgress<long>? progress,
         CancellationToken cancellationToken)
         where T : class, new()
     {
-        var items = new List<T>();
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
-        bool needsHyperlinkPass = td.HasHyperlinkColumns;
-        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+
+        // Bind the compiled mapper directly against the per-table column
+        // headers + ClrTypes; avoids a GetColumnMetadataAsync round-trip.
+        string[] headers = new string[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
-                if (row == null)
-                {
-                    continue;
-                }
-
-                if (needsHyperlinkPass)
-                {
-                    WrapHyperlinkColumns(row, td.ClrTypes);
-                }
-
-                items.Add(factory(row));
-                if (maxRows.HasValue && items.Count >= maxRows.Value)
-                {
-                    return items;
-                }
-            }
+            headers[i] = td.Columns[i].Name;
         }
 
-        return items;
-    }
+        // Try to compile a direct page → T decoder that skips the per-row
+        // object?[] buffer and primitive boxing entirely. The builder returns
+        // null when any bound column requires the slow path (Memo/Ole
+        // LVAL chain, Complex/Attachment, Hyperlink prop).
+        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
+            ? null
+            : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
 
-    private async ValueTask<List<T>> ReadProjectedTableAsync<T>(
-        long tdefPage,
-        TableDef td,
-        List<ColumnInfo> projectedColumns,
-        uint? maxRows,
-        CancellationToken cancellationToken)
-        where T : class, new()
-    {
-        string[] headers = new string[projectedColumns.Count];
-        var projectedSourceTypes = new Type[projectedColumns.Count];
-        for (int i = 0; i < projectedColumns.Count; i++)
+        if (directDecoder != null)
         {
-            ColumnInfo column = projectedColumns[i];
-            headers[i] = column.Name;
-            projectedSourceTypes[i] = ResolveClrType(column);
+            return this.EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken);
         }
 
-        Func<object?[], T> factory = RowMapper<T>.Build(headers, projectedSourceTypes);
-        var items = new List<T>();
-        bool[] wantedColumns = new bool[td.Columns.Count];
-        int[] projectedOrdinals = new int[projectedColumns.Count];
-        for (int i = 0; i < projectedColumns.Count; i++)
-        {
-            int ordinal = td.Columns.IndexOf(projectedColumns[i]);
-            if (ordinal < 0)
-            {
-                return items;
-            }
+        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
 
-            projectedOrdinals[i] = ordinal;
-            wantedColumns[ordinal] = true;
-        }
+        // Skip per-row decode of columns the mapper never reads. For wide
+        // tables and narrow DTOs this can eliminate the bulk of the per-row
+        // decode + boxing cost. We suppress the projection when the table has
+        // complex/attachment columns, because complex resolution needs the
+        // parent-id LongInteger which may not be in the projection set.
+        bool[]? wantedColumns = td.HasComplexColumns
+            ? null
+            : RowMapper<T>.GetBoundColumnMask(headers);
 
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
-        bool needsHyperlinkPass = td.HasHyperlinkColumns && HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns);
-        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
-                if (row == null)
-                {
-                    continue;
-                }
-
-                if (needsHyperlinkPass)
-                {
-                    WrapHyperlinkColumns(row, td.ClrTypes);
-                }
-
-                object?[] projectedRow = new object?[projectedOrdinals.Length];
-                for (int i = 0; i < projectedOrdinals.Length; i++)
-                {
-                    projectedRow[i] = row[projectedOrdinals[i]];
-                }
-
-                items.Add(factory(projectedRow));
-                if (maxRows.HasValue && items.Count >= maxRows.Value)
-                {
-                    return items;
-                }
-            }
-        }
-
-        return items;
+        return this.EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken);
     }
 
     /// <summary>
