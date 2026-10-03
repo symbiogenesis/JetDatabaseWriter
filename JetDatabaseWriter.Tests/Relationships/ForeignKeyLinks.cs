@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -65,20 +66,39 @@ internal static class ForeignKeyLinks
         return result;
     }
 
-    /// <summary>Asserts that every FK entry names a partner entry that points back at it.</summary>
+    /// <summary>Asserts that every FK entry names another entry that points back at it.</summary>
     /// <param name="fksByPage">The entries read by <see cref="ReadForeignKeyEntriesAsync"/>.</param>
     public static void AssertConsistent(Dictionary<long, List<IndexMetadata>> fksByPage)
     {
+        List<string> broken = FindUnreciprocatedLinks(fksByPage);
+        Assert.True(broken.Count == 0, string.Join(Environment.NewLine, broken));
+    }
+
+    /// <summary>
+    /// Describes every FK entry whose partner does not point back at it,
+    /// including an entry that names itself as its partner: the two sides of
+    /// a relationship, self-referencing ones too, are always two entries.
+    /// </summary>
+    /// <param name="fksByPage">The entries read by <see cref="ReadForeignKeyEntriesAsync"/>.</param>
+    /// <returns>One message per broken link; empty when every link is reciprocal.</returns>
+    public static List<string> FindUnreciprocatedLinks(Dictionary<long, List<IndexMetadata>> fksByPage)
+    {
+        var broken = new List<string>();
         foreach ((long page, List<IndexMetadata> fks) in fksByPage)
         {
             foreach (IndexMetadata fk in fks)
             {
-                Assert.True(
-                    fksByPage.TryGetValue(fk.RelatedTablePage, out List<IndexMetadata>? partner)
-                        && partner.Any(p => p.IndexNumber == fk.RelatedIndexNumber && p.RelatedTablePage == page && p.RelatedIndexNumber == fk.IndexNumber),
-                    $"FK index '{fk.Name}' (#{fk.IndexNumber}) on TDEF page {page} points at page {fk.RelatedTablePage} entry #{fk.RelatedIndexNumber}, which does not point back.");
+                bool namesItself = fk.RelatedTablePage == page && fk.RelatedIndexNumber == fk.IndexNumber;
+                if (namesItself
+                    || !fksByPage.TryGetValue(fk.RelatedTablePage, out List<IndexMetadata>? partner)
+                    || !partner.Any(p => p.IndexNumber == fk.RelatedIndexNumber && p.RelatedTablePage == page && p.RelatedIndexNumber == fk.IndexNumber))
+                {
+                    broken.Add($"FK index '{fk.Name}' (#{fk.IndexNumber}) on TDEF page {page} points at page {fk.RelatedTablePage} entry #{fk.RelatedIndexNumber}, which does not point back{(namesItself ? " (it names itself)" : string.Empty)}.");
+                }
             }
         }
+
+        return broken;
     }
 
     /// <summary>Asserts that no FK entry names <paramref name="page"/> as its partner table.</summary>
