@@ -1,8 +1,7 @@
-namespace JetDatabaseWriter.Infrastructure;
+namespace JetDatabaseWriter.TestSupport;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -10,6 +9,12 @@ internal static class DaoPowerShellHostResolver
 {
     private const string PowerShellRelativePath = @"WindowsPowerShell\v1.0\powershell.exe";
     private const string DaoProbeScript = "$ErrorActionPreference = 'Stop'; $engine = New-Object -ComObject DAO.DBEngine.120; try { exit 0 } finally { if ($null -ne $engine) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null }; [GC]::Collect(); [GC]::WaitForPendingFinalizers() }";
+
+    /// <summary>
+    /// How long one host may take to activate DAO. Starting Windows PowerShell took 12 s on a
+    /// busy test machine, so the probe allows a minute before it gives up on a host.
+    /// </summary>
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMinutes(1);
 
     public static DaoPowerShellHostProbeResult Probe(string? msAccessPath = null)
     {
@@ -96,44 +101,25 @@ internal static class DaoPowerShellHostResolver
 
     private static bool TryProbeDaoHost(string powershellPath, out string? failure)
     {
-        var psi = new ProcessStartInfo(powershellPath)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-Command");
-        psi.ArgumentList.Add(DaoProbeScript);
-
         try
         {
-            using var process = Process.Start(psi);
-            if (process is null)
+            PowerShellRunResult run = PowerShellProcessRunner.Run(
+                powershellPath,
+                ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", DaoProbeScript],
+                ProbeTimeout);
+            if (run.TimedOut)
             {
-                failure = $"Failed to start PowerShell host '{powershellPath}'.";
-                return false;
-            }
-
-            string stdout = process.StandardOutput.ReadToEnd();
-            string stderr = process.StandardError.ReadToEnd();
-            if (!process.WaitForExit(10000))
-            {
-                TryKill(process);
                 failure = $"Timed out while probing DAO with '{powershellPath}'.";
                 return false;
             }
 
-            if (process.ExitCode == 0)
+            if (run.ExitCode == 0)
             {
                 failure = null;
                 return true;
             }
 
-            string detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+            string detail = string.IsNullOrWhiteSpace(run.StandardError) ? run.StandardOutput : run.StandardError;
             failure = $"DAO.DBEngine.120 activation failed via '{powershellPath}': {detail.Trim()}";
             return false;
         }
@@ -145,26 +131,6 @@ internal static class DaoPowerShellHostResolver
     }
 
     private static string BuildPowerShellPath(string windowsDirectory, string systemDirectoryName) => Path.Combine(windowsDirectory, systemDirectoryName, PowerShellRelativePath);
-
-    private static void TryKill(Process process)
-    {
-        try
-        {
-#if NETSTANDARD2_1
-            process.Kill();
-#else
-            process.Kill(entireProcessTree: true);
-#endif
-        }
-        catch (InvalidOperationException)
-        {
-            // Process already exited.
-        }
-        catch (NotSupportedException)
-        {
-            // Not supported on this host.
-        }
-    }
 
     internal sealed record DaoPowerShellHostProbeResult(string? HostPath, string? FailureReason);
 }

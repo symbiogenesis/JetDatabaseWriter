@@ -1,12 +1,11 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 
 /// <summary>
 /// Probes for a Microsoft Access install (MSACCESS.EXE plus a bitness-matched
@@ -256,29 +255,7 @@ internal static class AccessRoundTripEnvironment
 
         try
         {
-            var psi = new ProcessStartInfo(PowerShellPath!)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-ExecutionPolicy");
-            psi.ArgumentList.Add("Bypass");
-            psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(scriptPath);
-
-            using Process p = Process.Start(psi)!;
-            string stdout = p.StandardOutput.ReadToEnd();
-            string stderr = p.StandardError.ReadToEnd();
-            if (!p.WaitForExit((int)timeout.TotalMilliseconds))
-            {
-                TryKill(p);
-                return new CompactResult(-1, stdout, stderr + $"\n[timeout after {timeout.TotalSeconds}s]");
-            }
-
-            return new CompactResult(p.ExitCode, stdout, stderr);
+            return RunScriptFile(scriptPath, timeout);
         }
         finally
         {
@@ -308,34 +285,23 @@ internal static class AccessRoundTripEnvironment
 
         try
         {
-            var psi = new ProcessStartInfo(PowerShellPath!)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-ExecutionPolicy");
-            psi.ArgumentList.Add("Bypass");
-            psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(scriptPath);
-
-            using Process p = Process.Start(psi)!;
-            string stdout = p.StandardOutput.ReadToEnd();
-            string stderr = p.StandardError.ReadToEnd();
-            if (!p.WaitForExit((int)timeout.TotalMilliseconds))
-            {
-                TryKill(p);
-                return new CompactResult(-1, stdout, stderr + $"\n[timeout after {timeout.TotalSeconds}s]");
-            }
-
-            return new CompactResult(p.ExitCode, stdout, stderr);
+            return RunScriptFile(scriptPath, timeout);
         }
         finally
         {
             TryDelete(scriptPath);
         }
+    }
+
+    private static CompactResult RunScriptFile(string scriptPath, TimeSpan timeout)
+    {
+        PowerShellRunResult run = PowerShellProcessRunner.Run(
+            PowerShellPath!,
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+            timeout);
+        return run.TimedOut
+            ? new CompactResult(-1, run.StandardOutput, run.StandardError + $"\n[timeout after {timeout.TotalSeconds}s]")
+            : new CompactResult(run.ExitCode, run.StandardOutput, run.StandardError);
     }
 
     private static ProbeResult DetectCore()
@@ -382,22 +348,6 @@ internal static class AccessRoundTripEnvironment
             || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void TryKill(Process p)
-    {
-        try
-        {
-            p.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-            // Process already exited.
-        }
-        catch (NotSupportedException)
-        {
-            // Not supported on this host.
-        }
     }
 
     private static void TryDelete(string path)

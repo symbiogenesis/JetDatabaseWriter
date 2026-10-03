@@ -11,12 +11,11 @@
 namespace JetDatabaseWriter.FormatProbe.Bisection;
 
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.FormatProbe;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.TestSupport;
 
 internal static class RoundTripBisect
 {
@@ -229,23 +228,10 @@ internal static class RoundTripBisect
         string scriptPath = FormatProbeArtifacts.GetFilePath(Path.GetDirectoryName(dst)!, "rt-bisect-compact.ps1");
         FormatProbeArtifacts.WriteAllText(scriptPath, script);
 
-        var psi = new ProcessStartInfo(powerShellPath)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(scriptPath);
-
-        using Process p = Process.Start(psi)!;
-        string err = p.StandardError.ReadToEnd();
-        _ = p.StandardOutput.ReadToEnd();
-        p.WaitForExit(120_000);
-        return (p.ExitCode, err);
+        PowerShellRunResult run = PowerShellProcessRunner.Run(
+            powerShellPath,
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+            TimeSpan.FromMinutes(2));
+        return (run.ExitCode, run.StandardError);
     }
 }

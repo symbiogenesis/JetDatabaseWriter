@@ -27,7 +27,6 @@ namespace JetDatabaseWriter.FormatProbe.Dao;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -35,7 +34,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.FormatProbe;
-using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 
 internal static class DaoBaselineProbe
 {
@@ -418,24 +417,11 @@ internal static class DaoBaselineProbe
     private static (int Code, string StdOut, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
         FormatProbeArtifacts.WriteAllText(scriptPath, script);
-        var psi = new ProcessStartInfo(powerShellPath)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(scriptPath);
-
-        using Process p = Process.Start(psi)!;
-        string stdout = p.StandardOutput.ReadToEnd();
-        string err = p.StandardError.ReadToEnd();
-        _ = p.WaitForExit(120_000);
-        return (p.ExitCode, stdout, err);
+        PowerShellRunResult run = PowerShellProcessRunner.Run(
+            powerShellPath,
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+            TimeSpan.FromMinutes(2));
+        return (run.ExitCode, run.StandardOutput, run.StandardError);
     }
 
     // ────────────────────────── Snapshot / per-file analysis ────────────────

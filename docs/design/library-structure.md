@@ -350,13 +350,14 @@ JetDatabaseWriter/
     ├── BinaryBuffer.cs                    (byte-slice copy helpers)
     ├── BinaryStringParser.cs              (hex/base64 parsing helpers)
     ├── BoxCache.cs                        (interned boxes for low-cardinality fixed-width cell values)
-    ├── DaoPowerShellHostResolver.cs       (test/probe DAO PowerShell host discovery)
     ├── FileStreamFactory.cs               (central FileStream construction helpers)
     ├── StreamReadExtensions.cs            (cross-target stream read helpers)
     ├── AsyncLazyInitializer.cs            (thread-safe async lazy initialization)
     ├── AsyncReentrantOperationGate.cs     (reentrant async operation serializer)
     └── Guard.cs                           (argument validation helpers)
 ```
+
+The other projects in the solution are not part of the package: the tests (`JetDatabaseWriter.Tests`, net10.0 and net8.0), the benchmarks, the format probe, the scaffolding CLI, and `JetDatabaseWriter.TestSupport`. TestSupport is a non-packable class library, built for net10.0 and net8.0 like the tests, that holds code the tests and the format probe share but the package must not ship: `DaoPowerShellHostResolver`, which finds a Windows PowerShell host that can load DAO, and `PowerShellProcessRunner`, which runs that host and, when it times out, kills it with every process it started.
 
 ---
 

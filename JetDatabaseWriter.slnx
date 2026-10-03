@@ -13,6 +13,7 @@
   <Project Path="JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj" />
   <Project Path="JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj" />
   <Project Path="JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj" />
+  <Project Path="JetDatabaseWriter.TestSupport/JetDatabaseWriter.TestSupport.csproj" />
   <Project Path="JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj" />
   <Project Path="JetDatabaseWriter/JetDatabaseWriter.csproj" />
 </Solution>

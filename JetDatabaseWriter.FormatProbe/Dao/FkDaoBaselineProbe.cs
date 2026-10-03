@@ -3,15 +3,14 @@ namespace JetDatabaseWriter.FormatProbe.Dao;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.FormatProbe;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.TestSupport;
 
 #pragma warning disable CA1303 // Diagnostic console output is not localized.
 
@@ -670,24 +669,11 @@ internal static class FkDaoBaselineProbe
         FormatProbeArtifacts.WriteAllText(scriptPath, script);
         try
         {
-            var psi = new ProcessStartInfo(powerShellPath)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-ExecutionPolicy");
-            psi.ArgumentList.Add("Bypass");
-            psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(scriptPath);
-
-            using Process process = Process.Start(psi)!;
-            string stdout = process.StandardOutput.ReadToEnd();
-            string stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            return (process.ExitCode, stdout, stderr);
+            PowerShellRunResult run = PowerShellProcessRunner.Run(
+                powerShellPath,
+                ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+                TimeSpan.FromMinutes(10));
+            return (run.ExitCode, run.StandardOutput, run.StandardError);
         }
         finally
         {

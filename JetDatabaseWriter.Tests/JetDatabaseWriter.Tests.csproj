@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+    <ProjectReference Include="..\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
   </ItemGroup>
 
   <!--

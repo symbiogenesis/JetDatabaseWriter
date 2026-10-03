@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System.Collections.Generic;
-using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 public sealed class DaoPowerShellHostResolverTests
