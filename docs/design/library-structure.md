@@ -241,7 +241,9 @@ JetDatabaseWriter/
 │   │   ├── CalculatedFunctionDescriptor.cs         (function alias, domain, and argument metadata)
 │   │   ├── CalculatedFunctionDomain.cs             (calculated-function domain enum)
 │   │   ├── CalculatedFunctionEvaluator.cs          (function evaluator delegate)
-│   │   └── CalculatedFunctionInvocation.cs         (bound function invocation context)
+│   │   ├── CalculatedFunctionInvocation.cs         (bound function invocation context)
+│   │   ├── ColumnDefaultValue.cs                   (persisted column DefaultValue expression, evaluated on insert)
+│   │   └── ColumnValidationRule.cs                 (persisted column ValidationRule: implicit operand, three-valued logic)
 │   └── Models/
 │       ├── ColumnConstraint.cs
 │       ├── ConstraintRegistrySnapshot.cs  (registry contents + AutoNumber counters, restored on rollback)

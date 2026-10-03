@@ -5,7 +5,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema.Expressions;
 
 /// <summary>
-/// Per-column constraint metadata used at insert time to apply default values,
+/// Per-column constraint metadata used at insert and update time to apply default values,
 /// auto-increment, required-field, and validation rule semantics.
 /// </summary>
 internal sealed class ColumnConstraint
@@ -22,6 +22,23 @@ internal sealed class ColumnConstraint
 
     public Func<object?, bool>? ValidationRule { get; set; }
 
+    /// <summary>
+    /// Gets or sets the persisted Access <c>DefaultValue</c> expression. Evaluated on
+    /// insert when <see cref="DefaultValue"/> is not set.
+    /// </summary>
+    public string? DefaultValueExpression { get; set; }
+
+    /// <summary>
+    /// Gets or sets the persisted Access column <c>ValidationRule</c> expression.
+    /// </summary>
+    public string? ValidationRuleExpression { get; set; }
+
+    /// <summary>
+    /// Gets or sets the persisted Access <c>ValidationText</c> shown when
+    /// <see cref="ValidationRuleExpression"/> rejects a value.
+    /// </summary>
+    public string? ValidationText { get; set; }
+
     public bool IsCalculated { get; set; }
 
     public string? CalculationExpression { get; set; }
@@ -35,6 +52,24 @@ internal sealed class ColumnConstraint
 
     internal CalculatedExpressionPlan? CalculatedExpressionPlan { get; set; }
 
+    /// <summary>
+    /// Gets or sets the parsed <see cref="DefaultValueExpression"/>, or
+    /// <see cref="ColumnDefaultValue.Unsupported"/> once it is known not to parse.
+    /// </summary>
+    internal ColumnDefaultValue? DefaultValuePlan { get; set; }
+
+    /// <summary>
+    /// Gets or sets the parsed <see cref="ValidationRuleExpression"/>, or
+    /// <see cref="ColumnValidationRule.Unsupported"/> once it is known not to parse.
+    /// </summary>
+    internal ColumnValidationRule? ValidationRulePlan { get; set; }
+
     public bool HasAnyConstraint =>
-        !this.IsNullable || this.DefaultValue != null || this.IsAutoIncrement || this.ValidationRule != null || this.IsCalculated;
+        !this.IsNullable
+        || this.DefaultValue != null
+        || this.IsAutoIncrement
+        || this.ValidationRule != null
+        || this.DefaultValueExpression != null
+        || this.ValidationRuleExpression != null
+        || this.IsCalculated;
 }

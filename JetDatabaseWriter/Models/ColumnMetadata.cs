@@ -46,12 +46,16 @@ public sealed record ColumnMetadata
     /// database engine level (e.g. <c>"0"</c>, <c>"\"hi\""</c>, <c>"=Now()"</c>). Sourced from
     /// <c>MSysObjects.LvProp</c>; <see langword="null"/> when no default is persisted or the blob
     /// is absent (typical for databases created by this library prior to write-side support).
+    /// <see cref="AccessWriter"/> applies it on insert; see
+    /// <see cref="ColumnDefinition.DefaultValueExpression"/>.
     /// </summary>
     public string? DefaultValueExpression { get; init; }
 
     /// <summary>
     /// Gets or initializes the persisted Jet expression evaluated by the database engine on
     /// insert/update (e.g. <c>"&gt;=0 And &lt;=100"</c>). Sourced from <c>MSysObjects.LvProp</c>.
+    /// <see cref="AccessWriter"/> enforces it too; see
+    /// <see cref="ColumnDefinition.ValidationRuleExpression"/>.
     /// </summary>
     public string? ValidationRuleExpression { get; init; }
 
