@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
-using System.Data;
 using System.Globalization;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -58,9 +57,7 @@ public sealed class ConstraintRegistryTests
             "IsHigh",
             ColumnType.BooleanType,
             "[Score] >= 10");
-        var registry = new ConstraintRegistry(
-            static (_, _) => ValueTask.FromResult(new DataTable()),
-            (_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
+        var registry = new ConstraintRegistry((_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
         object[] values = [12, DBNull.Value];
 
         _ = await registry.ApplyAsync("Calc", tableDef, values, TestContext.Current.CancellationToken);
@@ -411,7 +408,7 @@ public sealed class ConstraintRegistryTests
     public async Task ApplyAsync_DbDefault_IsReplacedWhenConstraintsAreSkipped()
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
-        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        var registry = new ConstraintRegistry();
         registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }, new ColumnDefinition("Other", typeof(int))]);
         object[] values = [DbDefault.Value];
 
@@ -458,7 +455,7 @@ public sealed class ConstraintRegistryTests
     public async Task Register_DefaultOnAutoNumberColumn_IsNotApplied()
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
-        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        var registry = new ConstraintRegistry();
         registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }]);
         object[] values = [DbDefault.Value];
 
@@ -491,7 +488,7 @@ public sealed class ConstraintRegistryTests
             _ => (ColumnType.ByteType, new ColumnDefinition("Score", typeof(byte)) { DefaultValue = 300 }, DBNull.Value),
         };
         TableDef tableDef = SingleColumnTable(testCase.Type);
-        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        var registry = new ConstraintRegistry();
         registry.Register("T", [testCase.Column]);
         object[] values = [DbDefault.Value];
 
@@ -562,7 +559,6 @@ public sealed class ConstraintRegistryTests
     };
 
     private static ConstraintRegistry RegistryWithProperties(ColumnPropertyBlock properties) => new(
-        static (_, _) => ValueTask.FromResult(new DataTable()),
         (_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
 
     private static ColumnPropertyBlock BuildColumnProperties(string columnName, (string Name, string Value) property)

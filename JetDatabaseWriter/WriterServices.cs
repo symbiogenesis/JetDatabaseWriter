@@ -56,7 +56,6 @@ internal sealed class WriterServices
         CatalogRowReader catalogRows = this.CatalogRows;
         var complexReferenceSeeds = new ComplexReferenceSeedReader(db, catalogRows, autoNumbers);
         var constraints = new ConstraintRegistry(
-            snapshots.ReadTableSnapshotAsync,
             async (tableName, ct) =>
             {
                 CatalogEntry? entry = await catalog.GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
@@ -67,14 +66,14 @@ internal sealed class WriterServices
 
                 return await snapshots.ReadLvPropBlockAsync(entry.TDefPage, ct).ConfigureAwait(false);
             },
-            async (tableName, ct) =>
+            async (tableName, tableDef, columnIndex, ct) =>
             {
                 // Complex-column flat tables are system tables, so they are
                 // not in the user-table catalog.
                 CatalogEntry? entry = await catalog.GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
                 long tdefPage = entry?.TDefPage
                     ?? await catalogRows.FindSystemTableTdefPageAsync(tableName, ct).ConfigureAwait(false);
-                return await autoNumbers.ReadHighWaterAsync(tdefPage, ct).ConfigureAwait(false);
+                return await autoNumbers.ReadUsedHighWaterAsync(tdefPage, tableDef, columnIndex, ct).ConfigureAwait(false);
             },
             async (tableName, tableDef, ct) =>
             {
