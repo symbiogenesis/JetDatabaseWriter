@@ -31,12 +31,6 @@ internal sealed class WriterServices
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A capacity-0 ReaderPageCache allocates no caches, so its Dispose has nothing to release.")]
     internal WriterServices(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
     {
-        this.CatalogRows = new CatalogRowReader(db);
-        this.Catalog = new TableCatalog(db, this.CatalogRows);
-        this.PageAllocator = new PageAllocator(db, options);
-
-        TableCatalog catalog = this.Catalog;
-
         // Decoded reads of the writer's own rows go through the same database
         // file the writer writes, so they see an active transaction's journal.
         // A capacity-0 page cache keeps nothing between calls, and names
@@ -44,7 +38,15 @@ internal sealed class WriterServices
         // leave a stale snapshot behind.
         var snapshotPages = new ReaderPageCache(db, capacity: 0);
         var snapshotRows = new RowDecoder(db, snapshotPages, new LongValueDecoder(db, snapshotPages), strictParsing: true);
-        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, snapshotRows));
+        var columnProperties = new ColumnPropertyReader(db, snapshotRows);
+
+        this.CatalogRows = new CatalogRowReader(db);
+        this.Catalog = new TableCatalog(db, this.CatalogRows);
+        this.PageAllocator = new PageAllocator(db, options);
+
+        TableCatalog catalog = this.Catalog;
+
+        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db);
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator);
