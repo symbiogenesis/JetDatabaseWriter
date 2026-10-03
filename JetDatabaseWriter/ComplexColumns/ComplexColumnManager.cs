@@ -989,7 +989,7 @@ internal sealed class ComplexColumnManager(
         ColumnInfo complexCol,
         CancellationToken cancellationToken)
     {
-        byte[] page = await this.db.ReadPageAsync(parentLocation.PageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.db.ReadPageAsync(parentLocation.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (ComplexReferenceSeedReader.TryReadSlot(this.db, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing))
@@ -1021,7 +1021,8 @@ internal sealed class ComplexColumnManager(
         int reference,
         CancellationToken cancellationToken)
     {
-        byte[] page = await this.db.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
+        // An overflow row's bytes are on the page its header points at.
+        byte[] page = await this.db.ReadPageAsync(location.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             foreach (ColumnInfo column in parentDef.Columns)
@@ -1033,7 +1034,7 @@ internal sealed class ComplexColumnManager(
                 }
             }
 
-            await this.db.WritePageAsync(location.PageNumber, page, cancellationToken).ConfigureAwait(false);
+            await this.db.WritePageAsync(location.DataPageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1195,7 +1196,7 @@ internal sealed class ComplexColumnManager(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await this.db.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.db.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 foreach (ColumnInfo col in complexCols)

@@ -9,12 +9,11 @@ using Xunit;
 
 /// <summary>
 /// Fixture-based tests for rows with overflow pointers using the Jackcess
-/// <c>overflowTestV2010.accdb</c> fixture. The fixture's <c>Table1</c> has
-/// 7 rows, 2 of which (rows 3 and 5 in Jackcess terms) use overflow
-/// pointers (<c>0x4000</c>-flagged row offsets). The reader follows
-/// overflow pointers in V2007+/ACE; older format variants (V2000/V2003)
-/// may throw <c>JetLimitationException</c> due to deleted-column schema
-/// gaps in the fixture.
+/// <c>overflowTest</c> fixtures. Each fixture's <c>Table1</c> has 7 rows. In
+/// the V2000 and V2003 files, rows 3 and 5 (in Jackcess terms) are overflow
+/// rows: their slots are flagged <c>0x4000</c> and hold a pointer to the row
+/// data on another slot, which the reader follows. <see cref="Pages.OverflowRowTests"/>
+/// checks the rows' values on every version.
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -77,16 +76,17 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     }
 
     /// <summary>
-    /// The overflow fixture across ACE format variants (V2007–V2010) opens
-    /// and reads without throwing. V2000 and V2003 overflow fixtures have
-    /// deleted-column schema gaps that trigger
-    /// <c>JetLimitationException</c> — those are excluded.
+    /// The overflow fixture of every format variant opens and reads all 7 rows
+    /// of <c>Table1</c>, including the overflow rows of V2000 and V2003.
     /// </summary>
     /// <param name="fieldName">The field name.</param>
     [Theory]
-    [InlineData(nameof(TestDatabases.OverflowTestV2010))]
+    [InlineData(nameof(TestDatabases.OverflowTestV1997))]
+    [InlineData(nameof(TestDatabases.OverflowTestV2000))]
+    [InlineData(nameof(TestDatabases.OverflowTestV2003))]
     [InlineData(nameof(TestDatabases.OverflowTestV2007))]
-    public async Task OverflowFixture_AceFormats_ReadsWithoutThrowing(string fieldName)
+    [InlineData(nameof(TestDatabases.OverflowTestV2010))]
+    public async Task OverflowFixture_EveryFormat_ReadsAllRows(string fieldName)
     {
         string path = (string)typeof(TestDatabases)
             .GetField(fieldName)!
@@ -97,15 +97,22 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.NotEmpty(tables);
+        Assert.Contains("Table1", tables);
 
         foreach (string table in tables)
         {
+            int rows = 0;
             await foreach (object[] row in reader.Rows(
                 table,
                 cancellationToken: TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(row);
+                rows++;
+            }
+
+            if (table == "Table1")
+            {
+                Assert.Equal(7, rows);
             }
         }
     }

@@ -37,7 +37,8 @@ applyTo: "**"
 | **LVAL** | Long Value — descriptor/page form for MEMO, OLE, and attachment payloads; oversized payloads live on external data pages marked with the `LVAL` signature |
 | **EOD** | End of Data — marker in the variable-length column trailer |
 | **Row ID** | Physical row pointer made from a page number plus a per-page row slot |
-| **Row-offset slot** | Data-page trailer entry pointing to a row start; high bits mark deleted or non-live rows |
+| **Row-offset slot** | Data-page entry (in the table after the page header) holding a row's start offset in its low 13 bits (`0x1FFF`); `0x8000` marks the row deleted and `0x4000` marks an overflow row's header. A row ends at the next greater offset of any slot on the page |
+| **Overflow row** | A row Access moved to another slot (often on another page of the same table) when it outgrew its page. Its original slot, the header, is flagged `0x4000` and holds a 4-byte pointer (row byte, then 3-byte page); the moved bytes' slot is flagged `0x8000`. Index entries and the TDEF row count refer to the header; see `docs/design/data-page-row-format-notes.md` |
 | **Null mask** | Row bitmap indicating which columns are present; BOOL values are stored here rather than in the fixed area |
 | **Fixed row area** | Row section containing fixed-width column payloads |
 | **Variable-length trailer** | Row tail holding offsets for variable-width columns plus the EOD marker |

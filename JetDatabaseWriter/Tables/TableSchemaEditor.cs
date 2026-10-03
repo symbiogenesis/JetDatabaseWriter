@@ -887,17 +887,23 @@ internal sealed class TableSchemaEditor(
         long totalPages = db.PageCount;
         if (tableDef is not null)
         {
+            // Overflow rows are followed to their moved bytes, so their long
+            // values are freed too.
             await db.ForEachOwnedDataPageAsync(
                 tdefPage,
-                (pageNumber, page, _) =>
+                (pageNumber, page, token) =>
                 {
                     pagesToFree.Add(pageNumber);
-                    foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
-                    {
-                        longValueRoots.AddRange(longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef));
-                    }
-
-                    return new ValueTask<bool>(true);
+                    return db.ForEachRowOnPageAsync(
+                        pageNumber,
+                        page,
+                        (row, _) =>
+                        {
+                            var rowBound = new RowBound(row.Location.DataRowIndex, row.Location.RowStart, row.Location.RowSize);
+                            longValueRoots.AddRange(longValueEncoder.CollectLongValueRoots(row.Page, rowBound, tableDef));
+                            return new ValueTask<bool>(true);
+                        },
+                        token);
                 },
                 cancellationToken).ConfigureAwait(false);
         }

@@ -329,7 +329,24 @@ internal sealed class IndexRowReader(
             return null;
         }
 
-        if (!this.TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < db.RowFields.NumCols)
+        if (!this.TryFindRowEntry(page, dataPage, rowIndex, out RowBound rowBound))
+        {
+            return null;
+        }
+
+        // Index entries name an overflow row's header slot; read the row from
+        // the slot the header points at.
+        if (rowBound.IsOverflowPointer)
+        {
+            if (await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false) is not { } target)
+            {
+                return null;
+            }
+
+            (page, rowBound) = (target.Page, target.Bound);
+        }
+
+        if (rowBound.RowSize < db.RowFields.NumCols)
         {
             return null;
         }
@@ -353,9 +370,9 @@ internal sealed class IndexRowReader(
         return row;
     }
 
-    private bool TryFindLiveRowBound(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
+    private bool TryFindRowEntry(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
     {
-        foreach (RowBound candidate in pages.GetLiveRowBounds(pageNumber, page))
+        foreach (RowBound candidate in pages.GetRowDirectory(pageNumber, page))
         {
             if (candidate.RowIndex == rowIndex)
             {

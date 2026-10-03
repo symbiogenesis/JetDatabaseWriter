@@ -244,7 +244,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// Corrupts the numRows field on EVERY data page (type 0x01) in the file to
     /// 2500, exceeding the physical max of (4096 − 14) / 2 = 2041 row-offset
     /// entries. Then reads all tables through the normal API. Without the numRows
-    /// clamp in <c>EnumerateLiveRowBounds</c> / <c>ComputeLiveRowBoundsArray</c>,
+    /// clamp in <c>EnumerateLiveRowBounds</c> / <c>ComputeRowDirectory</c>,
     /// <c>Ru16</c> reads past the page buffer and throws
     /// <see cref="ArgumentOutOfRangeException"/>.
     /// </summary>
@@ -888,7 +888,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
 
     /// <summary>
     /// Sets the delete flag (0x8000) on every row offset in all data pages.
-    /// <c>ComputeLiveRowBoundsArray</c> filters on <c>(raw &amp; 0xC000) == 0</c>,
+    /// <c>ComputeRowDirectory</c> leaves out every slot with the deleted bit set,
     /// so every row should be skipped — the reader must produce zero rows per
     /// table without crashing.
     /// </summary>

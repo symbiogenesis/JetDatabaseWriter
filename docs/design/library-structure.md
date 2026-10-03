@@ -143,16 +143,17 @@ JetDatabaseWriter/
 │   ├── DataPageInserter.cs               (FindInsertTarget, CanInsertRow, WriteRowToPage)
 │   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
 │   ├── ReservedPageRuns.cs                (page runs an index operation reserved but has not linked; released on a bail or throw)
-│   ├── ReaderPageCache.cs                 (the reader's page and live-row-bound LRU caches)
+│   ├── ReaderPageCache.cs                 (the reader's page and row-directory LRU caches)
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
 │   ├── PageJournal.cs                     (in-memory after-images of a transaction's pages, replayed in place on commit)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (insert hint + writable owned-map set, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
+│       ├── OverflowRowTarget.cs           (the slot an overflow row's header points at, and its page)
 │       ├── PageInsertTarget.cs
-│       ├── RowBound.cs
+│       ├── RowBound.cs                    (one row-directory entry; flags an overflow row's header)
 │       ├── RowLayout.cs
-│       ├── RowLocation.cs
+│       ├── RowLocation.cs                 (a row's identity slot, and the slot that holds its bytes)
 │       └── UsageMapPointer.cs
 │
 ├── Indexes/                               (all index concerns — B-tree, key encoding, maintenance)

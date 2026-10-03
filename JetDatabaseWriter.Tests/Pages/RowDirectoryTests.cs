@@ -24,6 +24,7 @@ using Xunit;
 public sealed class RowDirectoryTests
 {
     private const int Deleted = 0x8000;
+    private const int Overflow = 0x4000;
 
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
@@ -92,10 +93,30 @@ public sealed class RowDirectoryTests
             new RowBound(2, top - 300, 200));
     }
 
+    /// <summary>
+    /// The row directory keeps an overflow row's header (flagged <c>0x4000</c>) as a
+    /// pointer entry and leaves out deleted slots, including a deleted header
+    /// (<c>0xC000</c>) and the moved bytes Access flags deleted. The live-row
+    /// enumeration leaves the header out too.
+    /// </summary>
+    /// <param name="format">The database format, which sets the page size and header layout.</param>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task RowDirectory_FlagsOverflowHeadersAndLeavesOutDeletedSlots(DatabaseFormat format)
+    {
+        await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
+        DatabaseFile db = harness.Database;
+        int top = db.PageSizeBytes;
+        byte[] page = BuildDataPage(db, top - 100, (top - 200) | Overflow, (top - 300) | Deleted, (top - 400) | Deleted | Overflow);
+
+        Assert.Equal([new RowBound(0, top - 100, 100), new RowBound(1, top - 200, 100, IsOverflowPointer: true)], db.ComputeRowDirectory(page));
+        Assert.Equal([new RowBound(0, top - 100, 100)], db.EnumerateLiveRowBounds(page).ToArray());
+    }
+
     private static void AssertBounds(DatabaseFile db, byte[] page, params RowBound[] expected)
     {
         Assert.Equal(expected, db.EnumerateLiveRowBounds(page).ToArray());
-        Assert.Equal(expected, db.ComputeLiveRowBoundsArray(page));
+        Assert.Equal(expected, db.ComputeRowDirectory(page));
     }
 
     /// <summary>

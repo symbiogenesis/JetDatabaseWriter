@@ -42,8 +42,8 @@ internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
 
     private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
-        RowBound[] liveRows = pages.GetLiveRowBounds(lvalPage, page);
-        return LongValueStore.LocateRow(lvalPage, lvalRow, page, db.DataPage, db.PageSizeBytes, liveRows);
+        RowBound[] rowDirectory = pages.GetRowDirectory(lvalPage, page);
+        return LongValueStore.LocateRow(lvalPage, lvalRow, page, db.DataPage, db.PageSizeBytes, rowDirectory);
     }
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)

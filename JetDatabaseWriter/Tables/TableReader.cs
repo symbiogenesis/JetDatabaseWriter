@@ -138,9 +138,9 @@ internal sealed class TableReader(
     }
 
     /// <summary>
-    /// Counts the rows of a table by scanning its data pages: the live
-    /// (non-deleted, non-overflow) rows whose layout decodes, which are exactly
-    /// the rows the table-read APIs return.
+    /// Counts the rows of a table by scanning its data pages: the live rows,
+    /// overflow rows read through their pointer included, whose layout decodes,
+    /// which are exactly the rows the table-read APIs return.
     /// </summary>
     /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -166,10 +166,22 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
             {
+                byte[] rowPage = scanPage.Page;
+                RowBound rb = slot;
+                if (slot.IsOverflowPointer)
+                {
+                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                    {
+                        continue;
+                    }
+
+                    (rowPage, rb) = (target.Page, target.Bound);
+                }
+
                 if (rb.RowSize >= db.RowFields.NumCols
-                    && decodePlan.CanDecodeRow(db, scanPage.Page, rb.RowStart, rb.RowSize))
+                    && decodePlan.CanDecodeRow(db, rowPage, rb.RowStart, rb.RowSize))
                 {
                     count++;
                 }
@@ -593,14 +605,26 @@ internal sealed class TableReader(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+                    foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
                     {
+                        byte[] rowPage = scanPage.Page;
+                        RowBound rb = slot;
+                        if (slot.IsOverflowPointer)
+                        {
+                            if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                            {
+                                continue;
+                            }
+
+                            (rowPage, rb) = (target.Page, target.Bound);
+                        }
+
                         if (rb.RowSize < db.RowFields.NumCols)
                         {
                             continue;
                         }
 
-                        bool ok = await rows.CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
+                        bool ok = await rows.CrackRowTypedIntoBufferAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                         if (!ok)
                         {
                             continue;
@@ -763,14 +787,26 @@ internal sealed class TableReader(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+                foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
                 {
+                    byte[] rowPage = scanPage.Page;
+                    RowBound rb = slot;
+                    if (slot.IsOverflowPointer)
+                    {
+                        if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                        {
+                            continue;
+                        }
+
+                        (rowPage, rb) = (target.Page, target.Bound);
+                    }
+
                     if (rb.RowSize < db.RowFields.NumCols)
                     {
                         continue;
                     }
 
-                    bool ok = await rows.CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
+                    bool ok = await rows.CrackRowTypedIntoBufferAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                     if (!ok)
                     {
                         continue;
@@ -844,14 +880,26 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
             {
+                byte[] rowPage = scanPage.Page;
+                RowBound rb = slot;
+                if (slot.IsOverflowPointer)
+                {
+                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                    {
+                        continue;
+                    }
+
+                    (rowPage, rb) = (target.Page, target.Bound);
+                }
+
                 if (rb.RowSize < db.RowFields.NumCols)
                 {
                     continue;
                 }
 
-                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                object?[]? row = await rows.CrackRowTypedAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
                     continue;
@@ -906,15 +954,27 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
             {
+                byte[] rowPage = scanPage.Page;
+                RowBound rb = slot;
+                if (slot.IsOverflowPointer)
+                {
+                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } overflow)
+                    {
+                        continue;
+                    }
+
+                    (rowPage, rb) = (overflow.Page, overflow.Bound);
+                }
+
                 if (rb.RowSize < db.RowFields.NumCols)
                 {
                     continue;
                 }
 
                 T target = new();
-                if (!decodePlan.TryDecodeDirect(db, scanPage.Page, rb.RowStart, rb.RowSize, directDecoder, target))
+                if (!decodePlan.TryDecodeDirect(db, rowPage, rb.RowStart, rb.RowSize, directDecoder, target))
                 {
                     continue;
                 }

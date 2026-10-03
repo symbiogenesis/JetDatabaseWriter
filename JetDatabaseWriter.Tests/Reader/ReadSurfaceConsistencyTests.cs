@@ -143,6 +143,33 @@ public sealed class ReadSurfaceConsistencyTests
     }
 
     [Theory]
+    [MemberData(nameof(FormatsAndReadModes))]
+    public async Task ReadApis_OverflowRow_AllFollowItAndAgreeOnCount(DatabaseFormat format, PageReadOptimizationMode readMode)
+    {
+        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, ItemCount, primaryKey: false, this.ct);
+        long expected;
+        await using (var original = new MemoryStream(bytes, writable: false))
+        await using (AccessReader reader = await OpenReaderAsync(original, this.ct))
+        {
+            expected = await reader.GetRealRowCountAsync(TableName, this.ct);
+        }
+
+        _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, OverflowRowLayout.CrossPage, this.ct);
+
+        await using var ms = new MemoryStream(bytes, writable: false);
+        await using AccessReader overflowReader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { UseLockFile = false, PageReadOptimizationMode = readMode },
+            leaveOpen: true,
+            this.ct);
+
+        Dictionary<string, long> counts = await this.CountThroughEveryApiAsync(overflowReader);
+
+        Assert.True(expected >= ItemCount, $"The table holds {expected} rows; expected at least {ItemCount}.");
+        Assert.All(counts, pair => Assert.True(pair.Value == expected, $"{pair.Key} returned {pair.Value} rows; expected {expected}."));
+    }
+
+    [Theory]
     [MemberData(nameof(Formats))]
     public async Task ReadApis_DataPageRowCountPastPageCapacity_AgreeOnCount(DatabaseFormat format)
     {

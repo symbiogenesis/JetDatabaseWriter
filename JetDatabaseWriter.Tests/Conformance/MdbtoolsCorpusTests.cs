@@ -34,17 +34,18 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    // ── nwind.mdb (Jet4 / Access 2000 .mdb) ───────────────────────────────────
+    // ── nwind.mdb (Jet3 / Access 97 .mdb) ─────────────────────────────────────
 
     /// <summary>Mirror of <c>mdb-tables nwind.mdb</c> from mdbtools' test_script.sh.</summary>
     /// <remarks>
-    /// The mdbtools nwind.mdb fixture is a stripped-down Northwind that retains
-    /// only "Order Details", "Orders", "Products", "Shippers" and "Umsätze"
-    /// as user tables (verified by hand-decoding MSysObjects). Names like
-    /// "Customers"/"Employees"/"Suppliers" appear only as Forms/Macros there.
+    /// The mdbtools nwind.mdb fixture is a Jet3 Northwind with nine user tables.
+    /// The <c>MSysObjects</c> rows of Categories, Customers, Employees and
+    /// Suppliers are overflow rows (Access moved them to another page when they
+    /// grew), so the catalog scan lists those four only because it follows the
+    /// overflow pointers.
     /// </remarks>
     [Fact]
-    public async Task Nwind_ListTables_IncludesOrdersAndUmsätze()
+    public async Task Nwind_ListTables_ListsAllNineTables()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -54,9 +55,9 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        Assert.NotEmpty(tables);
-        Assert.Contains("Orders", tables);
-        Assert.Contains("Umsätze", tables);
+        Assert.Equal(
+            ["Categories", "Customers", "Employees", "Order Details", "Orders", "Products", "Shippers", "Suppliers", "Umsätze"],
+            tables.Order(System.StringComparer.Ordinal));
     }
 
     /// <summary>Mirror of <c>mdb-count nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh.</summary>
@@ -120,9 +121,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     /// <summary>
     /// Mirror of <c>select * from Orders LIMIT 10</c> — the reader returns at
-    /// least 10 rows via the LINQ surface. (mdbtestdata/sql/nwind.sql targets
-    /// Customers, but the bundled nwind.mdb has Customers only as Forms; Orders
-    /// is the closest analogue.)
+    /// least 10 rows via the LINQ surface.
     /// </summary>
     [Fact]
     public async Task Nwind_Orders_TakeTen_ReturnsTenRows()
@@ -143,8 +142,6 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     /// <summary>
     /// Predicate scan over an existing user table — the LINQ surface produces a
     /// non-empty result for at least one ShipCountry value present in Orders.
-    /// (mdbtestdata/sql/nwind.sql tests City='Helsinki' on Customers; Customers
-    /// is not present as a table in the bundled fixture.)
     /// </summary>
     [Fact]
     public async Task Nwind_Orders_WhereShipCountryFinland_ReturnsNonEmpty()
@@ -166,10 +163,29 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     }
 
     /// <summary>
+    /// Mirror of mdbtestdata/sql/nwind.sql's <c>City='Helsinki'</c> and
+    /// <c>CompanyName LIKE 'Océ%'</c> queries on Customers, whose catalog row is
+    /// an overflow row.
+    /// </summary>
+    [Fact]
+    public async Task Nwind_Customers_SqlTestPredicates_MatchOneCustomerEach()
+    {
+        if (!File.Exists(TestDatabases.MdbtoolsNwind))
+        {
+            return;
+        }
+
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        using DataTable customers = await reader.ReadDataTableAsync("Customers", cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(91, customers.Rows.Count);
+        Assert.Single(customers.Rows.Cast<DataRow>(), row => Equals(row["City"], "Helsinki"));
+        Assert.Single(customers.Rows.Cast<DataRow>(), row => row["CompanyName"] is string name && name.StartsWith("Océ", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Non-ASCII predicate scan — exercises the codepage decoder against a
     /// table whose name itself contains a non-ASCII character (Umsätze).
-    /// (mdbtestdata/sql/nwind.sql tests CompanyName LIKE 'Océ%' on Customers;
-    /// Customers is not present as a table in the bundled fixture.)
     /// </summary>
     [Fact]
     public async Task Nwind_Umsätze_NonAsciiTableName_StreamsAtLeastOneRow()

@@ -92,7 +92,7 @@ internal static class LongValueStore
         byte[] page,
         DataPageLayout dataPage,
         int pageSize,
-        ReadOnlySpan<RowBound> liveRows)
+        ReadOnlySpan<RowBound> rowDirectory)
     {
         if (lvalPage <= 0)
         {
@@ -110,9 +110,10 @@ internal static class LongValueStore
             return new LvalRowLocation(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
 
-        foreach (RowBound rowBound in liveRows)
+        foreach (RowBound rowBound in rowDirectory)
         {
-            if (rowBound.RowIndex != lvalRow)
+            // LVAL pages hold no overflow rows; a slot flagged overflow is not an LVAL row.
+            if (rowBound.RowIndex != lvalRow || rowBound.IsOverflowPointer)
             {
                 continue;
             }
