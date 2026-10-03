@@ -24,11 +24,11 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
 {
     /// <summary>
     /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
-    /// and returns the column type it is stored as: calculated, Large Number
-    /// and Date/Time Extended columns need ACCDB, a calculated column needs an
-    /// expression, a supported result type and no AutoNumber, Attachment,
-    /// multi-value or Hyperlink flag, and a decimal column on Jet3, which has
-    /// no Decimal type, is stored as Currency
+    /// and returns the column type it is stored as: calculated, Large Number,
+    /// Date/Time Extended, Attachment and multi-value columns need ACCDB, a
+    /// calculated column needs an expression, a supported result type and no
+    /// AutoNumber, Attachment, multi-value or Hyperlink flag, and a decimal
+    /// column on Jet3, which has no Decimal type, is stored as Currency
     /// (<see cref="JetTypeInfo.ResolveStorageType"/>). The expression itself
     /// is not parsed here.
     /// </summary>
@@ -36,7 +36,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
     /// <param name="format">The database format.</param>
     /// <returns>The column's type code.</returns>
     /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
-    /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, or (<see cref="ArgumentOutOfRangeException"/>) a decimal column's precision or scale is out of range.</exception>
+    /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
     internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format)
     {
         ValidateCalculatedColumn(definition, format);
@@ -52,6 +52,21 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
+        }
+
+        if (type is ComplexType or AttachmentType && format != DatabaseFormat.AceAccdb)
+        {
+            throw new NotSupportedException(
+                $"Column '{definition.Name}': Attachment and multi-value columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
+        }
+
+        // A multi-value Decimal column's precision and scale are its items',
+        // stored on the flat table's Value column, which is created after the
+        // parent table; check them before anything is written.
+        if (definition.IsMultiValue && definition.MultiValueElementType == typeof(decimal))
+        {
+            _ = ResolveNumericPrecision(definition);
+            _ = ResolveNumericScale(definition);
         }
 
         return type;

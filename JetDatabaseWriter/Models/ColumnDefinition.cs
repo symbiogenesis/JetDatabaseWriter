@@ -351,6 +351,9 @@ public sealed record ColumnDefinition
     /// Gets the CLR element type stored in a multi-value column (e.g.
     /// <c>typeof(string)</c>, <c>typeof(int)</c>). Required when
     /// <see cref="IsMultiValue"/> is <see langword="true"/>; ignored otherwise.
+    /// For <see cref="decimal"/> items, <see cref="NumericPrecision"/> and
+    /// <see cref="NumericScale"/> are the items' precision and scale, Access's
+    /// Decimal(18,0) by default.
     /// </summary>
     public Type? MultiValueElementType { get; init; }
 
@@ -397,6 +400,17 @@ public sealed record ColumnDefinition
     /// offset 11. Ignored for non-decimal and <see cref="IsCurrency"/> columns.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// For an <see cref="IsMultiValue"/> column whose
+    /// <see cref="MultiValueElementType"/> is <see cref="decimal"/>, this and
+    /// <see cref="NumericScale"/> are the items' precision and scale: they are
+    /// stored on the hidden flat table's <c>Value</c> column, each item is
+    /// rounded half to even to the scale, and an item with more digits than
+    /// the precision throws <see cref="Exceptions.JetLimitationException"/>.
+    /// An out-of-range pair throws <see cref="ArgumentOutOfRangeException"/>
+    /// before anything is written.
+    /// </para>
+    /// <para>
     /// Jet3 (Access 97) databases have no Decimal type, so on a Jet3
     /// <c>.mdb</c> a decimal column is created as Currency
     /// (<see cref="IsCurrency"/>): neither the precision nor the scale is
@@ -407,6 +421,7 @@ public sealed record ColumnDefinition
     /// anything is written, when <c>NumericPrecision - NumericScale</c> is
     /// above 15 (the default Decimal(18,0) included) or
     /// <see cref="NumericScale"/> is above 4.
+    /// </para>
     /// </remarks>
     public byte NumericPrecision { get; init; } = 18;
 
@@ -418,7 +433,8 @@ public sealed record ColumnDefinition
     /// <see cref="MidpointRounding.ToEven"/> rounding so a single
     /// canonical scale governs the B-tree (mirroring Access, which stores
     /// every <c>Numeric</c> cell at the declared scale). Must satisfy
-    /// <c>NumericScale &lt;= NumericPrecision</c>. Ignored for
+    /// <c>NumericScale &lt;= NumericPrecision</c>. For a multi-value column of
+    /// <see cref="decimal"/> items it is the items' scale. Ignored for
     /// <see cref="IsCurrency"/> columns, and not applied on Jet3, where a
     /// decimal column is Currency (see <see cref="NumericPrecision"/>).
     /// </summary>
