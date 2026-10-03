@@ -19,7 +19,8 @@ using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.
 /// that leaves the key alone, a delete that matches nothing) still succeeds.
 /// The relationships are planted straight into <c>MSysRelationships</c>,
 /// because <c>CreateRelationshipAsync</c> and <c>DropTableAsync</c> never
-/// leave one dangling. Jet3 resolves the parent through its key set; Jet4 and
+/// leave one dangling. The class also covers parent rows inserted earlier in
+/// the same batch. Jet3 resolves the parent through its key set; Jet4 and
 /// ACCDB try the index seek first.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
@@ -165,6 +166,52 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
     }
 
     /// <summary>
+    /// A row of an <c>InsertRowsAsync</c> batch resolves its foreign key
+    /// against a row inserted earlier in the same batch, even when no row
+    /// before it had a non-null key: on Jet4 and ACCDB the parent's index is
+    /// rebuilt only after the batch, so the seek cannot see that row.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the insert.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task InsertRows_SelfReferentialBatch_ChildOfEarlierRowWithNullParent_IsAccepted(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await this.CreateTreeDatabaseAsync(format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(3, await writer.InsertRowsAsync("Tree", [[5, null], [6, 5], [7, 6]], Ct));
+                Assert.Equal(2, await writer.InsertRowsAsync("Tree", [[8, 7], [9, 8]], Ct));
+            });
+        }
+
+        Assert.Equal(["5|", "6|5", "7|6", "8|7", "9|8"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
+    }
+
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task InsertRows_SelfReferentialBatch_ChildOfMissingParent_IsRejectedAndRollsBack(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await this.CreateTreeDatabaseAsync(format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.InsertRowsAsync("Tree", [[5, null], [6, 5], [7, 99]], Ct));
+                Assert.Contains("violates foreign-key constraint 'FK_Tree_Self': no matching row in 'Tree'", ex.Message, StringComparison.Ordinal);
+
+                Assert.Equal(2, await writer.InsertRowsAsync("Tree", [[5, null], [6, 5]], Ct));
+            });
+        }
+
+        Assert.Equal(["5|", "6|5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
+    }
+
+    /// <summary>
     /// Checks that <paramref name="ex"/> says the relationship cannot be
     /// enforced and names what is missing, rather than a missing parent row.
     /// </summary>
@@ -176,5 +223,27 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         Assert.Contains($"Foreign-key constraint '{relationship}' cannot be enforced", ex.Message, StringComparison.Ordinal);
         Assert.Contains(missing, ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("no matching row", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns a database with an empty table <c>Tree</c> (<c>Id</c> primary
+    /// key, <c>ParentId</c>) and the enforced relationship <c>FK_Tree_Self</c>
+    /// from <c>Tree.ParentId</c> to <c>Tree.Id</c>.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    private async Task<MemoryStream> CreateTreeDatabaseAsync(DatabaseFormat format)
+    {
+        MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync(
+                "Tree",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
+                Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_Tree_Self", "Tree", "Id", "Tree", "ParentId"), Ct);
+        }
+
+        ms.Position = 0;
+        return ms;
     }
 }

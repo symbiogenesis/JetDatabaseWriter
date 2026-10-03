@@ -46,15 +46,14 @@ internal static class ForeignKeyTestDatabase
     }
 
     /// <summary>
-    /// Returns a database holding <c>P</c> and <c>C</c>, with the rows given,
-    /// written with no transaction and no relationship.
+    /// Returns a database with an <c>MSysRelationships</c> table and none of
+    /// the tables the tests create: a copy of testV1997.mdb or testV2003.mdb,
+    /// or a new full-catalog ACCDB.
     /// </summary>
     /// <param name="db">Caches the fixture files.</param>
     /// <param name="format">The database format.</param>
-    /// <param name="parentRows">The rows of <c>P</c> (<c>Id</c>, <c>Name</c>).</param>
-    /// <param name="childRows">The rows of <c>C</c> (<c>Id</c>, <c>ParentId</c>, <c>Note</c>).</param>
     /// <returns>The database, positioned at 0.</returns>
-    public static async Task<MemoryStream> CreateAsync(DatabaseCache db, DatabaseFormat format, object?[][] parentRows, object?[][] childRows)
+    public static async Task<MemoryStream> CreateEmptyAsync(DatabaseCache db, DatabaseFormat format)
     {
         MemoryStream ms;
         if (format == DatabaseFormat.AceAccdb)
@@ -67,6 +66,22 @@ internal static class ForeignKeyTestDatabase
             ms = await db.CopyToStreamAsync(format == DatabaseFormat.Jet3Mdb ? TestDatabases.TestV1997 : TestDatabases.TestV2003, Ct);
         }
 
+        ms.Position = 0;
+        return ms;
+    }
+
+    /// <summary>
+    /// Returns a database holding <c>P</c> and <c>C</c>, with the rows given,
+    /// written with no transaction and no relationship.
+    /// </summary>
+    /// <param name="db">Caches the fixture files.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="parentRows">The rows of <c>P</c> (<c>Id</c>, <c>Name</c>).</param>
+    /// <param name="childRows">The rows of <c>C</c> (<c>Id</c>, <c>ParentId</c>, <c>Note</c>).</param>
+    /// <returns>The database, positioned at 0.</returns>
+    public static async Task<MemoryStream> CreateAsync(DatabaseCache db, DatabaseFormat format, object?[][] parentRows, object?[][] childRows)
+    {
+        MemoryStream ms = await CreateEmptyAsync(db, format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
             Assert.Equal(format, writer.DatabaseFormat);
