@@ -342,7 +342,16 @@ internal sealed class CatalogArtifactWriter(
             }
         }
 
-        byte[]? lvProp = tableArtifact.EmitLvProp ? JetExpressionConverter.BuildLvPropBlob(tableArtifact.Columns, db.Format) : null;
+        // A schema rewrite hands over the original table's properties projected
+        // onto the rebuilt columns; a new table's come from its column definitions.
+        byte[]? lvProp = null;
+        if (tableArtifact.EmitLvProp)
+        {
+            lvProp = tableArtifact.PersistedProperties is { } persisted
+                ? persisted.ToBytes(db.Format)
+                : JetExpressionConverter.BuildLvPropBlob(tableArtifact.Columns, db.Format);
+        }
+
         await catalogWriter.InsertCatalogEntryAsync(
             tableArtifact.TableName,
             tdefPageNumber,

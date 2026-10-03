@@ -31,11 +31,22 @@ internal sealed class ColumnPropertyBlock
     /// <summary>Gets the database format the blob was parsed against.</summary>
     public DatabaseFormat Format { get; private init; }
 
-    /// <summary>Gets the parsed property targets, in source order. Targets may include the table itself and individual columns.</summary>
+    /// <summary>
+    /// Gets the parsed property targets, in source order: one per column that has
+    /// properties, named after it, and the table itself, under an empty name
+    /// (see <see cref="FindTableTarget"/>).
+    /// </summary>
     public IReadOnlyList<ColumnPropertyTarget> Targets { get; private init; } = [];
 
     /// <summary>Gets opaque chunks the parser did not recognise. Preserved verbatim for forward-compatible round-trip.</summary>
     public IReadOnlyList<ColumnPropertyUnknownChunk> UnknownChunks { get; private init; } = [];
+
+    /// <summary>
+    /// Returns a block with no targets and no unknown chunks, which serializes to
+    /// no <c>LvProp</c> value at all.
+    /// </summary>
+    /// <param name="format">The database format the block belongs to.</param>
+    public static ColumnPropertyBlock Empty(DatabaseFormat format) => new() { Format = format };
 
     /// <summary>
     /// Parses an <c>LvProp</c> blob. Returns <see langword="null"/> for null or
@@ -137,6 +148,33 @@ internal sealed class ColumnPropertyBlock
 
         return null;
     }
+
+    /// <summary>
+    /// Returns the table-level target: the first target with an empty name, or
+    /// <see langword="null"/> when there is none. Access writes it as a
+    /// property block of chunk type <c>0x00</c>, first in Jet3 and Jet4 blobs and
+    /// usually last in ACCDB blobs. It is never matched by the table's name.
+    /// </summary>
+    public ColumnPropertyTarget? FindTableTarget()
+    {
+        foreach (ColumnPropertyTarget t in this.Targets)
+        {
+            if (t.Name.Length == 0)
+            {
+                return t;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Serializes the block for <paramref name="format"/> through
+    /// <see cref="ColumnPropertyBlockBuilder"/>. Returns <see langword="null"/>
+    /// when the block has no targets and no unknown chunks.
+    /// </summary>
+    /// <param name="format">The database format the bytes are written for.</param>
+    public byte[]? ToBytes(DatabaseFormat format) => ColumnPropertyBlockBuilder.FromBlock(this).ToBytes(format);
 
     private static void ReadNamePool(
         byte[] blob, int start, int length, Encoding stringEncoding, bool isJet3, List<string> dest)

@@ -219,6 +219,7 @@ JetDatabaseWriter/
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
 │   ├── LogicalTDefChain.cs                (logical TDEF bytes spanning chained table-definition pages)
+│   ├── PersistedPropertyProjector.cs      (carries a table's LvProp blob through AddColumn / DropColumn / RenameColumn)
 │   ├── Expressions/
 │   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)

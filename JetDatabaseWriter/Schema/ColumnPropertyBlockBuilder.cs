@@ -35,7 +35,11 @@ internal sealed class ColumnPropertyBlockBuilder
     private const int PropertyBlockTargetHeaderLength = sizeof(uint) + sizeof(ushort);
     private const int PropertyEntryHeaderLength = sizeof(ushort) + sizeof(byte) + sizeof(byte) + sizeof(ushort) + sizeof(ushort);
 
-    /// <summary>Gets the mutable list of property targets in emission order. The first target is conventionally the table itself.</summary>
+    /// <summary>
+    /// Gets the mutable list of property targets in emission order. Column targets
+    /// carry the column's name; the table-level target has an empty name and can be
+    /// anywhere in the list (see <see cref="ColumnPropertyBlock.FindTableTarget"/>).
+    /// </summary>
     public List<ColumnPropertyTargetBuilder> Targets { get; } = [];
 
     /// <summary>Gets the mutable list of opaque chunks to re-emit verbatim (forward-compat).</summary>
@@ -59,23 +63,7 @@ internal sealed class ColumnPropertyBlockBuilder
         var b = new ColumnPropertyBlockBuilder();
         foreach (ColumnPropertyTarget t in block.Targets)
         {
-            var tb = new ColumnPropertyTargetBuilder
-            {
-                Name = t.Name,
-                ChunkType = t.ChunkType,
-            };
-            foreach (ColumnPropertyEntry e in t.Entries)
-            {
-                tb.Entries.Add(new ColumnPropertyEntryBuilder
-                {
-                    Name = e.Name,
-                    DataType = e.DataType,
-                    DdlFlag = e.DdlFlag,
-                    Value = (byte[])e.Value.Clone(),
-                });
-            }
-
-            b.Targets.Add(tb);
+            b.Targets.Add(FromTarget(t));
         }
 
         foreach (ColumnPropertyUnknownChunk u in block.UnknownChunks)
@@ -84,6 +72,53 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         return b;
+    }
+
+    /// <summary>
+    /// Returns a mutable copy of a parsed target: its name, chunk type, and every
+    /// entry with its name, data type, DDL flag and value bytes, in source order.
+    /// </summary>
+    /// <param name="target">The parsed target.</param>
+    public static ColumnPropertyTargetBuilder FromTarget(ColumnPropertyTarget target)
+    {
+        Guard.NotNull(target, nameof(target));
+        var tb = new ColumnPropertyTargetBuilder
+        {
+            Name = target.Name,
+            ChunkType = target.ChunkType,
+        };
+        foreach (ColumnPropertyEntry e in target.Entries)
+        {
+            tb.Entries.Add(new ColumnPropertyEntryBuilder
+            {
+                Name = e.Name,
+                DataType = e.DataType,
+                DdlFlag = e.DdlFlag,
+                Value = (byte[])e.Value.Clone(),
+            });
+        }
+
+        return tb;
+    }
+
+    /// <summary>
+    /// Returns the table-level target (the first one with an empty name), or adds
+    /// one at index 0 as Access's Jet3 and Jet4 blobs have it: an empty name and
+    /// chunk type <c>0x00</c>.
+    /// </summary>
+    public ColumnPropertyTargetBuilder GetOrAddTableTarget()
+    {
+        foreach (ColumnPropertyTargetBuilder t in this.Targets)
+        {
+            if (t.Name.Length == 0)
+            {
+                return t;
+            }
+        }
+
+        var table = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlock };
+        this.Targets.Insert(0, table);
+        return table;
     }
 
     /// <summary>

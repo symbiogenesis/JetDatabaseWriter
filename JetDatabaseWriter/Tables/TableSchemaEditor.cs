@@ -31,8 +31,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Table DDL workflows behind <see cref="Interfaces.IAccessSchema"/>: create
 /// and drop tables, and add, drop, or rename columns. Column changes rebuild
-/// the table through a temporary copy that preserves rows, indexes, the
-/// persisted column properties the writer models, client-side constraints,
+/// the table through a temporary copy that preserves rows, indexes, every
+/// persisted column and table property except the table's <c>NameMap</c>
+/// (<see cref="PersistedPropertyProjector"/>), client-side constraints,
 /// complex-column artifacts, and foreign-key relationships (the table's FK
 /// index entries, its partners' links to it, and renamed key columns in
 /// <c>MSysRelationships</c>). A renamed column's new name is written into the
@@ -83,7 +84,7 @@ internal sealed class TableSchemaEditor(
     /// database's code page, then that the format can hold each
     /// declared column, then each calculated expression's syntax and each
     /// default. Then it creates the table. <see cref="RewriteTableAsync"/>
-    /// calls <see cref="CreateTableAsync"/> directly, so a table holding an
+    /// calls <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, ColumnPropertyBlock?, CancellationToken)"/> directly, so a table holding an
     /// older expression, or a name an existing file already carries, can
     /// still be altered.
     /// </summary>
@@ -119,7 +120,30 @@ internal sealed class TableSchemaEditor(
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
     }
 
-    internal async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
+    internal ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
+        => this.CreateTableAsync(tableName, columns, indexes, persistedProperties: null, cancellationToken);
+
+    /// <summary>
+    /// Creates a table without the declaration checks of
+    /// <see cref="CreateDeclaredTableAsync"/>. A schema rewrite passes
+    /// <paramref name="persistedProperties"/>, the original table's properties
+    /// projected onto the rebuilt columns, which the catalog row stores instead of
+    /// the properties built from <paramref name="columns"/>.
+    /// </summary>
+    /// <param name="tableName">The new table's name.</param>
+    /// <param name="columns">The column definitions.</param>
+    /// <param name="indexes">The index definitions.</param>
+    /// <param name="persistedProperties">The properties to store, or <see langword="null"/> to build them from <paramref name="columns"/>.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A task that completes when the table is in the catalog.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="columns"/> is empty.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when a table named <paramref name="tableName"/> already exists.</exception>
+    internal async ValueTask CreateTableAsync(
+        string tableName,
+        IReadOnlyList<ColumnDefinition> columns,
+        IReadOnlyList<IndexDefinition> indexes,
+        ColumnPropertyBlock? persistedProperties,
+        CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
@@ -179,7 +203,7 @@ internal sealed class TableSchemaEditor(
             }
         }
 
-        var tableArtifact = new CatalogTableArtifact(tableName, columns, indexes, catalogFlags);
+        var tableArtifact = new CatalogTableArtifact(tableName, columns, indexes, catalogFlags) { PersistedProperties = persistedProperties };
         long tdefPageNumber = await catalogArtifacts.CreateTableAsync(tableArtifact, cancellationToken).ConfigureAwait(false);
 
         // Emit the hidden flat child table + MSysComplexColumns row for every
@@ -705,8 +729,9 @@ internal sealed class TableSchemaEditor(
 
         // Hydrate persisted-property fields from MSysObjects.LvProp so that
         // DefaultValueExpression / ValidationRuleExpression / ValidationText / Description
-        // round-trip through Add/Drop/Rename semantically. Forward-compat note: unknown
-        // chunks and table-level property targets are intentionally not preserved by this path.
+        // round-trip through Add/Drop/Rename semantically. The rebuilt table's blob is
+        // this one projected onto the new columns (PersistedPropertyProjector), so the
+        // properties the writer does not model are kept too.
         ColumnPropertyBlock? originalProperties =
             await snapshots.ReadLvPropBlockAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -759,6 +784,12 @@ internal sealed class TableSchemaEditor(
         // to drop a column one of them names, before anything is written; the
         // LvProp blob and the constraint registry are both built from newDefs.
         ProjectExpressionReferences(tableName, existingDefs, newDefs, mapColumnName);
+
+        // Project the stored properties onto the new columns, and serialize them,
+        // before anything is written: the rebuilt table's catalog row carries them.
+        ColumnPropertyBlock persistedProperties =
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, db.Format);
+        byte[]? persistedLvProp = persistedProperties.ToBytes(db.Format);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
@@ -832,7 +863,7 @@ internal sealed class TableSchemaEditor(
         bool transplant = newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0;
 
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
-        await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
+        await this.CreateTableAsync(tempName, newDefs, projectedIndexes, persistedProperties, cancellationToken).ConfigureAwait(false);
 
         ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
         CatalogEntry tempEntry = tempTable.Entry;
@@ -886,9 +917,7 @@ internal sealed class TableSchemaEditor(
         }
 
         // Drop the original table, then rename the temp catalog entry to take its place.
-        // Pre-compute the LvProp blob from the projected columns so the catalog rename
-        // re-emits the persisted properties under the user-facing table name.
-        byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, db.Format);
+        // Either way the table's catalog row carries the projected persisted properties.
         if (transplant)
         {
             await this.TransplantTempTableToOriginalAsync(
@@ -897,13 +926,13 @@ internal sealed class TableSchemaEditor(
                 tableDef,
                 tempName,
                 tempEntry.TDefPage,
-                renamedLvProp,
+                persistedLvProp,
                 cancellationToken).ConfigureAwait(false);
         }
         else
         {
             await this.DropTableCoreAsync(tableName, rewriting: true, cancellationToken).ConfigureAwait(false);
-            await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
+            await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, persistedLvProp, cancellationToken).ConfigureAwait(false);
 
             foreach (ColumnDefinition survivor in newComplexById.Values)
             {
