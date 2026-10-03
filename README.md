@@ -63,7 +63,8 @@ For a compact map of writer-created disk-format surfaces and their strongest DAO
 Beyond functional tests, the codebase is validated by:
 
 - **Strict compiler settings** — nullable reference types, warnings-as-errors, `WarningLevel 9999`, `AnalysisLevel latest-all`, and arithmetic overflow checking enabled globally
-- **Static analysis** — Roslyn .NET analyzers, Roslynator, StyleCop, and `dotnet format` enforced in CI
+- **Static analysis** — Roslyn .NET analyzers, Roslynator, StyleCop, and the `.editorconfig` code-style rules, all errors in the Release build of the library and the tests that CI runs on every push and pull request
+- **Continuous integration** — [GitHub Actions](.github/workflows/ci.yml) builds the solution in Release and runs the test suite on .NET 10 and on .NET 8 (the `netstandard2.1` build) on Windows; a release tag is packed and published only after that run passes
 - **Reproducible builds** — deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); identical source always produces identical binaries
 - **Access Compact & Repair round-trips** — writer-created tables, indexes, relationships, password-protected ACCDB output, and Northwind-hosted attachment/multi-value complex columns with chained-LVAL payloads are validated on Access-equipped Windows hosts.
 - **Index key fixture parity** — long text/MEMO index keys with embedded line breaks are validated against Access-authored fixtures: Jet4 (V2000 / V2003 / V2007) is byte-exact, and V2010 ACE is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` long rows. The V2010 encoder also includes the DAO-derived 65-character contribution tables for the plain, auxiliary, row10, row11, and row12 long-row suffix contexts, with probe validation showing zero mismatches across the exported matrices and observed double-space sweeps. See [GeneralLegacyEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs), [GeneralEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs), and [format-probe notes](docs/format-probe/format-probe-long-row-index-encoding.md).
@@ -951,6 +952,13 @@ The library parses JET pages directly, based on the [mdbtools format specificati
 ## Contributing
 
 Issues and pull requests are welcome. Please open an issue to discuss larger changes before submitting a PR.
+
+CI runs the same commands you can run locally; a PR needs them to pass:
+
+```bash
+dotnet build JetDatabaseWriter.slnx -c Release
+dotnet test --project JetDatabaseWriter.Tests -c Release --no-build
+```
 
 ## License
 

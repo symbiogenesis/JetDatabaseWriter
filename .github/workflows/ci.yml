@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+  # publish.yml calls this workflow so a tag is packed only after the tests pass.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    name: Build (Release) and test
+    # Windows only: the suite uses Windows paths and byte-range locks, and the DAO
+    # round-trip tests skip themselves when Access is not installed.
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # global.json pins the .NET 10 SDK that builds everything. The .NET 8 SDK is
+      # installed only for its runtime, which runs the net8.0 test leg; that leg loads
+      # the library's netstandard2.1 build.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore JetDatabaseWriter.slnx --locked-mode
+
+      # Release turns on every analyzer, code-style rule and XML-doc check as an error,
+      # including in the test project.
+      - name: Build
+        run: dotnet build JetDatabaseWriter.slnx -c Release --no-restore
+
+      - name: Test (net10.0, library net10.0 build)
+        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net10.0
+
+      - name: Test (net8.0, library netstandard2.1 build)
+        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net8.0
+
+      - name: Pack
+        run: dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg

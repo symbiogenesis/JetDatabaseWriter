@@ -143,6 +143,9 @@ issues in tests can accumulate unseen during day-to-day Debug work.
 **Remediation:** acceptable as-is for iteration speed; just ensure CI builds Tests in Release (or with
 analyzers on) so the bar is enforced before merge.
 
+**Status:** done. [ci.yml](../.github/workflows/ci.yml) builds the whole solution in Release on every
+push and pull request, so test-project analyzer errors now fail CI.
+
 ---
 
 ## Recommended Order of Attack
@@ -150,4 +153,4 @@ analyzers on) so the bar is enforced before merge.
 1. Decompose the large `IndexBTreeEditor` methods (#2) — highest defect risk per line.
 2. Split the remaining large types along their internal seams (#1).
 3. Hoist the repeated guard/disposal preamble into `RunAutoCommitAsync` (#10).
-4. Build the Tests project in Release / with analyzers on in CI so its bar matches production (#11).
+4. ~~Build the Tests project in Release / with analyzers on in CI so its bar matches production (#11).~~ Done.
