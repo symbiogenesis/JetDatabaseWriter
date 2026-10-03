@@ -77,6 +77,7 @@ None of the bugs from my earlier report is fixed at `HEAD` (6eab703). The five c
   - Follow-up: found while fixing, not fixed. `DropTableAsync` on a table in a relationship leaves the related tables' FK entries pointing at the freed TDEF page.
   - Follow-up: found while fixing, not fixed. `RenameColumnAsync` does not rewrite calculated expressions that name the renamed column, so the expression names a column that no longer exists. Either rewrite the expression or refuse the rename. This predates the fix.
   - Follow-up: found while fixing, not investigated. `TableCatalog` does not list some Access-authored tables: Orders, Employees and Products in NorthwindTraders.accdb, and Table3 in indexTestV1997.mdb.
+- **AddColumn and DropColumn dropped the IgnoreNulls and Required index flags** (found while fixing the RenameColumn entries above). `IndexHelpers.DefaultIndexProjection` copied only the unique flag and the descending columns, so a primary key or index declared IgnoreNulls, or an index declared Required, lost the flag whenever a column was added to or dropped from its table. RenameColumn had its own projection that kept them. A single `IndexHelpers.ProjectIndexes`, which renames key columns through the rewrite's column-name map, now serves all three operations, and `RewriteTableAsync` no longer takes a projection. `SchemaEvolutionTests.SchemaRewrite_KeepsIndexFlags` covers add, drop and rename on Jet3, Jet4 and ACCDB.
 
 ## Open: data loss and corruption, reproduced by me at `HEAD`
 None. Every bug from my table is now under "Fixed since 6eab703".
