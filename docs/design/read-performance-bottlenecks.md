@@ -66,8 +66,8 @@ release-quality benchmark results justify reopening a specific area.
 - `RowMapper<T>.Build(headers, sourceTypes?)` builds an expression-tree
   `Func<object?[], T>` that typed reads use when no direct page-to-POCO decoder
   applies (and that index and linked-table reads always use); type mismatches flow through
-  `CoerceToTarget`, and the `ToRow` / `Accessor` API remains available for
-  writer-side mapping.
+  `Mapping/ValueCoercer`, which `Include`'s `RuntimeRowMapper` shares, and the
+  `ToRow` / `Accessor` API remains available for writer-side mapping.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
   for primitive projections. The compiled delegate still asks `RowDecodePlan`
   to parse row layout and resolve column slices, so direct and fallback decode

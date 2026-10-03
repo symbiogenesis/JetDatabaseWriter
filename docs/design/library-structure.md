@@ -346,7 +346,8 @@ JetDatabaseWriter/
 │
 ├── Mapping/                               (POCO mapping model shared by typed reads, writes and LINQ)
 │   ├── EntityMap.cs                       (cached per-type property↔column map honouring [Column], [NotMapped], [Table])
-│   └── EntityProperty.cs                  (one mapped property and its column name)
+│   ├── EntityProperty.cs                  (one mapped property and its column name)
+│   └── ValueCoercer.cs                    (the one cell-value → property-type conversion every typed read uses)
 │
 ├── CompoundFile/                          (MS-CFB OLE structured storage)
 │   ├── CompoundFileReader.cs              (read .accdb wrapped in CFB container)
