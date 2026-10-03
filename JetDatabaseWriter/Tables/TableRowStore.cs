@@ -112,12 +112,31 @@ internal sealed class TableRowStore(
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, CancellationToken cancellationToken)
         => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, DeletedRowDataMode.Default, cancellationToken).ConfigureAwait(false);
 
+    /// <summary>
+    /// Flags the row at (<paramref name="pageNumber"/>, <paramref name="rowIndex"/>)
+    /// deleted. For an overflow row that slot is the header: it is flagged deleted
+    /// as well as overflow (<c>0xC000</c>, as Jackcess <c>TableImpl.deleteRow</c>
+    /// does), and the moved bytes, whose slot Access already flags deleted, are
+    /// scrubbed with the header's pointer when <paramref name="dataMode"/> or the
+    /// secure-erase policy asks for it. A slot that is already deleted is left alone.
+    /// </summary>
+    /// <param name="pageNumber">The page holding the row's slot.</param>
+    /// <param name="rowIndex">The row's slot index.</param>
+    /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
+    /// <param name="dataMode">Whether the row's bytes are cleared.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
         byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
         int offsetPos = db.DataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
+        if ((raw & Constants.DataPage.NonLiveRowFlags) == Constants.DataPage.OverflowRowFlag)
+        {
+            await this.MarkOverflowRowDeletedAsync(pageNumber, page, rowIndex, tableDef, dataMode, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
         {
             ReturnPage(page);
@@ -146,6 +165,71 @@ internal sealed class TableRowStore(
         Wu16(page, offsetPos, raw | Constants.DataPage.DeletedRowFlag);
         await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
+
+        if (longValueRoots is null)
+        {
+            return;
+        }
+
+        foreach (LongValueDescriptor root in longValueRoots)
+        {
+            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Deletes an overflow row through its header slot on <paramref name="page"/>,
+    /// which this method writes and returns to the pool.
+    /// </summary>
+    /// <param name="pageNumber">The page holding the header.</param>
+    /// <param name="page">The header page's bytes, owned by this method.</param>
+    /// <param name="rowIndex">The header's slot index.</param>
+    /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
+    /// <param name="dataMode">Whether the row's bytes are cleared.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+    {
+        List<LongValueDescriptor>? longValueRoots = null;
+        try
+        {
+            bool secureErase = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
+            if ((dataMode == DeletedRowDataMode.Clear || secureErase) && db.TryGetSlotBound(page, rowIndex, out RowBound header))
+            {
+                if (await db.TryResolveOverflowRowAsync(page, header, db.ReadPageAsync, ReturnPage, cancellationToken).ConfigureAwait(false) is { } target)
+                {
+                    try
+                    {
+                        if (tableDef is not null && secureErase)
+                        {
+                            longValueRoots = longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
+                        }
+
+                        // A target on the header's own page is cleared in the
+                        // header page's buffer, which is the one written below.
+                        byte[] dataPage = target.PageNumber == pageNumber ? page : target.Page;
+                        Array.Clear(dataPage, target.Bound.RowStart, target.Bound.RowSize);
+                        if (target.PageNumber != pageNumber)
+                        {
+                            await db.WritePageAsync(target.PageNumber, target.Page, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                    finally
+                    {
+                        ReturnPage(target.Page);
+                    }
+                }
+
+                Array.Clear(page, header.RowStart, header.RowSize);
+            }
+
+            int offsetPos = db.DataPage.RowsStart + (rowIndex * 2);
+            Wu16(page, offsetPos, Ru16(page, offsetPos) | Constants.DataPage.DeletedRowFlag);
+            await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
 
         if (longValueRoots is null)
         {

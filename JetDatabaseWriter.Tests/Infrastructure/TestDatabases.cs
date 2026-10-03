@@ -96,7 +96,7 @@ internal static class TestDatabases
     private static string Mt(string fileName) =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "mdbtools", fileName);
 
-    /// <summary>Northwind sample from mdbtestdata; Jet 4 .mdb. Contains the German-named "Umsätze" table mdbtools uses for codepage tests.</summary>
+    /// <summary>Northwind sample from mdbtestdata; Jet3 (Access 97) .mdb. Contains the German-named "Umsätze" table mdbtools uses for codepage tests, and catalog rows Access stored as overflow rows (Categories, Customers, Employees, Suppliers).</summary>
     public static readonly string MdbtoolsNwind = Mt("nwind.mdb");
 
     /// <summary>Asset-tracking sample ACCDB from mdbtestdata. Contains the "Asset Items" table and the "qryCostsSummedByOwner" stored query.</summary>

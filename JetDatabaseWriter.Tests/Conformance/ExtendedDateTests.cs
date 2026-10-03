@@ -127,8 +127,10 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
             DateTime value = Assert.IsType<DateTime>(row[extended.Ordinal]);
             Assert.Equal(DateTimeKind.Unspecified, value.Kind);
             string expectedText = Assert.IsType<string>(row[text.Ordinal]);
-            string dateOnly = value.ToString("M/d/yyyy", CultureInfo.InvariantCulture);
-            string dateTime = value.ToString("M/d/yyyy h:mm:ss.fffffff tt", CultureInfo.InvariantCulture);
+
+            // The fixture's text column writes the year unpadded (6/14/100 for the year 100).
+            string dateOnly = string.Create(CultureInfo.InvariantCulture, $"{value.Month}/{value.Day}/{value.Year}");
+            string dateTime = dateOnly + value.ToString(" h:mm:ss.fffffff tt", CultureInfo.InvariantCulture);
             Assert.True(
                 string.Equals(expectedText, dateOnly, StringComparison.Ordinal)
                 || string.Equals(expectedText, dateTime, StringComparison.Ordinal),

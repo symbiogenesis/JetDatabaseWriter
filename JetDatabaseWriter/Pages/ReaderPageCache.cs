@@ -8,7 +8,7 @@ using JetDatabaseWriter.Pages.Models;
 
 /// <summary>
 /// The reader's page cache: an LRU of decrypted page buffers plus a parallel
-/// LRU of each data page's parsed live-row directory. Every cached read falls
+/// LRU of each data page's parsed row directory. Every cached read falls
 /// through to the <see cref="DatabaseFile"/> while a transaction journal is
 /// attached, and the cache is absent altogether when its capacity is zero or
 /// negative, as it is for the writer's reads of its own rows.
@@ -19,7 +19,7 @@ internal sealed class ReaderPageCache : IDisposable
     private readonly LruCache<long, byte[]>? pageCache;
 
     /// <summary>
-    /// Memoizes the parsed live-row directory per data page. Same eviction
+    /// Memoizes the parsed row directory per data page. Same eviction
     /// profile as <see cref="pageCache"/> (sized 1:1 with it) so a page that's
     /// still hot in the byte-cache also keeps its bounds array. Stale entries
     /// left behind after a page is evicted from the byte-cache simply age out of
@@ -100,19 +100,21 @@ internal sealed class ReaderPageCache : IDisposable
     }
 
     /// <summary>
-    /// Returns the live row-bound directory for <paramref name="page"/>, computing
-    /// it on first request and caching the result keyed by <paramref name="pageNumber"/>
-    /// when a page cache is configured. The returned array is owned by the cache —
-    /// callers must not mutate it. Used by the typed/untyped scan paths to avoid
-    /// re-parsing the row-offset trailer on repeated scans of the same table.
+    /// Returns the row directory for <paramref name="page"/> (see
+    /// <see cref="DatabaseFile.ComputeRowDirectory"/>: live rows plus overflow headers
+    /// flagged <see cref="RowBound.IsOverflowPointer"/>), computing it on first request
+    /// and caching the result keyed by <paramref name="pageNumber"/> when a page cache
+    /// is configured. The returned array is owned by the cache — callers must not
+    /// mutate it. Used by the typed/untyped scan paths to avoid re-parsing the
+    /// row-offset trailer on repeated scans of the same table.
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="page">The page bytes.</param>
-    internal RowBound[] GetLiveRowBounds(long pageNumber, byte[] page)
+    internal RowBound[] GetRowDirectory(long pageNumber, byte[] page)
     {
         if (this.db.ActiveJournal is not null)
         {
-            return this.db.ComputeLiveRowBoundsArray(page);
+            return this.db.ComputeRowDirectory(page);
         }
 
         if (this.rowBoundsCache is not null && this.rowBoundsCache.TryGetValue(pageNumber, out RowBound[]? cached))
@@ -120,7 +122,7 @@ internal sealed class ReaderPageCache : IDisposable
             return cached;
         }
 
-        RowBound[] bounds = this.db.ComputeLiveRowBoundsArray(page);
+        RowBound[] bounds = this.db.ComputeRowDirectory(page);
         this.rowBoundsCache?.Add(pageNumber, bounds);
         return bounds;
     }

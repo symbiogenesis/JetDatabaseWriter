@@ -1016,8 +1016,30 @@ internal static class Constants
         /// <summary>Row-offset high bit indicating a deleted row.</summary>
         public const int DeletedRowFlag = 0x8000;
 
+        /// <summary>
+        /// Row-offset bit marking an overflow row: Access moved the row's bytes
+        /// to another slot when it outgrew its page, and this slot (the row's
+        /// header, which index entries and the TDEF row count refer to) holds
+        /// an <see cref="OverflowPointerSize"/>-byte pointer to them. The moved
+        /// bytes' own slot is flagged <see cref="DeletedRowFlag"/>.
+        /// </summary>
+        public const int OverflowRowFlag = 0x4000;
+
         /// <summary>Row-offset high bits that mark rows as non-live.</summary>
         public const int NonLiveRowFlags = 0xC000;
+
+        /// <summary>
+        /// Size of an overflow row's pointer: the target row index (1 byte)
+        /// followed by the target page number (3 bytes, little-endian). Jet3,
+        /// Jet4 and ACE use the same layout.
+        /// </summary>
+        public const int OverflowPointerSize = 4;
+
+        /// <summary>
+        /// Maximum number of overflow pointers followed from one header before
+        /// the row is treated as unreadable, which also ends a pointer cycle.
+        /// </summary>
+        public const int MaxOverflowHops = 8;
 
         /// <summary>
         /// Maximum number of rows a single JET data page may hold. JET row IDs

@@ -52,7 +52,7 @@ using JetDatabaseWriter.Transactions;
 ///   <item><description>Access-file linked tables — read-through via trusted source paths.</description></item>
 ///   <item><description>CSV/text linked tables — managed string-valued delimited-text read-through via trusted source paths.</description></item>
 ///   <item><description>ODBC linked tables — metadata only.</description></item>
-///   <item><description>Overflow rows (span multiple pages) — silently skipped (rare edge case).</description></item>
+///   <item><description>Overflow rows (rows Access moved to another slot when they grew) — read through their pointer; one that cannot be resolved is skipped like an undecodable row.</description></item>
 /// </list>
 /// <para>
 /// Based on the <see href="https://github.com/mdbtools/mdbtools/blob/master/HACKING.md">mdbtools format specification</see>.

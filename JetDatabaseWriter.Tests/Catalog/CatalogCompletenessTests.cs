@@ -1,10 +1,13 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
+using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -38,6 +41,14 @@ public sealed class CatalogCompletenessTests
         { TestDatabases.TestPromotionV2007, "jobDB1", 0 },
     };
 
+    /// <summary>Gets fixtures whose catalogs hold overflow rows, with their table counts and some of those tables.</summary>
+    public static TheoryData<string, int, string[]> OverflowCatalogFixtures => new()
+    {
+        { TestDatabases.NorthwindTraders, 28, ["Orders", "Employees", "Products", "PurchaseOrderStatus", "Welcome"] },
+        { TestDatabases.MdbtoolsNwind, 9, ["Categories", "Customers", "Employees", "Suppliers"] },
+        { TestDatabases.TestIndexCodesV2010, 30, [] },
+    };
+
     /// <summary>Gets the Jackcess <c>delTest</c> fixtures.</summary>
     public static TheoryData<string> DelTestFixtures =>
     [
@@ -47,6 +58,89 @@ public sealed class CatalogCompletenessTests
         TestDatabases.DelTestV2007,
         TestDatabases.DelTestV2010,
     ];
+
+    /// <summary>
+    /// Gets every readable unencrypted fixture: the in-repo databases, the Jackcess tree
+    /// and the mdbtools corpus.
+    /// </summary>
+    public static TheoryData<string> AllFixtures
+    {
+        get
+        {
+            var data = new TheoryData<string>();
+            string[] others =
+            [
+                TestDatabases.NorthwindTraders,
+                TestDatabases.AdventureWorks,
+                TestDatabases.Jet3Test,
+                TestDatabases.ComplexFields,
+                TestDatabases.CompositeTextIndex,
+                TestDatabases.MdbtoolsNwind,
+                TestDatabases.MdbtoolsASampleDatabase,
+                TestDatabases.MdbtoolsDateTestDatabase,
+            ];
+            foreach (string path in others.Concat(TestDatabases.AllJackcessDatabases).Where(TestDatabases.IsReadable))
+            {
+                data.Add(path);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// The reader and the writer list exactly the user tables an independent walk of
+    /// the <c>MSysObjects</c> pages finds (<see cref="RawCatalogWalker"/>), and every
+    /// listed table resolves to its columns. Catalog rows Access moved to another page
+    /// (overflow rows) and rows sharing an offset with deleted slots used to be missed.
+    /// </summary>
+    /// <param name="path">The fixture path.</param>
+    [Theory]
+    [MemberData(nameof(AllFixtures))]
+    public async Task ListTables_MatchesEveryUserTableRowInMSysObjects(string path)
+    {
+        SortedSet<string> expected;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: this.ct))
+        {
+            expected = await RawCatalogWalker.GetUserTableNamesAsync(harness, this.ct);
+        }
+
+        await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
+        IReadOnlyList<string> listed = await reader.ListTablesAsync(this.ct);
+        Assert.Equal(expected, listed.Order(StringComparer.Ordinal));
+
+        await using var copy = new MemoryStream(await File.ReadAllBytesAsync(path, this.ct));
+        await using (WriterHarness writer = await WriterHarness.OpenAsync(copy, cancellationToken: this.ct))
+        {
+            List<CatalogEntry> writerTables = await writer.Services.Catalog.GetUserTablesAsync(this.ct);
+            Assert.Equal(expected, writerTables.Select(e => e.Name).Order(StringComparer.Ordinal));
+        }
+
+        foreach (string table in listed)
+        {
+            using DataTable schema = await reader.ReadDataTableAsync(table, maxRows: 0, cancellationToken: this.ct);
+            Assert.True(schema.Columns.Count > 0, $"'{table}' read with no columns.");
+        }
+    }
+
+    /// <summary>
+    /// Pins the table lists of fixtures whose catalogs hold overflow rows: tables such
+    /// as Orders and Products in NorthwindTraders.accdb and Customers in the Jet3
+    /// nwind.mdb were missing.
+    /// </summary>
+    /// <param name="path">The fixture path.</param>
+    /// <param name="expectedCount">The number of user tables.</param>
+    /// <param name="mustInclude">Tables whose catalog rows are overflow rows.</param>
+    [Theory]
+    [MemberData(nameof(OverflowCatalogFixtures))]
+    public async Task ListTables_TablesWithOverflowCatalogRows_AreListed(string path, int expectedCount, string[] mustInclude)
+    {
+        await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(this.ct);
+
+        Assert.Equal(expectedCount, tables.Count);
+        Assert.All(mustInclude, name => Assert.Contains(name, tables));
+    }
 
     /// <summary>
     /// A table whose catalog row shares its offset with deleted slots is listed,

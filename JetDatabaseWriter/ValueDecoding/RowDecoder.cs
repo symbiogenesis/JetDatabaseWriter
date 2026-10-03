@@ -87,9 +87,21 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound rb in pages.GetLiveRowBounds(pageNumber, page))
+            byte[] scanPage = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            foreach (RowBound entry in pages.GetRowDirectory(pageNumber, scanPage))
             {
+                byte[] page = scanPage;
+                RowBound rb = entry;
+                if (entry.IsOverflowPointer)
+                {
+                    if (await this.ResolveOverflowAsync(scanPage, entry, cancellationToken).ConfigureAwait(false) is not { } target)
+                    {
+                        continue;
+                    }
+
+                    (page, rb) = (target.Page, target.Bound);
+                }
+
                 if (rb.RowSize < db.RowFields.NumCols)
                 {
                     continue;
@@ -122,7 +134,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
-    /// <param name="pageNumber">The page number, used to memoize the parsed live-row directory in the row-bounds cache.</param>
+    /// <param name="pageNumber">The page number, used to memoize the parsed row directory in the row-bounds cache.</param>
     /// <param name="page">The data page to enumerate rows from.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
@@ -133,28 +145,52 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     }
 
     /// <summary>Yields the rows of a single data page decoded as strings.</summary>
-    /// <param name="pageNumber">The page number, used to memoize the parsed live-row directory in the row-bounds cache.</param>
+    /// <param name="pageNumber">The page number, used to memoize the parsed row directory in the row-bounds cache.</param>
     /// <param name="page">The data page to enumerate rows from.</param>
     /// <param name="decodePlan">The string decode plan.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
     internal async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (RowBound rb in pages.GetLiveRowBounds(pageNumber, page))
+        foreach (RowBound entry in pages.GetRowDirectory(pageNumber, page))
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] rowPage = page;
+            RowBound rb = entry;
+            if (entry.IsOverflowPointer)
+            {
+                if (await this.ResolveOverflowAsync(page, entry, cancellationToken).ConfigureAwait(false) is not { } target)
+                {
+                    continue;
+                }
+
+                (rowPage, rb) = (target.Page, target.Bound);
+            }
 
             if (rb.RowSize < db.RowFields.NumCols)
             {
                 continue;
             }
 
-            string[]? values = await decodePlan.TryDecodeStringRowAsync(db, page, rb.RowStart, rb.RowSize, longValues, cancellationToken).ConfigureAwait(false);
+            string[]? values = await decodePlan.TryDecodeStringRowAsync(db, rowPage, rb.RowStart, rb.RowSize, longValues, cancellationToken).ConfigureAwait(false);
             if (values != null)
             {
                 yield return values;
             }
         }
     }
+
+    /// <summary>
+    /// Follows an overflow header from a row directory (<see cref="ReaderPageCache.GetRowDirectory"/>)
+    /// to the row data, reading pages through the page cache. Returns <see langword="null"/>
+    /// when the pointer cannot be resolved; the caller skips the row, as it skips an
+    /// undecodable one. The returned page belongs to the cache and is not returned to the pool.
+    /// </summary>
+    /// <param name="page">The data page holding the header.</param>
+    /// <param name="header">The header's directory entry.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask<OverflowRowTarget?> ResolveOverflowAsync(byte[] page, RowBound header, CancellationToken cancellationToken)
+        => db.TryResolveOverflowRowAsync(page, header, pages.ReadPageAsync, returnPage: null, cancellationToken);
 
     // ── Typed row cracker ────────────────────────────────────
     //

@@ -75,7 +75,7 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
                     return null;
                 }
 
-                foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
+                foreach (RowBound rowBound in db.ComputeRowDirectory(page))
                 {
                     if (!pageRows.Value.Contains(rowBound.RowIndex))
                     {
@@ -83,10 +83,30 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
                     }
 
                     long key = (pageRows.Key << 16) | (uint)rowBound.RowIndex;
-                    if (pendingByLocation.TryGetValue(key, out (long DataPage, int RowIndex, TPayload Payload) entry))
+                    if (!pendingByLocation.TryGetValue(key, out (long DataPage, int RowIndex, TPayload Payload) entry))
                     {
-                        result.Add((new RowLocation(pageRows.Key, rowBound.RowIndex, rowBound.RowStart, rowBound.RowSize), entry.Payload));
+                        continue;
                     }
+
+                    var location = new RowLocation(pageRows.Key, rowBound.RowIndex, rowBound.RowStart, rowBound.RowSize);
+                    if (rowBound.IsOverflowPointer)
+                    {
+                        // The index names an overflow row's header; the row's
+                        // bytes are where the header points.
+                        if (await db.TryResolveOverflowRowAsync(page, rowBound, db.ReadPageAsync, DatabaseFile.ReturnPage, cancellationToken).ConfigureAwait(false) is not { } target)
+                        {
+                            continue;
+                        }
+
+                        DatabaseFile.ReturnPage(target.Page);
+                        location = new RowLocation(pageRows.Key, rowBound.RowIndex, target.Bound.RowStart, target.Bound.RowSize)
+                        {
+                            DataPageNumber = target.PageNumber,
+                            DataRowIndex = target.RowIndex,
+                        };
+                    }
+
+                    result.Add((location, entry.Payload));
                 }
             }
             finally

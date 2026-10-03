@@ -593,7 +593,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                     Assert.True(
                         dataPage[0] == Constants.PageTypes.Data && Ri32(dataPage, db.DataPage.TDefOff) == tdefPage,
                         $"Index entry points at page {indexEntry.DataPage}, which is not a data page of the table.");
-                    data = (dataPage, db.ComputeLiveRowBoundsArray(dataPage));
+                    data = (dataPage, db.ComputeRowDirectory(dataPage));
                     dataPages.Add(indexEntry.DataPage, data);
                 }
 

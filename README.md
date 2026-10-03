@@ -944,7 +944,7 @@ The library parses JET pages directly, based on the [mdbtools format specificati
 1. **Page 0** — header: Jet3/Jet4 detection, code page, encryption flag
 2. **Page 2** — `MSysObjects` catalog: table names → TDEF page numbers
 3. **TDEF pages** — table definition chains: column descriptors + names
-4. **Data pages** — row slot arrays → null mask + fixed/variable fields
+4. **Data pages** — row slot arrays (an overflow row's slot points to the slot Access moved the row to) → null mask + fixed/variable fields
 5. **LVAL pages** — long-value chains for MEMO, OLE, and attachment payloads
 
 ---

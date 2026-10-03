@@ -67,7 +67,7 @@ public interface IAccessReader : IAccessBase
     public ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table asynchronously.
+    /// Scans all data pages to count the live rows of the specified table asynchronously, overflow rows (rows Access moved to another page) included.
     /// Rows whose layout is too damaged to decode are not counted, so the result matches the number of rows
     /// <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> and the other table reads return.
     /// This is slower than reading the TDEF RowCount (which may be stale), but always accurate.

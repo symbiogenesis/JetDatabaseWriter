@@ -24,6 +24,26 @@ using Xunit;
 /// </summary>
 public sealed partial class CatalogDiagnosticsTests
 {
+    /// <summary>Gets Access-authored Jet3, Jet4 and ACE fixtures.</summary>
+    public static TheoryData<string> RowsScannedFixtures =>
+    [
+        TestDatabases.TestV1997,
+        TestDatabases.IndexTestV2003,
+        TestDatabases.TestV2003,
+        TestDatabases.UnsupportedFieldsTestV2007,
+        TestDatabases.ComplexDataTestV2007,
+        TestDatabases.TestV2010,
+        TestDatabases.NorthwindTraders,
+        TestDatabases.MdbtoolsNwind,
+    ];
+
+    /// <summary>Gets the fixtures whose catalogs hold overflow rows, with their catalog row counts.</summary>
+    public static TheoryData<string, int> OverflowCatalogFixtures => new()
+    {
+        { TestDatabases.NorthwindTraders, 239 },
+        { TestDatabases.MdbtoolsNwind, 106 },
+    };
+
     /// <summary>
     /// Every live catalog row of these fixtures decodes. Three rows of each share
     /// their offset with deleted slots, and the scan used to give them zero bytes
@@ -77,21 +97,37 @@ public sealed partial class CatalogDiagnosticsTests
     }
 
     /// <summary>
+    /// The catalogs of NorthwindTraders.accdb and the Jet3 nwind.mdb hold overflow
+    /// rows (40 of NorthwindTraders' 239); each counts once, at its header, as
+    /// Access counts it in the catalog's TDEF row count.
+    /// </summary>
+    /// <param name="path">The fixture path.</param>
+    /// <param name="expectedRows">The expected "Total rows scanned" count.</param>
+    [Theory]
+    [MemberData(nameof(OverflowCatalogFixtures))]
+    public async Task ListTables_Diagnostics_CountsOverflowCatalogRowsOnce(string path, int expectedRows)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { DiagnosticsEnabled = true, UseLockFile = false },
+            ct);
+
+        _ = await reader.ListTablesAsync(ct);
+
+        Assert.Equal(expectedRows, ParseRowsScanned(reader.LastDiagnostics));
+    }
+
+    /// <summary>
     /// "Total rows scanned" matches the number of rows the table reader returns for
     /// <c>MSysObjects</c>, across Jet3, Jet4 and ACE fixtures.
     /// </summary>
-    /// <param name="fixture">The fixture file name under the Jackcess tree.</param>
+    /// <param name="path">The fixture path.</param>
     [Theory]
-    [InlineData("V1997/testV1997.mdb")]
-    [InlineData("V2003/indexTestV2003.mdb")]
-    [InlineData("V2003/testV2003.mdb")]
-    [InlineData("V2007/unsupportedFieldsTestV2007.accdb")]
-    [InlineData("V2007/complexDataTestV2007.accdb")]
-    [InlineData("V2010/testV2010.accdb")]
-    public async Task ListTables_Diagnostics_RowsScannedMatchesMSysObjectsRowCount(string fixture)
+    [MemberData(nameof(RowsScannedFixtures))]
+    public async Task ListTables_Diagnostics_RowsScannedMatchesMSysObjectsRowCount(string path)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string path = System.IO.Path.Combine(TestDatabases.JackcessRoot, fixture);
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path,
