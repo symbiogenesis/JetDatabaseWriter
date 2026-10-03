@@ -189,20 +189,38 @@ internal sealed class ConstraintRegistry(
     }
 
     /// <summary>
-    /// Applies registered column constraints to <paramref name="values"/> and
-    /// returns a list of auto-increment counter checkpoints captured for the
-    /// row. Callers should pass the returned list to
-    /// <see cref="RestoreAutoCounters"/> if a later step (FK enforcement,
-    /// data-page write, deferred unique-index check) rejects the row, so the
-    /// counter rewinds to the value the failed insert tried to consume.
+    /// Applies registered column constraints to <paramref name="values"/>, the
+    /// row an insert is about to write, and returns a list of auto-increment
+    /// counter checkpoints captured for the row. Callers should pass the
+    /// returned list to <see cref="RestoreAutoCounters"/> if a later step (FK
+    /// enforcement, data-page write, deferred unique-index check) rejects the
+    /// row, so the counter rewinds to the value the failed insert tried to
+    /// consume.
     /// </summary>
+    /// <remarks>
+    /// As in an Access SQL <c>INSERT</c>, a supplied null or
+    /// <see cref="DBNull"/> is stored as null even when the column has a
+    /// default, and a NOT NULL column rejects it. A column set to
+    /// <see cref="DbDefault.Value"/> (which the insert front ends also put in
+    /// the columns a row leaves out) gets its CLR or persisted default, or
+    /// null when it has none. An AutoNumber column generates its next value,
+    /// a complex column gets the row's complex reference, and a calculated
+    /// column is computed, for any of the three.
+    /// </remarks>
     /// <param name="tableName">The table name.</param>
     /// <param name="tableDef">The table def.</param>
-    /// <param name="values">The values.</param>
+    /// <param name="values">The values, in table-column order. Every <see cref="DbDefault"/> is replaced, so it never reaches the row encoder.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">A NOT NULL column is null after defaults and AutoNumber values are applied.</exception>
+    /// <exception cref="ArgumentException">A validation rule rejects a value.</exception>
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
+        // Replace DbDefault before anything else, so the sentinel never reaches
+        // the encoder, the unique checks or an expression, even when the
+        // bail-out below skips the constraints.
+        bool[]? requestsDefault = TakeDefaultRequests(values);
+
         List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
 
         // The constraint list is positionally aligned with the columns at registration time.
@@ -222,6 +240,7 @@ internal sealed class ConstraintRegistry(
                 ColumnConstraint c = list[i];
                 object? value = values[i];
                 bool isNull = value is null or DBNull;
+                bool takeDefault = requestsDefault?[i] == true;
 
                 if (c.IsCalculated)
                 {
@@ -248,12 +267,14 @@ internal sealed class ConstraintRegistry(
                     continue;
                 }
 
-                if (isNull && c.DefaultValue != null)
+                // Only a column the insert left out takes its default; an
+                // explicit null is stored as null, as in Access SQL.
+                if (takeDefault && c.DefaultValue != null)
                 {
                     value = c.DefaultValue;
                     isNull = false;
                 }
-                else if (isNull && c.DefaultValueExpression != null)
+                else if (takeDefault && c.DefaultValueExpression != null)
                 {
                     ColumnDefaultValue defaultValue = c.DefaultValuePlan ??= ColumnDefaultValue.Compile(c.DefaultValueExpression);
                     if (defaultValue.TryEvaluate(
@@ -277,8 +298,9 @@ internal sealed class ConstraintRegistry(
 
                 if (isNull && !c.IsNullable)
                 {
-                    throw new InvalidOperationException(
-                        $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied.");
+                    throw new InvalidOperationException(takeDefault
+                        ? $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied."
+                        : $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.");
                 }
 
                 if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
@@ -456,6 +478,27 @@ internal sealed class ConstraintRegistry(
         return value is DateTime dateTime
             ? new DateTime(dateTime.Ticks - (dateTime.Ticks % TimeSpan.TicksPerSecond), dateTime.Kind)
             : value;
+    }
+
+    /// <summary>
+    /// Replaces every <see cref="DbDefault"/> in <paramref name="values"/> with
+    /// <see cref="DBNull.Value"/> and records which columns asked for their default.
+    /// </summary>
+    /// <param name="values">The row, in table-column order.</param>
+    /// <returns>A flag per column, or <see langword="null"/> when no column asked for its default.</returns>
+    private static bool[]? TakeDefaultRequests(object[] values)
+    {
+        bool[]? requested = null;
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (values[i] is DbDefault)
+            {
+                (requested ??= new bool[values.Length])[i] = true;
+                values[i] = DBNull.Value;
+            }
+        }
+
+        return requested;
     }
 
     private static bool TryGetComplexReference(object value, out long reference)

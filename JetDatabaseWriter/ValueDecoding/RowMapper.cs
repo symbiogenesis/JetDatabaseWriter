@@ -220,7 +220,10 @@ internal static class RowMapper<T>
     /// <summary>
     /// Compiles a delegate that extracts property values from a
     /// <typeparamref name="T"/> into an <c>object[]</c> in the column order
-    /// of <paramref name="td"/>. Unmatched columns produce <see cref="DBNull.Value"/>.
+    /// of <paramref name="td"/>, for an insert. A mapped property whose value is
+    /// <see langword="null"/> produces <see cref="DBNull.Value"/>, which stores
+    /// database null. A column no readable property maps to is left out of the
+    /// insert: it produces <see cref="DbDefault.Value"/>, so it gets its default.
     /// </summary>
     /// <param name="td">Parsed table definition.</param>
     private static Func<T, object[]> BuildToRow(TableDef td)
@@ -228,6 +231,7 @@ internal static class RowMapper<T>
         int count = td.Columns.Count;
         ParameterExpression itemParam = Expression.Parameter(typeof(T), "item");
         ConstantExpression dbNull = Expression.Constant(DBNull.Value, typeof(object));
+        ConstantExpression dbDefault = Expression.Constant(DbDefault.Value, typeof(object));
 
         // Build the array via NewArrayInit so the compiled body is a single
         // `newarr` followed by inline `stelem.ref` per element — no scratch
@@ -259,7 +263,7 @@ internal static class RowMapper<T>
             }
             else
             {
-                valueExpr = dbNull;
+                valueExpr = dbDefault;
             }
 
             values[i] = valueExpr;

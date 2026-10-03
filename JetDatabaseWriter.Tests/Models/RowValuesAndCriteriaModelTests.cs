@@ -7,8 +7,8 @@ using Xunit;
 
 /// <summary>
 /// Unit tests for the named-column / predicate model types (<see cref="RowValues"/>,
-/// <see cref="RowCriteria"/>, <see cref="ColumnPredicate"/>) that do not require a
-/// database.
+/// <see cref="DbDefault"/>, <see cref="RowCriteria"/>, <see cref="ColumnPredicate"/>) that
+/// do not require a database.
 /// </summary>
 public sealed class RowValuesAndCriteriaModelTests
 {
@@ -57,6 +57,16 @@ public sealed class RowValuesAndCriteriaModelTests
         var row = new RowValues();
 
         Assert.Throws<ArgumentException>(() => row[string.Empty] = 1);
+    }
+
+    [Fact]
+    public void DbDefault_IsASingletonThatPrintsAsDefault()
+    {
+        var row = new RowValues { ["Score"] = DbDefault.Value };
+
+        Assert.Same(DbDefault.Value, row["Score"]);
+        Assert.Equal("DEFAULT", DbDefault.Value.ToString());
+        Assert.Empty(typeof(DbDefault).GetConstructors());
     }
 
     [Fact]

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
@@ -283,8 +284,12 @@ public class RowMapperTests
         Assert.Equal(1.25m, row[2]);
     }
 
+    /// <summary>
+    /// A column no property maps to is left out of the insert, so it gets its default:
+    /// the mapper fills it with <see cref="DbDefault.Value"/>, not database null.
+    /// </summary>
     [Fact]
-    public void ToRow_UnmatchedColumn_ProducesDBNull()
+    public void ToRow_UnmatchedColumn_ProducesDbDefault()
     {
         TableDef td = MakeTableDef("Id", "Unknown");
         var product = new SimpleProduct { Id = 3 };
@@ -292,7 +297,7 @@ public class RowMapperTests
         object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
 
         Assert.Equal(3, row[0]);
-        Assert.Equal(DBNull.Value, row[1]);
+        Assert.Same(DbDefault.Value, row[1]);
     }
 
     [Fact]
@@ -334,7 +339,7 @@ public class RowMapperTests
     }
 
     [Fact]
-    public void ToRow_EmptyPoco_AllDBNull()
+    public void ToRow_EmptyPoco_AllDbDefault()
     {
         TableDef td = MakeTableDef("Col1", "Col2");
         var item = new EmptyPoco();
@@ -342,8 +347,8 @@ public class RowMapperTests
         object[] row = RowMapper<EmptyPoco>.ToRow(td, item);
 
         Assert.Equal(2, row.Length);
-        Assert.Equal(DBNull.Value, row[0]);
-        Assert.Equal(DBNull.Value, row[1]);
+        Assert.Same(DbDefault.Value, row[0]);
+        Assert.Same(DbDefault.Value, row[1]);
     }
 
     [Fact]

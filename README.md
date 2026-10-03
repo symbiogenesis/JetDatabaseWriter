@@ -505,17 +505,17 @@ await writer.CreateTableAsync("Contacts", new[]
 
 | Constraint | Persisted in the file? | Notes |
 |---|---|---|
-| `IsNullable` | ✅ `MSysObjects.LvProp` (`Required`) | Inserts that leave the column null and updates that set it to null throw `InvalidOperationException`. Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
-| `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. Seeded on first use from `max(TDEF AutoNumber counter, existing) + 1`; the counter only rises, so deleted top values are not reused in a later session. An update may assign an explicit value, which raises the stored high-water as an insert does, but setting the column to null throws `InvalidOperationException`. |
+| `IsNullable` | ✅ `MSysObjects.LvProp` (`Required`) | An insert whose value is still null after defaults and AutoNumber values are applied, and an update that sets the column to null, throw `InvalidOperationException`. An explicit `null` on insert is never replaced by a default, so it is rejected even when the column has one, as in Access. Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
+| `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. An insert generates the next value for `null`, `DBNull.Value`, `DbDefault.Value` or an omitted column. Seeded on first use from `max(TDEF AutoNumber counter, existing) + 1`; the counter only rises, so deleted top values are not reused in a later session. An update may assign an explicit value, which raises the stored high-water as an insert does, but setting the column to null throws `InvalidOperationException`. |
 | `IsPrimaryKey` | ✅ TDEF logical-index entry with `index_type = 0x01` | Shortcut for synthesizing a PK `IndexDefinition` named `"PrimaryKey"` from one or more columns (in declaration order). Forces the PK key columns to `IsNullable = false` on the emitted TDEF. Mixing this with an explicit PK `IndexDefinition` in the same call throws `ArgumentException`. Single- and multi-column PKs both participate in live B-tree leaf maintenance (composite-key path). |
-| `DefaultValue` | ✅ as a literal `DefaultValue` expression in `MSysObjects.LvProp` | CLR object substituted for `null` / `DBNull.Value` at insert time. Unless `DefaultValueExpression` is set, it is also persisted as a literal expression (`7`, `"text"`, `True`, `#2024-02-29 08:30:00#`), so a later `AccessWriter` and Microsoft Access apply the same default. Text, Boolean, numeric, `DateTime` and `Guid` values persist; other types such as `byte[]` throw `NotSupportedException` at table creation. Every writer stores what the literal denotes: a `DateTime` default to the whole second, and a `double` or `float` default as its literal reads back in the column's type (NaN and infinities throw `ArgumentException`). `DBNull.Value` means no default. Updates never apply defaults. Not allowed on AutoNumber, calculated, Attachment or multi-value columns (`CreateTableAsync` and `AddColumnAsync` throw `ArgumentException`); a `DefaultValue` property another tool stored on one is kept but never applied. |
+| `DefaultValue` | ✅ as a literal `DefaultValue` expression in `MSysObjects.LvProp` | CLR object stored when an insert leaves the column out (a `RowValues` row that does not name it, a POCO with no property for it, or `DbDefault.Value`); an explicit `null` / `DBNull.Value` stores null. Unless `DefaultValueExpression` is set, it is also persisted as a literal expression (`7`, `"text"`, `True`, `#2024-02-29 08:30:00#`), so a later `AccessWriter` and Microsoft Access apply the same default. Text, Boolean, numeric, `DateTime` and `Guid` values persist; other types such as `byte[]` throw `NotSupportedException` at table creation. Every writer stores what the literal denotes: a `DateTime` default to the whole second, and a `double` or `float` default as its literal reads back in the column's type (NaN and infinities throw `ArgumentException`). `DBNull.Value` means no default. Updates never apply defaults. Not allowed on AutoNumber, calculated, Attachment or multi-value columns (`CreateTableAsync` and `AddColumnAsync` throw `ArgumentException`); a `DefaultValue` property another tool stored on one is kept but never applied. |
 | `ValidationRule` | ⚠️ this writer only | Checked against every non-null value an insert supplies or an update assigns; a rejection throws `ArgumentException`. A CLR `Func<>` cannot be serialized into the file, so a writer that opens the database later does not enforce it. For a rule every writer and Microsoft Access enforce, set `ValidationRuleExpression`. |
-| `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`, `"Date()"`). Every `AccessWriter` evaluates it when an insert leaves the column `null` / `DBNull.Value`. Wins over `DefaultValue` for persistence; the declaring writer still uses a CLR `DefaultValue` when both are set. Not allowed on AutoNumber, calculated, Attachment or multi-value columns, as for `DefaultValue`. Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. |
+| `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`, `"Date()"`). Every `AccessWriter` evaluates it when an insert leaves the column out or passes `DbDefault.Value`; an explicit `null` stores null. Wins over `DefaultValue` for persistence; the declaring writer still uses a CLR `DefaultValue` when both are set. Not allowed on AutoNumber, calculated, Attachment or multi-value columns, as for `DefaultValue`. Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. |
 | `ValidationRuleExpression` | ✅ `MSysObjects.LvProp` (`ValidationRule`) | Access rule with the column as implicit left operand (e.g. `">=0 And <=100"`, `"Is Not Null"`, `"Between 1 And 10"`, `"In (1,2,3)"`, `"Like \"A*\""`, `"0 Or >100"`). Every `AccessWriter` checks it against each value an insert stores and each value an update assigns; a rejection throws `ArgumentException`. Like Access, a rule that does not test for Null accepts Null. Surfaced via `ColumnMetadata.ValidationRuleExpression`. |
 | `ValidationText` | ✅ `MSysObjects.LvProp` (`ValidationText`) | User-facing message Access shows when `ValidationRuleExpression` rejects a value; the writer appends it to the `ArgumentException` message. Surfaced via `ColumnMetadata.ValidationText`. |
 | `Description` | ✅ `MSysObjects.LvProp` (`Description`) | Free-text column description shown in Access Design View. Surfaced via `ColumnMetadata.Description`. Preserved across `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. |
 
-Column defaults and validation rules that Microsoft Access wrote into an existing database are applied the same way. For example, older versions of Access gave every Number column a default of `0`, so an insert that leaves such a column null stores `0`. The writer evaluates default and rule expressions with its calculated-column expression engine, which does date arithmetic as Access does, so a default of `=Date()+7` stores the date a week from today and a rule of `>=Date()-30` rejects older dates. It also reads single-quoted text (a default of `'N/A'`) and VBA `&H`/`&O` literals (a rule of `<=&HFF`). An expression that uses syntax or a function the engine does not support (such as `GenGUID()`, `CurrentUser()` or `DLookUp`) is skipped by the writer rather than blocking every write to the table; Microsoft Access still applies it. Table-level (record) validation rules are not enforced.
+Column defaults and validation rules that Microsoft Access wrote into an existing database are applied the same way. For example, older versions of Access gave every Number column a default of `0`, so an insert that leaves such a column out stores `0`; an explicit `null` still stores null, as in Access SQL. The writer evaluates default and rule expressions with its calculated-column expression engine, which does date arithmetic as Access does, so a default of `=Date()+7` stores the date a week from today and a rule of `>=Date()-30` rejects older dates. It also reads single-quoted text (a default of `'N/A'`) and VBA `&H`/`&O` literals (a rule of `<=&HFF`). An expression that uses syntax or a function the engine does not support (such as `GenGUID()`, `CurrentUser()` or `DLookUp`) is skipped by the writer rather than blocking every write to the table; Microsoft Access still applies it. Table-level (record) validation rules are not enforced.
 
 ### Insert rows — generic POCO
 
@@ -563,7 +563,7 @@ await writer.InsertRowAsync("Contacts", new RowValues
     ["Email"] = "grace@example.com",
     ["Name"]  = "Grace",
     ["ContactID"] = 7,
-    // Score omitted -> stored as null
+    // Score omitted -> its default value, or null when it has none
 });
 
 // Fluent form and bulk insert
@@ -573,6 +573,25 @@ await writer.InsertRowsAsync("Contacts", new[]
     RowValues.Create().Set("ContactID", 9).Set("Name", "Ivan"),
 });
 ```
+
+#### Defaults and explicit NULL
+
+Inserts follow Access SQL: a value you supply is stored as given, so `null` and `DBNull.Value` store NULL even in a column that has a default, and a NOT NULL column rejects them. A column the insert leaves out gets its default: leave it out of a `RowValues` row or a POCO, or pass `DbDefault.Value` in any insert.
+
+```csharp
+await writer.CreateTableAsync("Scores", new[]
+{
+    new ColumnDefinition("Id",    typeof(int)) { IsAutoIncrement = true },
+    new ColumnDefinition("Score", typeof(int)) { DefaultValue = 0 },
+});
+
+await writer.InsertRowAsync("Scores", new object?[] { null, null });            // Id 1, Score NULL
+await writer.InsertRowAsync("Scores", new object?[] { null, DbDefault.Value }); // Id 2, Score 0
+await writer.InsertRowAsync("Scores", new RowValues { ["Score"] = 5 });        // Id 3, Score 5
+await writer.InsertRowAsync("Scores", new RowValues { ["Id"] = null });        // Id 4, Score 0
+```
+
+An AutoNumber column generates its next value for `null`, `DBNull.Value` and `DbDefault.Value` alike, and a calculated column is always computed. A POCO property whose value is `null` stores NULL; to take the default instead, leave the property off the type or mark it `[NotMapped]`. Updates never apply defaults, and `UpdateRowsAsync` rejects `DbDefault.Value`.
 
 ### Update & delete
 

@@ -37,8 +37,10 @@ public sealed record ColumnDefinition
     /// Default is <c>true</c>. When <c>false</c>, the writer rejects inserts whose value for
     /// this column is null after <see cref="DefaultValue"/> substitution and auto-increment
     /// assignment have run, and updates that set the column to null, with
-    /// <see cref="InvalidOperationException"/>. An update is checked only for the columns
-    /// it assigns.
+    /// <see cref="InvalidOperationException"/>. An explicit null on insert is never replaced
+    /// by the default, so it is rejected even when the column has one, as in Access; a
+    /// column the insert leaves out, or sets to <see cref="DbDefault.Value"/>, gets the
+    /// default first. An update is checked only for the columns it assigns.
     /// </summary>
     /// <remarks>
     /// Persisted as the boolean <c>Required = True</c> property in <c>MSysObjects.LvProp</c>
@@ -50,10 +52,12 @@ public sealed record ColumnDefinition
     public bool IsNullable { get; init; } = true;
 
     /// <summary>
-    /// Gets an optional default value substituted for null / <see cref="DBNull.Value"/> at
-    /// insert time. The value must be assignment-compatible with <see cref="ClrType"/>.
-    /// Defaults apply only when a row is created: an update that sets the column to null
-    /// stores null.
+    /// Gets an optional default value, stored when an insert leaves the column out: a
+    /// <see cref="RowValues"/> row that does not name it, a POCO with no property for it,
+    /// or <see cref="DbDefault.Value"/> in any insert. An explicit <see langword="null"/> or
+    /// <see cref="DBNull.Value"/> stores null, as in an Access SQL <c>INSERT</c>. The value
+    /// must be assignment-compatible with <see cref="ClrType"/>. Defaults apply only when a
+    /// row is created: an update that sets the column to null stores null.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -90,7 +94,8 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets a value indicating whether this column auto-assigns a monotonically increasing
-    /// integer when the supplied value is null / <see cref="DBNull.Value"/>. The next value
+    /// integer when an insert supplies null, <see cref="DBNull.Value"/> or
+    /// <see cref="DbDefault.Value"/>, or leaves the column out. The next value
     /// is seeded on first use from the larger of the table's persisted AutoNumber counter
     /// and the largest existing value, plus one (<c>1</c> for a new table), and incremented
     /// per insert. Only valid for <see cref="byte"/>, <see cref="short"/>,
@@ -181,11 +186,11 @@ public sealed record ColumnDefinition
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every <see cref="AccessWriter"/> evaluates the expression when an inserted row leaves
-    /// the column null / <see cref="DBNull.Value"/> (the same rule as
+    /// Every <see cref="AccessWriter"/> evaluates the expression when an insert leaves the
+    /// column out or sets it to <see cref="DbDefault.Value"/> (the same rule as
     /// <see cref="DefaultValue"/>), converts the result to the column's type, and stores it.
-    /// An update that sets the column to null stores null. A persisted <c>DefaultValue</c>
-    /// written by Microsoft Access is applied the same way.
+    /// An explicit null on insert, and an update that sets the column to null, store null.
+    /// A persisted <c>DefaultValue</c> written by Microsoft Access is applied the same way.
     /// </para>
     /// <para>
     /// When both are set, the declaring writer uses the CLR <see cref="DefaultValue"/> and

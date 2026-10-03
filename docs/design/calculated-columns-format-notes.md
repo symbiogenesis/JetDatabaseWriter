@@ -203,8 +203,8 @@ Delivered:
   parsing only; all Access/ACE storage and type coercion remains in this
   library.
 - `ConstraintRegistry` evaluates calculated columns during inserts when the row
-  omits the cached value or supplies `NULL`/`DBNull`, and recomputes calculated
-  columns during updates after source values are applied.
+  omits the cached value or supplies `NULL`, `DBNull` or `DbDefault.Value`, and
+  recomputes calculated columns during updates after source values are applied.
 - Caller-supplied cached values still work on insert. This preserves Phase 1B
   behavior and lets unsupported expressions be persisted when the caller has
   already computed the value.

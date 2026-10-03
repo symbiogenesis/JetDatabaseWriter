@@ -43,6 +43,7 @@ JetDatabaseWriter/
 │   ├── ComplexCellValue.cs                (decodes the complex-column cells that row reads return)
 │   ├── ComplexColumnInfo.cs
 │   ├── DatabaseStatistics.cs
+│   ├── DbDefault.cs                       (stands for a column's default in an insert row, like SQL DEFAULT)
 │   ├── Hyperlink.cs
 │   ├── IndexColumnReference.cs
 │   ├── IndexDefinition.cs
