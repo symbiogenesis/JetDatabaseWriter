@@ -307,7 +307,10 @@ internal static class RowMapper<T>
     /// <param name="targetUnderlying">The target underlying.</param>
     private static object? CoerceToTarget(object value, Type targetUnderlying)
     {
-        if (value.GetType() == targetUnderlying)
+        // Values the property can already hold pass through unchanged. That
+        // covers object-typed properties bound to byte[] or complex-column
+        // cells, which Convert.ChangeType rejects as not IConvertible.
+        if (targetUnderlying.IsInstanceOfType(value))
         {
             return value;
         }

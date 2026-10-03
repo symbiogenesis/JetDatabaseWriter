@@ -264,7 +264,8 @@ Start by checking the workload shape before changing the core reader:
 ### Prefer narrow `Rows<T>()` projections
 
 Use `Rows<T>()` with a DTO that binds only the columns needed by the caller.
-The reader can emit a direct page-to-POCO decoder for primitive projections,
+`ReadTableAsync<T>()` materializes the same scan into a list, so it picks the
+same decoder. The reader can emit a direct page-to-POCO decoder for primitive projections,
 which avoids per-row `object?[]` allocation and primitive boxing. This is the
 best available path for wide tables when the caller does not need every column.
 
