@@ -145,9 +145,6 @@ internal static class CalculatedExpressionCoercion
         return value;
     }
 
-    internal static object EvaluateNumeric(object left, object right, Func<decimal, decimal, decimal> operation)
-        => IsNull(left) || IsNull(right) ? DBNull.Value : operation(ToDecimal(left), ToDecimal(right));
-
     internal static object CompareValues(object left, object right, Func<int, bool> predicate)
     {
         if (IsNull(left) || IsNull(right))
@@ -165,6 +162,15 @@ internal static class CalculatedExpressionCoercion
         {
             // Two strings compare as text in Access, even when both look numeric ("10" < "9").
             comparison = string.Compare(leftText, rightText, StringComparison.OrdinalIgnoreCase);
+        }
+        else if ((left is DateTime || right is DateTime)
+            && TryConvertDateTime(left, out DateTime leftDateValue)
+            && TryConvertDateTime(right, out DateTime rightDateValue))
+        {
+            // A date against a number (a date serial) or date text compares as dates.
+            // Comparing DateTimes rather than serials keeps dates before 1899-12-30
+            // in order, where a negative serial's fraction counts forward.
+            comparison = leftDateValue.CompareTo(rightDateValue);
         }
         else if (TryConvertDecimal(left, out decimal leftDecimal) && TryConvertDecimal(right, out decimal rightDecimal))
         {

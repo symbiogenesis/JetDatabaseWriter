@@ -511,6 +511,81 @@ public sealed class ColumnConstraintTests
         Assert.Equal("none", third["Label"]);
     }
 
+    /// <summary>Gets every format, in the declaring and a reopened writer, with each write mode.</summary>
+    public static TheoryData<DatabaseFormat, bool, string> EveryWriterCases
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, bool, string>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                foreach (bool reopened in new[] { false, true })
+                {
+                    foreach (string mode in new[] { "none", "transactional", "explicit" })
+                    {
+                        data.Add(format, reopened, mode);
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// A default and a rule that use date arithmetic (<c>=Date()+7</c>,
+    /// <c>&gt;=Date()-30</c>) are applied in every writer. Before date arithmetic
+    /// worked they threw <see cref="InvalidCastException"/>, which the default and
+    /// the rule treat as "cannot evaluate", so NULL was stored and every date was
+    /// accepted.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="reopened">Whether a later writer, which reads the expressions from the file, does the writes.</param>
+    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(EveryWriterCases))]
+    public async Task DateArithmeticDefaultAndRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, string mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "DateRule";
+        ColumnDefinition[] columns =
+        [
+            new("Id", typeof(int)),
+            new("Due", typeof(DateTime)) { DefaultValueExpression = "=Date()+7", ValidationRuleExpression = ">=Date()-30" },
+        ];
+
+        if (reopened)
+        {
+            await using AccessWriter creator = await OpenWriterAsync(stream);
+            await creator.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+        }
+
+        // Access Date() reads the local clock.
+        DateTime before = DateTimeOffset.Now.DateTime.Date;
+        await WriteInModeAsync(stream, mode, async writer =>
+        {
+            if (!reopened)
+            {
+                await writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+            }
+
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [2, before.AddDays(-1)], TestContext.Current.CancellationToken);
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync(table, [3, new DateTime(2000, 1, 1)], TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 2, new Dictionary<string, object?> { ["Due"] = new DateTime(2000, 1, 1) }, TestContext.Current.CancellationToken));
+        });
+        DateTime after = DateTimeOffset.Now.DateTime.Date;
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, dt.Rows.Count);
+        Assert.InRange((DateTime)Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Due"], before.AddDays(7), after.AddDays(7));
+        Assert.Equal(before.AddDays(-1), Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Due"]);
+    }
+
     /// <summary>
     /// A CLR <see cref="ColumnDefinition.DefaultValue"/> is persisted as a literal
     /// <c>DefaultValue</c> expression, so a writer that did not declare it still
@@ -831,6 +906,23 @@ public sealed class ColumnConstraintTests
             options ?? new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
+    }
+
+    private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
+    {
+        await using AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" });
+        if (mode == "explicit")
+        {
+            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await work(writer);
+            await transaction.CommitAsync(TestContext.Current.CancellationToken);
+        }
+        else
+        {
+            await work(writer);
+        }
     }
 
     private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)

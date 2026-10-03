@@ -26,6 +26,12 @@ public sealed class ConstraintRegistryTests
             { "<=Date()", today.AddDays(2), false },
             { ">=#2000-01-01#", new DateTime(1999, 12, 31), false },
             { ">=#2000-01-01#", new DateTime(2000, 1, 1), true },
+            { ">=Date()-30", today.AddDays(-2), true },
+            { ">=Date()-30", today.AddDays(-40), false },
+            { "<Date()+1", today.AddDays(-2), true },
+            { "<Date()+1", today.AddDays(3), false },
+            { "Between Date()-7 And Date()+7", today.AddDays(-9), false },
+            { "Between Date()-7 And Date()+7", today, true },
         };
     }
 
@@ -148,6 +154,8 @@ public sealed class ConstraintRegistryTests
     [InlineData("=No", ColumnType.BooleanType, typeof(bool), "False")]
     [InlineData("#2020-01-31#", ColumnType.DateTimeType, typeof(DateTime), "2020-01-31 00:00:00")]
     [InlineData("#2026-04-24 13:05:30#", ColumnType.DateTimeType, typeof(DateTime), "2026-04-24 13:05:30")]
+    [InlineData("#2020-01-31#+1", ColumnType.DateTimeType, typeof(DateTime), "2020-02-01 00:00:00")]
+    [InlineData("=#2020-01-31 06:00# - 0.25", ColumnType.DateTimeType, typeof(DateTime), "2020-01-31 00:00:00")]
     [InlineData("{guid 12345678-1234-1234-1234-1234567890ab}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     [InlineData("{guid {12345678-1234-1234-1234-1234567890AB}}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     public async Task ApplyAsync_HydratedDefaultValue_FillsNull(string expression, ColumnType type, Type expectedType, string expectedText)
@@ -192,6 +200,21 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(before.Date, Assert.IsType<DateTime>(values[0]).Date);
         DateTime stamp = Assert.IsType<DateTime>(values[1]);
         Assert.InRange(stamp, before.AddSeconds(-1), after.AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task ApplyAsync_HydratedDefaultValue_DateArithmeticUsesTheClock()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.DateTimeType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "=Date()+7")));
+        object[] values = [DBNull.Value];
+
+        // Access Date() reads the local clock.
+        DateTime before = DateTimeOffset.Now.DateTime.Date;
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        DateTime after = DateTimeOffset.Now.DateTime.Date;
+
+        Assert.InRange(Assert.IsType<DateTime>(values[0]), before.AddDays(7), after.AddDays(7));
     }
 
     [Fact]

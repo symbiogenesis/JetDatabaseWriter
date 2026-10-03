@@ -12,17 +12,16 @@ internal sealed class CalculatedExpressionBinaryNode(BinaryOperation operation, 
         object leftValue = left.Evaluate(context, plan);
         object rightValue = right.Evaluate(context, plan);
 
-        // Access concatenates when both operands of + are text.
+        // Access concatenates when both operands of + are text, and does date
+        // arithmetic when either operand is a date (AccessVariantOperators).
         return operation switch
         {
             BinaryOperation.Concat => CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue),
-            BinaryOperation.Addition => leftValue is string && rightValue is string
-                ? CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue)
-                : EvaluateNumeric(leftValue, rightValue, static (l, r) => l + r),
-            BinaryOperation.Subtraction => EvaluateNumeric(leftValue, rightValue, static (l, r) => l - r),
-            BinaryOperation.Multiplication => EvaluateNumeric(leftValue, rightValue, static (l, r) => l * r),
-            BinaryOperation.Division => EvaluateNumeric(leftValue, rightValue, static (l, r) => l / r),
-            BinaryOperation.Power => IsNull(leftValue) || IsNull(rightValue) ? DBNull.Value : Math.Pow(ToDouble(leftValue), ToDouble(rightValue)),
+            BinaryOperation.Addition => AccessVariantOperators.Add(leftValue, rightValue),
+            BinaryOperation.Subtraction => AccessVariantOperators.Subtract(leftValue, rightValue),
+            BinaryOperation.Multiplication => AccessVariantOperators.Multiply(leftValue, rightValue),
+            BinaryOperation.Division => AccessVariantOperators.Divide(leftValue, rightValue),
+            BinaryOperation.Power => AccessVariantOperators.Power(leftValue, rightValue),
             BinaryOperation.Equal => CompareValues(leftValue, rightValue, static c => c == 0),
             BinaryOperation.NotEqual => CompareValues(leftValue, rightValue, static c => c != 0),
             BinaryOperation.GreaterThan => CompareValues(leftValue, rightValue, static c => c > 0),
