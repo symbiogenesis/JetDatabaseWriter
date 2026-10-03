@@ -21,15 +21,20 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     /// Generates C# entity files for all user tables visible through the configured reader.
     /// Every table's columns are read first, so each table gets a class and file name no
     /// other table and no type the generated code uses has
-    /// (<see cref="ScaffoldNames.AllocateClassNames"/>), and navigations name only the
-    /// classes that are generated.
+    /// (<see cref="ScaffoldNames.AllocateClassNames"/>), navigations name only the
+    /// classes that are generated, and a namespace segment that would hide a type the
+    /// generated code names (<see cref="ScaffoldNames.FindTypeHidingSegment"/>) stops the
+    /// run before the output directory is created.
     /// </summary>
     /// <param name="outputDir">Directory to write generated .cs files into.</param>
     /// <param name="ns">Namespace for generated classes.</param>
     /// <param name="useRecords">Whether to emit C# records instead of classes.</param>
     /// <param name="nullable">Whether to emit nullable reference type annotations.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The number of models generated, or -1 when <paramref name="ns"/> is not a valid C# namespace.</returns>
+    /// <returns>
+    /// The number of models generated, or -1 when <paramref name="ns"/> is not a valid C#
+    /// namespace or has a segment named like a type the generated code names.
+    /// </returns>
     public async Task<int> RunAsync(
         string outputDir,
         string ns,
@@ -42,8 +47,6 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             await error.WriteLineAsync($"Error: '{ns}' is not a valid C# namespace.");
             return -1;
         }
-
-        Directory.CreateDirectory(outputDir);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken);
         if (tables.Count == 0)
@@ -78,6 +81,13 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             }
         }
 
+        if (ScaffoldNames.FindTypeHidingSegment(ns, scaffolded) is { } segment)
+        {
+            await error.WriteLineAsync($"Error: the namespace '{ns}' has a segment named '{segment}', which would hide the {segment} type the generated code uses. Choose a namespace without it.");
+            return -1;
+        }
+
+        Directory.CreateDirectory(outputDir);
         Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(scaffolded);
         Dictionary<string, List<ScaffoldNavigation>> navigationsByTable = NavigationResolver.Resolve(classNames, relationships);
 

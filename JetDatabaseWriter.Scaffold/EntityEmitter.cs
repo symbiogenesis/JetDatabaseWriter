@@ -93,7 +93,9 @@ internal static class EntityEmitter
     /// navigation named like the class or a <see cref="ReservedMemberNames">reserved member</see>
     /// gets a <c>Value</c> or <c>Navigation</c> suffix, and a numeric suffix when that name is
     /// taken too. The using directives precede the namespace declaration, so a namespace segment
-    /// such as <c>System</c> cannot capture them.
+    /// such as <c>System</c> cannot capture them. C# consults them only after the namespace and
+    /// each enclosing one, though, so the caller must refuse a segment named like a type the code
+    /// names (<see cref="ScaffoldNames.FindTypeHidingSegment"/>).
     /// </summary>
     /// <param name="className">The generated class name.</param>
     /// <param name="tableName">The Access table name the class maps.</param>
@@ -186,7 +188,8 @@ internal static class EntityEmitter
     /// Returns the C# type names the properties for <paramref name="columns"/> spell out
     /// (such as <c>DateTime</c>, <c>Guid</c> or <c>Hyperlink</c>), leaving out keywords such
     /// as <c>int</c>. A generated class with one of these names would capture the
-    /// property types of every entity in its namespace, so the class allocation reserves them.
+    /// property types of every entity in its namespace, and so would a namespace segment,
+    /// so the class allocation reserves them and the runner refuses such a namespace.
     /// </summary>
     /// <param name="columns">The columns of the scaffolded tables.</param>
     /// <returns>The referenced type names.</returns>
