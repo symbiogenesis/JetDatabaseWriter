@@ -14,7 +14,7 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATE", 0, 0, static _ => CurrentAccessLocalDateTime().Date, "TODAY"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime()));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIME", 0, 0, static _ => CurrentAccessLocalDateTime()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => ParseDate(ToText(function.Arg(0)))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATESERIAL", 3, 3, static function => DateSerial(checked((int)ToDecimal(function.Arg(0))), checked((int)ToDecimal(function.Arg(1))), checked((int)ToDecimal(function.Arg(2))))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEDIFF", 3, 5, static function => DateDiff(ToText(function.Arg(0)), ToDateTime(function.Arg(1)), ToDateTime(function.Arg(2)))));

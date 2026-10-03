@@ -1356,6 +1356,55 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(0x0A, row["LowBits"]);
     }
 
+    /// <summary>
+    /// A Text calculated column that joins a date stores the date in VBA's en-US
+    /// General Date form, on insert and when an update recomputes it, whatever the
+    /// current culture.
+    /// </summary>
+    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("transactional")]
+    [InlineData("explicit")]
+    public async Task InsertAndUpdate_DateInTextExpression_StoresGeneralDate(string mode)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcDueText",
+                [
+                    new("Id", typeof(int)),
+                    new("Due", typeof(DateTime)),
+                    new("Label", typeof(string), maxLength: 60) { IsCalculated = true, CalculationExpression = "\"Due \" & [Due]" },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            await WriteInModeAsync(stream, mode, async writer =>
+            {
+                await writer.InsertRowAsync("CalcDueText", [1, new DateTime(2020, 1, 31, 18, 30, 5), DBNull.Value], TestContext.Current.CancellationToken);
+                await writer.InsertRowAsync("CalcDueText", [2, new DateTime(2020, 1, 31), DBNull.Value], TestContext.Current.CancellationToken);
+                int updated = await writer.UpdateRowsAsync("CalcDueText", "Id", 2, new Dictionary<string, object?> { ["Due"] = new DateTime(2021, 12, 9, 7, 5, 0) }, TestContext.Current.CancellationToken);
+                Assert.Equal(1, updated);
+            });
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcDueText", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("Due 1/31/2020 6:30:05 PM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Label"]);
+        Assert.Equal("Due 12/9/2021 7:05:00 AM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
+    }
+
     private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(

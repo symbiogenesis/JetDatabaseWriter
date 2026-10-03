@@ -11,6 +11,9 @@ internal static class CalculatedExpressionCoercion
     /// <summary>The OLE Automation serial of 10000-01-01, one day past the latest Access date.</summary>
     private const double MaxOleDateExclusive = 2958466d;
 
+    /// <summary>OLE Automation day 0, 1899-12-30, whose date part General Date text leaves out.</summary>
+    private static readonly DateTime OleDateZero = new(1899, 12, 30);
+
     internal static object CoerceResult(object? value, Type targetType)
     {
         if (IsNull(value))
@@ -307,7 +310,8 @@ internal static class CalculatedExpressionCoercion
     /// <summary>
     /// Converts a value to text the way the Access expression service does:
     /// True is <c>"-1"</c> and False is <c>"0"</c>, so <c>"x" &amp; (1 &lt; 2)</c>
-    /// is <c>"x-1"</c> (<see cref="Convert"/> gives <c>"True"</c>).
+    /// is <c>"x-1"</c> (<see cref="Convert"/> gives <c>"True"</c>), and a date is
+    /// General Date text (<see cref="ToGeneralDateText"/>).
     /// </summary>
     /// <param name="value">The value to convert.</param>
     /// <returns>The text value; empty for Null.</returns>
@@ -318,7 +322,44 @@ internal static class CalculatedExpressionCoercion
             return boolean ? "-1" : "0";
         }
 
+        if (value is DateTime date)
+        {
+            return ToGeneralDateText(date);
+        }
+
         return IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Converts a date to text in VBA's General Date form for the en-US locale, as OLE
+    /// Automation's <c>VarBstrFromDate</c> gives it to <c>CStr</c> and <c>&amp;</c>
+    /// (measured with oleaut32 on Windows, LCID 1033), whatever the current culture:
+    /// <c>1/31/2020 6:00:00 AM</c>. A date at midnight has no time part
+    /// (<c>1/31/2020</c>), and a time on day 0, 1899-12-30, has no date part
+    /// (<c>6:00:00 AM</c>; day 0 at midnight is <c>12:00:00 AM</c>). More than half a
+    /// second rounds up to the next second; half a second or less is dropped.
+    /// </summary>
+    /// <param name="value">The date.</param>
+    /// <returns>The General Date text.</returns>
+    internal static string ToGeneralDateText(DateTime value)
+    {
+        long fraction = value.Ticks % TimeSpan.TicksPerSecond;
+        DateTime rounded = value.AddTicks(-fraction);
+        if (fraction > TimeSpan.TicksPerSecond / 2 && (DateTime.MaxValue - rounded).Ticks >= TimeSpan.TicksPerSecond)
+        {
+            rounded = rounded.AddSeconds(1);
+        }
+
+        string time = rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
+        if (rounded.Date == OleDateZero)
+        {
+            return time;
+        }
+
+        string date = rounded.Month.ToString(CultureInfo.InvariantCulture)
+            + "/" + rounded.Day.ToString(CultureInfo.InvariantCulture)
+            + "/" + rounded.Year.ToString(CultureInfo.InvariantCulture);
+        return rounded.TimeOfDay == TimeSpan.Zero ? date : date + " " + time;
     }
 
     /// <summary>
