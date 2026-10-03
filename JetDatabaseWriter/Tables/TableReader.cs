@@ -1103,8 +1103,6 @@ internal sealed class TableReader(
 
     /// <summary>
     /// Determines whether table pages should be read ahead.
-    /// The cache returns page buffers to the shared pool on eviction, so read-ahead
-    /// needs room for the previous, current, and prefetched data pages.
     /// Auto mode stays conservative: only file-backed, non-transactional scans
     /// with enough table pages use read-ahead, and the first page is yielded
     /// before prefetch begins to preserve first-row latency.

@@ -38,7 +38,12 @@ internal sealed class ReaderPageCache : IDisposable
         this.db = db;
         if (capacity > 0)
         {
-            this.pageCache = new LruCache<long, byte[]>(capacity, DatabaseFile.ReturnPage);
+            // No eviction callback: callers keep using a cached buffer after it
+            // is evicted (a scan holds its data page while decoding a long-value
+            // chain that cycles the whole cache), so returning it to the shared
+            // pool would let the next rent overwrite it mid-scan. Evicted
+            // buffers are left to the GC instead.
+            this.pageCache = new LruCache<long, byte[]>(capacity);
             this.rowBoundsCache = new LruCache<long, RowBound[]>(capacity);
         }
     }

@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -114,6 +115,64 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         Assert.True(pageCache.Misses > pageCache.Count);
         Assert.Equal(options.PageCacheSize, rowBoundsCache.Count);
         Assert.True(rowBoundsCache.Misses > rowBoundsCache.Count);
+    }
+
+    [Fact]
+    public async Task Rows_WhenLongValueChainEvictsCurrentDataPage_ReturnsEveryRow()
+    {
+        const string tableName = "MemoRows";
+        const int smallRowCount = 29;
+
+        // CJK text defeats Unicode compression, so the chain spans ~50 LVAL
+        // pages: far more than the cache holds, which evicts the data page the
+        // scan is still iterating while the first row's MEMO is decoded.
+        var large = new StringBuilder(100_000);
+        for (int i = 0; i < 100_000; i++)
+        {
+            _ = large.Append((char)(0x4E00 + (i % 0x5000)));
+        }
+
+        string largeBody = large.ToString();
+        var rows = new List<object[]> { new object[] { 1, largeBody } };
+        for (int id = 2; id <= smallRowCount + 1; id++)
+        {
+            rows.Add([id, "small-" + id.ToString(CultureInfo.InvariantCulture)]);
+        }
+
+        var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [new("Id", typeof(int)), new("Body", typeof(string))],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { PageCacheSize = 8, UseLockFile = false },
+            leaveOpen: false,
+            TestContext.Current.CancellationToken);
+
+        var actual = new List<object[]>();
+        await foreach (object[] row in reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            actual.Add(row);
+        }
+
+        Assert.Equal(rows.Count, actual.Count);
+        for (int i = 0; i < rows.Count; i++)
+        {
+            Assert.Equal(rows[i][0], actual[i][0]);
+            Assert.Equal(rows[i][1], actual[i][1]);
+        }
     }
 
     [Fact]
