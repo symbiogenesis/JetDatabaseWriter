@@ -9,4 +9,9 @@ namespace JetDatabaseWriter.Catalog.Models;
 /// <param name="TDefPage">The table-definition page number.</param>
 /// <param name="Id">The identifier.</param>
 /// <param name="ParentId">The parent id.</param>
-internal sealed record CatalogRow(long PageNumber, int RowIndex, string Name, int ObjectType, long Flags, long TDefPage, long Id, long ParentId);
+/// <param name="IsDecoded">
+/// Whether the row's layout could be parsed. A live row that is too short or
+/// malformed to decode is still returned, with empty or zero fields, so writers
+/// that walk every live slot see it; <see langword="false"/> marks such a row.
+/// </param>
+internal sealed record CatalogRow(long PageNumber, int RowIndex, string Name, int ObjectType, long Flags, long TDefPage, long Id, long ParentId, bool IsDecoded);
