@@ -464,6 +464,25 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
     }
 
     /// <summary>
+    /// Writes a real index's 4-byte <c>used_pages</c> usage-map pointer (row
+    /// byte, then the 3-byte page number) at the given LOGICAL TDEF offset,
+    /// mapping every byte to the physical page that holds it. In a wide table
+    /// the real-idx descriptors sit on a continuation page, whose body starts
+    /// after an 8-byte header, so the offset cannot be split with a plain
+    /// divide by the page size.
+    /// </summary>
+    /// <param name="pages">The pages.</param>
+    /// <param name="logicalOffset">The logical offset of the <c>used_pages</c> field.</param>
+    /// <param name="rowIndex">The usage-map row that lists the index's pages.</param>
+    /// <param name="usageMapPage">The usage-map page number.</param>
+    internal void WriteLogicalUsedPagesPointer(byte[][] pages, int logicalOffset, int rowIndex, long usageMapPage)
+    {
+        (int pageIdx, int pageOff) = this.LogicalToPhysicalTDefOffset(logicalOffset);
+        pages[pageIdx][pageOff] = checked((byte)rowIndex);
+        this.WriteLogicalTDefUInt24(pages, logicalOffset + 1, checked((int)usageMapPage));
+    }
+
+    /// <summary>
     /// Adjusts the persisted row count of the table whose TDEF lives at
     /// <paramref name="tdefPage"/> by <paramref name="delta"/>, mirroring the
     /// change into every per-real-idx <c>num_idx_rows</c> counter.
