@@ -39,10 +39,13 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// calculated expressions, validation rules and defaults that name it. A
 /// column that a relationship uses as a key column, or that another column's
 /// expression names, cannot be dropped, and a table that any relationship
-/// names cannot be dropped either, as in Microsoft Access. Dropped tables
-/// return their data, LVAL, index, usage-map, and TDEF pages to the global
-/// free map, and no partner FK entry is left naming the freed TDEF page. The
-/// public facade owns the auto-commit scope around each call.
+/// names cannot be dropped either, as in Microsoft Access. New table, column
+/// and index names must follow the Access naming rules
+/// (<see cref="AccessObjectName"/>); names the table already carries are
+/// kept as they are. Dropped tables return their data, LVAL, index,
+/// usage-map, and TDEF pages to the global free map, and no partner FK entry
+/// is left naming the freed TDEF page. The public facade owns the
+/// auto-commit scope around each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
@@ -74,11 +77,14 @@ internal sealed class TableSchemaEditor(
 {
     /// <summary>
     /// Public CreateTable entry point: checks the arguments before any catalog
-    /// I/O, in this order: the table name and the argument lists, then that
-    /// the format can hold each declared column, then each calculated
-    /// expression's syntax and each default. Then it creates the table.
-    /// <see cref="RewriteTableAsync"/> calls <see cref="CreateTableAsync"/>
-    /// directly, so a table holding an older expression can still be altered.
+    /// I/O, in this order: the table name and the argument lists, including
+    /// the Access naming rules for the table, column and index names
+    /// (<see cref="AccessObjectName"/>), then that the format can hold each
+    /// declared column, then each calculated expression's syntax and each
+    /// default. Then it creates the table. <see cref="RewriteTableAsync"/>
+    /// calls <see cref="CreateTableAsync"/> directly, so a table holding an
+    /// older expression, or a name an existing file already carries, can
+    /// still be altered.
     /// </summary>
     /// <param name="tableName">The new table's name.</param>
     /// <param name="columns">The column definitions.</param>
@@ -87,10 +93,12 @@ internal sealed class TableSchemaEditor(
     /// <returns>A task that completes when the table is in the catalog.</returns>
     internal ValueTask CreateDeclaredTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        AccessObjectName.ThrowIfInvalid(tableName, nameof(tableName), "table");
         Guard.NotNull(columns, nameof(columns));
         Guard.NotNull(indexes, nameof(indexes));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        ValidateDeclaredNames(columns, indexes);
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -215,10 +223,11 @@ internal sealed class TableSchemaEditor(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
+        AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(column), "column");
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        // Argument checks before the table is read: the format first, so a
-        // calculated column on an .mdb reports that, then the expression,
+        // Argument checks before the table is read: the name, then the format,
+        // so a calculated column on an .mdb reports that, then the expression,
         // then the default.
         _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
         ValidateDeclaredCalculatedExpression(column, nameof(column));
@@ -296,7 +305,7 @@ internal sealed class TableSchemaEditor(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
-        Guard.NotNullOrEmpty(newColumnName, nameof(newColumnName));
+        AccessObjectName.ThrowIfInvalid(newColumnName, nameof(newColumnName), "column");
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         return this.RewriteTableAsync(
@@ -326,6 +335,46 @@ internal sealed class TableSchemaEditor(
             (oldRow, _) => oldRow,
             name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Checks the column and index names a CreateTable caller declares: each
+    /// definition is present, its name follows the Access naming rules
+    /// (<see cref="AccessObjectName"/>), and no two columns share a name,
+    /// which Access compares ignoring case. <see cref="IndexHelpers.ResolveIndexes"/>
+    /// rejects duplicate index names.
+    /// </summary>
+    /// <param name="columns">The declared columns.</param>
+    /// <param name="indexes">The declared indexes.</param>
+    /// <exception cref="ArgumentException">A definition is <see langword="null"/>, a name is missing or breaks a rule, or two columns share a name.</exception>
+    private static void ValidateDeclaredNames(IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes)
+    {
+        var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (columns[i] is not { } column)
+            {
+                throw new ArgumentException($"The column at position {i} is null.", nameof(columns));
+            }
+
+            AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(columns), "column", i);
+            if (!columnNames.Add(column.Name))
+            {
+                throw new ArgumentException(
+                    $"Column name '{column.Name}' is used more than once; Access compares column names ignoring case.",
+                    nameof(columns));
+            }
+        }
+
+        for (int i = 0; i < indexes.Count; i++)
+        {
+            if (indexes[i] is not { } index)
+            {
+                throw new ArgumentException($"The index at position {i} is null.", nameof(indexes));
+            }
+
+            AccessObjectName.ThrowIfInvalidMember(index.Name, nameof(indexes), "index", i);
+        }
     }
 
     /// <summary>
@@ -433,7 +482,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="existingDefs">The columns before the rewrite.</param>
     /// <param name="newDefs">The projected columns, updated in place.</param>
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
-    /// <exception cref="ArgumentException">A renamed reference would need a name containing <c>]</c>, or would push an expression past the engine's limits.</exception>
+    /// <exception cref="ArgumentException">A renamed reference would push an expression past the engine's limits.</exception>
     /// <exception cref="InvalidOperationException">A surviving column's expression names a dropped column.</exception>
     private static void ProjectExpressionReferences(
         string tableName,
@@ -493,7 +542,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="oldColumnName">The renamed column's current name.</param>
     /// <param name="newColumnName">The renamed column's new name.</param>
     /// <returns>The rewritten text, or <paramref name="expression"/> itself when it does not name the column.</returns>
-    /// <exception cref="ArgumentException">The expression names the column and the new name contains <c>]</c>, or the rewritten text breaks a limit the original met.</exception>
+    /// <exception cref="ArgumentException">The rewritten text breaks a limit the original met.</exception>
     private static string? RenameReference(string tableName, ColumnDefinition column, string property, string? expression, string oldColumnName, string newColumnName)
     {
         if (expression is null || !ExpressionFieldReferences.References(expression, oldColumnName, tableName))
@@ -501,20 +550,16 @@ internal sealed class TableSchemaEditor(
             return expression;
         }
 
-        string conflict = $"Cannot rename column '{oldColumnName}' of table '{tableName}' to '{newColumnName}': the {property} of column '{column.Name}' ('{expression}') names it";
-        if (newColumnName.Contains(']', StringComparison.Ordinal))
-        {
-            throw new ArgumentException($"{conflict}, and a name containing ']' cannot be written as a [field] reference.", nameof(newColumnName));
-        }
-
-        // A bare reference gains brackets and the new name may be longer. An
+        // RenameColumnAsync has checked the new name against the Access
+        // naming rules, which exclude ']', so it can be written as [New]. A
+        // bare reference gains brackets and the new name may be longer. An
         // expression past the limits stops evaluating (a rule or default
         // silently), so refuse a rename that would push one over them.
         string renamed = ExpressionFieldReferences.Rename(expression, oldColumnName, newColumnName, tableName)!;
         if (!FitsExpressionLimits(renamed) && FitsExpressionLimits(expression))
         {
             throw new ArgumentException(
-                $"{conflict}, and with the new name it would exceed the expression limits ({CalculatedExpressionLimits.MaxExpressionLength} characters, {CalculatedExpressionLimits.MaxColumnReferences} [field] references).",
+                $"Cannot rename column '{oldColumnName}' of table '{tableName}' to '{newColumnName}': the {property} of column '{column.Name}' ('{expression}') names it, and with the new name it would exceed the expression limits ({CalculatedExpressionLimits.MaxExpressionLength} characters, {CalculatedExpressionLimits.MaxColumnReferences} [field] references).",
                 nameof(newColumnName));
         }
 
@@ -577,7 +622,7 @@ internal sealed class TableSchemaEditor(
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
-    /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name cannot be written into an expression that names it.</exception>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     private async ValueTask RewriteTableAsync(
         string tableName,

@@ -125,9 +125,10 @@ and rewrites `[Old]`, a bare `Old` (not a keyword, a `vb` constant, a function
 call or a `$` name) and `[Table].[Old]` / `Table.Old` qualified by the table's
 own name as `[New]`. Other qualified names (`[Other].[Old]`, `Forms![F]![Old]`)
 are left alone. Every Access-authored expression in the fixtures uses
-`[Field]` brackets. A rename whose new name contains `]` throws
-`ArgumentException` when an expression names the column, since a bracketed
-name cannot hold `]`. `DropColumnAsync` uses the same scan to refuse, with
+`[Field]` brackets. A bracketed name cannot hold `]`, and the Access naming
+rules that `RenameColumnAsync` checks the new name against exclude it, so a
+rename to such a name throws `ArgumentException` before the table is read.
+`DropColumnAsync` uses the same scan to refuse, with
 `InvalidOperationException` and before anything is written, to drop a column
 that another column's `Expression`, `ValidationRule` or `DefaultValue` names; a
 mention in a string literal, or in the dropped column's own rule, does not

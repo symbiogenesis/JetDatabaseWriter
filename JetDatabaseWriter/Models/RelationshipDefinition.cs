@@ -34,7 +34,7 @@ using JetDatabaseWriter.Interfaces;
 ///   <item><description>Both <see cref="PrimaryTable"/> and <see cref="ForeignTable"/> must already exist as user tables.</description></item>
 ///   <item><description>Every name in <see cref="PrimaryColumns"/> / <see cref="ForeignColumns"/> must match a column on its table, case-insensitively.</description></item>
 ///   <item><description><see cref="PrimaryColumns"/> and <see cref="ForeignColumns"/> must have the same length and at least one entry.</description></item>
-///   <item><description><see cref="Name"/> must be unique across existing relationships in this database (case-insensitive).</description></item>
+///   <item><description><see cref="Name"/> must be unique across existing relationships in this database (case-insensitive), and must follow the Access naming rules (1 to 64 characters, not only white space, no leading space, none of <c>. ! ` [ ]</c> or a control character).</description></item>
 ///   <item><description>The database must already contain a <c>MSysRelationships</c> table. Full-catalog ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c> include this table; Jet/MDB outputs and slim-catalog databases may require an Access-authored source before calling <c>CreateRelationshipAsync</c>.</description></item>
 /// </list>
 /// </remarks>
@@ -44,7 +44,7 @@ public sealed record RelationshipDefinition
     /// Initializes a new instance of the <see cref="RelationshipDefinition"/> class
     /// describing a single-column foreign-key relationship.
     /// </summary>
-    /// <param name="name">The relationship name (typically <c>"FK_Child_Parent"</c> or similar).</param>
+    /// <param name="name">The relationship name (typically <c>"FK_Child_Parent"</c> or similar). <c>CreateRelationshipAsync</c> requires the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="primaryTable">The name of the parent (PK side) table — written to the <c>szReferencedObject</c> column.</param>
     /// <param name="primaryColumn">The name of the primary-key column on the parent table — written to <c>szReferencedColumn</c>.</param>
     /// <param name="foreignTable">The name of the child (FK side) table — written to the <c>szObject</c> column.</param>
@@ -58,7 +58,7 @@ public sealed record RelationshipDefinition
     /// Initializes a new instance of the <see cref="RelationshipDefinition"/> class
     /// describing a possibly-composite foreign-key relationship.
     /// </summary>
-    /// <param name="name">The relationship name.</param>
+    /// <param name="name">The relationship name, following the same naming rules as the single-column constructor.</param>
     /// <param name="primaryTable">The parent (PK side) table name.</param>
     /// <param name="primaryColumns">The PK column names, in key order. Must have the same length as <paramref name="foreignColumns"/>.</param>
     /// <param name="foreignTable">The child (FK side) table name.</param>

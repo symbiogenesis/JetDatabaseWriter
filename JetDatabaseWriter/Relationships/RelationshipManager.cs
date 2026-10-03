@@ -68,7 +68,7 @@ internal sealed class RelationshipManager(
     /// <param name="relationship">The relationship to create.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">Thrown when a key column is missing from its table.</exception>
+    /// <exception cref="ArgumentException">Thrown when a key column is missing from its table, or, before anything is read, when the relationship name breaks the Access naming rules (<see cref="AccessObjectName"/>).</exception>
     /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists.</exception>
     /// <remarks>
@@ -83,7 +83,7 @@ internal sealed class RelationshipManager(
     internal async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken)
     {
         Guard.NotNull(relationship, nameof(relationship));
-        Guard.NotNullOrEmpty(relationship.Name, "relationship.Name");
+        AccessObjectName.ThrowIfInvalid(relationship.Name, "relationship.Name", "relationship");
         Guard.NotNullOrEmpty(relationship.PrimaryTable, "relationship.PrimaryTable");
         Guard.NotNullOrEmpty(relationship.ForeignTable, "relationship.ForeignTable");
         Guard.ThrowIfDisposed(this.db.IsDisposed, this);
@@ -1662,10 +1662,11 @@ internal sealed class RelationshipManager(
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="newName"/> is already taken, no relationship is named <paramref name="oldName"/>, or <c>MSysRelationships</c> has no <c>szRelationship</c> column.</exception>
+    /// <exception cref="ArgumentException">Thrown, before anything is read, when <paramref name="newName"/> breaks the Access naming rules (<see cref="AccessObjectName"/>).</exception>
     internal async ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(oldName, nameof(oldName));
-        Guard.NotNullOrEmpty(newName, nameof(newName));
+        AccessObjectName.ThrowIfInvalid(newName, nameof(newName), "relationship");
         Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 

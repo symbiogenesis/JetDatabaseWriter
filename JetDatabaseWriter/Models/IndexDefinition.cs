@@ -45,7 +45,7 @@ public sealed record IndexDefinition
     /// Initializes a new instance of the <see cref="IndexDefinition"/> class
     /// referencing a single column.
     /// </summary>
-    /// <param name="name">The logical-index name (1-64 characters, matching Access naming rules).</param>
+    /// <param name="name">The logical-index name. <c>CreateTableAsync</c> requires the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="columnName">The name of the column this index covers. Must match a column on the same table, case-insensitively.</param>
     public IndexDefinition(string name, string columnName)
     {
@@ -58,7 +58,7 @@ public sealed record IndexDefinition
     /// referencing one or more columns. See the type-level remarks for the
     /// emitted layout and the live B-tree maintenance contract.
     /// </summary>
-    /// <param name="name">The logical-index name.</param>
+    /// <param name="name">The logical-index name, following the same naming rules as the single-column constructor.</param>
     /// <param name="columns">The columns that make up the index key, in key order. Must contain at least one entry.</param>
     public IndexDefinition(string name, IReadOnlyList<string> columns)
     {
