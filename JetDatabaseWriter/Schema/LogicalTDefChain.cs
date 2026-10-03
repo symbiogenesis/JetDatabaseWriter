@@ -227,6 +227,57 @@ internal sealed class LogicalTDefChain
         this.pageNumbers.AddRange(physicalPages);
     }
 
+    /// <summary>
+    /// Writes <see cref="Bytes"/> back over the chain's retained physical
+    /// pages without changing the chain's length or page numbers. Used for
+    /// in-place field patches (index <c>first_dp</c> roots, <c>used_pages</c>
+    /// pointers) whose logical offsets may fall on any page of the chain. Each
+    /// page is re-read, the logical slice it holds is laid over it (page 0
+    /// whole, continuation pages after their 8-byte header), and the page is
+    /// written only when that changed it.
+    /// </summary>
+    /// <param name="readPageAsync">Reads one physical page.</param>
+    /// <param name="returnPage">Returns a buffer obtained from <paramref name="readPageAsync"/>.</param>
+    /// <param name="writePageAsync">Writes one physical page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">The chain was read without retaining its page numbers.</exception>
+    internal async ValueTask WriteInPlaceAsync(
+        Func<long, CancellationToken, ValueTask<byte[]>> readPageAsync,
+        Action<byte[]> returnPage,
+        Func<long, byte[], CancellationToken, ValueTask> writePageAsync,
+        CancellationToken cancellationToken)
+    {
+        if (this.pageNumbers.Count == 0)
+        {
+            throw new InvalidOperationException("A logical TDEF chain must retain its physical pages before it can be written in place.");
+        }
+
+        int bodyPerContinuation = this.pageSizeBytes - 8;
+        for (int pageIndex = 0; pageIndex < this.pageNumbers.Count; pageIndex++)
+        {
+            int logicalStart = pageIndex == 0 ? 0 : this.pageSizeBytes + ((pageIndex - 1) * bodyPerContinuation);
+            int physicalStart = pageIndex == 0 ? 0 : 8;
+            int length = this.pageSizeBytes - physicalStart;
+            ReadOnlyMemory<byte> logicalSlice = this.Bytes.AsMemory(logicalStart, length);
+
+            byte[] page = await readPageAsync(this.pageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (logicalSlice.Span.SequenceEqual(page.AsSpan(physicalStart, length)))
+                {
+                    continue;
+                }
+
+                logicalSlice.Span.CopyTo(page.AsSpan(physicalStart, length));
+                await writePageAsync(this.pageNumbers[pageIndex], page, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                returnPage(page);
+            }
+        }
+    }
+
     private static int GetNextPageNumber(IReadOnlyList<long>? pageNumbers, int currentPageIndex)
         => pageNumbers is not null && currentPageIndex + 1 < pageNumbers.Count
             ? checked((int)pageNumbers[currentPageIndex + 1])

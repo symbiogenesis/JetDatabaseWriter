@@ -464,6 +464,52 @@ internal sealed class DatabaseFile : IAsyncDisposable
         return chain?.Bytes;
     }
 
+    /// <summary>
+    /// Reads the TDEF page chain starting at <paramref name="startPage"/> as a
+    /// logical buffer that remembers its physical pages, so fields patched at
+    /// logical offsets can be written back with
+    /// <see cref="WriteTDefChainInPlaceAsync"/>. Throws when the page is not a
+    /// TDEF root.
+    /// </summary>
+    /// <param name="startPage">The first TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidDataException">The page at <paramref name="startPage"/> is not a table definition.</exception>
+    internal async ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
+        => await LogicalTDefChain.ReadAsync(
+            startPage,
+            this.PageSizeBytes,
+            this.ReadPageAsync,
+            ReturnPage,
+            retainPageNumbers: true,
+            cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException($"The table definition at page {startPage} could not be read.");
+
+    /// <summary>
+    /// Writes a chain read by <see cref="ReadTDefChainAsync"/> back in place,
+    /// mapping each logical byte to the physical page that holds it. Only
+    /// pages whose bytes changed are written.
+    /// </summary>
+    /// <param name="chain">The chain whose <see cref="LogicalTDefChain.Bytes"/> were patched.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask WriteTDefChainInPlaceAsync(LogicalTDefChain chain, CancellationToken cancellationToken = default)
+        => chain.WriteInPlaceAsync(this.ReadPageAsync, ReturnPage, this.WritePageAsync, cancellationToken);
+
+    /// <summary>
+    /// Patches one 32-bit field at a logical offset of the TDEF chain rooted
+    /// at <paramref name="tdefPage"/>, such as a real index's <c>first_dp</c>
+    /// root pointer, which sits on a continuation page in a wide table.
+    /// </summary>
+    /// <param name="tdefPage">The first TDEF page.</param>
+    /// <param name="logicalOffset">The field's offset in the logical TDEF buffer.</param>
+    /// <param name="value">The value to write.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask WriteTDefInt32Async(long tdefPage, int logicalOffset, int value, CancellationToken cancellationToken = default)
+    {
+        LogicalTDefChain chain = await this.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        Wi32(chain.Bytes, logicalOffset, value);
+        await this.WriteTDefChainInPlaceAsync(chain, cancellationToken).ConfigureAwait(false);
+    }
+
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
         byte[]? td = await this.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);

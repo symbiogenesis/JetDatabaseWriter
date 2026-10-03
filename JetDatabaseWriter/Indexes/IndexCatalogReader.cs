@@ -15,9 +15,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <c>LoadUniqueIndexDescriptorsAsync</c>, <c>TrySpliceCatalogIndexEntryAsync</c>)
 /// no longer re-implement the same ~50-line decode each.
 /// <para>
-/// Caller is responsible for advancing past the column-name block to compute
-/// <c>realIdxDescStart</c> (that walk depends on the writer's per-format
-/// column-name encoding and is not duplicated across the catalog callers).
+/// Callers pass the logical TDEF buffer (every page of the chain, as
+/// <see cref="DatabaseFile.ReadTDefBytesAsync"/> stitches it) and locate
+/// <c>realIdxDescStart</c> with <see cref="LocateRealIdxDescStart"/>, which
+/// walks the per-format column-name block.
 /// Pass <c>logIdxNames</c> when the caller needs best-effort
 /// logical-idx names per real-idx slot; pass <see langword="null"/> when only
 /// the real-idx → key-list map and PK-promotion set are required.
@@ -135,19 +136,12 @@ internal static class IndexCatalogReader
         }
 
         // Section walk mirrors DatabaseFile.ReadTableDefAsync and FormatProbe.
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-
-        // Walk column-name length-prefix block to find where it ends.
-        int pos = colStart + (numCols * db.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
+        int realIdxDescStart = LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
         {
-            if (db.ReadColumnName(td, ref pos, out _) < 0)
-            {
-                return [];
-            }
+            return [];
         }
 
-        int realIdxDescStart = pos;
         IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (anchors.LogIdxNamesStart > td.Length)

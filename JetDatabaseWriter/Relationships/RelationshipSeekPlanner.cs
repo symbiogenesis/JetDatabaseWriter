@@ -184,9 +184,10 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
         int[] targetColumnNumbers,
         CancellationToken cancellationToken)
     {
-        byte[] tableDefinition = await RelationshipPageReader.ReadOwnedAsync(db, tdefPage, cancellationToken).ConfigureAwait(false);
-
-        if (tableDefinition[0] != Constants.PageTypes.TableDefinition || Ru32(tableDefinition, 4) != 0)
+        // Read the whole TDEF chain: a wide table's real-idx descriptors sit
+        // on a continuation page.
+        byte[]? tableDefinition = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tableDefinition is null)
         {
             return null;
         }

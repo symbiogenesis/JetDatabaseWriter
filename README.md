@@ -874,7 +874,7 @@ try { var dt = await reader.ReadTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
-catch (JetLimitationException)  { /* deleted-column gap, numeric overflow */ }
+catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained */ }
 catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```
