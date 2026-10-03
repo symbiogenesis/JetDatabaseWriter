@@ -36,6 +36,7 @@ guidance below to produce new evidence before changing the core reader.
 - Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
 - Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted, in `Disabled` (page reads through the reader's I/O gate) and `Auto`: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
 - `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
+- The per-call cost of typed reads and `Query<T>()` (materializer and predicate compiles, translation, the in-memory tail, index-ordered reads, inferred range seeks and aggregates): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
 - Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
 - Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
 - Opening and scanning a file the OS has not cached (Windows only): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
@@ -85,8 +86,11 @@ release-quality benchmark results justify reopening a specific area.
   bug (bug 1 in `docs/todo.md`) went unmeasured. The numeric database also has an
   `AccdbAesCfbWrapped`-encrypted copy. The relational database has 1,000
   `Customers` and 10,000 `Orders` (primary keys, a non-unique `OrderDate` index,
-  and the `FK_Orders_Customers` relationship), and the attachment database has
-  150 `Documents` rows with one 16 KB attachment each. Both are smaller than
+  and the `FK_Orders_Customers` relationship), the query database has a 6-row
+  `QuerySmall` table and a 25K-row `QueryLarge` table (integer primary key and a
+  non-unique `Score` index), and the attachment database has
+  150 `Documents` rows with one 16 KB attachment each. The relational and
+  attachment databases are smaller than
   planned because of a writer limit: a full index rebuild that spreads a table's
   index pages over more than one inline usage-map bitmap throws
   `NotSupportedException` ("REFERENCE usage maps for index pages are not yet
