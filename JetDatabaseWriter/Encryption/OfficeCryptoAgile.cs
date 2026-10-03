@@ -151,10 +151,9 @@ internal static class OfficeCryptoAgile
             verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
             intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
-            // Pre-derive the password-bound keys once: each PBKDF
-            // iteration is 100k SHA-512s, so we share the iterated state
-            // by computing it inline rather than reusing DeriveKey thrice.
-            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+            // One PBKDF chain of 100k SHA-512s yields all three
+            // password-bound keys.
+            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt, Constants.AgileEncryption.SpinCount, Constants.AgileEncryption.KeyBytes);
             hasPasswordKeys = true;
 
             // Encrypt the verifier triple. Agile uses the password salt as
@@ -476,9 +475,8 @@ internal static class OfficeCryptoAgile
 
     private static byte[] ResolvePassword(AgileDescriptor d, byte[] passwordUtf16)
     {
-        byte[]? verifierInputKey = null;
-        byte[]? verifierHashKey = null;
-        byte[]? keyValueKey = null;
+        AgilePasswordKeys passwordKeys = default;
+        bool hasPasswordKeys = false;
         byte[]? verifierInput = null;
         byte[]? verifierInputForHash = null;
         byte[]? storedHash = null;
@@ -487,12 +485,13 @@ internal static class OfficeCryptoAgile
         try
         {
             // 1. Verify the password by decrypting verifierHashInput / Value.
-            verifierInputKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashInput, d.SpinCount, d.PasswordKeyBits / 8);
-            verifierHashKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyVerifierHashValue, d.SpinCount, d.PasswordKeyBits / 8);
-            keyValueKey = DeriveKey(passwordUtf16, d.PasswordSalt, BlockKeyEncryptedKeyValue, d.SpinCount, d.PasswordKeyBits / 8);
+            //    The three password keys share one PBKDF chain and differ
+            //    only in the block key mixed in at the end.
+            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, d.PasswordSalt, d.SpinCount, d.PasswordKeyBits / 8);
+            hasPasswordKeys = true;
 
-            verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, verifierInputKey, d.PasswordSalt);
-            storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, verifierHashKey, d.PasswordSalt);
+            verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, passwordKeys.VerifierInput, d.PasswordSalt);
+            storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, passwordKeys.VerifierHash, d.PasswordSalt);
 
             verifierInputForHash = Truncate(verifierInput, d.PasswordSaltSize);
             expectedHash = OfficeCryptoPrimitives.Sha512(verifierInputForHash);
@@ -504,16 +503,18 @@ internal static class OfficeCryptoAgile
             }
 
             // 2. Recover the intermediate key.
-            intermediate = AesCbcDecrypt(d.EncryptedKeyValue, keyValueKey, d.PasswordSalt);
+            intermediate = AesCbcDecrypt(d.EncryptedKeyValue, passwordKeys.KeyValue, d.PasswordSalt);
             byte[] intermediateKey = new byte[d.KeyDataKeyBits / 8];
             Buffer.BlockCopy(intermediate, 0, intermediateKey, 0, Math.Min(intermediateKey.Length, intermediate.Length));
             return intermediateKey;
         }
         finally
         {
-            OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputKey);
-            OfficeCryptoPrimitives.ZeroIfNotNull(verifierHashKey);
-            OfficeCryptoPrimitives.ZeroIfNotNull(keyValueKey);
+            if (hasPasswordKeys)
+            {
+                ZeroPasswordKeys(passwordKeys);
+            }
+
             OfficeCryptoPrimitives.ZeroIfNotNull(verifierInput);
             OfficeCryptoPrimitives.ZeroIfNotNull(verifierInputForHash);
             OfficeCryptoPrimitives.ZeroIfNotNull(storedHash);
@@ -574,67 +575,6 @@ internal static class OfficeCryptoAgile
             OfficeCryptoPrimitives.ZeroIfNotNull(hmacValueRaw);
             OfficeCryptoPrimitives.ZeroIfNotNull(storedHmac);
             OfficeCryptoPrimitives.ZeroIfNotNull(computedHmac);
-        }
-    }
-
-    private static byte[] DeriveKey(
-        byte[] passwordUtf16,
-        byte[] salt,
-        ReadOnlySpan<byte> blockKey,
-        int spinCount,
-        int keyByteCount)
-    {
-        // Agile PBKDF (ECMA-376 §2.3.4.11):
-        //   H0      = SHA512(salt || passwordUtf16Le)
-        //   H_(i+1) = SHA512(uint32_le(i) || H_i)
-        //   H_final = SHA512(H_spinCount || blockKey)
-        //   key     = H_final truncated, or padded with 0x36 to keyByteCount.
-        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
-        byte[] h = new byte[hashBytes];
-        byte[] scratchHash = new byte[hashBytes];
-        byte[]? buf = null;
-        byte[]? iter = null;
-        byte[]? final = null;
-
-        try
-        {
-            buf = new byte[salt.Length + passwordUtf16.Length];
-            Buffer.BlockCopy(salt, 0, buf, 0, salt.Length);
-            Buffer.BlockCopy(passwordUtf16, 0, buf, salt.Length, passwordUtf16.Length);
-            OfficeCryptoPrimitives.HashSha512(buf, h);
-
-            iter = new byte[4 + h.Length];
-            for (int i = 0; i < spinCount; i++)
-            {
-                Wi32(iter, 0, i);
-
-                Buffer.BlockCopy(h, 0, iter, 4, h.Length);
-                OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
-                (h, scratchHash) = (scratchHash, h);
-            }
-
-            final = new byte[h.Length + blockKey.Length];
-            Buffer.BlockCopy(h, 0, final, 0, h.Length);
-            blockKey.CopyTo(final.AsSpan(h.Length));
-            OfficeCryptoPrimitives.HashSha512(final, scratchHash);
-
-            byte[] key = new byte[keyByteCount];
-            int copyLength = Math.Min(scratchHash.Length, keyByteCount);
-            Buffer.BlockCopy(scratchHash, 0, key, 0, copyLength);
-            for (int i = copyLength; i < keyByteCount; i++)
-            {
-                key[i] = 0x36;
-            }
-
-            return key;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(h);
-            CryptographicOperations.ZeroMemory(scratchHash);
-            OfficeCryptoPrimitives.ZeroIfNotNull(buf);
-            OfficeCryptoPrimitives.ZeroIfNotNull(iter);
-            OfficeCryptoPrimitives.ZeroIfNotNull(final);
         }
     }
 
@@ -792,25 +732,33 @@ internal static class OfficeCryptoAgile
     // ════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Performs the expensive Agile PBKDF (100k SHA-512 iterations) once and
-    /// returns all five password-bound keys (verifier input/value, encrypted
-    /// key value, HMAC key/value) by mixing each block-key constant into the
-    /// shared iterated hash. Avoids running PBKDF five separate times.
+    /// <para>
+    /// Runs the Agile password PBKDF (ECMA-376 §2.3.4.11) once and returns
+    /// the three password-bound keys: the keys of the verifier hash input,
+    /// the verifier hash value and the encrypted key value.
+    /// </para>
+    /// <para>
+    /// The spec states each key as its own chain:
+    /// <c>H0 = SHA512(salt ‖ password)</c>, then
+    /// <c>H(i+1) = SHA512(LE32(i) ‖ H(i))</c> for <c>i</c> below
+    /// <paramref name="spinCount"/>, then <c>SHA512(H(spinCount) ‖ blockKey)</c>
+    /// truncated to the key length or padded to it with <c>0x36</c>. Only the
+    /// last step depends on the block key, so the three keys share one
+    /// iterated hash: an open runs one chain of <paramref name="spinCount"/>
+    /// hashes instead of three.
+    /// </para>
     /// </summary>
-    /// <param name="passwordUtf16">The password utf16.</param>
-    /// <param name="passwordSalt">The password salt.</param>
-    private static AgilePasswordKeys DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt)
+    /// <param name="passwordUtf16">The password, UTF-16LE.</param>
+    /// <param name="passwordSalt">The password key encryptor's salt.</param>
+    /// <param name="spinCount">The iteration count: the descriptor's <c>spinCount</c>, or <see cref="Constants.AgileEncryption.SpinCount"/> when encrypting.</param>
+    /// <param name="keyByteCount">The key length in bytes: the descriptor's <c>keyBits</c> / 8, or <see cref="Constants.AgileEncryption.KeyBytes"/> when encrypting.</param>
+    private static AgilePasswordKeys DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt, int spinCount, int keyByteCount)
     {
-        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
-        byte[] h = new byte[hashBytes];
-        byte[] scratchHash = new byte[hashBytes];
+        byte[] h = new byte[OfficeCryptoPrimitives.Sha512HashBytes];
         byte[]? init = null;
-        byte[]? iter = null;
         byte[]? verifierInput = null;
         byte[]? verifierHash = null;
         byte[]? keyValue = null;
-        byte[]? hmacKey = null;
-        byte[]? hmacValue = null;
         bool returned = false;
 
         try
@@ -821,44 +769,71 @@ internal static class OfficeCryptoAgile
             Buffer.BlockCopy(passwordUtf16, 0, init, passwordSalt.Length, passwordUtf16.Length);
             OfficeCryptoPrimitives.HashSha512(init, h);
 
-            // Iterate: H_(i+1) = SHA512(uint32_le(i) || H_i).
-            iter = new byte[4 + h.Length];
-            for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
-            {
-                Wi32(iter, 0, i);
-
-                Buffer.BlockCopy(h, 0, iter, 4, h.Length);
-                OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
-                (h, scratchHash) = (scratchHash, h);
-            }
+            IteratePasswordHash(h, spinCount);
 
             // Mix in each block-key constant.
-            verifierInput = FinalizeKey(h, BlockKeyVerifierHashInput);
-            verifierHash = FinalizeKey(h, BlockKeyVerifierHashValue);
-            keyValue = FinalizeKey(h, BlockKeyEncryptedKeyValue);
-            hmacKey = FinalizeKey(h, BlockKeyHmacKey);
-            hmacValue = FinalizeKey(h, BlockKeyHmacValue);
+            verifierInput = FinalizeKey(h, BlockKeyVerifierHashInput, keyByteCount);
+            verifierHash = FinalizeKey(h, BlockKeyVerifierHashValue, keyByteCount);
+            keyValue = FinalizeKey(h, BlockKeyEncryptedKeyValue, keyByteCount);
             returned = true;
-            return new AgilePasswordKeys(verifierInput, verifierHash, keyValue, hmacKey, hmacValue);
+            return new AgilePasswordKeys(verifierInput, verifierHash, keyValue);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(h);
-            CryptographicOperations.ZeroMemory(scratchHash);
             OfficeCryptoPrimitives.ZeroIfNotNull(init);
-            OfficeCryptoPrimitives.ZeroIfNotNull(iter);
             if (!returned)
             {
                 OfficeCryptoPrimitives.ZeroIfNotNull(verifierInput);
                 OfficeCryptoPrimitives.ZeroIfNotNull(verifierHash);
                 OfficeCryptoPrimitives.ZeroIfNotNull(keyValue);
-                OfficeCryptoPrimitives.ZeroIfNotNull(hmacKey);
-                OfficeCryptoPrimitives.ZeroIfNotNull(hmacValue);
             }
         }
     }
 
-    private static byte[] FinalizeKey(byte[] iteratedHash, ReadOnlySpan<byte> blockKey)
+    /// <summary>
+    /// Applies the Agile iteration <c>H(i+1) = SHA512(LE32(i) ‖ H(i))</c>
+    /// <paramref name="spinCount"/> times to <paramref name="hash"/>, in
+    /// place. One <see cref="IncrementalHash"/> serves every iteration. On
+    /// .NET 10 a chain measured about a quarter faster that way than with
+    /// the one-shot <c>SHA512.TryHashData</c>, and netstandard2.1 has no
+    /// one-shot hash, so it would otherwise create a <see cref="SHA512"/> per
+    /// iteration.
+    /// </summary>
+    /// <param name="hash">The 64-byte <c>H0</c> on entry, <c>H(spinCount)</c> on return.</param>
+    /// <param name="spinCount">The iteration count.</param>
+    /// <exception cref="CryptographicException">Thrown when a SHA-512 hash cannot be computed.</exception>
+    private static void IteratePasswordHash(byte[] hash, int spinCount)
+    {
+        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        Span<byte> input = stackalloc byte[sizeof(int) + hashBytes];
+        Span<byte> next = stackalloc byte[hashBytes];
+        try
+        {
+            hash.AsSpan().CopyTo(input[sizeof(int)..]);
+            using var sha512 = IncrementalHash.CreateHash(HashAlgorithmName.SHA512);
+            for (int i = 0; i < spinCount; i++)
+            {
+                Wi32(input, 0, i);
+                sha512.AppendData(input);
+                if (!sha512.TryGetHashAndReset(next, out int written) || written != hashBytes)
+                {
+                    throw new CryptographicException("SHA-512 hash computation failed.");
+                }
+
+                next.CopyTo(input[sizeof(int)..]);
+            }
+
+            input[sizeof(int)..].CopyTo(hash);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(input);
+            CryptographicOperations.ZeroMemory(next);
+        }
+    }
+
+    private static byte[] FinalizeKey(byte[] iteratedHash, ReadOnlySpan<byte> blockKey, int keyByteCount)
     {
         byte[] buf = new byte[iteratedHash.Length + blockKey.Length];
         Buffer.BlockCopy(iteratedHash, 0, buf, 0, iteratedHash.Length);
@@ -868,7 +843,7 @@ internal static class OfficeCryptoAgile
 
         try
         {
-            byte[] key = new byte[Constants.AgileEncryption.KeyBytes];
+            byte[] key = new byte[keyByteCount];
             int copyLength = Math.Min(hf.Length, key.Length);
             Buffer.BlockCopy(hf, 0, key, 0, copyLength);
             for (int i = copyLength; i < key.Length; i++)
@@ -974,7 +949,7 @@ internal static class OfficeCryptoAgile
             verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
             intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
-            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt, Constants.AgileEncryption.SpinCount, Constants.AgileEncryption.KeyBytes);
             hasPasswordKeys = true;
 
             byte[] verifierInputCipher = AesCbcRaw(
@@ -1039,8 +1014,6 @@ internal static class OfficeCryptoAgile
         OfficeCryptoPrimitives.ZeroIfNotNull(keys.VerifierInput);
         OfficeCryptoPrimitives.ZeroIfNotNull(keys.VerifierHash);
         OfficeCryptoPrimitives.ZeroIfNotNull(keys.KeyValue);
-        OfficeCryptoPrimitives.ZeroIfNotNull(keys.HmacKey);
-        OfficeCryptoPrimitives.ZeroIfNotNull(keys.HmacValue);
     }
 
     private static bool TryGetFlatEncryptionInfo(byte[] database, out byte[] encryptionInfo)
@@ -1180,9 +1153,7 @@ internal static class OfficeCryptoAgile
     private readonly record struct AgilePasswordKeys(
         byte[] VerifierInput,
         byte[] VerifierHash,
-        byte[] KeyValue,
-        byte[] HmacKey,
-        byte[] HmacValue);
+        byte[] KeyValue);
 
     private readonly record struct FlatAgileEncryptionInfo(
         byte[] EncryptionInfo,

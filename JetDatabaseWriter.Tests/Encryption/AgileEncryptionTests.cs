@@ -233,6 +233,39 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         Assert.Equal(expectedHash, storedHash);
     }
 
+    /// <summary>
+    /// The reader derives the three password keys (verifier hash input,
+    /// verifier hash value, encrypted key value) from one PBKDF chain, where
+    /// ECMA-376 §2.3.4.11 states one chain per key, as the fixture builder
+    /// runs it. Decrypting the builder's package with the right password
+    /// proves the shared chain yields the same three keys. The iteration
+    /// count and key size are read from the descriptor, so a count and key
+    /// size other than the writer's 100,000 and 256 bits must work too.
+    /// </summary>
+    /// <param name="spinCount">The descriptor's PBKDF iteration count.</param>
+    /// <param name="keyBits">The descriptor's key size, for the key data and the password key encryptor.</param>
+    [Theory]
+    [InlineData(1_000, 128)]
+    [InlineData(0, 192)]
+    [InlineData(100_000, 256)]
+    public void Agile_ResolvePassword_SharedChainMatchesPerBlockKeyDerivation(int spinCount, int keyBits)
+    {
+        AgileEncryptionFixtureBuilder.Parameters p = AgileEncryptionFixtureBuilder.DeterministicParameters(spinCount, keyBits);
+        byte[] inner = new byte[10_000];
+        for (int i = 0; i < inner.Length; i++)
+        {
+            inner[i] = (byte)(i % 251);
+        }
+
+        (byte[] encryptionInfo, byte[] encryptedPackage) = AgileEncryptionFixtureBuilder.BuildStreams(p, inner, TestDatabases.AesEncryptedPassword);
+        string descriptor = Encoding.UTF8.GetString(encryptionInfo, 8, encryptionInfo.Length - 8);
+        Assert.Contains($"spinCount=\"{spinCount}\"", descriptor, StringComparison.Ordinal);
+        Assert.Contains($"keyBits=\"{keyBits}\"", descriptor, StringComparison.Ordinal);
+
+        Assert.Equal(inner, OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, TestDatabases.AesEncryptedPassword));
+        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, "not_the_password"));
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // 5. WRITE SUPPORT — decrypt-on-open + re-encrypt-on-dispose round-trip
     // ═══════════════════════════════════════════════════════════════════
