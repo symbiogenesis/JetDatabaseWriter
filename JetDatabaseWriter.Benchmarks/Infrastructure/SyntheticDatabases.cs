@@ -116,6 +116,28 @@ internal static class SyntheticDatabases
     /// <summary>Rows in <see cref="NumericTable"/>.</summary>
     public const int NumericRows = 25_000;
 
+    /// <summary>
+    /// Small query table (Id primary key, Name, Price) of <see cref="QuerySmallRows"/> rows,
+    /// for the per-call cost of the LINQ and typed-read benchmarks.
+    /// </summary>
+    public const string QuerySmallTable = "QuerySmall";
+
+    /// <summary>Rows in <see cref="QuerySmallTable"/>.</summary>
+    public const int QuerySmallRows = 6;
+
+    /// <summary>
+    /// Large query table (Id primary key, Score, Name) of <see cref="QueryLargeRows"/> rows,
+    /// with the non-unique <see cref="QueryScoreIndex"/> on Score. Row <c>n</c> (0-based)
+    /// has Id <c>n</c> and Score <c>n % 1000</c>.
+    /// </summary>
+    public const string QueryLargeTable = "QueryLarge";
+
+    /// <summary>Non-unique index on <c>QueryLarge.Score</c>.</summary>
+    public const string QueryScoreIndex = "IX_QueryLarge_Score";
+
+    /// <summary>Rows in <see cref="QueryLargeTable"/>.</summary>
+    public const int QueryLargeRows = 25_000;
+
     private const int TextRows = 25_000;
     private const int WideRows = 10_000;
     private const int WideColumnCount = 40;
@@ -154,6 +176,8 @@ internal static class SyntheticDatabases
     public static string RelationalDbPath => Path.Combine(TempRoot, $"Relational_{RelationalCustomers}_{RelationalOrders}_v1.accdb");
 
     public static string AttachmentDbPath => Path.Combine(TempRoot, $"Attachments_{AttachmentDocuments}_v1.accdb");
+
+    public static string QueryDbPath => Path.Combine(TempRoot, $"Query_{QuerySmallRows}_{QueryLargeRows}_v1.accdb");
 
     /// <summary>Gets the total MEMO characters in <see cref="LargeLongValueTable"/>.</summary>
     public static long LargeLongValueMemoChars { get; } = SumLargeLongValueLengths(IsLargeMemoRow, LargeMemoLength);
@@ -359,6 +383,61 @@ internal static class SyntheticDatabases
         }
 
         File.Move(building, AttachmentDbPath);
+    }
+
+    /// <summary>
+    /// Ensures <see cref="QueryDbPath"/> exists: <see cref="QuerySmallTable"/> with
+    /// <see cref="QuerySmallRows"/> rows (Id 1..6, Price <c>10 * Id</c>), and
+    /// <see cref="QueryLargeTable"/> with <see cref="QueryLargeRows"/> rows and
+    /// <see cref="QueryScoreIndex"/>.
+    /// </summary>
+    /// <returns>A task that completes when the file exists.</returns>
+    public static async Task EnsureQueryAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        if (File.Exists(QueryDbPath))
+        {
+            return;
+        }
+
+        string building = Path.ChangeExtension(QueryDbPath, ".building.accdb");
+        File.Delete(building);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(building, DatabaseFormat.AceAccdb).ConfigureAwait(false))
+        {
+            await writer.CreateTableAsync(
+                QuerySmallTable,
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Name", typeof(string), 32),
+                    new("Price", typeof(decimal)),
+                ]).ConfigureAwait(false);
+            await writer.CreateTableAsync(
+                QueryLargeTable,
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Score", typeof(int)),
+                    new("Name", typeof(string), 32),
+                ],
+                [new IndexDefinition(QueryScoreIndex, "Score")]).ConfigureAwait(false);
+
+            var small = new List<object[]>(QuerySmallRows);
+            for (int id = 1; id <= QuerySmallRows; id++)
+            {
+                small.Add([id, "Item " + id.ToString(CultureInfo.InvariantCulture), (decimal)(10 * id)]);
+            }
+
+            await writer.InsertRowsAsync(QuerySmallTable, small).ConfigureAwait(false);
+
+            var large = new List<object[]>(QueryLargeRows);
+            for (int id = 0; id < QueryLargeRows; id++)
+            {
+                large.Add([id, id % 1000, "Row " + id.ToString(CultureInfo.InvariantCulture)]);
+            }
+
+            await writer.InsertRowsAsync(QueryLargeTable, large).ConfigureAwait(false);
+        }
+
+        File.Move(building, QueryDbPath);
     }
 
     /// <summary>Gets the OrderDate of order <paramref name="orderId"/>: one hour after the previous order, from 2020-01-01.</summary>
