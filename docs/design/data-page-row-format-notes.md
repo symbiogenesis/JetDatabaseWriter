@@ -82,6 +82,34 @@ it, rows whose variable data crossed offset 256 decoded truncated, empty or
 shifted, and a 256-byte row was misparsed, because the reader skipped
 `rowLength / 256` bytes and never read them.
 
+`RowEncoder.SerializeRow` writes the same layout. It sizes the jump table as
+the smallest `J` with `(lengthWithoutJumps + J - 1) / 256 == J`
+(`Jet3JumpTable.CountForLength`): a row whose other parts take 511 bytes
+gets one entry (512 bytes in all), and one of 512 bytes gets two. It stores
+the low byte of the EOD and of each offset. `Jet3JumpTable.Write` fills the entries and writes `0xFF` for a
+dummy; rebuilt from its offsets, the MSP_PROJECTS trailer comes out as
+Access's bytes. Before, the encoder wrote the one-byte fields with a checked
+cast, so any Jet3 row whose EOD or an offset reached 256 threw
+`OverflowException`: a table of 200 Long columns, Text values adding up to
+about 250 bytes, or a `MSysObjects` row whose inline LvProp blob carried four
+or five CLR defaults.
+
+Limits of the Jet3 row:
+
+- `num_cols` and `var_len` are one byte, so a Jet3 table holds at most 255
+  columns (Access's field limit too). `CreateTableAsync` and `AddColumnAsync`
+  reject a 256th column with `JetLimitationException` before writing
+  anything, and `SerializeRow` rejects a row of a wider table.
+- With 255 variable columns, the EOD's index is 255, the same byte as a
+  dummy. One dummy is always the last entry, which readers drop; a row that
+  would need two (an EOD below the second-to-last boundary, which takes a
+  trailer of about 290 bytes) throws `JetLimitationException`.
+
+Tables with no variable columns keep the writer's EOD, jump table and
+`var_len = 0` trailer (the jump entries name the EOD, index 0), which every
+reader skips because the TDEF has no variable columns. Access writes no
+trailer for such rows: nwind.mdb's fixed-only table has 24-byte rows.
+
 ## Overflow rows
 
 When an update makes a row too large for its page, Access moves the row's bytes

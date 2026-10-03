@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
@@ -284,9 +285,17 @@ internal sealed class RowEncoder(DatabaseFile db)
     /// <summary>
     /// Serializes a typed value array into the binary row format understood
     /// by the JET engine (null mask, fixed area, variable-length trailers).
+    /// A Jet3 row stores its EOD and variable-column offsets in one byte each
+    /// and, past 256 bytes, carries a jump table for their high parts
+    /// (<see cref="Jet3JumpTable"/>). Tables without variable columns still
+    /// get the EOD, jump table and <c>var_len</c> trailer, which readers skip.
     /// </summary>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
+    /// <exception cref="JetLimitationException">
+    /// A Jet3 row would have more than 255 columns or variable columns, or
+    /// 255 variable columns with an EOD the jump table cannot encode.
+    /// </exception>
     internal byte[] SerializeRow(TableDef tableDef, object[] values)
     {
         int numCols = 0;
@@ -308,6 +317,12 @@ internal sealed class RowEncoder(DatabaseFile db)
 
         int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
+        bool jet3 = db.Format == DatabaseFormat.Jet3Mdb;
+        if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
+        {
+            throw new JetLimitationException(
+                $"The row has {numCols} columns, {varLen} of them variable-length; a Jet3 (Access 97) row holds at most {Constants.TableDefinition.MaxJet3Columns}.");
+        }
 
         // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.
         byte[] fixedArea = maxFixedEnd > 0 ? ArrayPool<byte>.Shared.Rent(maxFixedEnd) : [];
@@ -386,15 +401,8 @@ internal sealed class RowEncoder(DatabaseFile db)
         }
 
         int baseRowLength = db.RowFields.NumCols + fixedAreaSize + varPayloadSize + db.RowFields.Eod + (varLen * db.RowFields.VarEntry) + db.RowFields.VarLen + nullMaskLen;
-
-        int jumpSize = db.Format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
+        int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
         int rowLength = baseRowLength + jumpSize;
-        int finalJump = db.Format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
-        if (finalJump != jumpSize)
-        {
-            jumpSize = finalJump;
-            rowLength = baseRowLength + jumpSize;
-        }
 
         byte[] row = new byte[rowLength];
         int pos = 0;
@@ -430,16 +438,22 @@ internal sealed class RowEncoder(DatabaseFile db)
             }
         }
 
-        WriteField(row, pos, db.RowFields.Eod, currentOffset);
+        // Jet3 keeps only the low byte of the EOD and each offset; the jump
+        // table below carries their high parts.
+        WriteField(row, pos, db.RowFields.Eod, jet3 ? currentOffset & 0xFF : currentOffset);
         pos += db.RowFields.Eod;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            WriteField(row, pos, db.RowFields.VarEntry, variableOffsets[varIndex]);
+            WriteField(row, pos, db.RowFields.VarEntry, jet3 ? variableOffsets[varIndex] & 0xFF : variableOffsets[varIndex]);
             pos += db.RowFields.VarEntry;
         }
 
-        pos += jumpSize;
+        if (jumpSize > 0)
+        {
+            Jet3JumpTable.Write(row.AsSpan(pos, jumpSize), variableOffsets, currentOffset);
+            pos += jumpSize;
+        }
 
         WriteField(row, pos, db.RowFields.VarLen, varLen);
         pos += db.RowFields.VarLen;

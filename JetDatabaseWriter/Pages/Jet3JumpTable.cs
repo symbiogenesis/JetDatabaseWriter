@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Pages;
 
 using System;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// The jump table of a Jet3 (Access 97) row. Jet3 stores the EOD and each
@@ -21,6 +22,9 @@ internal static class Jet3JumpTable
 {
     /// <summary>The span of offsets one jump entry covers.</summary>
     internal const int BoundarySize = 256;
+
+    /// <summary>The value Access writes in an entry whose boundary no offset reaches.</summary>
+    internal const int DummyEntry = 0xFF;
 
     /// <summary>
     /// Returns the number of jump entries a Jet3 row of <paramref name="rowLength"/>
@@ -73,5 +77,75 @@ internal static class Jet3JumpTable
         }
 
         return reached * BoundarySize;
+    }
+
+    /// <summary>
+    /// Returns the number of jump entries a Jet3 row needs when everything
+    /// but its jump table takes <paramref name="lengthWithoutJumps"/> bytes:
+    /// the smallest count <c>J</c> with <c>(lengthWithoutJumps + J - 1) / 256 == J</c>,
+    /// so that <see cref="EntryCount"/> of the finished row gives <c>J</c> back.
+    /// A row of 256 bytes or less needs none; 257 to 511 bytes need one
+    /// (a 511-byte row becomes 512 bytes); 512 bytes need two.
+    /// </summary>
+    /// <param name="lengthWithoutJumps">The row length without its jump table.</param>
+    /// <returns>The number of jump entries.</returns>
+    internal static int CountForLength(int lengthWithoutJumps)
+    {
+        int count = 0;
+        while (EntryCount(lengthWithoutJumps + count) > count)
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Writes a Jet3 row's jump entries in stored order, the highest
+    /// boundary's entry first: for each boundary <c>256 * k</c>, the index of
+    /// the first of <paramref name="variableOffsets"/> (then the EOD, as index
+    /// <c>var_len</c>) at or past it, or <c>0xFF</c> when none is.
+    /// </summary>
+    /// <param name="destination">The jump table, one byte per entry.</param>
+    /// <param name="variableOffsets">The row-relative variable-column offsets, which never decrease.</param>
+    /// <param name="eod">The row-relative EOD.</param>
+    /// <exception cref="JetLimitationException">
+    /// The row has 255 variable columns and two or more boundaries the EOD
+    /// does not reach. Readers drop only the last dummy, and the next one's
+    /// <c>0xFF</c> would read as the EOD's index 255, so no byte can encode it.
+    /// </exception>
+    internal static void Write(Span<byte> destination, ReadOnlySpan<int> variableOffsets, int eod)
+    {
+        int varLen = variableOffsets.Length;
+        int dummies = 0;
+        for (int k = destination.Length; k >= 1; k--)
+        {
+            int boundary = k * BoundarySize;
+            int entry = DummyEntry;
+            if (eod >= boundary)
+            {
+                entry = varLen;
+                for (int i = 0; i < varLen; i++)
+                {
+                    if (variableOffsets[i] >= boundary)
+                    {
+                        entry = i;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                dummies++;
+            }
+
+            destination[^k] = (byte)entry;
+        }
+
+        if (varLen == DummyEntry && dummies > 1)
+        {
+            throw new JetLimitationException(
+                $"A Jet3 row with 255 variable columns cannot end its variable data at offset {eod}: its jump table would need {dummies} unused entries, which Jet cannot tell from the EOD's index.");
+        }
     }
 }

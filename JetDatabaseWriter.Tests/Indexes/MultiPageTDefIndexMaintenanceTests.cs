@@ -24,7 +24,8 @@ using Xunit;
 /// <c>first_dp</c> root and <c>used_pages</c> pointers) sit on a continuation
 /// page of the TDEF chain. Jet4 and ACE use 200 columns and 30 single-column
 /// indexes; Jet3 uses 50 columns and 20 indexes, which already overflow its
-/// 2 KB page while keeping rows under the 255 bytes its row encoder handles.
+/// 2 KB page. Jet3 rows longer than 255 bytes are covered by
+/// <see cref="Writer.Jet3LongRowTests"/>.
 /// The round-trip of such a schema is covered by
 /// <see cref="IndexWriterTests.CreateTable_TDefChainSpansMultiplePages_RoundTrips"/>;
 /// these tests cover writes to it.

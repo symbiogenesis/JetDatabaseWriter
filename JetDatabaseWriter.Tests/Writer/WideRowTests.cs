@@ -17,7 +17,9 @@ using Xunit;
 /// columns). These exercise the row-pointer / data-page code path on
 /// payloads close to but under the Jet4 single-page threshold; they do not
 /// themselves assert overflow-page allocation. True LVAL/overflow paths
-/// are covered by the LVAL and complex-column test suites.
+/// are covered by the LVAL and complex-column test suites. On the Jet3
+/// fixture every row is longer than 255 bytes, so it carries a jump table
+/// (see <see cref="Jet3LongRowTests"/>).
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -27,11 +29,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     public async Task WideRows_RoundTrip_ReturnsAllRows(string path)
     {
         await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        if (!IsJet4(ms))
-        {
-            return; // wide-row layout under test only applies to Jet4/ACE
-        }
-
         string tableName = $"Overflow_{Guid.NewGuid():N}"[..20];
         var columns = new List<ColumnDefinition>
         {
@@ -70,11 +67,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     public async Task WideRows_GetRealRowCount_MatchesInsertCount(string path)
     {
         await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        if (!IsJet4(ms))
-        {
-            return;
-        }
-
         string tableName = $"OvfCnt_{Guid.NewGuid():N}"[..18];
         var columns = new List<ColumnDefinition>
         {
@@ -106,11 +98,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     public async Task WideRows_StreamRows_YieldsAllRows(string path)
     {
         await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        if (!IsJet4(ms))
-        {
-            return;
-        }
-
         string tableName = $"OvfStr_{Guid.NewGuid():N}"[..18];
         var columns = new List<ColumnDefinition>
         {
@@ -145,11 +132,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     {
         // Verify that the actual cell values survive a wide-row round-trip.
         await using MemoryStream ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        if (!IsJet4(ms))
-        {
-            return;
-        }
-
         string tableName = $"OvfVal_{Guid.NewGuid():N}"[..18];
         var columns = new List<ColumnDefinition>
         {
@@ -282,17 +264,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     // ═══════════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════════
-
-    private static bool IsJet4(MemoryStream stream)
-    {
-        if (stream.Length < 0x20)
-        {
-            return false;
-        }
-
-        stream.Position = 0x14;
-        return stream.ReadByte() >= 1;
-    }
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)
     {
