@@ -603,6 +603,7 @@ internal sealed class TableDataWriter(
                 }
 
                 await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, CancellationToken.None).ConfigureAwait(false);
+                await autoNumbers.UpdateComplexHighWaterAsync(tdefPage, tableDef, pendingRows, CancellationToken.None).ConfigureAwait(false);
             }
         }
         catch

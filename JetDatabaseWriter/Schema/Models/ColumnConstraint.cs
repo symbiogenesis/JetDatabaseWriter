@@ -46,7 +46,17 @@ internal sealed class ColumnConstraint
     public ColumnType CalculatedResultType { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the column is a complex
+    /// (Attachment / multi-value / version-history) column, whose 4-byte slot
+    /// holds the row's per-row complex reference. An insert that leaves it
+    /// null gets the row's reference, shared by all the row's complex columns.
+    /// </summary>
+    public bool IsComplexReference { get; set; }
+
+    /// <summary>
     /// Gets or sets lazy-seeded next auto-increment value (max(TDEF counter, existing) + 1). Null until first use.
+    /// On a table's first <see cref="IsComplexReference"/> column it is instead the next per-row complex
+    /// reference (max(TDEF complex AutoNumber, references in use) + 1).
     /// </summary>
     public long? NextAutoValue { get; set; }
 
@@ -71,5 +81,6 @@ internal sealed class ColumnConstraint
         || this.ValidationRule != null
         || this.DefaultValueExpression != null
         || this.ValidationRuleExpression != null
-        || this.IsCalculated;
+        || this.IsCalculated
+        || this.IsComplexReference;
 }

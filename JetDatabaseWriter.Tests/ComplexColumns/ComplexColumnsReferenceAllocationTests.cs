@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
@@ -231,6 +232,107 @@ public sealed class ComplexColumnsReferenceAllocationTests
         Assert.Equal(4, docs.ComplexAutoNumber);
     }
 
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task InsertRows_TableWithComplexColumns_AssignsOneReferencePerRow(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
+        {
+            await CreateDocsAsync(writer);
+            await RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(2, await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, null], [2, null, DBNull.Value]], Ct));
+                await writer.InsertRowAsync("Docs", new RowValues { ["Id"] = 3 }, Ct);
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(["1|1|1", "2|2|2", "3|3|3"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
+        Assert.Equal(3, docs.ComplexAutoNumber);
+
+        // A reference with no items still reads as an empty cell.
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.All(await reader.Rows("Docs", cancellationToken: Ct).ToListAsync(Ct), r => Assert.Equal([DBNull.Value, DBNull.Value], r[1..]));
+        Assert.All(await reader.RowsAsStrings("Docs", cancellationToken: Ct).ToListAsync(Ct), r => Assert.Equal([string.Empty, string.Empty], r[1..]));
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessFixturesAndModes))]
+    public async Task InsertRow_AccessFixture_ContinuesFromTdefCounter(string fixture, int counter, ComplexWriteMode mode)
+    {
+        await using MemoryStream ms = await CopyFixtureAsync(fixture);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "row5" }, Ct);
+                await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "row6" }, Ct);
+            });
+        }
+
+        RawTable table = await ReadRawTableAsync(ms, "Table1");
+        foreach (ComplexDataColumn column in ComplexDataColumns)
+        {
+            Assert.Equal(counter + 1, Slot(table, Assert.Single(table.Rows, r => (string)r[0] == "row5"), column.Name));
+            Assert.Equal(counter + 2, Slot(table, Assert.Single(table.Rows, r => (string)r[0] == "row6"), column.Name));
+
+            List<byte[]> keys = await ReadIndexLeafKeysAsync(ms, "Table1", column.Index);
+            Assert.Equal(
+                [IndexKeyEncoderEntry(counter + 1), IndexKeyEncoderEntry(counter + 2)],
+                keys[^2..]);
+        }
+
+        Assert.Equal(counter + 2, table.ComplexAutoNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task InsertRows_FailedBatch_RewindsComplexCounter(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
+        {
+            await writer.CreateTableAsync(
+                "Docs",
+                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }],
+                [new IndexDefinition("UX_Id", "Id") { IsUnique = true }],
+                Ct);
+            await writer.InsertRowAsync("Docs", [1, DBNull.Value], Ct);
+
+            await RunAsync(writer, mode, async () =>
+            {
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowsAsync("Docs", [[4, DBNull.Value], [4, DBNull.Value]], Ct));
+                await writer.InsertRowAsync("Docs", [5, DBNull.Value], Ct);
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(["1|1", "5|2"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}"));
+        Assert.Equal(2, docs.ComplexAutoNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_AttachmentOnTableWithRows_GivesExistingRowsReferences(ComplexWriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
+        {
+            await writer.CreateTableAsync("Docs", [new ColumnDefinition("Id", typeof(int))], Ct);
+            await writer.InsertRowsAsync("Docs", [[1], [2]], Ct);
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.AddColumnAsync("Docs", new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }, Ct);
+                await writer.InsertRowAsync("Docs", [3, DBNull.Value], Ct);
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(["1|1", "2|2", "3|3"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}"));
+        Assert.Equal(3, docs.ComplexAutoNumber);
+    }
+
     [Fact]
     public void TDefHeaderLayout_ComplexAutoNumber_IsAceOnly()
     {
@@ -301,6 +403,8 @@ public sealed class ComplexColumnsReferenceAllocationTests
                 new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) },
             ],
             Ct);
+
+    private static byte[] IndexKeyEncoderEntry(int reference) => IndexKeyEncoder.EncodeEntry(ColumnType.ComplexType, reference);
 
     private static async Task ZeroComplexAutoNumberAsync(MemoryStream ms, string tableName)
     {

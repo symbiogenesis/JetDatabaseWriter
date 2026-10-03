@@ -42,7 +42,7 @@ public interface IAccessWriter : IAccessBase
     /// Values must be in the same order as the table's columns.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a column with a default value stores that default, and any other column stores database null.</param>
+    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, a column with a default value stores that default, and any other column stores database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
@@ -50,7 +50,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber or its default value, or database null when it has neither.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber, its per-row complex reference or its default value, or database null when it has none of them.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="item">The object whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -62,7 +62,7 @@ public interface IAccessWriter : IAccessBase
     /// Asynchronously inserts multiple rows into the specified table in a single operation.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a column with a default value stores that default, and any other column stores database null.</param>
+    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, a column with a default value stores that default, and any other column stores database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
@@ -70,7 +70,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber or its default value, or database null when it has neither.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber, its per-row complex reference or its default value, or database null when it has none of them.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="items">Collection of objects whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -83,8 +83,8 @@ public interface IAccessWriter : IAccessBase
     /// is by name rather than position, removing the silent-corruption risk of a
     /// positional <c>object?[]</c> whose order drifts from the schema. Columns not named
     /// are left to the engine's default (an AutoNumber column generates its next value;
-    /// any other omitted column stores its default value, or database null when it has
-    /// none).
+    /// a complex column gets the row's per-row complex reference; any other omitted
+    /// column stores its default value, or database null when it has none).
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="row">The named-column values to insert.</param>
@@ -172,10 +172,10 @@ public interface IAccessWriter : IAccessBase
     /// column. Locates the parent row by the supplied key columns and inserts a
     /// row into the hidden flat child table carrying the wrapper-encoded payload
     /// (per <see href="docs/design/complex-columns-format-notes.md" /> §3),
-    /// joined to the parent through the row's per-row complex reference. When
-    /// the parent row has no reference yet, it first gets the next one from the
-    /// table's complex AutoNumber, stored in every null complex slot of the row,
-    /// so a deleted row's reference is never handed out again.
+    /// joined to the parent through the row's per-row complex reference, which
+    /// every inserted row gets from the table's complex AutoNumber. A row whose
+    /// reference is still null (written by an earlier build of this library)
+    /// gets the next one first, in every null complex slot of the row.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Attachment column on <paramref name="tableName"/>.</param>
@@ -202,9 +202,10 @@ public interface IAccessWriter : IAccessBase
     /// column. Locates the parent row by the supplied key columns and inserts a
     /// row into the hidden flat child table whose <c>value</c> column carries
     /// <paramref name="value"/>, joined to the parent through the row's per-row
-    /// complex reference. When the parent row has no reference yet, it first
-    /// gets the next one from the table's complex AutoNumber, stored in every
-    /// null complex slot of the row.
+    /// complex reference, which every inserted row gets from the table's complex
+    /// AutoNumber. A row whose reference is still null (written by an earlier
+    /// build of this library) gets the next one first, in every null complex
+    /// slot of the row.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Multi-Value column on <paramref name="tableName"/>.</param>

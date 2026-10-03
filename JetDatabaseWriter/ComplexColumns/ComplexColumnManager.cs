@@ -951,14 +951,16 @@ internal sealed class ComplexColumnManager(
 
     /// <summary>
     /// Returns the per-row complex reference in <paramref name="complexCol"/>'s
-    /// slot of the parent row at <paramref name="parentLocation"/>. When the
-    /// slot is null (rows written by earlier builds of this library, or by a
-    /// tool that leaves it null), allocates the next reference from the
-    /// table's complex AutoNumber, raises that counter, and stores the
-    /// reference in every null complex slot of the row in one page write, so
-    /// the row's complex columns share it as Access's do. When the table has an
-    /// index on a complex column (Access gives each one a unique index), the
-    /// table's indexes are rebuilt to pick up the patched slots.
+    /// slot of the parent row at <paramref name="parentLocation"/>. Inserts
+    /// give every row a reference, so the slot is null only in rows written by
+    /// earlier builds of this library or by a tool that leaves it null. Then
+    /// the next reference comes from the table's complex AutoNumber through
+    /// <see cref="ConstraintRegistry.AllocateComplexReferencesAsync"/>, the
+    /// counter is raised, and the reference goes into every null complex slot
+    /// of the row in one page write, so the row's complex columns share it as
+    /// Access's do. When the table has an index on a complex column (Access
+    /// gives each one a unique index), the table's indexes are rebuilt to pick
+    /// up the patched slots.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="parentTdefPage">The parent TDEF page.</param>
@@ -988,13 +990,9 @@ internal sealed class ComplexColumnManager(
             DatabaseFile.ReturnPage(page);
         }
 
-        long seed = await seeds.ReadSeedAsync(parentTdefPage, parentDef, cancellationToken).ConfigureAwait(false);
-        if (seed >= int.MaxValue)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' has used every complex column reference up to {int.MaxValue}.");
-        }
-
-        int allocated = (int)(seed + 1);
+        // The registry's session counter is the one inserts take references
+        // from, so the two never hand out the same reference.
+        int allocated = await constraints.AllocateComplexReferencesAsync(tableName, parentDef, 1, cancellationToken).ConfigureAwait(false);
         await autoNumbers.RaiseComplexHighWaterAsync(parentTdefPage, allocated, cancellationToken).ConfigureAwait(false);
         await this.PatchNullComplexSlotsAsync(parentDef, parentLocation, allocated, cancellationToken).ConfigureAwait(false);
         if (await this.HasComplexColumnIndexAsync(parentTdefPage, parentDef, cancellationToken).ConfigureAwait(false))
