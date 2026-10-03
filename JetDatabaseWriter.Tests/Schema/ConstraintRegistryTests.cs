@@ -173,6 +173,11 @@ public sealed class ConstraintRegistryTests
     [InlineData("=#2020-01-31 06:00# - 0.25", ColumnType.DateTimeType, typeof(DateTime), "2020-01-31 00:00:00")]
     [InlineData("#2020-01-31 18:30:05#", ColumnType.TextType, typeof(string), "1/31/2020 6:30:05 PM")]
     [InlineData("=#2020-01-31# & \"\"", ColumnType.TextType, typeof(string), "1/31/2020")]
+    [InlineData("#6:00#", ColumnType.DateTimeType, typeof(DateTime), "1899-12-30 06:00:00")]
+    [InlineData("=CDate(\"6:00:00 PM\")", ColumnType.DateTimeType, typeof(DateTime), "1899-12-30 18:00:00")]
+    [InlineData("=TimeValue(\"6:00 PM\")", ColumnType.DateTimeType, typeof(DateTime), "1899-12-30 18:00:00")]
+    [InlineData("=TimeSerial(18, 30, 5)", ColumnType.DateTimeType, typeof(DateTime), "1899-12-30 18:30:05")]
+    [InlineData("=CStr(TimeSerial(18, 30, 5))", ColumnType.TextType, typeof(string), "6:30:05 PM")]
     [InlineData("{guid 12345678-1234-1234-1234-1234567890ab}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     [InlineData("{guid {12345678-1234-1234-1234-1234567890AB}}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     public async Task ApplyAsync_HydratedDefaultValue_FillsDbDefault(string expression, ColumnType type, Type expectedType, string expectedText)
@@ -311,6 +316,35 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(before.Date, Assert.IsType<DateTime>(values[0]).Date);
         DateTime stamp = Assert.IsType<DateTime>(values[1]);
         Assert.InRange(stamp, before.AddSeconds(-1), after.AddSeconds(1));
+    }
+
+    /// <summary>
+    /// A <c>=Time()</c> default, a common time-stamp default in Access, stores the
+    /// current time on day 0 (1899-12-30), as Access does. A <c>=CStr(Time())</c>
+    /// default in a Text column stores the time without a date. Both used to carry
+    /// today's date.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_HydratedDefaultValue_TimeIsOnDayZero()
+    {
+        var tableDef = new TableDef
+        {
+            Columns =
+            [
+                new ColumnInfo { Name = "Stamp", Type = ColumnType.DateTimeType },
+                new ColumnInfo { Name = "Label", Type = ColumnType.TextType },
+            ],
+        };
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties(
+            ("Stamp", Constants.ColumnPropertyNames.DefaultValue, "=Time()"),
+            ("Label", Constants.ColumnPropertyNames.DefaultValue, "=CStr(Time())")));
+        object[] values = [DbDefault.Value, DbDefault.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new DateTime(1899, 12, 30), Assert.IsType<DateTime>(values[0]).Date);
+        Assert.DoesNotContain("/", Assert.IsType<string>(values[1]), StringComparison.Ordinal);
     }
 
     [Fact]
