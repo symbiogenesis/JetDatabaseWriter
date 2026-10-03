@@ -819,12 +819,18 @@ internal sealed class RelationshipManager(
     // before it writes anything, EmitFkEntriesForRewriteAsync on the copy
     // before the row copy (so the copy's single index rebuild fills the FK
     // leaves), and CompleteRewriteAsync once the copy has replaced the table.
-    // This works the same on every format.
+    // This works the same on every format. An FK entry whose partner does not
+    // link back, such as one naming the freed TDEF page of a table that
+    // earlier builds dropped without unlinking it, is not captured, so the
+    // rewrite drops it rather than re-emitting a pointer at a freed or
+    // reused page.
 
     /// <summary>
     /// Captures the relationship state of <paramref name="tableName"/> before a
     /// copy-and-swap schema rewrite: its FK logical-idx entries and the key
-    /// columns its <c>MSysRelationships</c> rows name.
+    /// columns its <c>MSysRelationships</c> rows name. An FK entry whose
+    /// partner does not link back is left out, so the rewrite drops it instead
+    /// of carrying it over; see <see cref="PartnerLinksBackAsync"/>.
     /// </summary>
     /// <param name="tableName">The table about to be rewritten.</param>
     /// <param name="tdefPage">The table's current TDEF page.</param>
@@ -837,8 +843,15 @@ internal sealed class RelationshipManager(
         TableDef tableDef,
         CancellationToken cancellationToken)
     {
-        IReadOnlyList<FkLogicalIndexSnapshot> fkEntries =
-            await this.ReadFkLogicalIndexesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        var fkEntries = new List<FkLogicalIndexSnapshot>();
+        foreach (FkLogicalIndexSnapshot entry in await this.ReadFkLogicalIndexesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false))
+        {
+            if (entry.RelIdxNum < 0
+                || await this.PartnerLinksBackAsync(entry.RelTblPage, entry.RelIdxNum, tdefPage, cancellationToken).ConfigureAwait(false))
+            {
+                fkEntries.Add(entry);
+            }
+        }
 
         var keyColumns = new List<RelationshipKeyColumn>();
         foreach (RelationshipRowSnapshot row in await this.CollectAllRelationshipRowsAsync(cancellationToken).ConfigureAwait(false))
@@ -1125,6 +1138,61 @@ internal sealed class RelationshipManager(
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns whether the TDEF at <paramref name="partnerTdefPage"/> holds an
+    /// FK logical-idx entry numbered <paramref name="partnerIndexNumber"/>
+    /// whose <c>rel_tbl_page</c> is <paramref name="tdefPage"/>: the partner of
+    /// an entry on <paramref name="tdefPage"/> that names it, linking back. For
+    /// a self-referencing entry both pages are the same TDEF. Returns
+    /// <see langword="false"/> for a dangling entry, whose partner page is out
+    /// of range, freed, holds no parseable TDEF, or holds a table without that
+    /// entry. Earlier builds' <c>DropTableAsync</c> left such entries naming
+    /// the freed TDEF page of a dropped table, or the unrelated table that took
+    /// the page later.
+    /// </summary>
+    /// <param name="partnerTdefPage">The page the entry names (<c>rel_tbl_page</c>).</param>
+    /// <param name="partnerIndexNumber">The partner entry the entry names (<c>rel_idx_num</c>).</param>
+    /// <param name="tdefPage">The TDEF page that holds the entry.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>Whether the partner entry exists and points back.</returns>
+    private async ValueTask<bool> PartnerLinksBackAsync(
+        long partnerTdefPage,
+        int partnerIndexNumber,
+        long tdefPage,
+        CancellationToken cancellationToken)
+    {
+        if (!this.IsTDefPageCandidate(partnerTdefPage))
+        {
+            return false;
+        }
+
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            partnerTdefPage,
+            this.db.PageSizeBytes,
+            this.db.ReadPageAsync,
+            DatabaseFile.ReturnPage,
+            retainPageNumbers: false,
+            cancellationToken).ConfigureAwait(false);
+        if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+        {
+            return false;
+        }
+
+        byte[] td = chain.Bytes;
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int f = this.db.IndexLayoutInfo.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] == (byte)IndexKind.ForeignKey
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset) == partnerIndexNumber
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) == tdefPage)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
