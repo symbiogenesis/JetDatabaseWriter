@@ -83,15 +83,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the specified database.</returns>
+    /// <remarks>
+    /// The file is opened once, for reading and writing, and page 0 is read
+    /// once: the flat Agile check and the password check both use it, before
+    /// the lock-file slot is taken or anything is written. A file that cannot
+    /// be opened for writing (read-only, or locked by another process) reports
+    /// that error before any encryption or password error.
+    /// </remarks>
     /// <exception cref="NotSupportedException">Thrown when the file uses Access-native flat Agile encryption (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. The file is not modified.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. The file is not modified.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
-
-        options ??= new AccessWriterOptions();
-        await ThrowIfFlatAgileAsync(path, cancellationToken).ConfigureAwait(false);
-        await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
 
         FileStream fs = CreateStream(path);
         return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
@@ -108,6 +112,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
     /// <exception cref="NotSupportedException">Thrown when the stream holds an Access-native flat Agile database (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. Nothing is written to the stream.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. Nothing is written to the stream.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
@@ -117,13 +122,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+
+            // One read of page 0 serves the header and the flat Agile probe.
+            byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+            byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
 
             // Access-native flat Agile encrypts every page with AES-CBC keyed
             // from the descriptor in page 0. The page cipher has no writer
             // path, so refuse before anything is written.
-            if (!EncryptionManager.IsCompoundFileEncrypted(header) &&
-                await EncryptionManager.IsFlatAgileEncryptedAsync(stream, cancellationToken).ConfigureAwait(false))
+            if (!EncryptionManager.IsCompoundFileEncrypted(header) && OfficeCryptoAgile.IsFlatAgileEncrypted(headerPage))
             {
                 throw FlatAgileNotSupported();
             }
@@ -137,7 +144,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 (byte[]? decryptedPackage, AccessEncryptionFormat outerFormat) = await EncryptionManager
-                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, cancellationToken)
+                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, EncryptionManager.WriterPasswordOption, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (decryptedPackage != null)
@@ -707,55 +714,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private static FileStream CreateStream(string path) =>
         DatabaseFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
-    /// <summary>
-    /// Refuses a flat Agile file before the path overload verifies the
-    /// password or opens the file for writing. Reads page 0 only.
-    /// </summary>
-    /// <param name="path">Path to the .mdb or .accdb file.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="NotSupportedException">Thrown when page 0 carries a flat Agile descriptor.</exception>
-    private static async ValueTask ThrowIfFlatAgileAsync(string path, CancellationToken cancellationToken)
-    {
-        bool isFlatAgile;
-        await using (FileStream probe = DatabaseFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous))
-        {
-            isFlatAgile = await EncryptionManager.IsFlatAgileEncryptedAsync(probe, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (isFlatAgile)
-        {
-            throw FlatAgileNotSupported();
-        }
-    }
-
     private static NotSupportedException FlatAgileNotSupported() => new(
         "This .accdb file uses Access-native Agile encryption (AccessEncryptionFormat.AccdbAgile), " +
         "which AccessWriter cannot edit in place. Open it with AccessReader to read it. To write to it, " +
         "remove the encryption with AccessWriter.DecryptAsync, write to the decrypted file, then encrypt it " +
         "again with AccessWriter.EncryptAsync. Files encrypted as AccessEncryptionFormat.AccdbAgileCfb can be " +
         "opened for writing.");
-
-    private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken = default)
-    {
-        var readerOptions = new AccessReaderOptions
-        {
-            FileShare = FileShare.ReadWrite,
-            ValidateOnOpen = false,
-            UseLockFile = false,
-            Password = options.Password,
-        };
-
-        try
-        {
-            await using AccessReader reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
-        }
-        catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
-        {
-            throw new UnauthorizedAccessException(
-                ex.Message.Replace("AccessReaderOptions.Password", "AccessWriterOptions.Password", StringComparison.Ordinal),
-                ex);
-        }
-    }
 
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled

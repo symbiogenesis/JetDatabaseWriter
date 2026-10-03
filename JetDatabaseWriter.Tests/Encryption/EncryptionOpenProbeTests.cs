@@ -4,10 +4,12 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Transactions;
@@ -49,9 +51,33 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     /// <summary>Lower bound for the test databases, so a whole-file read is far above <see cref="MaxOpenBytes"/>.</summary>
     private const long MinDatabaseBytes = 64L * Constants.PageSizes.Jet4;
 
+    /// <summary>The bytes the compound-file probe reads from a CFB-magic file before it gives up: one 512-byte CFB header.</summary>
+    private const long CfbHeaderProbeBytes = 512;
+
     private static readonly AccessWriterOptions NoLockOptions = new() { UseLockFile = false };
 
     private readonly List<string> tempFiles = [];
+
+    /// <summary>Gets each password format the writer can open, by path and by stream.</summary>
+    /// <returns>The format and by-path pairs.</returns>
+    public static TheoryData<AccessEncryptionFormat, bool> PasswordFormatsByPathAndStream()
+    {
+        var data = new TheoryData<AccessEncryptionFormat, bool>();
+        foreach (AccessEncryptionFormat format in new[]
+        {
+            AccessEncryptionFormat.Jet4Rc4,
+            AccessEncryptionFormat.AccdbLegacyPassword,
+            AccessEncryptionFormat.AccdbAesCfbWrapped,
+            AccessEncryptionFormat.AccdbAgileCfb,
+            AccessEncryptionFormat.AccdbStandard,
+        })
+        {
+            data.Add(format, true);
+            data.Add(format, false);
+        }
+
+        return data;
+    }
 
     public void Dispose()
     {
@@ -104,16 +130,22 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task WriterOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream backing = await this.BuildDatabaseAsync(source, encryption, ct);
 
+        // Page 0 is read once; the header and the flat-Agile probe share it.
+        // A CFB-magic file also has its compound-file header checked.
+        long maxBytes = encryption == AccessEncryptionFormat.AccdbAesCfbWrapped
+            ? Constants.PageSizes.Jet4 + CfbHeaderProbeBytes
+            : Constants.PageSizes.Jet4;
         await using var counting = new CountingStream(backing);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, WriterOptions(encryption), leaveOpen: true, ct))
         {
             Assert.True(
-                counting.BytesRead <= MaxOpenBytes,
+                counting.BytesRead <= maxBytes,
                 $"AccessWriter.OpenAsync read {counting.BytesRead} bytes of a {backing.Length}-byte file.");
 
             await writer.CreateTableAsync("Probe", [new ColumnDefinition("Id", typeof(int))], ct);
@@ -180,10 +212,16 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         string lockPath = LockFileSlotWriter.GetLockFilePath(path);
 
         var options = new AccessWriterOptions { Password = password.AsMemory() };
-        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException ex;
+        using (FileStreamFactory.OpenTracker opens = FileStreamFactory.TrackOpens())
         {
-            await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
-        });
+            ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            {
+                await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
+            });
+
+            Assert.Equal(1, CountOpens(opens, path));
+        }
 
         Assert.Contains("Agile", ex.Message, StringComparison.Ordinal);
         Assert.Equal(before, await File.ReadAllBytesAsync(path, ct));
@@ -241,7 +279,116 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         Assert.Equal(before, backing.ToArray());
     }
 
+    // ───── The path overload opens the file once ─────────────────────
+
+    [Theory]
+    [InlineData(Jet3, AccessEncryptionFormat.None)]
+    [InlineData(Jet4, AccessEncryptionFormat.None)]
+    [InlineData(Ace, AccessEncryptionFormat.None)]
+    [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbStandard)]
+    public async Task WriterOpen_PathOverload_OpensDatabaseFileOnce(string source, AccessEncryptionFormat encryption)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = await this.WriteTempDatabaseAsync(source, encryption, ct);
+
+        using (FileStreamFactory.OpenTracker opens = FileStreamFactory.TrackOpens())
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(path, WriterOptions(encryption), ct);
+            Assert.Equal(1, CountOpens(opens, path));
+
+            await writer.CreateTableAsync("Probe", [new ColumnDefinition("Id", typeof(int))], ct);
+            await writer.InsertRowAsync("Probe", [1], ct);
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(path, ReaderOptions(encryption), ct);
+        Assert.Equal(1L, await CountRowsAsync(reader, "Probe", ct));
+    }
+
+    [Theory]
+    [InlineData(AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword)]
+    [InlineData(AccessEncryptionFormat.AccdbAgileCfb)]
+    public async Task WriterOpen_PathOverload_WrongPassword_LeavesFileAndLockUnchanged(AccessEncryptionFormat encryption)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = await this.WriteTempDatabaseAsync(encryption == AccessEncryptionFormat.Jet4Rc4 ? Jet4 : Ace, encryption, ct);
+        byte[] before = await File.ReadAllBytesAsync(path, ct);
+
+        var options = new AccessWriterOptions { Password = "wrong-password".AsMemory() };
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
+        });
+
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await File.ReadAllBytesAsync(path, ct));
+        Assert.False(File.Exists(LockFileSlotWriter.GetLockFilePath(path)), "The refused open left a lock file behind.");
+    }
+
+    // ───── Password errors name the caller's options type ────────────
+
+    [Theory]
+    [MemberData(nameof(PasswordFormatsByPathAndStream))]
+    public async Task WriterOpen_MissingPassword_NamesWriterOptions(AccessEncryptionFormat encryption, bool byPath)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = await this.WriteTempDatabaseAsync(encryption == AccessEncryptionFormat.Jet4Rc4 ? Jet4 : Ace, encryption, ct);
+
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        {
+            if (byPath)
+            {
+                await using AccessWriter writer = await AccessWriter.OpenAsync(path, NoLockOptions, ct);
+            }
+            else
+            {
+                await using var stream = new MemoryStream();
+                await stream.WriteAsync(await File.ReadAllBytesAsync(path, ct), ct);
+                stream.Position = 0;
+                await using AccessWriter writer = await AccessWriter.OpenAsync(stream, NoLockOptions, leaveOpen: true, ct);
+            }
+        });
+
+        Assert.Contains("AccessWriterOptions.Password", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("AccessReaderOptions", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(PasswordFormatsByPathAndStream))]
+    [InlineData(AccessEncryptionFormat.AccdbAgile, true)]
+    [InlineData(AccessEncryptionFormat.AccdbAgile, false)]
+    public async Task ReaderOpen_MissingPassword_NamesReaderOptions(AccessEncryptionFormat encryption, bool byPath)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = await this.WriteTempDatabaseAsync(encryption == AccessEncryptionFormat.Jet4Rc4 ? Jet4 : Ace, encryption, ct);
+        var options = new AccessReaderOptions { UseLockFile = false };
+
+        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        {
+            if (byPath)
+            {
+                await using AccessReader reader = await AccessReader.OpenAsync(path, options, ct);
+            }
+            else
+            {
+                await using var stream = new MemoryStream(await File.ReadAllBytesAsync(path, ct), writable: false);
+                await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, ct);
+            }
+        });
+
+        Assert.Contains("AccessReaderOptions.Password", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("AccessWriterOptions", ex.Message, StringComparison.Ordinal);
+    }
+
     // ───── Helpers ───────────────────────────────────────────────────
+
+    private static int CountOpens(FileStreamFactory.OpenTracker opens, string path) =>
+        opens.OpenedPaths.Count(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
 
     private static AccessReaderOptions ReaderOptions(AccessEncryptionFormat encryption) => new()
     {
@@ -341,6 +488,16 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         var backing = new MemoryStream();
         await backing.WriteAsync(bytes.AsMemory(), ct);
         return await EncryptInPlaceAsync(backing, encryption, ct);
+    }
+
+    private async Task<string> WriteTempDatabaseAsync(string source, AccessEncryptionFormat encryption, CancellationToken ct)
+    {
+        await using MemoryStream database = await this.BuildDatabaseAsync(source, encryption, ct);
+        string path = Path.Combine(Path.GetTempPath(), $"jdwprobe_{Guid.NewGuid():N}{(source is Jet3 or Jet4 or AdventureWorks ? ".mdb" : ".accdb")}");
+        this.tempFiles.Add(path);
+        this.tempFiles.Add(LockFileSlotWriter.GetLockFilePath(path));
+        await File.WriteAllBytesAsync(path, database.ToArray(), ct);
+        return path;
     }
 
     private async Task<string> CreateFlatAgileFileAsync(CancellationToken ct)

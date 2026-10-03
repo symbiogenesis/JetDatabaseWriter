@@ -204,7 +204,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // package decryption; on success we re-enter on the inner ACCDB
             // bytes.
             byte[]? decryptedAgile = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
+                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken)
                 .ConfigureAwait(false);
             if (decryptedAgile != null)
             {

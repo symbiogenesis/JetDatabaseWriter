@@ -56,7 +56,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="password">The database password.</param>
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
-    /// <param name="ownerType">The public type that owns this file, named by <see cref="ObjectDisposedException"/>s raised after disposal.</param>
+    /// <param name="ownerType">The public type that owns this file, named by <see cref="ObjectDisposedException"/>s raised after disposal; its options type is named by a missing-password error.</param>
     /// <param name="canCacheOwnedDataPages">
     /// <see langword="true"/> to memoize each table's owned data pages; only safe when
     /// nothing writes through this file (the reader).
@@ -80,7 +80,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.Format = EncryptionConverter.DetectFormat(header);
         this.PageSizeBytes = GetPageSize(this.Format);
         bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
-        this.pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Format, isLegacyAesCfb, password);
+        string passwordOptionName = ownerType == typeof(AccessWriter)
+            ? EncryptionManager.WriterPasswordOption
+            : EncryptionManager.ReaderPasswordOption;
+        this.pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Format, isLegacyAesCfb, password, passwordOptionName);
 
         // Codepage / sort order: stored as a UInt16 at hdr[0x3C], scrambled by
         // the constant-key RC4 stream Microsoft Access applies to header bytes
@@ -235,7 +238,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        byte[] hdr = new byte[0x80];
+        byte[] hdr = new byte[Constants.DatabaseHeader.Length];
         _ = fs.Seek(0, SeekOrigin.Begin);
         await fs.ReadExactlyAsync(hdr.AsMemory(), cancellationToken).ConfigureAwait(false);
 

@@ -87,7 +87,7 @@ internal static class EncryptionConverter
         {
             _ = source.Seek(0, SeekOrigin.Begin);
             (byte[]? cfbInner, AccessEncryptionFormat cfbFormat) = await EncryptionManager
-                .TryDecryptCompoundFileWithFormatAsync(source, header, password, cancellationToken)
+                .TryDecryptCompoundFileWithFormatAsync(source, header, password, EncryptionManager.OldPasswordArgument, cancellationToken)
                 .ConfigureAwait(false);
 
             if (cfbInner != null)
@@ -113,7 +113,7 @@ internal static class EncryptionConverter
             {
                 throw new UnauthorizedAccessException(
                     "This .accdb file is encrypted with Access Agile encryption. " +
-                    "Provide the database password via AccessReaderOptions.Password to open it.");
+                    $"Provide the database password via {EncryptionManager.OldPasswordArgument} to open it.");
             }
 
             return (OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span), AccessEncryptionFormat.AccdbAgile);
@@ -234,7 +234,7 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        using PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, fmt, isLegacyAesCfb, password);
+        using PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, fmt, isLegacyAesCfb, password, EncryptionManager.OldPasswordArgument);
 
         long length = source.Length;
         if (length % pageSize != 0)
