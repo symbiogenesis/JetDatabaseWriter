@@ -79,7 +79,7 @@ journal, then **releases it before** the replay loop so each replayed
 
 ## Annotated call paths
 
-### Writer auto-commit (default `UseTransactionalWrites = true`)
+### Writer auto-commit (`UseTransactionalWrites = true`)
 
 `InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L781)
 → [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L68)
@@ -110,7 +110,7 @@ The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`.
 
-### Writer non-transactional (`UseTransactionalWrites = false`)
+### Writer non-transactional (default `UseTransactionalWrites = false`)
 
 No journal, no commit-lock. Each page mutation flushes immediately:
 
