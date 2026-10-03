@@ -8,9 +8,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Foreign-key relationships across the copy-and-swap rewrite behind
@@ -604,6 +607,169 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
             Assert.Equal(relationshipsBefore, (await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken)).Count);
             Assert.Equal(rowsBefore, (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count);
         }
+    }
+
+    /// <summary>
+    /// A schema rewrite drops an FK entry whose partner does not link back:
+    /// the damage earlier builds' <c>DropTableAsync</c> left when it freed a
+    /// related table's TDEF page. Re-emitting the entry would keep it naming
+    /// the freed page, or make it a bogus self-reference once the rebuilt copy
+    /// takes that page. The child's entry is pointed at a freed page; rewriting
+    /// the child drops it, which leaves the parent's entry one-sided, and
+    /// rewriting the parent then drops that one too. The relationship is still
+    /// in <c>MSysRelationships</c>, and still enforced.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task SchemaRewrite_OfTableWithDanglingForeignKeyEntry_DropsTheEntry(DatabaseFormat format)
+    {
+        MemoryStream stream = await this.CreateDatabaseAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await CreateParentAndChildAsync(writer);
+        }
+
+        long freedPage = await CreateAndDropSpareTableAsync(stream);
+        await PointForeignKeyEntryAtAsync(stream, Child, RelationshipName, freedPage);
+        long parentPage = await GetTDefPageAsync(stream, Parent);
+        long childPageBefore = await GetTDefPageAsync(stream, Child);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.RenameColumnAsync(Child, "Note", "Note2", TestContext.Current.CancellationToken);
+        }
+
+        // Only the parent's entry, now one-sided, still names the child's old page.
+        Dictionary<long, List<IndexMetadata>> fks = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        ForeignKeyLinks.AssertNoEntryNamesPage(fks, freedPage);
+        Assert.Empty(fks[await GetTDefPageAsync(stream, Child)]);
+        Assert.Equal(childPageBefore, Assert.Single(fks[parentPage]).RelatedTablePage);
+        Assert.True(fks.Remove(parentPage));
+        ForeignKeyLinks.AssertConsistent(fks);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.RenameColumnAsync(Parent, "Name", "Name2", TestContext.Current.CancellationToken);
+        }
+
+        fks = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        ForeignKeyLinks.AssertConsistent(fks);
+        Assert.Empty(fks[await GetTDefPageAsync(stream, Parent)]);
+        Assert.Empty(fks[await GetTDefPageAsync(stream, Child)]);
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            Assert.Contains(await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken), r => r.Name == RelationshipName);
+        }
+
+        await AssertEnforcementAndCascadeAsync(stream);
+    }
+
+    /// <summary>
+    /// The Jet3 form of <see cref="SchemaRewrite_OfTableWithDanglingForeignKeyEntry_DropsTheEntry"/>,
+    /// on the Access 97 <c>indexTestV1997.mdb</c>: Table1's 'Table2Table1'
+    /// entry is pointed at a freed page, and Table1's other relationship,
+    /// 'Table3Table1', is re-linked as usual.
+    /// </summary>
+    [Fact]
+    public async Task SchemaRewrite_Jet3TableWithDanglingForeignKeyEntry_DropsTheEntry()
+    {
+        MemoryStream stream = await db.CopyToStreamAsync(TestDatabases.IndexTestV1997, TestContext.Current.CancellationToken);
+        long freedPage = await CreateAndDropSpareTableAsync(stream);
+        int totalBefore = (await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream)).Sum(pair => pair.Value.Count);
+        await PointForeignKeyEntryAtAsync(stream, "Table1", "Table2Table1", freedPage);
+        long table1PageBefore = await GetTDefPageAsync(stream, "Table1");
+        long table2Page = await GetTDefPageAsync(stream, "Table2");
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.AddColumnAsync("Table1", new ColumnDefinition("RwExtra", typeof(int)), TestContext.Current.CancellationToken);
+        }
+
+        // The rebuilt Table1 can take the freed page, so other tables' links
+        // to it may name that page now. Only Table2's '.rC', now one-sided,
+        // still names Table1's old page.
+        Dictionary<long, List<IndexMetadata>> fks = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        Assert.DoesNotContain(fks[await GetTDefPageAsync(stream, "Table1")], i => i.Name == "Table2Table1");
+        Assert.Equal(table1PageBefore, Assert.Single(fks[table2Page]).RelatedTablePage);
+        Assert.True(fks.Remove(table2Page));
+        ForeignKeyLinks.AssertConsistent(fks);
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            IReadOnlyList<IndexMetadata> table1 = await reader.ListIndexesAsync("Table1", TestContext.Current.CancellationToken);
+            Assert.DoesNotContain(table1, i => i.Name == "Table2Table1");
+            Assert.Contains(table1, i => i.Name == "Table3Table1" && i.Kind == IndexKind.ForeignKey);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.AddColumnAsync("Table2", new ColumnDefinition("RwExtra", typeof(int)), TestContext.Current.CancellationToken);
+        }
+
+        fks = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        ForeignKeyLinks.AssertConsistent(fks);
+        Assert.Equal(totalBefore - 2, fks.Sum(pair => pair.Value.Count));
+        Assert.Empty(fks[await GetTDefPageAsync(stream, "Table2")]);
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            Assert.Equal(4, (await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken)).Rows.Count);
+        }
+    }
+
+    /// <summary>Creates a table and drops it, and returns its freed TDEF page.</summary>
+    /// <param name="stream">The database.</param>
+    /// <returns>The freed page.</returns>
+    private static async ValueTask<long> CreateAndDropSpareTableAsync(MemoryStream stream)
+    {
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("Sp", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+        }
+
+        long page = await GetTDefPageAsync(stream, "Sp");
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.DropTableAsync("Sp", TestContext.Current.CancellationToken);
+        }
+
+        return page;
+    }
+
+    /// <summary>
+    /// Overwrites the <c>rel_tbl_page</c> of <paramref name="table"/>'s FK
+    /// entry <paramref name="entryName"/> with <paramref name="page"/>, as if
+    /// the partner on that page had been dropped without unlinking it.
+    /// </summary>
+    /// <param name="stream">The database.</param>
+    /// <param name="table">The table that holds the entry.</param>
+    /// <param name="entryName">The FK logical-index name.</param>
+    /// <param name="page">The page the entry should name.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the table or its TDEF is not found.</exception>
+    private static async ValueTask PointForeignKeyEntryAtAsync(MemoryStream stream, string table, string entryName, long page)
+    {
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        DatabaseFile database = harness.Database;
+        CatalogEntry entry = await harness.Services.Catalog.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken)
+            ?? throw new InvalidOperationException($"Table '{table}' not found.");
+        byte[] td = await database.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken)
+            ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
+        int numIdx = Ri32(td, database.TDef.NumIdx);
+        int numRealIdx = Ri32(td, database.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(database, td, Ru16(td, database.TDef.NumCols), numRealIdx);
+        IndexSectionAnchors anchors = database.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        int index = IndexCatalogReader.ReadLogicalIdxNames(database, td, anchors.LogIdxNamesStart, numIdx).IndexOf(entryName);
+        Assert.True(index >= 0, $"Table '{table}' has no index '{entryName}'.");
+        int fields = database.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, index);
+        Assert.Equal((byte)IndexKind.ForeignKey, td[fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset]);
+        await database.WriteTDefInt32Async(
+            entry.TDefPage,
+            fields + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset,
+            checked((int)page),
+            TestContext.Current.CancellationToken);
     }
 
     private static async ValueTask CreateParentAndChildAsync(AccessWriter writer, bool insertRows = true)
