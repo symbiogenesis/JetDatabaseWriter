@@ -128,10 +128,13 @@ public interface IAccessSchema : IAccessBase
     /// and renaming the result back to <paramref name="tableName"/>. When the column is a
     /// key column of a foreign-key relationship, the relationship's <c>MSysRelationships</c>
     /// rows are updated to the new name. Every calculated expression, validation rule and
-    /// default value expression in the table that names the column (as <c>[Old]</c>, a bare
-    /// <c>Old</c>, or qualified by the table's name) is rewritten to name it as
-    /// <c>[New]</c>, so it keeps evaluating; the rest of each expression, including text
-    /// inside string literals, is kept as it was.
+    /// default value expression in the table that names the column is rewritten:
+    /// <c>[Old]</c> and a bare <c>Old</c> become <c>[New]</c>, so the expression keeps
+    /// evaluating. A reference qualified by the table's own name keeps the qualifier
+    /// (<c>[T].[Old]</c> becomes <c>[T].[New]</c> and <c>T.Old</c> becomes
+    /// <c>T.[New]</c>); the expression engine does not evaluate table-qualified references
+    /// yet, before or after the rename. The rest of each expression, including text inside
+    /// string literals, is kept as it was.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>

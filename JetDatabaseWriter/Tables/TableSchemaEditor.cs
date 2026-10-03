@@ -476,14 +476,15 @@ internal sealed class TableSchemaEditor(
     /// <summary>
     /// Carries a rewrite's column rename into every calculated expression,
     /// validation rule and default of the projected columns that names the
-    /// renamed column, so they keep evaluating: <c>[Old]</c> and a bare
-    /// <c>Old</c>, qualified by the table's own name or not, become
-    /// <c>[New]</c>, and the rest of the text is kept as it was
-    /// (<see cref="ExpressionFieldReferences"/>). Refuses to drop a column
-    /// that one of them names, as for a relationship key column: the
-    /// expression would name a column that no longer exists, and a rule or
-    /// default would silently stop applying. <c>ValidationText</c> and
-    /// <c>Description</c> are free text and are left alone.
+    /// renamed column: <c>[Old]</c> and a bare <c>Old</c> become
+    /// <c>[New]</c>, so they keep evaluating, a reference qualified by the
+    /// table's own name keeps the qualifier (<c>[T].[New]</c>, which the
+    /// expression engine does not evaluate yet), and the rest of the text is
+    /// kept as it was (<see cref="ExpressionFieldReferences"/>). Refuses to
+    /// drop a column that one of them names, as for a relationship key
+    /// column: the expression would name a column that no longer exists, and
+    /// a rule or default would silently stop applying. <c>ValidationText</c>
+    /// and <c>Description</c> are free text and are left alone.
     /// </summary>
     /// <param name="tableName">The table being rewritten, which may qualify a reference.</param>
     /// <param name="existingDefs">The columns before the rewrite.</param>

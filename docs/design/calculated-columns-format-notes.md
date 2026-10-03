@@ -121,10 +121,12 @@ free skipped `AllNames`' headers and left the writer's LVAL rows allocated.
 is written. `ExpressionFieldReferences` scans the stored text without parsing
 it, so an expression the engine cannot parse (a stored `%`) is renamed too. It
 skips string, `#date#` and `{guid ...}` literals, numbers and radix literals,
-and rewrites `[Old]`, a bare `Old` (not a keyword, a `vb` constant, a function
-call or a `$` name) and `[Table].[Old]` / `Table.Old` qualified by the table's
-own name as `[New]`. Other qualified names (`[Other].[Old]`, `Forms![F]![Old]`)
-are left alone. Every Access-authored expression in the fixtures uses
+and rewrites `[Old]` and a bare `Old` (not a keyword, a `vb` constant, a
+function call or a `$` name) as `[New]`. A reference qualified by the table's
+own name keeps the qualifier: `[Table].[Old]` becomes `[Table].[New]` and
+`Table.Old` becomes `Table.[New]`. The expression engine cannot evaluate a
+table-qualified reference yet, before the rename or after it. Other qualified
+names (`[Other].[Old]`, `Forms![F]![Old]`) are left alone. Every Access-authored expression in the fixtures uses
 `[Field]` brackets. A bracketed name cannot hold `]`, and the Access naming
 rules that `RenameColumnAsync` checks the new name against exclude it, so a
 rename to such a name throws `ArgumentException` before the table is read.
