@@ -24,7 +24,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for deleted rows.</param>
-/// <param name="longValueEncoder">Pre-encodes and deallocates LVAL chains.</param>
+/// <param name="longValueEncoder">Moves oversized long values to LVAL chains and deallocates them.</param>
 /// <param name="rowEncoder">Serializes row values into on-disk row bytes.</param>
 /// <param name="dataPages">Finds or allocates the data page that receives a row.</param>
 /// <param name="tdefPageBuilder">Owns the TDEF row-count byte layout.</param>
@@ -63,13 +63,19 @@ internal sealed class TableRowStore(
         // this guard keeps a placeholder from ever reaching the page.
         UnreadableLongValue.ThrowIfAny(values, tableName: null);
 
-        // Push any oversized MEMO / OLE / Attachment payload to LVAL pages
-        // before serializing the row. The pre-encode pass appends LVAL pages to
-        // the file and rewrites the matching slot in `values` with a
-        // PreEncodedLongValue sentinel carrying the finished 12-byte header.
-        values = await longValueEncoder.PreEncodeLongValuesAsync(tdefPage, tableDef, values, cancellationToken).ConfigureAwait(false);
-
+        // A MEMO or OLE value over its inline cap goes to LVAL pages. They are
+        // written only after the row has been serialized with a 12-byte
+        // placeholder header for each such value, so a value the encoder
+        // rejects, or a row too long for a page, throws before anything is
+        // written. The real headers have the same size, so the row serialized
+        // again with them has the measured length.
+        values = longValueEncoder.PrepareLongValues(tableDef, values);
         byte[] rowBytes = rowEncoder.SerializeRow(tableDef, values);
+        if (await longValueEncoder.WriteLongValuesAsync(values, cancellationToken).ConfigureAwait(false))
+        {
+            rowBytes = rowEncoder.SerializeRow(tableDef, values);
+        }
+
         PageInsertTarget target = await dataPages.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
         int rowIndex;
         int rowStart;

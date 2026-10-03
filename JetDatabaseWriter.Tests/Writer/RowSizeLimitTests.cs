@@ -48,8 +48,49 @@ public sealed class RowSizeLimitTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int oleColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
-        await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, ct);
+        await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, memo: false, ct);
         object[] row = [1, .. Enumerable.Range(0, oleColumns).Select(i => (object)Ole(250, i))];
+
+        await AssertOversizedInsertWritesNothingAsync(ms, format, mode, row, ct);
+    }
+
+    /// <summary>
+    /// The same oversized row with a MEMO value too long to stay inline, so it
+    /// is bound for LVAL pages. The writer used to write those pages before it
+    /// measured the row, and the failed insert left them behind with nothing
+    /// pointing at them: appended to the file, or, once a dropped table had
+    /// freed pages, written over the free pages and marked used, with the file
+    /// length unchanged. The row is now measured first, with a 12-byte
+    /// placeholder for the value's LVAL header.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="freePages">Whether a dropped table has left free pages for the LVAL pages to reuse.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "direct", false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "direct", true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "explicit", true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "direct", false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "direct", true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "transactional", false)]
+    [InlineData(DatabaseFormat.AceAccdb, "direct", false)]
+    [InlineData(DatabaseFormat.AceAccdb, "direct", true)]
+    [InlineData(DatabaseFormat.AceAccdb, "explicit", false)]
+    public async Task RowLargerThanAPage_WithAMemoBoundForLvalPages_WritesNothing(DatabaseFormat format, string mode, bool freePages)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int oleColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
+        await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, memo: true, ct);
+        if (freePages)
+        {
+            await using AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct);
+            await writer.CreateTableAsync("Scratch", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Notes", typeof(string))], ct);
+            await writer.InsertRowAsync("Scratch", [1, new string('s', 20_000)], ct);
+            await writer.DropTableAsync("Scratch", ct);
+        }
+
+        object[] row = [1, .. Enumerable.Range(0, oleColumns).Select(i => (object)Ole(250, i)), new string('m', 5_000)];
 
         await AssertOversizedInsertWritesNothingAsync(ms, format, mode, row, ct);
     }
@@ -73,7 +114,7 @@ public sealed class RowSizeLimitTests
         int[] lengths = format == DatabaseFormat.Jet3Mdb
             ? [.. Enumerable.Repeat(240, 7), 236]
             : [.. Enumerable.Repeat(240, 15), 243];
-        await using MemoryStream ms = await CreateDatabaseAsync(format, lengths.Length, ct);
+        await using MemoryStream ms = await CreateDatabaseAsync(format, lengths.Length, memo: false, ct);
 
         object[] fits = [1, .. lengths.Select((length, i) => (object)Ole(length, i))];
         object[] tooLong = [2, .. lengths.Select((length, i) => (object)Ole(i == 0 ? length + 1 : length, i))];
@@ -107,7 +148,7 @@ public sealed class RowSizeLimitTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int oleColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
-        await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, ct);
+        await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, memo: false, ct);
         object[] original = [1, .. Enumerable.Range(0, oleColumns).Select(i => (object)Ole(20, i))];
         await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
         {
@@ -192,12 +233,17 @@ public sealed class RowSizeLimitTests
         return bytes;
     }
 
-    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, int oleColumns, CancellationToken cancellationToken)
+    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, int oleColumns, bool memo, CancellationToken cancellationToken)
     {
         var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
         for (int i = 0; i < oleColumns; i++)
         {
             columns.Add(new ColumnDefinition($"Blob{i}", typeof(byte[])));
+        }
+
+        if (memo)
+        {
+            columns.Add(new ColumnDefinition("Notes", typeof(string)));
         }
 
         var ms = new MemoryStream();

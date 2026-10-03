@@ -31,22 +31,34 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
 internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAllocator, AccessWriterOptions options)
 {
+    /// <summary>Throws when <paramref name="data"/> is too long for an LVAL descriptor's 24-bit length.</summary>
+    /// <param name="data">The long value's payload.</param>
+    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
+    private static void ThrowIfLongerThanLvalLimit(byte[] data)
+    {
+        if (data.Length > Constants.LongValue.MaxPayloadBytes)
+        {
+            throw new JetLimitationException(
+                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
+        }
+    }
+
     /// <summary>
-    /// Pre-encode pass for row insert: any MEMO / OLE value whose payload
-    /// exceeds the inline cap is written to one or more freshly-appended LVAL
-    /// data pages here, and the in-row value is replaced with a
-    /// <see cref="PreEncodedLongValue"/> sentinel carrying the matching 12-byte
-    /// header. Returns the same array reference when no large payloads were
-    /// found and a defensively-cloned array otherwise so the caller's original
-    /// <c>values</c> stays untouched.
+    /// First half of a row insert's long-value pass, which writes nothing: any
+    /// MEMO / OLE value whose payload exceeds the inline cap is replaced with a
+    /// pending <see cref="PreEncodedLongValue"/> that holds the payload and a
+    /// zeroed 12-byte header. The caller can then serialize the row, which
+    /// checks its values and its size, before any page is written, and calls
+    /// <see cref="WriteLongValuesAsync"/> once the row is known to fit. Returns
+    /// the same array reference when no value leaves the row and a clone
+    /// otherwise, so the caller's original <c>values</c> stays untouched.
     /// </summary>
-    /// <param name="ownerTdefPage">The owner TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<object[]> PreEncodeLongValuesAsync(long ownerTdefPage, TableDef tableDef, object[] values, CancellationToken cancellationToken)
+    /// <returns><paramref name="values"/>, or a clone with the pending sentinels.</returns>
+    /// <exception cref="JetLimitationException">Thrown when a payload exceeds the 24-bit JET LVAL length limit.</exception>
+    internal object[] PrepareLongValues(TableDef tableDef, object[] values)
     {
-        _ = ownerTdefPage;
         object[]? result = null;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
@@ -105,12 +117,38 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
                 continue;
             }
 
-            byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken).ConfigureAwait(false);
+            ThrowIfLongerThanLvalLimit(data);
             result ??= (object[])values.Clone();
-            result[i] = new PreEncodedLongValue(header);
+            result[i] = new PreEncodedLongValue(new byte[Constants.LongValue.HeaderSize], data);
         }
 
         return result ?? values;
+    }
+
+    /// <summary>
+    /// Second half of a row insert's long-value pass: writes the payload of each
+    /// pending <see cref="PreEncodedLongValue"/> in <paramref name="values"/>,
+    /// the array <see cref="PrepareLongValues"/> returned, to LVAL pages, and
+    /// replaces it in place with a sentinel carrying the finished header. The
+    /// header has the placeholder's size, so the row's length does not change.
+    /// </summary>
+    /// <param name="values">The values <see cref="PrepareLongValues"/> returned.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>Whether any value was written, in which case the row must be serialized again.</returns>
+    internal async ValueTask<bool> WriteLongValuesAsync(object[] values, CancellationToken cancellationToken)
+    {
+        bool written = false;
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (values[i] is PreEncodedLongValue { PendingPayload: { } payload })
+            {
+                byte[] header = await this.EncodeAsLvalChainAsync(payload, cancellationToken).ConfigureAwait(false);
+                values[i] = new PreEncodedLongValue(header);
+                written = true;
+            }
+        }
+
+        return written;
     }
 
     internal async ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, CancellationToken cancellationToken)
@@ -143,12 +181,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         uint? lvalTokenOverride = null,
         bool packRowsAtEnd = false)
     {
-        if (data.Length > Constants.LongValue.MaxPayloadBytes)
-        {
-            throw new JetLimitationException(
-                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
-        }
-
+        ThrowIfLongerThanLvalLimit(data);
         int pgSz = db.PageSizeBytes;
         LvalPageLayout layout = db.LvalPage;
 
