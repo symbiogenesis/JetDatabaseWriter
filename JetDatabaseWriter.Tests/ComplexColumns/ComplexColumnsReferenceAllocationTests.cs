@@ -138,6 +138,43 @@ public sealed class ComplexColumnsReferenceAllocationTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(AccessFixturesAndModes))]
+    public async Task AddMultiValue_AccessFixtureRowWithNullSlots_RebuildsComplexIndexes(string fixture, int counter, ComplexWriteMode mode)
+    {
+        await using MemoryStream ms = await CopyFixtureAsync(fixture);
+        await using (AccessWriter writer = await OpenWriterAsync(ms))
+        {
+            await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "row5" }, Ct);
+        }
+
+        // An earlier build left row5's slots null; Access's complex indexes
+        // still hold the reference the insert gave it.
+        await ClearComplexReferencesAsync(ms, "Table1", r => (string)r[0] == "row5", clearCounter: false);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+                await writer.AddMultiValueItemAsync("Table1", "multi-value-data", new Dictionary<string, object?> { ["id"] = "row5" }, "writer-value", Ct));
+        }
+
+        RawTable table = await ReadRawTableAsync(ms, "Table1");
+        object[] row5 = Assert.Single(table.Rows, r => (string)r[0] == "row5");
+        Assert.Equal(counter + 2, table.ComplexAutoNumber);
+        foreach (ComplexDataColumn column in ComplexDataColumns)
+        {
+            Assert.Equal(counter + 2, Slot(table, row5, column.Name));
+
+            // The patched slots replaced the old keys in every complex index.
+            IEnumerable<string> expected = table.Rows.Select(r => Convert.ToHexString(IndexKeyEncoder.EncodeEntry(ColumnType.ComplexType, Slot(table, r, column.Name))));
+            IEnumerable<string> onDisk = (await ReadIndexLeafKeysAsync(ms, "Table1", column.Index)).Select(Convert.ToHexString);
+            Assert.Equal(expected.Order(StringComparer.Ordinal), onDisk);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["writer-value"], (await reader.GetMultiValueItemsAsync("Table1", "multi-value-data", Ct)).Where(i => i.ConceptualTableId == counter + 2).Select(i => i.Value));
+    }
+
     [Fact]
     public async Task AddAttachment_ZeroCounterFile_SeedsAboveExistingReferences()
     {
@@ -198,17 +235,26 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task SchemaRewrite_KeepsComplexAutoNumber(ComplexWriteMode mode)
+    public async Task SchemaRewrite_AfterDeletingTopRow_KeepsComplexAutoNumber(ComplexWriteMode mode)
     {
         await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(ComplexWriteMode.Direct);
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            // A table with a surviving complex column is transplanted onto its TDEF page.
-            await RunAsync(writer, mode, async () => await writer.AddColumnAsync("Docs", new ColumnDefinition("Note", typeof(string), maxLength: 20), Ct));
+            await RunAsync(writer, mode, async () =>
+            {
+                // Row 1 (reference 1) is left, under a counter of 3, so only the
+                // carried counter keeps references 2 and 3 from being reused.
+                Assert.Equal(1, await writer.DeleteRowsAsync("Docs", "Id", 3, Ct));
+
+                // A table with a surviving complex column is transplanted onto its TDEF page.
+                await writer.AddColumnAsync("Docs", new ColumnDefinition("Note", typeof(string), maxLength: 20), Ct);
+            });
         }
 
-        Assert.Equal(3, (await ReadRawTableAsync(ms, "Docs")).ComplexAutoNumber);
+        RawTable afterTransplant = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal([1], afterTransplant.Rows.Select(r => Slot(afterTransplant, r, "Files")));
+        Assert.Equal(3, afterTransplant.ComplexAutoNumber);
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
@@ -230,6 +276,9 @@ public sealed class ComplexColumnsReferenceAllocationTests
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
         Assert.Equal(4, Slot(docs, Assert.Single(docs.Rows, r => (int)r[0] == 4), "Files"));
         Assert.Equal(4, docs.ComplexAutoNumber);
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["1:one.txt", "4:four.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => $"{a.ConceptualTableId}:{a.FileName}").Order(StringComparer.Ordinal));
     }
 
     [Theory]
