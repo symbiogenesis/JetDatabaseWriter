@@ -185,7 +185,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         List<int> parentIds = await this.ReadParentIdsAsync(stream);
         var childIds = new List<int>();
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (WriterHarness writer = await OpenHarnessAsync(stream))
         {
             await CreateChildAsync(writer, this.ct);
             for (int id = 1; id <= 5; id++)
@@ -197,11 +197,10 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId") { CascadeDeletes = true }, this.ct);
 
             // A table with an FK entry takes the full rebuild on every insert.
-            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
             for (int id = 6; id <= 40; id++)
             {
                 await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
-                Assert.StartsWith("C1c", services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
+                Assert.StartsWith("C1c", writer.Services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
                 childIds.Add(id);
             }
 
@@ -274,14 +273,13 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             unreachableBefore = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenHarnessAsync(stream, transactionalWrites))
         {
             await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
-            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
             for (int id = seedRows + 1; id <= seedRows + 10; id++)
             {
                 await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
-                Assert.StartsWith("C1c", services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
+                Assert.StartsWith("C1c", writer.Services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
             }
 
             Assert.Equal(1, await writer.UpdateRowsAsync(Child, "Id", 5, new Dictionary<string, object?> { ["ParentId"] = parentIds[6 % parentIds.Count] }, this.ct));
@@ -514,11 +512,11 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         TDefIndexSection parentBefore = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection childBefore = await this.ReadIndexSectionAsync(stream, Child);
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (WriterHarness writer = await OpenHarnessAsync(stream))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
-            using (var services = new ReaderServices(FacadeInternals.Database(writer), new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }))
+            using (var services = new ReaderServices(writer.Database, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }))
             {
                 Assert.Single(await services.Indexes.ListIndexesAsync(Child, this.ct), i => i.Kind == IndexKind.ForeignKey);
             }
@@ -656,6 +654,13 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
             cancellationToken);
 
+    private static ValueTask CreateChildAsync(WriterHarness writer, CancellationToken cancellationToken)
+        => writer.CreateTableAsync(
+            Child,
+            [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
+            [],
+            cancellationToken);
+
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, bool transactionalWrites = false)
     {
         stream.Position = 0;
@@ -665,6 +670,19 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             leaveOpen: true,
             TestContext.Current.CancellationToken);
     }
+
+    /// <summary>
+    /// Opens the writer's internal layers over <paramref name="stream"/>, for
+    /// the tests that check the writer's own services or read through its
+    /// pages; its mutation helpers run as the facade's do.
+    /// </summary>
+    /// <param name="stream">The database.</param>
+    /// <param name="transactionalWrites">Whether each call runs in its own transaction.</param>
+    private static ValueTask<WriterHarness> OpenHarnessAsync(MemoryStream stream, bool transactionalWrites = false)
+        => WriterHarness.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
+            cancellationToken: TestContext.Current.CancellationToken);
 
     private async Task<MemoryStream> CopyFixtureAsync()
         => await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
@@ -715,11 +733,11 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// Checks every index of each of <paramref name="tables"/>, read through
     /// the writer's own pages, against the live rows of its table.
     /// </summary>
-    /// <param name="writer">The open writer.</param>
+    /// <param name="writer">The open writer's layers.</param>
     /// <param name="tables">The tables to check.</param>
-    private async Task AssertIndexesCoverRowsAsync(AccessWriter writer, params string[] tables)
+    private async Task AssertIndexesCoverRowsAsync(WriterHarness writer, params string[] tables)
     {
-        DatabaseFile db = FacadeInternals.Database(writer);
+        DatabaseFile db = writer.Database;
         using var services = new ReaderServices(db, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 });
         foreach (string table in tables)
         {

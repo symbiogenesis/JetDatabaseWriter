@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -26,31 +25,17 @@ public sealed class TransactionReadVisibilityTests
 {
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
 
-    /// <summary>How each test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The mutations run inside one explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets the relationship test cases: Jet4 (from an Access-authored file) and ACCDB, in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
     public static TheoryData<DatabaseFormat, WriteMode> RelationshipFormatsAndModes() =>
-        Combine(DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
+        WriteModes.Combine(DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets every writer-created format (Jet3, Jet4, ACCDB) in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
     public static TheoryData<DatabaseFormat, WriteMode> AllFormatsAndModes() =>
-        Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     [Theory]
     [MemberData(nameof(AllFormatsAndModes))]
@@ -387,26 +372,7 @@ public sealed class TransactionReadVisibilityTests
         Assert.Equal(["4|u4"], await SeekAsync(reader, "T", primaryKey.Name, 4));
     }
 
-    private static TheoryData<DatabaseFormat, WriteMode> Combine(params DatabaseFormat[] formats)
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in formats)
-        {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
-
-    private static AccessWriterOptions WriterOptions(WriteMode mode) => new()
-    {
-        UseLockFile = false,
-        UseByteRangeLocks = false,
-        UseTransactionalWrites = mode == WriteMode.AutoCommit,
-    };
+    private static AccessWriterOptions WriterOptions(WriteMode mode) => WriteModes.WriterOptions(mode);
 
     private static async Task<AccessWriter> CreateWriterAsync(MemoryStream ms, DatabaseFormat format, WriteMode mode) =>
         await AccessWriter.CreateDatabaseAsync(ms, format, WriterOptions(mode), leaveOpen: true, cancellationToken: Ct);
@@ -440,18 +406,7 @@ public sealed class TransactionReadVisibilityTests
         return ms;
     }
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await tx.CommitAsync(Ct);
-    }
+    private static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work) => WriteModes.RunAsync(writer, mode, work, Ct);
 
     private static async Task<List<string>> ReadRowsAsync(MemoryStream ms, string tableName, AccessReaderOptions? options = null)
     {

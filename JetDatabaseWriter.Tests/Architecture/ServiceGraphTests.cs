@@ -27,8 +27,9 @@ using Xunit;
 /// that hands every collaborator the database file plus the specific siblings
 /// it uses. No collaborator may hold or receive a facade, <see cref="AccessBase"/>,
 /// or a composition root; each collaborator graph must be acyclic; the facade
-/// must not be reachable from its services at runtime; and the facades expose
-/// no internal members.
+/// must not be reachable from its services at runtime; the reader's graph holds
+/// nothing that writes; each facade sets up its page reads by how it was
+/// opened; and the facades expose no internal members.
 /// </summary>
 public sealed class ServiceGraphTests
 {
@@ -256,15 +257,15 @@ public sealed class ServiceGraphTests
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeInternals.ReadPrivateField(writer, "services")!);
-        object database = FacadeInternals.Database(writer);
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+        object database = FacadeDatabase(writer);
 
         // Every database file and page cache the writer's services hold is the
         // writer's own: no second file is opened to read rows back, and no
         // page cache keeps pages between calls.
         Assert.Single(reachable, item => item is DatabaseFile);
         Assert.Contains(database, reachable);
-        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(FacadeInternals.ReadPrivateField(cache, "pageCache")));
+        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(ReadField(cache, "pageCache")));
         Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
 
@@ -282,10 +283,13 @@ public sealed class ServiceGraphTests
         _ = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         _ = await reader.ReadTableAsync("Items", cancellationToken: TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeInternals.Services(reader));
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(reader));
 
         Assert.DoesNotContain(reader, reachable);
-        Assert.Contains(FacadeInternals.Database(reader), reachable);
+        Assert.Contains(FacadeDatabase(reader), reachable);
+
+        // The reader's graph cannot write: no pager, journal or byte-range lock.
+        Assert.DoesNotContain(reachable, item => item is JetDatabaseWriter.Pages.Paging.Pager or PageJournal or JetByteRangeLock);
     }
 
     [Fact]
@@ -300,10 +304,86 @@ public sealed class ServiceGraphTests
 
         await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeInternals.ReadPrivateField(writer, "services")!);
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
 
         Assert.DoesNotContain(writer, reachable);
-        Assert.Contains(FacadeInternals.Database(writer), reachable);
+        Assert.Contains(FacadeDatabase(writer), reachable);
+    }
+
+    /// <summary>
+    /// How each facade sets up its page reads at open, read from its own
+    /// <see cref="DatabaseFile"/>. A reader opened by path reads positionally
+    /// unless <see cref="PageReadOptimizationMode.Disabled"/> (never in the
+    /// netstandard2.1 build) and reads inline on pool threads, because its
+    /// handle is synchronous. A reader over a caller's stream does neither,
+    /// even in <see cref="PageReadOptimizationMode.Enabled"/>: the caller may
+    /// still use the stream's position, and its handle may be overlapped. A
+    /// writer never reads inline, before a write, after one or inside a
+    /// transaction, because its handle is overlapped. <see cref="ReaderHarness"/>,
+    /// which other tests open in the reader's place, sets up a path and a
+    /// stream the same way.
+    /// </summary>
+    /// <param name="mode">The readers' page-read optimization mode.</param>
+    [Theory]
+    [InlineData(PageReadOptimizationMode.Auto)]
+    [InlineData(PageReadOptimizationMode.Enabled)]
+    [InlineData(PageReadOptimizationMode.Disabled)]
+    public async Task OpenFacades_PageReadSetup_FollowsHowEachWasOpened(PageReadOptimizationMode mode)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"ServiceGraphPageReads_{Guid.NewGuid():N}.accdb");
+        try
+        {
+            await using (MemoryStream created = await CreateDatabaseAsync())
+            {
+                await File.WriteAllBytesAsync(path, created.ToArray(), TestContext.Current.CancellationToken);
+            }
+
+            var readerOptions = new AccessReaderOptions { PageReadOptimizationMode = mode, UseLockFile = false };
+            bool positional = mode != PageReadOptimizationMode.Disabled && !LibraryTarget.IsNetStandard;
+            await using (AccessReader reader = await AccessReader.OpenAsync(path, readerOptions, TestContext.Current.CancellationToken))
+            await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, readerOptions, TestContext.Current.CancellationToken))
+            {
+                DatabaseFile db = FacadeDatabase(reader);
+                Assert.Equal(positional, db.UsesRandomAccessPageReads);
+                Assert.True(db.ReadsInlineOnThreadPool, $"{mode}: a path-opened reader reads inline on pool threads.");
+                Assert.Equal(positional, harness.Database.UsesRandomAccessPageReads);
+                Assert.True(harness.Database.ReadsInlineOnThreadPool, $"{mode}: ReaderHarness opens a path as the reader does.");
+            }
+
+            await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess))
+            {
+                await using (AccessReader reader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken))
+                {
+                    DatabaseFile db = FacadeDatabase(reader);
+                    Assert.False(db.UsesRandomAccessPageReads, $"{mode}: a reader over a caller's stream reads positionally.");
+                    Assert.False(db.ReadsInlineOnThreadPool, $"{mode}: a reader over a caller's stream reads inline.");
+                }
+
+                await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken);
+                Assert.False(harness.Database.UsesRandomAccessPageReads);
+                Assert.False(harness.Database.ReadsInlineOnThreadPool);
+            }
+
+            foreach (bool transactional in (bool[])[false, true])
+            {
+                await using AccessWriter writer = await AccessWriter.OpenAsync(
+                    path,
+                    new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = transactional },
+                    TestContext.Current.CancellationToken);
+                DatabaseFile db = FacadeDatabase(writer);
+                Assert.False(db.ReadsInlineOnThreadPool);
+                await writer.InsertRowAsync("Items", [transactional ? 3 : 2], TestContext.Current.CancellationToken);
+                Assert.False(db.ReadsInlineOnThreadPool);
+
+                await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+                Assert.False(db.ReadsInlineOnThreadPool);
+                await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     /// <summary>
@@ -334,6 +414,45 @@ public sealed class ServiceGraphTests
         string[] actual = [.. fields.Concat(methods).Concat(nestedTypes).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
         Assert.Empty(actual);
+    }
+
+    /// <summary>
+    /// Returns the service graph a reader or writer built at open, from the
+    /// facade's private <c>services</c> field. This class checks how the
+    /// facades are composed, so it is the one place tests reflect into them;
+    /// every other test opens <see cref="ReaderHarness"/> or <see cref="WriterHarness"/>.
+    /// </summary>
+    /// <param name="facade">The reader or writer.</param>
+    /// <exception cref="MissingFieldException">Thrown when the facade no longer declares the field, or it is null.</exception>
+    private static object FacadeServices(AccessBase facade) => ReadField(facade, "services")
+        ?? throw new MissingFieldException(facade.GetType().FullName, "services");
+
+    /// <summary>Returns the database file a reader or writer owns, from <see cref="AccessBase"/>'s private <c>Database</c> property.</summary>
+    /// <param name="facade">The reader or writer.</param>
+    /// <exception cref="MissingMemberException">Thrown when <see cref="AccessBase"/> no longer declares the property.</exception>
+    private static DatabaseFile FacadeDatabase(AccessBase facade)
+    {
+        PropertyInfo property = typeof(AccessBase).GetProperty("Database", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(AccessBase).FullName, "Database");
+        return (DatabaseFile)property.GetValue(facade)!;
+    }
+
+    /// <summary>Reads a private instance field declared on <paramref name="instance"/>'s type or a base type.</summary>
+    /// <param name="instance">The object to read from.</param>
+    /// <param name="fieldName">The field name.</param>
+    /// <exception cref="MissingFieldException">Thrown when no type in <paramref name="instance"/>'s hierarchy declares the field.</exception>
+    private static object? ReadField(object instance, string fieldName)
+    {
+        for (Type? type = instance.GetType(); type is not null; type = type.BaseType)
+        {
+            FieldInfo? field = type.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field is not null)
+            {
+                return field.GetValue(instance);
+            }
+        }
+
+        throw new MissingFieldException(instance.GetType().FullName, fieldName);
     }
 
     private static async ValueTask<MemoryStream> CreateDatabaseAsync()

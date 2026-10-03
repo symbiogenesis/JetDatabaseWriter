@@ -261,7 +261,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const int rowCount = 600;
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, cancellationToken: this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -272,14 +272,13 @@ public sealed class IndexIncrementalMaintenanceTests
                 [new IndexDefinition("PK", "Id") { IsPrimaryKey = true }, new IndexDefinition("IX_Code", "Code")],
                 this.ct);
 
-            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
             for (int i = 0; i < rowCount; i++)
             {
                 int id = ScatteredId(i);
                 await writer.InsertRowAsync("T", [id, FormattableString.Invariant($"c{id:D6}")], this.ct);
                 Assert.True(
-                    services.Indexes.LastIncrementalBail is null,
-                    $"Insert {i} (Id {id}) left the incremental path: {services.Indexes.LastIncrementalBail}.");
+                    writer.Services.Indexes.LastIncrementalBail is null,
+                    $"Insert {i} (Id {id}) left the incremental path: {writer.Services.Indexes.LastIncrementalBail}.");
             }
         }
 

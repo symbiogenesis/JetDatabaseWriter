@@ -12,7 +12,6 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.WriteMode;
 
 /// <summary>
 /// A cascade update rewrites each dependent row by deleting it and inserting

@@ -172,7 +172,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         FileStream fs = CreateStream(path, options);
 #pragma warning restore CA2000
         AccessReader reader = await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
-        if (CanUseRandomAccessPageReads(reader.PageReadOptimizationMode))
+        if (options.UsesPositionalPageReads(openedFromPath: true))
         {
             reader.Database.EnableRandomAccessPageReadsIfSupported();
         }
@@ -460,9 +460,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>The opened stream.</returns>
     private static FileStream CreateStream(string path, AccessReaderOptions options) =>
         DatabaseFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
-
-    private static bool CanUseRandomAccessPageReads(PageReadOptimizationMode mode) =>
-        mode != PageReadOptimizationMode.Disabled;
 
     private async ValueTask DisposeReaderResourcesAsync()
     {

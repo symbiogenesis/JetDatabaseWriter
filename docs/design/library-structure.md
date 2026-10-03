@@ -493,12 +493,12 @@ CompoundFile/     → Infrastructure/
 DelimitedText/    → Infrastructure/
 Mapping/          → Infrastructure/
 LongValues/       → Pages/, Schema/
-Pages/            → Catalog/, Schema/, Infrastructure/; DatabaseFile
+Pages/            → Catalog/, Encryption/, Schema/, Transactions/, Infrastructure/; JetFormat; DatabaseFile
 Transactions/     → Catalog/, Pages/, Schema/, Infrastructure/; DatabaseFile
 Encryption/       → CompoundFile/, Schema/, Transactions/, Infrastructure/
-ValueDecoding/    → Catalog/, LongValues/, Mapping/, Pages/, Schema/, Infrastructure/; DatabaseFile
+ValueDecoding/    → Catalog/, LongValues/, Mapping/, Pages/, Schema/, Infrastructure/; JetFormat; DatabaseFile
 ValueEncoding/    → Catalog/, LongValues/, Pages/, Schema/, ValueDecoding/; DatabaseFile
-Schema/           → Catalog/, Encryption/, Indexes/, Pages/, Infrastructure/; DatabaseFile
+Schema/           → Catalog/, Encryption/, Indexes/, Pages/, Infrastructure/; JetFormat; DatabaseFile
 Indexes/          → Catalog/, Mapping/, Pages/, Schema/, Tables/, ValueDecoding.Models/, ValueEncoding/, Infrastructure/; DatabaseFile
 Catalog/          → Indexes/, Pages/, Schema/, Tables/, ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 ComplexColumns/   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Tables/, ValueDecoding/, Infrastructure/; DatabaseFile
@@ -508,7 +508,7 @@ Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, 
                     ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 Queries/          → Indexes/, Linq/, Mapping/, Tables/, Infrastructure/
 Linq/             → Queries/, Infrastructure/
-DatabaseFile (root)   → JetFormat, Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
+DatabaseFile (root)   → JetFormat, Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/
 JetFormat (root)      → Encryption/, Indexes/, Pages/, Schema/
 AccessBase (root)     → DatabaseFile
 AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
@@ -517,7 +517,7 @@ ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```
 
-Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
+Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, `Pages` ↔ `Transactions` (the writer's `Pager` takes the byte-range locks; `TransactionLifecycle` attaches the `PageJournal`), and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
 
 ---
 
@@ -667,7 +667,7 @@ Models that belong to a specific domain are co-located with that domain (`Indexe
 
 Visibility is controlled via the C# `internal` keyword on classes — not by stuffing everything into an `Internal/` directory. This eliminates the misleading namespace prefix while maintaining encapsulation. Test projects access internals via `[InternalsVisibleTo]`.
 
-Internal access goes to the internal types, not through the facades. Tests that inspect pages or the catalog, or drive one service, build the layers they need: `ReaderHarness` and `WriterHarness` open a `DatabaseFile` directly and construct `ReaderServices` / `WriterServices` over it. The format probe does the same through its own `ProbeDatabase`. The few tests that check how a facade wires itself at open (page-cache allocation, random-access reads) read its private state by reflection. So the facades carry no members for tests or tools, and `ServiceGraphTests` keeps it that way.
+Internal access goes to the internal types, not through the facades. Tests that inspect pages or the catalog, or drive one service, build the layers they need: `ReaderHarness` and `WriterHarness` open a `DatabaseFile` directly and construct `ReaderServices` / `WriterServices` over it. The format probe does the same through its own `ProbeDatabase`. `ReaderHarness` opens a path the way `AccessReader.OpenAsync(path)` does: the same file options, positional reads by the same rule (`AccessReaderOptions.UsesPositionalPageReads`) and inline reads, so tests that inspect how a reader reads its pages can open the harness. `WriterHarness`'s mutation helpers run in the auto-commit scope, as the facade's methods do. Only `ServiceGraphTests`, which checks how the facades are composed and how each sets up its page reads at open, reflects into them; it also checks that `ReaderHarness` sets up its page reads the same way. So the facades carry no members for tests or tools, and `ServiceGraphTests` keeps it that way.
 
 ### Naming to avoid BCL shadowing
 

@@ -11,7 +11,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.WriteMode;
 
 /// <summary>
 /// An enforced relationship whose table or key column the writer cannot find

@@ -10,7 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.WriteMode;
 
 /// <summary>
 /// <c>UpdateRowsAsync</c> checks a relationship's foreign key only on the rows

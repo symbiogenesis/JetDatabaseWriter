@@ -13,25 +13,27 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Microsoft.Win32.SafeHandles;
 using Xunit;
 
+/// <summary>
+/// How a reader reads its pages: positional <c>RandomAccess</c> reads for a
+/// file it opened by path (unless <see cref="PageReadOptimizationMode.Disabled"/>,
+/// and never in the netstandard2.1 build), seek-and-read through the stream
+/// otherwise, and inline reads on pool threads for a path-opened reader.
+/// These tests check what the facade does: the handle it opens, the rows it
+/// reads, and how its scans complete. Which read path each way of opening
+/// sets up is asserted on the facades' own files in <c>ServiceGraphTests</c>,
+/// the one class that reflects into them.
+/// </summary>
 public sealed class AccessReaderRandomAccessTests : IDisposable
 {
     private readonly List<string> paths = [];
 
     [Fact]
-    public async Task OpenAsync_PathWithAutoPageReadOptimization_UsesRandomAccessPageReads()
+    public async Task OpenAsync_PathWithAutoPageReadOptimization_ReadsTables()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions { UseLockFile = false },
-            TestContext.Current.CancellationToken);
-
+        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         Assert.Equal(PageReadOptimizationMode.Auto, reader.PageReadOptimizationMode);
-
-        // The netstandard2.1 build has no RandomAccess API and reads every page through
-        // the stream; only the net10.0 build switches to random-access reads.
-        Assert.Equal(!LibraryTarget.IsNetStandard, FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
@@ -61,26 +63,22 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task OpenAsync_PathWithDisabledPageReadOptimization_UsesSeekReadPageReads()
+    public async Task OpenAsync_PathWithDisabledPageReadOptimization_ReadsTables()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions
-            {
-                PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
-                UseLockFile = false,
-            },
-            TestContext.Current.CancellationToken);
-
+        var options = new AccessReaderOptions
+        {
+            PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
+            UseLockFile = false,
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         Assert.Equal(PageReadOptimizationMode.Disabled, reader.PageReadOptimizationMode);
-        Assert.False(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
     [Fact]
-    public async Task OpenAsync_CallerSuppliedFileStreamWithEnabledPageReadOptimization_UsesSeekReadPageReads()
+    public async Task OpenAsync_CallerSuppliedFileStreamWithEnabledPageReadOptimization_ReadsTables()
     {
         string path = await this.CreateReadableDatabaseAsync();
 
@@ -90,17 +88,12 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete,
             FileOptions.Asynchronous | FileOptions.RandomAccess);
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions
-            {
-                PageReadOptimizationMode = PageReadOptimizationMode.Enabled,
-                UseLockFile = false,
-            },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-
-        Assert.False(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
+        var options = new AccessReaderOptions
+        {
+            PageReadOptimizationMode = PageReadOptimizationMode.Enabled,
+            UseLockFile = false,
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, TestContext.Current.CancellationToken);
         await AssertReadableItemsTableAsync(reader);
     }
 
@@ -121,22 +114,21 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         string path = await this.CreateReadableDatabaseAsync(rowCount, format);
 
         await using var stream = new HandleCountingFileStream(path);
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(
             stream,
             new AccessReaderOptions
             {
                 PageCacheSize = 0,
                 UseLockFile = false,
             },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-        DatabaseFile db = FacadeInternals.Database(reader);
+            cancellationToken: TestContext.Current.CancellationToken);
+        DatabaseFile db = reader.Database;
         db.EnableRandomAccessPageReadsIfSupported();
         Assert.Equal(!LibraryTarget.IsNetStandard, db.UsesRandomAccessPageReads);
 
         int handleReadsBeforeScan = stream.HandleReads;
         int count = 0;
-        await foreach (object[] row in reader.Rows("Items", cancellationToken: TestContext.Current.CancellationToken))
+        await foreach (object[] row in reader.Services.Tables.Rows("Items", progress: null, TestContext.Current.CancellationToken))
         {
             count++;
             Assert.Equal(count, Assert.IsType<int>(row[0]));
@@ -174,8 +166,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             },
             TestContext.Current.CancellationToken);
 
-        FileStream stream = Assert.IsType<FileStream>(FacadeInternals.Database(reader).DatabaseStream);
-        Assert.False(stream.IsAsync);
+        // FileOptions.None: no Asynchronous flag, so the handle is synchronous, and no hint.
         FileStreamFactory.OpenedFile open = Assert.Single(opens.Opens);
         Assert.Equal(path, open.Path);
         Assert.Equal(FileOptions.None, open.Options);
@@ -397,55 +388,6 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
 
         Assert.InRange(count, rowsBeforeCancel, rowCount - 1);
         Assert.Equal(rowCount, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
-    }
-
-    /// <summary>
-    /// Only a path-opened reader reads inline: its handle is synchronous. A
-    /// caller's stream may be overlapped, and the writer's handle is, so a
-    /// blocking read on either would be slower than the offloaded one.
-    /// </summary>
-    /// <param name="format">The database format.</param>
-    [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task ReadsInlineOnThreadPool_IsSetOnlyForPathOpenedReaders(DatabaseFormat format)
-    {
-        string path = await this.CreateReadableDatabaseAsync(format: format);
-
-        foreach (PageReadOptimizationMode mode in (PageReadOptimizationMode[])[PageReadOptimizationMode.Auto, PageReadOptimizationMode.Disabled, PageReadOptimizationMode.Enabled])
-        {
-            await using AccessReader pathReader = await AccessReader.OpenAsync(
-                path,
-                new AccessReaderOptions { PageReadOptimizationMode = mode, UseLockFile = false },
-                TestContext.Current.CancellationToken);
-            Assert.True(FacadeInternals.Database(pathReader).ReadsInlineOnThreadPool, $"{mode} path reader");
-        }
-
-        await using (FileStream stream = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-        await using (AccessReader streamReader = await AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { PageReadOptimizationMode = PageReadOptimizationMode.Enabled, UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-            Assert.False(FacadeInternals.Database(streamReader).ReadsInlineOnThreadPool);
-        }
-
-        foreach (bool transactional in (bool[])[false, true])
-        {
-            await using AccessWriter writer = await AccessWriter.OpenAsync(
-                path,
-                new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = transactional },
-                TestContext.Current.CancellationToken);
-            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
-            await writer.InsertRowAsync("Items", [transactional ? 3 : 2], TestContext.Current.CancellationToken);
-            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
-
-            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
-            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
-        }
     }
 
     public void Dispose()

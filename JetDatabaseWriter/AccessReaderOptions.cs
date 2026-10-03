@@ -101,4 +101,31 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Streaming row APIs and row-count scans are not capped by this option.
     /// </summary>
     public uint? LinkedTextMaxMaterializedRows { get; init; }
+
+    /// <summary>
+    /// Returns whether a reader opened with these options reads its pages
+    /// through positional <c>RandomAccess</c> reads, which bypass the I/O gate
+    /// and the shared stream position: only when the reader opened the file
+    /// by path itself, so it owns a <see cref="FileStream"/> and its handle,
+    /// <see cref="PageReadOptimizationMode"/> is not
+    /// <see cref="PageReadOptimizationMode.Disabled"/>, and the build has
+    /// <c>RandomAccess</c> (.NET 6 or later). A caller's stream, even a
+    /// <see cref="FileStream"/>, keeps seek-and-read under the gate, because
+    /// the caller may also use its position.
+    /// <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>
+    /// applies this rule, and the test harness opens files by the same rule.
+    /// </summary>
+    /// <param name="openedFromPath">Whether the reader opened the file by path.</param>
+    /// <returns><see langword="true"/> when page reads are positional.</returns>
+    internal bool UsesPositionalPageReads(bool openedFromPath)
+    {
+#if NET6_0_OR_GREATER
+        return openedFromPath && this.PageReadOptimizationMode != PageReadOptimizationMode.Disabled;
+#else
+        // The netstandard2.1 build has no RandomAccess: every page is read through the stream.
+        _ = openedFromPath;
+        _ = this.PageReadOptimizationMode;
+        return false;
+#endif
+    }
 }

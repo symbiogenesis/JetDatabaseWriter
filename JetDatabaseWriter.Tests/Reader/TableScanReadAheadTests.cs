@@ -89,13 +89,10 @@ public sealed class TableScanReadAheadTests : IDisposable
     {
         string path = await this.CreateDatabaseAsync(format, withLongValues: false, encrypt: false);
         ScanResult expected = await ReadBaselineAsync(path, PlainTable, password: null);
+        var options = new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = mode, UseLockFile = false };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = mode, UseLockFile = false },
-            TestContext.Current.CancellationToken);
-
-        Assert.True(await ReadsAheadAsync(reader, PlainTable));
+        Assert.True(await ReadsAheadAsync(path, options, PlainTable));
+        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         await AssertScansMatchAsync(reader, PlainTable, expected);
     }
 
@@ -105,14 +102,11 @@ public sealed class TableScanReadAheadTests : IDisposable
     {
         string path = await this.CreateDatabaseAsync(format, withLongValues: true, encrypt: false);
         ScanResult expected = await ReadBaselineAsync(path, LongValueTable, password: null);
-
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = PageReadOptimizationMode.Enabled, UseLockFile = false },
-            TestContext.Current.CancellationToken);
+        var options = new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = PageReadOptimizationMode.Enabled, UseLockFile = false };
 
         // Long-value tables stay sequential because read-ahead measured no gain on them.
-        Assert.False(await ReadsAheadAsync(reader, LongValueTable));
+        Assert.False(await ReadsAheadAsync(path, options, LongValueTable));
+        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         await AssertScansMatchAsync(reader, LongValueTable, expected);
     }
 
@@ -173,13 +167,10 @@ public sealed class TableScanReadAheadTests : IDisposable
         string path = await this.CreateDatabaseAsync(DatabaseFormat.AceAccdb, withLongValues: true, encrypt: true);
         ScanResult plain = await ReadBaselineAsync(path, PlainTable, Password);
         ScanResult longValues = await ReadBaselineAsync(path, LongValueTable, Password);
+        var options = new AccessReaderOptions(Password) { PageCacheSize = cacheSize, UseLockFile = false };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions(Password) { PageCacheSize = cacheSize, UseLockFile = false },
-            TestContext.Current.CancellationToken);
-
-        Assert.True(await ReadsAheadAsync(reader, PlainTable));
+        Assert.True(await ReadsAheadAsync(path, options, PlainTable));
+        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         await AssertScansMatchAsync(reader, PlainTable, plain);
         await AssertScansMatchAsync(reader, LongValueTable, longValues);
     }
@@ -217,9 +208,9 @@ public sealed class TableScanReadAheadTests : IDisposable
         var options = new AccessReaderOptions(Password) { PageCacheSize = 0, UseLockFile = false };
 
         byte[][] expected;
-        await using (AccessReader sequential = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken))
+        await using (ReaderHarness sequential = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken))
         {
-            DatabaseFile sequentialDb = FacadeInternals.Database(sequential);
+            DatabaseFile sequentialDb = sequential.Database;
             expected = new byte[checked((int)sequentialDb.PageCount)][];
             for (int page = 1; page < expected.Length; page++)
             {
@@ -229,8 +220,8 @@ public sealed class TableScanReadAheadTests : IDisposable
 
         // A fresh reader has not built its AES transforms yet, so the first
         // round also races the lazy build.
-        await using AccessReader reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
-        DatabaseFile db = FacadeInternals.Database(reader);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        DatabaseFile db = reader.Database;
         for (int round = 0; round < 8; round++)
         {
             Task<byte[]>[] reads = [.. Enumerable.Range(1, expected.Length - 1).Select(page =>
@@ -291,11 +282,14 @@ public sealed class TableScanReadAheadTests : IDisposable
         string path = await this.CreateDatabaseAsync(format, withLongValues: format != DatabaseFormat.Jet3Mdb, encrypt: false);
         byte[] file = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        // The harness opens the path as AccessReader.OpenAsync does, so Auto
+        // reads positionally and Disabled seeks and reads under the gate.
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(
             path,
             new AccessReaderOptions { PageCacheSize = 0, PageReadOptimizationMode = mode, UseLockFile = false },
             TestContext.Current.CancellationToken);
-        DatabaseFile db = FacadeInternals.Database(reader);
+        DatabaseFile db = reader.Database;
+        Assert.Equal(mode != PageReadOptimizationMode.Disabled && !LibraryTarget.IsNetStandard, db.UsesRandomAccessPageReads);
         int pageSize = db.PageSizeBytes;
         int pageCount = checked((int)db.PageCount);
         Assert.Equal(file.Length, pageCount * pageSize);
@@ -334,15 +328,25 @@ public sealed class TableScanReadAheadTests : IDisposable
     private static string ConcurrentScanTable(int scan, bool withLongValues) =>
         withLongValues && scan % 2 == 1 ? LongValueTable : PlainTable;
 
-    private static async Task<bool> ReadsAheadAsync(AccessReader reader, string tableName)
+    /// <summary>
+    /// Returns whether a reader opened on <paramref name="path"/> with
+    /// <paramref name="options"/> reads <paramref name="tableName"/> ahead,
+    /// asking the table reader of a <see cref="ReaderHarness"/>, which opens
+    /// the path as <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/> does.
+    /// </summary>
+    /// <param name="path">The database file.</param>
+    /// <param name="options">The reader options.</param>
+    /// <param name="tableName">The table.</param>
+    private static async Task<bool> ReadsAheadAsync(string path, AccessReaderOptions options, string tableName)
     {
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(
-            await FacadeInternals.Services(reader).Catalog.ResolveTableAsync(tableName, TestContext.Current.CancellationToken));
-        IReadOnlyList<long> pages = await FacadeInternals.Database(reader).GetOwnedDataPagesAsync(
+            await reader.Services.Catalog.ResolveTableAsync(tableName, TestContext.Current.CancellationToken));
+        IReadOnlyList<long> pages = await reader.Database.GetOwnedDataPagesAsync(
             resolved.Entry.TDefPage,
             TestContext.Current.CancellationToken);
         Assert.True(pages.Count >= 3, $"'{tableName}' should span at least 3 data pages; it spans {pages.Count}.");
-        return FacadeInternals.Services(reader).Tables.ShouldReadAheadTablePages(resolved.Definition, pages);
+        return reader.Services.Tables.ShouldReadAheadTablePages(resolved.Definition, pages);
     }
 
     private static async Task AssertScansMatchAsync(AccessReader reader, string tableName, ScanResult expected)

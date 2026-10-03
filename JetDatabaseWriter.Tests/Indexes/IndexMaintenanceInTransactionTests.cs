@@ -68,11 +68,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         var expectedIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, expectedIds);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
         {
             await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
             await this.InsertTailThenSingleKeysAsync(writer, expectedIds);
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), expectedIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
 
             if (tx is not null)
             {
@@ -92,15 +92,15 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         var seededIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, seededIds);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             var pendingIds = new List<int>(seededIds);
             await this.InsertTailThenSingleKeysAsync(writer, pendingIds);
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), pendingIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, pendingIds, this.ct);
 
             await tx.RollbackAsync(this.ct);
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), seededIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, seededIds, this.ct);
         }
 
         await AssertReopenedTableAndPrimaryKeyMatchAsync(stream, seededIds, this.ct);
@@ -128,14 +128,14 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
                 this.ct);
 
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            await using (WriterHarness writer = await WriterHarness.OpenAsync(
                 path,
                 new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, Password = Password.AsMemory() },
                 this.ct))
             {
                 await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
                 await this.InsertTailThenSingleKeysAsync(writer, expectedIds);
-                await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), expectedIds, this.ct);
+                await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
                 await tx.CommitAsync(this.ct);
             }
 
@@ -179,7 +179,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         var expectedIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows, keyStep: 10, expectedIds);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
         {
             await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
 
@@ -192,7 +192,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             }
 
             _ = await writer.InsertRowsAsync(TableName, middle, this.ct);
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), expectedIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
 
             if (tx is not null)
             {
@@ -224,7 +224,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
         {
             await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
             await CreateKeyedTableAsync(writer, this.ct);
@@ -233,7 +233,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 await writer.InsertRowAsync(TableName, [id, "r"], this.ct);
             }
 
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), expectedIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
 
             if (tx is not null)
             {
@@ -268,7 +268,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         List<int> expectedIds = DistinctRandomIds(400);
         var expectedParentIds = new Dictionary<int, int>(expectedIds.Count);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
         {
             await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
             await writer.CreateTableAsync(
@@ -282,7 +282,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition("ParentChild", parentTable, parentKey, ChildTable, ParentIdColumn), this.ct);
 
-            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
+            WriterServices services = writer.Services;
             foreach (int id in expectedIds)
             {
                 int parentId = parentIds[id % parentIds.Count];
@@ -294,7 +294,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 }
             }
 
-            await AssertChildIndexesMatchAsync(FacadeInternals.Database(writer), expectedParentIds, this.ct);
+            await AssertChildIndexesMatchAsync(writer.Database, expectedParentIds, this.ct);
 
             if (tx is not null)
             {
@@ -316,16 +316,16 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await CreateKeyedTableAsync(writer, this.ct);
             _ = await writer.InsertRowsAsync(TableName, [.. expectedIds.Select(id => new object?[] { id, "r" })], this.ct);
 
-            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
+            WriterServices services = writer.Services;
             ResolvedTable resolved = await services.Catalog.ResolveRequiredTableAsync(TableName, this.ct);
             await services.Indexes.MaintainIndexesAsync(resolved.Entry.TDefPage, resolved.Definition, TableName, this.ct);
-            await AssertTableAndPrimaryKeyMatchAsync(FacadeInternals.Database(writer), expectedIds, this.ct);
+            await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
 
             await tx.CommitAsync(this.ct);
         }
@@ -349,14 +349,18 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     }
 
     private static ValueTask CreateKeyedTableAsync(AccessWriter writer, CancellationToken cancellationToken)
-        => writer.CreateTableAsync(
-            TableName,
-            [
-                new ColumnDefinition(IdColumn, typeof(int)),
-                new ColumnDefinition("Pad", typeof(string), maxLength: 200),
-            ],
-            [new IndexDefinition(PrimaryKeyName, IdColumn) { IsPrimaryKey = true }],
-            cancellationToken);
+        => writer.CreateTableAsync(TableName, KeyedTableColumns(), [KeyedTablePrimaryKey()], cancellationToken);
+
+    private static ValueTask CreateKeyedTableAsync(WriterHarness writer, CancellationToken cancellationToken)
+        => writer.CreateTableAsync(TableName, KeyedTableColumns(), [KeyedTablePrimaryKey()], cancellationToken);
+
+    private static ColumnDefinition[] KeyedTableColumns() =>
+    [
+        new ColumnDefinition(IdColumn, typeof(int)),
+        new ColumnDefinition("Pad", typeof(string), maxLength: 200),
+    ];
+
+    private static IndexDefinition KeyedTablePrimaryKey() => new(PrimaryKeyName, IdColumn) { IsPrimaryKey = true };
 
     /// <summary>
     /// Returns <paramref name="count"/> distinct ids in [1, 10,000,000) in a
@@ -410,15 +414,19 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         return stream;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, bool transactionalWrites)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
+    /// <summary>
+    /// Opens the writer's internal layers over <paramref name="stream"/>, so a
+    /// test can read through the writer's own pages and services; the
+    /// harness's mutation helpers run in the auto-commit scope as the
+    /// facade's methods do.
+    /// </summary>
+    /// <param name="stream">The database.</param>
+    /// <param name="transactionalWrites">Whether each call runs in its own transaction.</param>
+    private static ValueTask<WriterHarness> OpenWriterAsync(MemoryStream stream, bool transactionalWrites)
+        => WriterHarness.OpenAsync(
             stream,
             new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
+            cancellationToken: TestContext.Current.CancellationToken);
 
     private static async Task AssertReopenedTableAndPrimaryKeyMatchAsync(MemoryStream stream, List<int> expectedIds, CancellationToken cancellationToken)
     {
@@ -649,7 +657,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
 
         MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         var parentIds = new List<int>();
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
         {
             await writer.CreateTableAsync(
                 "P",
@@ -666,7 +674,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         return (stream, "P", IdColumn, parentIds);
     }
 
-    private async Task InsertTailThenSingleKeysAsync(AccessWriter writer, List<int> expectedIds)
+    private async Task InsertTailThenSingleKeysAsync(WriterHarness writer, List<int> expectedIds)
     {
         // A batch whose rows need new data pages, then single inserts
         // packed into one key range of the multi-level primary key, so the

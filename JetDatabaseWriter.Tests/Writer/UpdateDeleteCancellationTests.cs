@@ -16,7 +16,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;
 using Xunit;
-using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.WriteMode;
 
 /// <summary>
 /// <c>UpdateRowsAsync</c> and <c>DeleteRowsAsync</c> honour their token through

@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,16 +38,20 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         };
 
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using (AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(0, reader.PageCacheSize);
+            Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+        }
 
-        Assert.Equal(0, reader.PageCacheSize);
-        Assert.Null(ReadPrivateField(PageCacheOf(reader), PageCacheFieldName));
-        Assert.Null(ReadPrivateField(PageCacheOf(reader), RowBoundsCacheFieldName));
-        Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(ReadPrivateField(harness.Services.PageCache, PageCacheFieldName));
+        Assert.Null(ReadPrivateField(harness.Services.PageCache, RowBoundsCacheFieldName));
+        Assert.NotEmpty(await harness.Services.Schema.ListTablesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -66,16 +71,12 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(PageCacheOf(reader), RowBoundsCacheFieldName);
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader.Services.PageCache, PageCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader.Services.PageCache, RowBoundsCacheFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.Equal(options.PageCacheSize, pageCache.Count);
         Assert.True(pageCache.Misses > pageCache.Count);
@@ -159,21 +160,17 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(PageCacheOf(reader), RowBoundsCacheFieldName);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader.Services.PageCache, PageCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader.Services.PageCache, RowBoundsCacheFieldName);
 
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.Services.Schema.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
         Assert.Contains(BetaRowsTable, tables);
-        Assert.NotNull(ReadPrivateField(FacadeInternals.Services(reader).TableCatalog, CatalogCacheFieldName));
+        Assert.NotNull(ReadPrivateField(reader.Services.TableCatalog, CatalogCacheFieldName));
 
         long catalogMisses = pageCache.Misses;
-        IReadOnlyList<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        IReadOnlyList<string> repeatedTables = await reader.Services.Schema.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Equal(tables, repeatedTables);
         Assert.Equal(catalogMisses, pageCache.Misses);
 
@@ -207,15 +204,11 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader).OwnedPages, OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(reader.Database.OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
@@ -239,15 +232,11 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader).OwnedPages, OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(reader.Database.OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
@@ -278,10 +267,15 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), PageCacheFieldName));
-        Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), RowBoundsCacheFieldName));
-        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), PageCacheFieldName));
-        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), RowBoundsCacheFieldName));
+        // The same options build the same reader services under the facades.
+        await using (ReaderHarness cached = await ReaderHarness.OpenAsync(cachedStream, new AccessReaderOptions { PageCacheSize = 16, UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
+        await using (ReaderHarness uncached = await ReaderHarness.OpenAsync(uncachedStream, new AccessReaderOptions { PageCacheSize = 0, UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.NotNull(ReadPrivateField(cached.Services.PageCache, PageCacheFieldName));
+            Assert.NotNull(ReadPrivateField(cached.Services.PageCache, RowBoundsCacheFieldName));
+            Assert.Null(ReadPrivateField(uncached.Services.PageCache, PageCacheFieldName));
+            Assert.Null(ReadPrivateField(uncached.Services.PageCache, RowBoundsCacheFieldName));
+        }
 
         foreach (string tableName in (string[])[AlphaRowsTable, BetaRowsTable])
         {
@@ -389,10 +383,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static string CreatePayload(string prefix, int rowNumber) =>
         prefix + "-" + rowNumber.ToString("D4", CultureInfo.InvariantCulture) + "-" + new string('x', 180);
 
-    private static async ValueTask<int> CountRowsAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
+    private static async ValueTask<int> CountRowsAsync(ReaderHarness reader, string tableName, CancellationToken cancellationToken)
     {
         int rowCount = 0;
-        await foreach (object[] row in reader.Rows(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in reader.Services.Tables.Rows(tableName, progress: null, cancellationToken).ConfigureAwait(false))
         {
             _ = row;
             rowCount++;
@@ -530,12 +524,30 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static int ReadUInt24(byte[] buffer, int offset)
         => buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
 
-    private static ReaderPageCache PageCacheOf(AccessReader reader) => FacadeInternals.Services(reader).PageCache;
-
     private static T ReadRequiredPrivateField<T>(object instance, string fieldName)
         where T : class =>
         Assert.IsType<T>(ReadPrivateField(instance, fieldName));
 
-    private static object? ReadPrivateField(object instance, string fieldName) =>
-        FacadeInternals.ReadPrivateField(instance, fieldName);
+    /// <summary>
+    /// Reads a private instance field of a library type (the page caches, the
+    /// catalog cache, the owner index), declared on the instance's type or a
+    /// base type. The caches keep their state private, so the tests that pin
+    /// when it is built read it this way.
+    /// </summary>
+    /// <param name="instance">The object to read from.</param>
+    /// <param name="fieldName">The field name.</param>
+    /// <exception cref="MissingFieldException">Thrown when no type in <paramref name="instance"/>'s hierarchy declares the field.</exception>
+    private static object? ReadPrivateField(object instance, string fieldName)
+    {
+        for (Type? type = instance.GetType(); type is not null; type = type.BaseType)
+        {
+            FieldInfo? field = type.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field is not null)
+            {
+                return field.GetValue(instance);
+            }
+        }
+
+        throw new MissingFieldException(instance.GetType().FullName, fieldName);
+    }
 }

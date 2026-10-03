@@ -9,10 +9,15 @@ using JetDatabaseWriter.Catalog.Models;
 /// <summary>
 /// Opens a database through the library's internal read layers — the
 /// <see cref="DatabaseFile"/> and a <see cref="ReaderServices"/> graph built
-/// over it — for tests that inspect raw pages, TDEF bytes, or catalog entries.
-/// Nothing goes through <see cref="AccessReader"/>, so the facade carries no
-/// test-only members. No lock-file slot is taken and Agile-encrypted
-/// containers are not unwrapped.
+/// over it — for tests that inspect raw pages, TDEF bytes, catalog entries or
+/// a reader service's state. Nothing goes through <see cref="AccessReader"/>,
+/// so the facade carries no test-only members. A path is opened the way
+/// <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, CancellationToken)"/>
+/// opens it: a synchronous handle with the options' access and sharing and no
+/// access hint, positional reads by
+/// <see cref="AccessReaderOptions.UsesPositionalPageReads"/>, and inline reads
+/// on pool threads. No lock-file slot is taken and Agile-encrypted containers
+/// are not unwrapped.
 /// </summary>
 internal sealed class ReaderHarness : IAsyncDisposable
 {
@@ -28,25 +33,38 @@ internal sealed class ReaderHarness : IAsyncDisposable
     /// <summary>Gets the reader service graph built over <see cref="Database"/>.</summary>
     public ReaderServices Services { get; }
 
-    /// <summary>Opens <paramref name="path"/> read-only, sharing it with any open writer.</summary>
+    /// <summary>
+    /// Opens <paramref name="path"/> as a path-opened <see cref="AccessReader"/>
+    /// opens it, sharing it with any open writer by default.
+    /// </summary>
     /// <param name="path">The database file path.</param>
-    /// <param name="options">Optional reader options (password, cache size, parsing mode).</param>
+    /// <param name="options">Optional reader options (password, cache size, parsing mode, page-read mode, file access and sharing).</param>
     /// <param name="cancellationToken">A token used to cancel the open.</param>
     public static async ValueTask<ReaderHarness> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
-        FileStream stream = DatabaseFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        options ??= new AccessReaderOptions { UseLockFile = false };
+        FileStream stream = DatabaseFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
+        ReaderHarness harness;
         try
         {
-            return await OpenAsync(stream, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+            harness = await OpenAsync(stream, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             await stream.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+
+        if (options.UsesPositionalPageReads(openedFromPath: true))
+        {
+            harness.Database.EnableRandomAccessPageReadsIfSupported();
+        }
+
+        harness.Database.ReadsInlineOnThreadPool = true;
+        return harness;
     }
 
-    /// <summary>Opens the database held in <paramref name="stream"/>.</summary>
+    /// <summary>Opens the database held in <paramref name="stream"/>, as <see cref="AccessReader"/>'s stream overload does.</summary>
     /// <param name="stream">A readable, seekable stream holding the database bytes.</param>
     /// <param name="options">Optional reader options (password, cache size, parsing mode).</param>
     /// <param name="leaveOpen">Whether <paramref name="stream"/> stays open after the harness is disposed.</param>

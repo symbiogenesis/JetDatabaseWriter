@@ -30,20 +30,6 @@ public sealed class UnmaintainableIndexWriteTests
     private const string TableName = "Wide";
     private const int RowCount = 40;
 
-    /// <summary>How a test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The refused write runs inside an explicit transaction, which is then committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     /// <summary>The damaged table a test writes to.</summary>
     [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
     public enum DamagedTable
