@@ -306,7 +306,7 @@ internal static class EncryptionConverter
         // Flag last — it overlaps the password area (see BuildJet4Rc4).
         result[0x62] = 0x07;
 
-        // No page-level encryption for legacy ;pwd= mode.
+        // The legacy password scheme encrypts no pages.
         return result;
     }
 
@@ -426,7 +426,7 @@ internal static class EncryptionConverter
     /// <summary>
     /// Encodes <paramref name="password"/> into the 40-byte header password
     /// area at offset <c>0x42</c>, using either the Jet4 XOR mask (Jet4 RC4 +
-    /// legacy AES CFB-wrapped layouts) or the ACCDB legacy <c>;pwd=</c> mask.
+    /// legacy AES CFB-wrapped layouts) or the ACCDB legacy password mask.
     /// The encoding is the inverse of <see cref="EncryptionManager"/>'s
     /// <c>DecodeJet4Password</c> / <c>DecodeAccdbPassword</c>.
     /// </summary>
@@ -451,7 +451,7 @@ internal static class EncryptionConverter
         {
             throw new JetLimitationException(
                 $"Password is too long for this database format: {password.Length} characters (maximum {maxPasswordLength}). " +
-                "Jet4 RC4, ACCDB legacy ';pwd=', and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
+                "The Jet4 RC4, ACCDB legacy password and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
                 "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
                 $"{maxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
                 "AccessEncryptionFormat.AccdbAgileCfb for longer passwords.");

@@ -179,7 +179,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await AssertOpenableAsync(path, password: null, originalTables);
     }
 
-    // ───── ACCDB legacy ;pwd= ────────────────────────────────────────
+    // ───── ACCDB legacy password ─────────────────────────────────────
 
     [Fact]
     public async Task EncryptDecrypt_AccdbLegacy_RoundTripsThroughChangePassword()

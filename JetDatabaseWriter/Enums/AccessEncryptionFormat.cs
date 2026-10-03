@@ -13,29 +13,34 @@ public enum AccessEncryptionFormat
     None = 0,
 
     /// <summary>
-    /// Jet4 RC4 page encryption (Access 2000 – 2003 <c>.mdb</c>). Password
+    /// The library's Jet4 RC4 page encryption for Jet4 <c>.mdb</c> files. Password
     /// XOR-verified in the header password area at <c>0x42</c>, encryption flag
     /// <c>0x02</c> or <c>0x03</c> in raw header byte <c>0x62</c>, RC4 database
     /// key at <c>0x3E</c>, per-page RC4 with key <c>MD5(dbKey ‖ pageNumber)[..4]</c>.
     /// Byte <c>0x62</c> lies inside the password area, which Access masks and,
     /// on a file without a password, fills with a pattern derived from the
     /// creation date, so the flag is detected only when the area holds a password.
+    /// This scheme has not been checked against files Access encrypted, and
+    /// mdbtools and Jackcess describe Jet4 encryption differently, so Access may
+    /// not open its output and Access-encrypted files may not open with it.
     /// </summary>
     Jet4Rc4 = 1,
 
     /// <summary>
-    /// ACCDB legacy password-only protection, on every ACE version. Password
+    /// The library's ACCDB password-only protection, on every ACE version. Password
     /// XOR-verified in the header password area at <c>0x42</c>, flag <c>0x07</c>
     /// in raw header byte <c>0x62</c>, detected, as for <see cref="Jet4Rc4"/>,
-    /// only when the area holds a password; pages are not encrypted.
+    /// only when the area holds a password; pages are not encrypted. No file
+    /// Access wrote is known to use it: its password mask was fitted to a
+    /// fixture that holds no password.
     /// </summary>
     AccdbLegacyPassword = 2,
 
     /// <summary>
-    /// Synthetic legacy AES-128 layout used by Access 2007 <c>.accdb</c> files
-    /// that have a CFB magic prefix (<c>D0 CF 11 E0 …</c>) but a flat per-page
-    /// AES-128-ECB body beneath. Key is <c>SHA-256(password)[..16]</c>; password
-    /// is XOR-verified at <c>0x42</c> using the Jet4 mask.
+    /// The library's AES-128 layout for <c>.accdb</c> files: a CFB magic prefix
+    /// (<c>D0 CF 11 E0 …</c>) over a flat per-page AES-128-ECB body. Key is
+    /// <c>SHA-256(password)[..16]</c>; password is XOR-verified at <c>0x42</c>
+    /// using the Jet4 mask. No file Access wrote is known to use it.
     /// </summary>
     AccdbAesCfbWrapped = 3,
 
