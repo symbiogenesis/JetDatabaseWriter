@@ -11,7 +11,8 @@ JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
-├── DatabaseFile.cs                        (one open database: stream, format layouts, page I/O, TDEF parsing, owned-page and live-row enumeration)
+├── DatabaseFile.cs                        (one open database: stream, page I/O, TDEF parsing, owned-page and live-row enumeration; forwards its format members to JetFormat)
+├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
 ├── AccessReaderOptions.cs
@@ -382,7 +383,7 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 | Layer | Folders | Responsibility |
 |-------|---------|----------------|
 | **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
-| **Storage / Page Services** | `DatabaseFile` (root), `Pages/`, `Transactions/`, `Encryption/` | One open file's page I/O and format layouts, page caching, usage-map parsing/serialization, allocation/free-list reuse, journaling, locking, page encryption |
+| **Storage / Page Services** | `DatabaseFile` (root), `JetFormat` (root), `Pages/`, `Transactions/`, `Encryption/` | One open file's page I/O and format layouts, page caching, usage-map parsing/serialization, allocation/free-list reuse, journaling, locking, page encryption |
 | **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Tables/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; run the reader's and writer's table workflows; translate and run LINQ queries; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`, `ReaderServices`, `WriterServices`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and composition |
 
@@ -391,7 +392,7 @@ Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only wh
 - reader: `TableReader`, `IndexRowReader`, `SchemaReader`, or `ComplexItemReader`; `FromIndex` and `Query<T>` return handles built over those services;
 - writer: `TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, or `TransactionLifecycle`, inside the auto-commit scope.
 
-Each facade owns one **`DatabaseFile`**: the backing stream, the detected format and its byte layouts, page read/write/append (decryption, the transaction journal, cooperative byte-range locks), TDEF parsing, and owned data-page and live-row enumeration. Its `PageCount` is the one end of file: inside a transaction it includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds it, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
+Each facade owns one **`DatabaseFile`**: the backing stream, its format profile (`JetFormat`, exposed as `DatabaseFile.Profile`: the format, page size, code page, byte layouts and text codecs, built once from the header), page read/write/append (decryption, the transaction journal, cooperative byte-range locks), TDEF parsing, and owned data-page and live-row enumeration. Its `PageCount` is the one end of file: inside a transaction it includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds it, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
 
 `ReaderServices` and `WriterServices` are the **composition roots**. Each builds its facade's collaborators once and passes each one two kinds of dependency through its constructor:
 
@@ -488,7 +489,8 @@ Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, 
                     ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 Queries/          → Indexes/, Linq/, Mapping/, Tables/, Infrastructure/
 Linq/             → Queries/, Infrastructure/
-DatabaseFile (root)   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
+DatabaseFile (root)   → JetFormat, Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
+JetFormat (root)      → Encryption/, Indexes/, Pages/, Schema/
 AccessBase (root)     → DatabaseFile
 AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
 AccessWriter (root)   → WriterServices, Relationships/, Encryption/, Schema/, Transactions/
@@ -575,7 +577,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-erase page reclamation |
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps read-only B-tree descent and in-place mutation planning separate from TDEF/catalog orchestration |
-| **Strategy via layout structs** | `DataPageLayout`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
+| **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
 | **Pager** | `DatabaseFile` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O with the reader's 256-page LRU eviction cache and an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |

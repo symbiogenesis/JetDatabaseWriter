@@ -25,11 +25,11 @@ using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// One open JET database file: the backing stream, the detected format and its
-/// byte layouts, page I/O (decryption, the transaction journal, cooperative
-/// byte-range locks), TDEF parsing, and owned data-page and live-row
-/// enumeration. Shared by the reader and writer service graphs; it knows
-/// nothing about either facade.
+/// One open JET database file: the backing stream, its format profile
+/// (<see cref="JetFormat"/>, whose members it forwards), page I/O
+/// (decryption, the transaction journal, cooperative byte-range locks), TDEF
+/// parsing, and owned data-page and live-row enumeration. Shared by the
+/// reader and writer service graphs; it knows nothing about either facade.
 /// </summary>
 internal sealed class DatabaseFile : IAsyncDisposable
 {
@@ -37,12 +37,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     private readonly bool canCacheOwnedDataPages;
     private readonly Type ownerType;
     private readonly PageDecryptionKeys pageKeys;
-
-    /// <summary>
-    /// <see cref="AnsiEncoding"/> with an encoder that throws for a character
-    /// the code page does not have; Jet3 text and names are encoded with it.
-    /// </summary>
-    private readonly Encoding ansiTextEncoder;
 
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
 #if NET9_0_OR_GREATER
@@ -60,8 +54,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// </summary>
     private Microsoft.Win32.SafeHandles.SafeFileHandle? randomAccessHandle;
 #endif
-
-    static DatabaseFile() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DatabaseFile"/> class
@@ -93,105 +85,59 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.DatabasePath = path ?? string.Empty;
         this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
 
-        this.Format = EncryptionConverter.DetectFormat(header);
-        this.PageSizeBytes = GetPageSize(this.Format);
+        // The profile detects the format and decodes the code page; neither
+        // step can throw, so a password error below is still the first error
+        // an encrypted file reports, as when the code page was decoded after
+        // the page keys.
+        this.Profile = JetFormat.FromHeader(header);
         bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
         string passwordOptionName = ownerType == typeof(AccessWriter)
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        this.pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Format, isLegacyAesCfb, password, passwordOptionName);
-
-        // Codepage / sort order: stored as a UInt16 at hdr[0x3C], scrambled by
-        // the constant-key RC4 stream Microsoft Access applies to header bytes
-        // [0x18 .. 0x18+126/128]. EncryptionManager.DecodeHeaderCodePage handles
-        // the descrambling so we recover the real codepage (e.g. 1252) instead
-        // of a corrupted byte. ACE / ACCDB stores text as UTF-16 in user data
-        // so the codepage there is largely cosmetic, but Jet3 .mdb files (and
-        // Jet4 catalog names) need it correct to round-trip non-ASCII names.
-        // An unknown code page falls back to UTF-8: Jet3 files that earlier
-        // builds of this library created left the header unmasked, so its raw
-        // zeros decode as code page 17019, and they hold UTF-8 text.
-        this.CodePage = EncryptionManager.DecodeHeaderCodePage(header, this.Format);
-        if (this.CodePage <= 0)
-        {
-            this.CodePage = 1252;  // default to Windows-1252 if unknown
-        }
-
-        try
-        {
-            this.AnsiEncoding = Encoding.GetEncoding(this.CodePage);
-        }
-        catch (ArgumentException)
-        {
-            this.AnsiEncoding = Encoding.UTF8;
-            this.CodePage = 65001;
-        }
-        catch (NotSupportedException)
-        {
-            this.AnsiEncoding = Encoding.UTF8;
-            this.CodePage = 65001;
-        }
-
-        this.ansiTextEncoder = CreateStrictEncoder(this.AnsiEncoding);
-
-        // Format-specific TDEF / page / column / row layouts:
-        //   Jet4 / ACE (Access 2000–2019): TDEF 8+55 = 63 bytes, column descriptor 25 bytes.
-        //   Jet3        (Access 97):       TDEF 8+35 = 43 bytes, column descriptor 18 bytes.
-        this.DataPage = DataPageLayout.For(this.Format);
-        this.LvalPage = LvalPageLayout.For(this.Format);
-        this.TDef = TDefHeaderLayout.For(this.Format);
-        this.ColumnDescriptor = ColumnDescriptorLayout.For(this.Format);
-        this.RowFields = RowFieldSizes.For(this.Format);
-        this.IndexLayoutInfo = IndexLayout.For(this.Format);
+        this.pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Profile.Kind, isLegacyAesCfb, password, passwordOptionName);
     }
 
     internal delegate ValueTask<bool> TableRowVisitor(TableRow row, CancellationToken cancellationToken);
 
     internal delegate ValueTask<bool> DataPageVisitor(long pageNumber, byte[] page, CancellationToken cancellationToken);
 
-    // ── Format-specific layouts ───────────────────────────────────────
-    // Each struct groups a related set of byte offsets / entry sizes that
-    // differ between Jet3 (Access 97 .mdb) and Jet4/ACE (.mdb + .accdb).
-    // Populated once at construction so call sites do not need to inline
-    // `jet3 ? ... : ...` ternaries on every access.
-
-    /// <summary>Gets per-format byte offsets within a data-page (page type 0x01) header — see <see cref="DataPageLayout"/>.</summary>
-    internal DataPageLayout DataPage { get; }
-
-    /// <summary>Gets the per-format layout of an LVAL page — see <see cref="LvalPageLayout"/>.</summary>
-    internal LvalPageLayout LvalPage { get; }
-
-    /// <summary>Gets per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="TDefHeaderLayout"/>.</summary>
-    internal TDefHeaderLayout TDef { get; }
-
-    /// <summary>Gets per-format byte offsets within one column descriptor — see <see cref="ColumnDescriptorLayout"/>.</summary>
-    internal ColumnDescriptorLayout ColumnDescriptor { get; }
-
-    /// <summary>Gets per-format byte sizes of the in-row trailer fields — see <see cref="RowFieldSizes"/>.</summary>
-    internal RowFieldSizes RowFields { get; }
-
     /// <summary>
-    /// Gets per-format byte offsets and entry sizes for the TDEF page's real-idx
-    /// physical descriptor (§3.1) and logical-idx entry (§3.2) sections.
+    /// Gets the file's immutable format profile: format, page size, code page,
+    /// byte layouts and text codecs. The format members below forward to it.
     /// </summary>
-    internal IndexLayout IndexLayoutInfo { get; }
+    internal JetFormat Profile { get; }
 
-    /// <summary>Gets the database page size in bytes.</summary>
-    internal int PageSizeBytes { get; }
+    // ── Format-specific layouts (forwarders to Profile) ──────────────
 
-    /// <summary>Gets the detected database format.</summary>
-    internal DatabaseFormat Format { get; }
+    /// <summary>Gets per-format byte offsets within a data-page (page type 0x01) header — see <see cref="JetFormat.DataPage"/>.</summary>
+    internal DataPageLayout DataPage => this.Profile.DataPage;
 
-    /// <summary>
-    /// Gets the database's ANSI code-page encoding, which decodes Jet3 text and
-    /// names. Its encoder substitutes a best-fit character or <c>?</c> for one
-    /// the code page does not have, so Jet3 text and names are encoded with
-    /// <see cref="EncodeAnsiText"/> instead, which refuses such a character.
-    /// </summary>
-    internal Encoding AnsiEncoding { get; }
+    /// <summary>Gets the per-format layout of an LVAL page — see <see cref="JetFormat.LvalPage"/>.</summary>
+    internal LvalPageLayout LvalPage => this.Profile.LvalPage;
 
-    /// <summary>Gets the decoded database code page.</summary>
-    internal int CodePage { get; }
+    /// <summary>Gets per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="JetFormat.TDef"/>.</summary>
+    internal TDefHeaderLayout TDef => this.Profile.TDef;
+
+    /// <summary>Gets per-format byte offsets within one column descriptor — see <see cref="JetFormat.ColumnDescriptor"/>.</summary>
+    internal ColumnDescriptorLayout ColumnDescriptor => this.Profile.ColumnDescriptor;
+
+    /// <summary>Gets per-format byte sizes of the in-row trailer fields — see <see cref="JetFormat.RowFields"/>.</summary>
+    internal RowFieldSizes RowFields => this.Profile.RowFields;
+
+    /// <summary>Gets the per-format real-idx and logical-idx layouts — see <see cref="JetFormat.Index"/>.</summary>
+    internal IndexLayout IndexLayoutInfo => this.Profile.Index;
+
+    /// <summary>Gets the database page size in bytes — see <see cref="JetFormat.PageSize"/>.</summary>
+    internal int PageSizeBytes => this.Profile.PageSize;
+
+    /// <summary>Gets the detected database format — see <see cref="JetFormat.Kind"/>.</summary>
+    internal DatabaseFormat Format => this.Profile.Kind;
+
+    /// <summary>Gets the database's ANSI code-page encoding — see <see cref="JetFormat.AnsiEncoding"/>.</summary>
+    internal Encoding AnsiEncoding => this.Profile.AnsiEncoding;
+
+    /// <summary>Gets the decoded database code page — see <see cref="JetFormat.CodePage"/>.</summary>
+    internal int CodePage => this.Profile.CodePage;
 
     /// <summary>Gets the database backing stream.</summary>
     internal Stream DatabaseStream { get; }
@@ -262,7 +208,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// </summary>
     internal long PageCount => this.ActiveJournal?.NextAppendPageNumber ?? this.PhysicalPageCount;
 
-    internal int RowColumnCountFieldSize => this.RowFields.NumCols;
+    internal int RowColumnCountFieldSize => this.Profile.RowFields.NumCols;
 
     /// <summary>
     /// Gets the page count of the backing stream alone, ignoring any pages an
@@ -270,10 +216,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// transaction is active) and the non-journaled append read it.
     /// </summary>
     private long PhysicalPageCount => this.DatabaseStream.Length / this.PageSizeBytes;
-
-    /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
-    /// <param name="format">The format.</param>
-    internal static int GetPageSize(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet4 : Constants.PageSizes.Jet3;
 
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
@@ -782,203 +724,58 @@ internal sealed class DatabaseFile : IAsyncDisposable
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
-    /// <summary>
-    /// Reads the per-row column count from the row header at
-    /// <paramref name="rowStart"/>. Jet3 stores it as a single byte; Jet4/ACE
-    /// uses a 16-bit little-endian word. Consolidates the format ternary
-    /// previously repeated at every row-cracker entry point.
-    /// </summary>
+    /// <summary>Reads the per-row column count at <paramref name="rowStart"/> — see <see cref="JetFormat.ReadRowColumnCount"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="rowStart">The row start.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal int ReadRowColumnCount(byte[] page, int rowStart)
-        => this.Format == DatabaseFormat.Jet3Mdb ? page[rowStart] : Ru16(page, rowStart);
+    internal int ReadRowColumnCount(byte[] page, int rowStart) => this.Profile.ReadRowColumnCount(page, rowStart);
 
-    /// <summary>
-    /// Decodes a text/memo slice using the format-appropriate codec
-    /// (Jet4 compressed/UCS-2 or Jet3 ANSI). Empty slices return
-    /// <see cref="string.Empty"/>.
-    /// </summary>
+    /// <summary>Decodes a text/memo slice — see <see cref="JetFormat.DecodeText"/>.</summary>
     /// <param name="bytes">The bytes.</param>
     /// <param name="start">The start.</param>
     /// <param name="len">The length in bytes.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal string DecodeTextForFormat(byte[] bytes, int start, int len)
-    {
-        if (len <= 0)
-        {
-            return string.Empty;
-        }
+    internal string DecodeTextForFormat(byte[] bytes, int start, int len) => this.Profile.DecodeText(bytes, start, len);
 
-        return this.Format == DatabaseFormat.Jet3Mdb ? this.AnsiEncoding.GetString(bytes, start, len) : DecodeJet4Text(bytes, start, len);
-    }
-
-    /// <summary>
-    /// Encodes a string for storage using the format-appropriate codec
-    /// (Jet4 with optional compression vs Jet3 ANSI code-page bytes).
-    /// </summary>
+    /// <summary>Encodes a string for storage — see <see cref="JetFormat.EncodeText(string, bool)"/>.</summary>
     /// <param name="value">The value.</param>
     /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal byte[] EncodeTextForFormat(string value, bool compress = true)
-        => this.Format == DatabaseFormat.Jet3Mdb ? this.EncodeAnsiText(value) : EncodeJet4Text(value, compress);
+    internal byte[] EncodeTextForFormat(string value, bool compress = true) => this.Profile.EncodeText(value, compress);
 
-    /// <summary>
-    /// Encodes a string for storage using the format-appropriate codec,
-    /// truncating the Jet4 path to at most <paramref name="maxBytes"/> output bytes.
-    /// </summary>
+    /// <summary>Encodes a string for storage with a byte cap — see <see cref="JetFormat.EncodeText(string, int, bool)"/>.</summary>
     /// <param name="value">The value.</param>
     /// <param name="maxBytes">The max bytes.</param>
     /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal byte[] EncodeTextForFormat(string value, int maxBytes, bool compress = true)
-        => this.Format == DatabaseFormat.Jet3Mdb ? this.EncodeAnsiText(value) : EncodeJet4Text(value, maxBytes, compress);
+    internal byte[] EncodeTextForFormat(string value, int maxBytes, bool compress = true) => this.Profile.EncodeText(value, maxBytes, compress);
 
-    /// <summary>
-    /// Encodes Jet3 text or a Jet3 name in the database's code page. A
-    /// character the code page does not have throws instead of being stored as
-    /// .NET's best-fit match or <c>?</c>; the public write paths refuse such
-    /// text before anything is written (<see cref="DescribeUnstorableCharacter"/>),
-    /// so this throw is only a backstop.
-    /// </summary>
+    /// <summary>Encodes Jet3 text or a Jet3 name in the code page — see <see cref="JetFormat.EncodeAnsiText"/>.</summary>
     /// <param name="value">The text.</param>
     /// <returns>The code-page bytes.</returns>
-    /// <exception cref="EncoderFallbackException"><paramref name="value"/> holds a character the code page does not have.</exception>
-    internal byte[] EncodeAnsiText(string value) => this.ansiTextEncoder.GetBytes(value);
+    internal byte[] EncodeAnsiText(string value) => this.Profile.EncodeAnsiText(value);
 
-    /// <summary>
-    /// Describes the first character of <paramref name="text"/> this database
-    /// cannot store, for an error message, or returns <see langword="null"/>
-    /// when it can store all of them. Jet4 and ACE store text and names as
-    /// UTF-16, which holds any string. Jet3 stores them in the database's code
-    /// page, Windows-1252 for new files, where .NET would write a best-fit
-    /// match or <c>?</c> instead (Łódź as Lódz, 中文 as ??). The stored name
-    /// would then differ from the caller's, so the table could not be found by
-    /// it and a second such name passed the duplicate check, and an index key
-    /// built from the caller's text would not match its row.
-    /// </summary>
+    /// <summary>Describes the first character the database cannot store — see <see cref="JetFormat.DescribeUnstorableCharacter"/>.</summary>
     /// <param name="text">The name or value.</param>
-    /// <returns>The character and its code point, such as <c>'中' (U+4E2D)</c>, or <see langword="null"/>.</returns>
-    internal string? DescribeUnstorableCharacter(string text)
-    {
-        if (this.Format != DatabaseFormat.Jet3Mdb)
-        {
-            return null;
-        }
+    /// <returns>The character and its code point, or <see langword="null"/>.</returns>
+    internal string? DescribeUnstorableCharacter(string text) => this.Profile.DescribeUnstorableCharacter(text);
 
-        try
-        {
-            _ = this.ansiTextEncoder.GetByteCount(text);
-            return null;
-        }
-        catch (EncoderFallbackException ex)
-        {
-            if (ex.CharUnknownHigh != '\0')
-            {
-                return $"'{ex.CharUnknownHigh}{ex.CharUnknownLow}' (U+{char.ConvertToUtf32(ex.CharUnknownHigh, ex.CharUnknownLow):X4})";
-            }
-
-            // A lone surrogate is not printable on its own.
-            return char.IsSurrogate(ex.CharUnknown)
-                ? $"the unpaired surrogate U+{(int)ex.CharUnknown:X4}"
-                : $"'{ex.CharUnknown}' (U+{(int)ex.CharUnknown:X4})";
-        }
-    }
-
-    /// <summary>
-    /// Builds the message for text that <see cref="DescribeUnstorableCharacter"/>
-    /// found a character in.
-    /// </summary>
-    /// <param name="subject">What the text is, such as "The table name '中文'".</param>
-    /// <param name="character">The description <see cref="DescribeUnstorableCharacter"/> returned.</param>
+    /// <summary>Builds the message for unstorable text — see <see cref="JetFormat.UnstorableTextMessage"/>.</summary>
+    /// <param name="subject">What the text is.</param>
+    /// <param name="character">The description of the character.</param>
     /// <returns>The message.</returns>
-    internal string UnstorableTextMessage(string subject, string character)
-        => $"{subject} cannot be stored: it contains {character}, which is not in code page {this.CodePage}. A Jet3 (Access 97) database stores text and object names in its code page.";
+    internal string UnstorableTextMessage(string subject, string character) => this.Profile.UnstorableTextMessage(subject, character);
 
-    /// <summary>
-    /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
-    /// advancing <paramref name="pos"/> past the name bytes.
-    /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
-    /// </summary>
+    /// <summary>Reads one TDEF column name — see <see cref="JetFormat.ReadColumnName"/>.</summary>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="pos">The byte position.</param>
     /// <param name="name">The name.</param>
-    internal int ReadColumnName(byte[] td, ref int pos, out string name)
-    {
-        name = string.Empty;
-        if (pos >= td.Length)
-        {
-            return -1;
-        }
+    internal int ReadColumnName(byte[] td, ref int pos, out string name) => this.Profile.ReadColumnName(td, ref pos, out name);
 
-        if (this.Format != DatabaseFormat.Jet3Mdb)
-        {
-            if (pos + 2 > td.Length)
-            {
-                return -1;
-            }
-
-            int len = Ru16(td, pos);
-            pos += 2;
-            if (pos + len > td.Length)
-            {
-                return -1;
-            }
-
-            name = DecodeUtf16LE(td.AsSpan(pos, len));
-            pos += len;
-            return len + 2;
-        }
-        else
-        {
-            int len = td[pos++];
-            if (pos + len > td.Length)
-            {
-                return -1;
-            }
-
-            name = this.AnsiEncoding.GetString(td, pos, len);
-            pos += len;
-            return len + 1;
-        }
-    }
-
-    /// <summary>
-    /// Encodes <paramref name="name"/> as a TDEF name record, the inverse of
-    /// <see cref="ReadColumnName"/>: on Jet4 / ACE a 2-byte length and the
-    /// UTF-16LE bytes, on Jet3 a 1-byte length and the bytes in the
-    /// database's ANSI code page.
-    /// </summary>
+    /// <summary>Encodes a TDEF name record — see <see cref="JetFormat.EncodeTDefNameRecord"/>.</summary>
     /// <param name="name">The column or index name.</param>
     /// <returns>The length-prefixed name record.</returns>
-    /// <exception cref="ArgumentException">Thrown when the encoded name is longer than its length prefix can hold (255 bytes on Jet3).</exception>
-    /// <exception cref="EncoderFallbackException">Thrown on Jet3 when the name holds a character the code page does not have (<see cref="EncodeAnsiText"/>).</exception>
-    internal byte[] EncodeTDefNameRecord(string name)
-    {
-        bool jet3 = this.Format == DatabaseFormat.Jet3Mdb;
-        byte[] nameBytes = jet3 ? this.EncodeAnsiText(name) : Encoding.Unicode.GetBytes(name);
-        int prefixSize = jet3 ? 1 : 2;
-        int maxLength = jet3 ? byte.MaxValue : ushort.MaxValue;
-        if (nameBytes.Length > maxLength)
-        {
-            throw new ArgumentException(
-                $"The name '{name}' encodes to {nameBytes.Length} bytes; a {this.Format} table definition stores at most {maxLength}.",
-                nameof(name));
-        }
-
-        byte[] record = new byte[prefixSize + nameBytes.Length];
-        if (jet3)
-        {
-            record[0] = (byte)nameBytes.Length;
-        }
-        else
-        {
-            Wu16(record, 0, nameBytes.Length);
-        }
-
-        Buffer.BlockCopy(nameBytes, 0, record, prefixSize, nameBytes.Length);
-        return record;
-    }
+    internal byte[] EncodeTDefNameRecord(string name) => this.Profile.EncodeTDefNameRecord(name);
 
     // ── Page write I/O ───────────────────────────────────────────────
 
@@ -1493,26 +1290,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
 
         return lo < count ? sortedPositions[lo] : pageSize;
-    }
-
-    /// <summary>
-    /// Returns an encoding that encodes as <paramref name="encoding"/> does but
-    /// throws <see cref="EncoderFallbackException"/> for a character it cannot
-    /// encode. .NET's code-page encodings substitute a best-fit match or
-    /// <c>?</c>, and UTF-8 substitutes U+FFFD for an unpaired surrogate.
-    /// </summary>
-    /// <param name="encoding">The database's code-page encoding.</param>
-    /// <returns>The strict encoding.</returns>
-    private static Encoding CreateStrictEncoder(Encoding encoding)
-    {
-        if (encoding is UTF8Encoding)
-        {
-            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
-        }
-
-        var strict = (Encoding)encoding.Clone();
-        strict.EncoderFallback = EncoderFallback.ExceptionFallback;
-        return strict;
     }
 
     /// <summary>

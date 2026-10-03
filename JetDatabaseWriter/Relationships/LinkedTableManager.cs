@@ -528,7 +528,7 @@ internal static class LinkedTableManager
     /// <summary>
     /// Refuses a link argument that the database would not store as given: a
     /// Jet3 <c>MSysObjects</c> row holds the foreign name, path and connect
-    /// string in the database's code page (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>).
+    /// string in the database's code page (<see cref="JetFormat.DescribeUnstorableCharacter"/>).
     /// </summary>
     /// <param name="db">The database the link is written to.</param>
     /// <param name="value">The argument.</param>

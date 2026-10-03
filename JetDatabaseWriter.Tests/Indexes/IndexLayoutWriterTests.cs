@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// The format-aware TDEF index-section writers (<see cref="IndexLayout.WriteRealIdxDescriptor"/>,
-/// <see cref="IndexLayout.WriteLogicalEntry"/>, <see cref="DatabaseFile.EncodeTDefNameRecord"/>)
+/// <see cref="IndexLayout.WriteLogicalEntry"/>, <see cref="JetFormat.EncodeTDefNameRecord"/>)
 /// round-trip through the readers and reproduce the foreign-key entries
 /// Access wrote in indexTestV1997.mdb (Jet3) and indexTestV2000.mdb (Jet4).
 /// </summary>

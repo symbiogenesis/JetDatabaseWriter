@@ -674,7 +674,7 @@ internal sealed class TableDataWriter(
     /// holds a character the database cannot store. Jet3 stores text in its
     /// code page, where .NET would write a best-fit match or <c>?</c>, and an
     /// index entry built from the caller's text would then not match the row
-    /// (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>). Checking the
+    /// (<see cref="JetFormat.DescribeUnstorableCharacter"/>). Checking the
     /// whole row also keeps an update from deleting the old row and then
     /// failing to encode the new one.
     /// </summary>

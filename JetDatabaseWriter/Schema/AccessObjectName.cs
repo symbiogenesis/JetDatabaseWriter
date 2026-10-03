@@ -120,7 +120,7 @@ internal static class AccessObjectName
     /// Refuses a new name that <paramref name="db"/> cannot store as given. A
     /// Jet3 database stores names in its code page, where a character outside
     /// it would be stored as a best-fit match or <c>?</c>, so the stored name
-    /// would no longer match the caller's (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>).
+    /// would no longer match the caller's (<see cref="JetFormat.DescribeUnstorableCharacter"/>).
     /// Jet4 and ACE store any name.
     /// </summary>
     /// <param name="db">The database the name is written to.</param>

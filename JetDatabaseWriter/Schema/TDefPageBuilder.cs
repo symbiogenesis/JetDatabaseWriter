@@ -605,7 +605,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
     /// <exception cref="NotImplementedException">Thrown when an unsupported database format is specified.</exception>
     internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
-        int pgSz = DatabaseFile.GetPageSize(format);
+        int pgSz = JetFormat.PageSizeOf(format);
         byte[] db = new byte[pgSz * 3];
 
         db[0] = 0x00;
@@ -851,7 +851,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         {
             Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
             int tdefLen = Math.Max(0, namePos - offset - 8);
-            int pgSz = DatabaseFile.GetPageSize(format);
+            int pgSz = JetFormat.PageSizeOf(format);
             Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
         }
     }
