@@ -1,10 +1,14 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -25,6 +29,27 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
+    /// <summary>Gets every format in every write mode: <c>plain</c>, <c>transactional</c> and <c>explicit</c>.</summary>
+    public static TheoryData<DatabaseFormat, string> FormatsAndModes
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, string>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                foreach (string mode in new[] { "plain", "transactional", "explicit" })
+                {
+                    data.Add(format, mode);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>Gets every format.</summary>
+    public static TheoryData<DatabaseFormat> Formats => [DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb];
+
     /// <summary>
     /// Auto-increment values start at 1 and increase monotonically when null
     /// is supplied for each FLAG_AUTO_LONG CLR type supported by the writer.
@@ -582,12 +607,327 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.Equal("0", metadata[0].DefaultValueExpression);
     }
 
+    // ── Seed from the TDEF counter and the index ───────────────────────
+
+    /// <summary>
+    /// A file whose TDEF counter lags its rows, as releases before the counter
+    /// was maintained left it: the first value a session hands out follows the
+    /// largest key in the primary-key index, in every write mode.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode"><c>plain</c>, <c>transactional</c> or <c>explicit</c>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task AutoIncrement_CounterBelowIndexedMax_SeedsAboveIndexMax(DatabaseFormat format, string mode)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 5, ct);
+        await SetAutoNumberCounterAsync(ms, "Items", 2, ct);
+
+        await InsertInModeAsync(ms, mode, "new", ct);
+
+        Assert.Equal(6, (await ReadIdsByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// With no index on the AutoNumber column and a counter of 0, as a file an
+    /// earlier build wrote with explicit values, the seed scans the column.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task AutoIncrement_CounterZeroAndNoIndex_ScansAndSeedsAboveMax(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateItemsAsync(format, [], rowCount: 0, ct);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
+        {
+            await writer.InsertRowsAsync("Items", [[3, "a"], [7, "b"], [5, "c"]], ct);
+        }
+
+        await SetAutoNumberCounterAsync(ms, "Items", 0, ct);
+        await InsertInModeAsync(ms, "plain", "new", ct);
+
+        Assert.Equal(8, (await ReadIdsByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// The largest key sits in the rightmost leaf of a multi-level index.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task AutoIncrement_MultiLevelIndex_SeedsAboveMax(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int rowCount = format == DatabaseFormat.Jet3Mdb ? 2_000 : 5_000;
+        await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount, ct);
+        Assert.Equal(Constants.PageTypes.IndexIntermediate, await ReadIndexRootPageTypeAsync(ms, format, "Items", ct));
+        await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
+
+        await InsertInModeAsync(ms, "plain", "new", ct);
+
+        Assert.Equal(rowCount + 1, (await ReadIdsByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// Single inserts after a batch append to the index's tail; the seed still
+    /// finds the last of them.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task AutoIncrement_AfterTailAppends_SeedsAboveMax(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 2_000, ct);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
+        {
+            for (int i = 0; i < 600; i++)
+            {
+                await writer.InsertRowAsync("Items", [DBNull.Value, "tail"], ct);
+            }
+        }
+
+        await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
+        await InsertInModeAsync(ms, "plain", "new", ct);
+
+        Assert.Equal(2_601, (await ReadIdsByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// A descending index on the column does not keep the largest value in its
+    /// rightmost leaf, so the seed scans the column instead.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task AutoIncrement_DescendingIndexOnColumn_FallsBackToScan(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("IX_IdDesc", "Id") { DescendingColumns = ["Id"] }], rowCount: 5, ct);
+        await SetAutoNumberCounterAsync(ms, "Items", 2, ct);
+
+        await InsertInModeAsync(ms, "plain", "new", ct);
+
+        Assert.Equal(6, (await ReadIdsByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// AddColumn rebuilds the table to a new TDEF and index inside the
+    /// transaction; the seed reads both through the transaction's journal.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode"><c>transactional</c> or <c>explicit</c>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
+    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
+    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
+    public async Task AutoIncrement_SeedAfterSchemaRewriteInsideTransaction_UsesJournaledCounterAndIndex(DatabaseFormat format, string mode)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 5, ct);
+        await SetAutoNumberCounterAsync(ms, "Items", 2, ct);
+
+        ms.Position = 0;
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct))
+        {
+            JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
+            await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), ct);
+            await writer.InsertRowAsync("Items", [DBNull.Value, "new", DBNull.Value], ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+                await tx.DisposeAsync();
+            }
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
+        {
+            await writer.InsertRowAsync("Items", [DBNull.Value, "later", DBNull.Value], ct);
+        }
+
+        Dictionary<string, int> ids = await ReadIdsByLabelAsync(ms, ct);
+        Assert.Equal(6, ids["new"]);
+        Assert.Equal(7, ids["later"]);
+    }
+
+    /// <summary>
+    /// Seeding the first AutoNumber of a session reads the index, not every
+    /// row with its MEMO values.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task AutoIncrement_FirstInsertOfSession_DoesNotReadLongValues(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync(
+                "Items",
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+                    new("Body", typeof(string)),
+                ],
+                [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }],
+                ct);
+            await writer.InsertRowsAsync(
+                "Items",
+                Enumerable.Range(0, 400).Select(i => new object[] { DBNull.Value, string.Concat(Enumerable.Repeat($"row {i} ", 1_000))[..4_000] }),
+                ct);
+        }
+
+        ms.Position = 0;
+        await using var counting = new CountingStream(ms);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            counting.Reset();
+            await writer.InsertRowAsync("Items", [DBNull.Value, "short"], ct);
+        }
+
+        Assert.True(
+            counting.BytesRead < ms.Length / 4,
+            $"The session's first insert read {counting.BytesRead} bytes of a {ms.Length}-byte file.");
+
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        int newest = 0;
+        await foreach (object[] row in reader.Rows("Items", cancellationToken: ct))
+        {
+            if ((string)row[1] == "short")
+            {
+                newest = (int)row[0];
+            }
+        }
+
+        Assert.Equal(401, newest);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates a database with an <c>Items</c> table (<c>Id</c> AutoNumber,
+    /// <c>Label</c>) carrying <paramref name="indexes"/>, and inserts
+    /// <paramref name="rowCount"/> rows numbered 1 up.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="indexes">The table's indexes.</param>
+    /// <param name="rowCount">How many rows to insert.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask<MemoryStream> CreateItemsAsync(DatabaseFormat format, IReadOnlyList<IndexDefinition> indexes, int rowCount, CancellationToken ct)
+    {
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync(
+                "Items",
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+                    new("Label", typeof(string), maxLength: 50),
+                ],
+                indexes,
+                ct);
+            if (rowCount > 0)
+            {
+                await writer.InsertRowsAsync("Items", Enumerable.Range(1, rowCount).Select(i => new object[] { DBNull.Value, "r" + i.ToString(CultureInfo.InvariantCulture) }), ct);
+            }
+        }
+
+        return ms;
+    }
+
+    /// <summary>Overwrites the TDEF AutoNumber counter of <paramref name="table"/> in place.</summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="table">The table name.</param>
+    /// <param name="value">The counter value to store.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask SetAutoNumberCounterAsync(MemoryStream ms, string table, uint value, CancellationToken ct)
+    {
+        long offset;
+        ms.Position = 0;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: ct))
+        {
+            CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
+            Assert.NotNull(entry);
+            offset = (entry.TDefPage * harness.Database.PageSizeBytes) + harness.Database.TDef.AutoNumber;
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(ms.GetBuffer().AsSpan(checked((int)offset), 4), value);
+    }
+
+    /// <summary>Returns the page type of the root page of the first index on <paramref name="table"/>.</summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="format">The database format, which sets the page size.</param>
+    /// <param name="table">The table name.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask<byte> ReadIndexRootPageTypeAsync(MemoryStream ms, DatabaseFormat format, string table, CancellationToken ct)
+    {
+        int rootPage;
+        await using (AccessReader reader = await OpenReaderAsync(ms, ct))
+        {
+            rootPage = (await reader.ListIndexesAsync(table, ct))[0].FirstDp;
+        }
+
+        int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+        return ms.GetBuffer()[checked(rootPage * pageSize)];
+    }
+
+    /// <summary>
+    /// Inserts one row labelled <paramref name="label"/> with no Id into
+    /// <c>Items</c> through a new writer: <c>plain</c>, with
+    /// <c>UseTransactionalWrites</c> (<c>transactional</c>) or inside an
+    /// explicit committed transaction (<c>explicit</c>).
+    /// </summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <param name="label">The row's label.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask InsertInModeAsync(MemoryStream ms, string mode, string label, CancellationToken ct)
+    {
+        ms.Position = 0;
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        await using AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct);
+        if (mode == "explicit")
+        {
+            await using JetTransaction tx = await writer.BeginTransactionAsync(ct);
+            await writer.InsertRowAsync("Items", [DBNull.Value, label], ct);
+            await tx.CommitAsync(ct);
+        }
+        else
+        {
+            await writer.InsertRowAsync("Items", [DBNull.Value, label], ct);
+        }
+    }
+
+    private static async ValueTask<Dictionary<string, int>> ReadIdsByLabelAsync(MemoryStream ms, CancellationToken ct)
+    {
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        var ids = new Dictionary<string, int>(StringComparer.Ordinal);
+        await foreach (object[] row in reader.Rows("Items", cancellationToken: ct))
+        {
+            ids[(string)row[1]] = (int)row[0];
+        }
+
+        return ids;
     }
 
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken cancellationToken)

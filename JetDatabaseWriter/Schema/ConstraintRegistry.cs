@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
@@ -27,9 +26,6 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// expression and the persisted <c>DefaultValue</c> and <c>ValidationRule</c>
 /// expressions, but not CLR delegates.
 /// </remarks>
-/// <param name="readTableSnapshot">
-/// Delegate used to read a table snapshot for seeding auto-increment counters.
-/// </param>
 /// <param name="readLvPropForTable">
 /// Delegate used to load <c>MSysObjects.LvProp</c> for a table by name when the
 /// registry needs to hydrate from the persisted column properties (e.g. the
@@ -37,13 +33,14 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// when the table has no property block. Optional — if not supplied, hydration
 /// falls back to the legacy TDEF flag bit only.
 /// </param>
-/// <param name="readAutoNumberHighWater">
-/// Delegate that returns a table's persisted AutoNumber high-water value (the
-/// TDEF counter: the last value handed out) by name, or 0 when unknown. The
-/// first AutoNumber a writer session assigns follows the larger of this value
-/// and the largest value in the table, so values freed by deleting the top
-/// rows in an earlier session are not reused. Optional; when not supplied
-/// only the table's rows are consulted.
+/// <param name="readUsedAutoNumberHighWater">
+/// Delegate that returns the largest AutoNumber value a table (by name, with
+/// its definition) has used in a column (by index): the larger of its
+/// persisted TDEF counter, the last value handed out, and the largest value
+/// the column holds. The first AutoNumber a writer session assigns follows it,
+/// so values freed by deleting the top rows in an earlier session are not
+/// reused, and values another tool stored without raising the counter are not
+/// handed out again. Optional; when not supplied the session starts from 1.
 /// </param>
 /// <param name="readComplexReferenceHighWater">
 /// Delegate that returns the largest per-row complex reference a table (by
@@ -53,9 +50,8 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// session starts from 1.
 /// </param>
 internal sealed class ConstraintRegistry(
-    Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot,
     Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null,
-    Func<string, CancellationToken, ValueTask<long>>? readAutoNumberHighWater = null,
+    Func<string, TableDef, int, CancellationToken, ValueTask<long>>? readUsedAutoNumberHighWater = null,
     Func<string, TableDef, CancellationToken, ValueTask<long>>? readComplexReferenceHighWater = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
@@ -294,7 +290,7 @@ internal sealed class ConstraintRegistry(
                 if (isNull && c.IsAutoIncrement)
                 {
                     long? previous = c.NextAutoValue;
-                    long next = await this.GetNextAutoValueAsync(tableName, c, i, cancellationToken).ConfigureAwait(false);
+                    long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
                     (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
                     value = ConvertIntegral(next, c.ClrType);
                     isNull = false;
@@ -793,48 +789,25 @@ internal sealed class ConstraintRegistry(
         return list;
     }
 
-    private async ValueTask<long> GetNextAutoValueAsync(string tableName, ColumnConstraint c, int columnIndex, CancellationToken cancellationToken)
+    /// <summary>
+    /// Hands out the next AutoNumber of column <paramref name="columnIndex"/>.
+    /// The first one in a writer session follows the largest value the table
+    /// has used (<c>readUsedAutoNumberHighWater</c>); later ones continue from
+    /// the session counter.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="c">The column's constraint, which holds the session counter.</param>
+    /// <param name="columnIndex">The column's index in <paramref name="tableDef"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<long> GetNextAutoValueAsync(string tableName, TableDef tableDef, ColumnConstraint c, int columnIndex, CancellationToken cancellationToken)
     {
         if (c.NextAutoValue == null)
         {
-            // The TDEF counter is the persisted high-water mark; the row scan
-            // covers files whose counter lags their rows (explicit values
-            // written by another tool, or a counter Access never maintained).
-            long max = readAutoNumberHighWater is null
+            long used = readUsedAutoNumberHighWater is null
                 ? 0
-                : await readAutoNumberHighWater(tableName, cancellationToken).ConfigureAwait(false);
-            using DataTable snapshot = await readTableSnapshot(tableName, cancellationToken).ConfigureAwait(false);
-            if (snapshot.Columns.Count > columnIndex)
-            {
-                foreach (DataRow row in snapshot.Rows)
-                {
-                    object cell = row[columnIndex];
-                    if (cell is null or DBNull)
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        long v = Convert.ToInt64(cell, CultureInfo.InvariantCulture);
-                        if (v > max)
-                        {
-                            max = v;
-                        }
-                    }
-                    catch (FormatException)
-                    {
-                    }
-                    catch (InvalidCastException)
-                    {
-                    }
-                    catch (OverflowException)
-                    {
-                    }
-                }
-            }
-
-            c.NextAutoValue = max + 1;
+                : await readUsedAutoNumberHighWater(tableName, tableDef, columnIndex, cancellationToken).ConfigureAwait(false);
+            c.NextAutoValue = used + 1;
         }
 
         long assigned = c.NextAutoValue.Value;

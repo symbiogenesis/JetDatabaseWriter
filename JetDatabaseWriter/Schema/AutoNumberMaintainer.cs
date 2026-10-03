@@ -3,11 +3,16 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -17,7 +22,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// value the batch wrote, and it is never lowered (a schema rewrite carries it
 /// over to the rebuilt TDEF), so deleting the top rows does not make their
 /// values available again. <see cref="ConstraintRegistry"/> seeds a writer
-/// session's next AutoNumber from it. The counter is one unsigned 32-bit value
+/// session's next AutoNumber from it and the column's largest value, which
+/// <see cref="ReadUsedHighWaterAsync"/> reads from an index on the column
+/// when there is one. The counter is one unsigned 32-bit value
 /// shared by every AutoNumber column of the table. ACE tables keep a second
 /// counter the same way, the complex AutoNumber at
 /// <see cref="Pages.TDefHeaderLayout.ComplexAutoNumber"/>: the last per-row
@@ -111,6 +118,65 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
         {
             DatabaseFile.ReturnPage(page);
         }
+    }
+
+    /// <summary>
+    /// Returns the largest AutoNumber value the table at
+    /// <paramref name="tdefPage"/> has used in the column at
+    /// <paramref name="columnIndex"/>: the larger of the TDEF counter and the
+    /// largest value the column holds. A writer session's first AutoNumber
+    /// follows it. The column's largest value comes from the rightmost key of
+    /// the first ascending index the column leads, which takes a few page
+    /// reads. With no such index, a key that does not decode, or an index
+    /// that is empty while the TDEF declares rows, it comes from a scan of
+    /// that column alone: data pages only, with no long-value reads. Every
+    /// read goes through <see cref="DatabaseFile"/>, so an active
+    /// transaction's pending writes are visible. Returns 0 when the page is
+    /// not a TDEF.
+    /// </summary>
+    /// <remarks>
+    /// The counter alone is not enough: releases before it was maintained left
+    /// it at 0, and another tool can store explicit values without raising it.
+    /// The index key is read without the row it points at, so a row a reader
+    /// cannot decode still counts.
+    /// </remarks>
+    /// <param name="tdefPage">The table's TDEF page number.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="columnIndex">The AutoNumber column's index in <paramref name="tableDef"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<long> ReadUsedHighWaterAsync(long tdefPage, TableDef tableDef, int columnIndex, CancellationToken cancellationToken)
+    {
+        if (tdefPage <= 0)
+        {
+            return 0;
+        }
+
+        long counter;
+        uint declaredRows;
+        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != Constants.PageTypes.TableDefinition)
+            {
+                return 0;
+            }
+
+            counter = Ru32(page, db.TDef.AutoNumber);
+            declaredRows = Ru32(page, db.TDef.NumRows);
+        }
+        finally
+        {
+            DatabaseFile.ReturnPage(page);
+        }
+
+        if (columnIndex < 0 || columnIndex >= tableDef.Columns.Count)
+        {
+            return counter;
+        }
+
+        long observed = await this.TryReadIndexedMaxAsync(tdefPage, tableDef, tableDef.Columns[columnIndex], declaredRows, cancellationToken).ConfigureAwait(false)
+            ?? await this.ScanColumnMaxAsync(tdefPage, tableDef, columnIndex, cancellationToken).ConfigureAwait(false);
+        return Math.Max(counter, observed);
     }
 
     /// <summary>
@@ -253,6 +319,96 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
                 value = 0;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Returns the largest value in <paramref name="column"/> from the
+    /// rightmost key of the first ascending index the column leads, 0 when
+    /// that index is empty and the TDEF declares no rows, or
+    /// <see langword="null"/> when the column must be scanned instead: it is
+    /// not an <c>Integer</c> or <c>Long Integer</c>, no such index exists, the
+    /// index section does not parse, the key does not decode, or the index is
+    /// empty while the TDEF declares rows.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page number.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="column">The AutoNumber column.</param>
+    /// <param name="declaredRows">The TDEF's row count.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<long?> TryReadIndexedMaxAsync(long tdefPage, TableDef tableDef, ColumnInfo column, uint declaredRows, CancellationToken cancellationToken)
+    {
+        if (column.Type is not (ColumnType.IntegerType or ColumnType.LongIntegerType))
+        {
+            return null;
+        }
+
+        byte[]? tdefBytes = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tdefBytes is null || tdefBytes.Length < db.TDef.BlockEnd)
+        {
+            return null;
+        }
+
+        List<IndexMetadata> indexes;
+        try
+        {
+            indexes = IndexCatalogReader.ReadMetadata(db, tdefBytes, tableDef.Columns);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
+        {
+            return null;
+        }
+
+        IndexMetadata? index = indexes.Find(i => i.FirstDp > 0
+            && i.Columns.Count > 0
+            && i.Columns[0].IsAscending
+            && i.Columns[0].ColumnNumber == column.ColNum);
+        if (index is null)
+        {
+            return null;
+        }
+
+        var cursor = new IndexCursor(IndexPageLayout.ForFormat(db.Format), db.ReadPageCopyAsync, db.PageSizeBytes);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(index.FirstDp, cancellationToken).ConfigureAwait(false);
+        if (last is null)
+        {
+            return declaredRows == 0 ? 0 : null;
+        }
+
+        return IndexKeyEncoder.TryDecodeIntegralKey(column.Type, last.Value.Key, out long value) ? value : null;
+    }
+
+    /// <summary>
+    /// Returns the largest value in the column at <paramref name="columnIndex"/>
+    /// over every live row, decoding that column alone from the data pages, or
+    /// 0 when no row holds one.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page number.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="columnIndex">The column's index in <paramref name="tableDef"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<long> ScanColumnMaxAsync(long tdefPage, TableDef tableDef, int columnIndex, CancellationToken cancellationToken)
+    {
+        var plan = RowDecodePlan.CreatePartial(tableDef, [columnIndex]);
+        object?[] cell = new object?[1];
+        long max = 0;
+        await db.ForEachLiveTableRowAsync(
+            tdefPage,
+            (row, _) =>
+            {
+                if (row.Location.RowSize >= db.RowFields.NumCols
+                    && plan.TryDecodePartialColumns(db, row.Page, row.Location.RowStart, row.Location.RowSize, cell)
+                    && cell[0] is { } boxed
+                    && TryGetAutoNumberCandidate(boxed, out long value)
+                    && value > max)
+                {
+                    max = value;
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return max;
     }
 
     private async ValueTask RaiseCounterAsync(long tdefPage, int offset, long highWater, CancellationToken cancellationToken)
