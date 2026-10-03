@@ -71,6 +71,48 @@ internal static class SyntheticDatabases
     /// <summary>Password of <see cref="AesNumericDbPath"/>.</summary>
     public const string AesPassword = "JetBench";
 
+    /// <summary>Relational parent table (CustomerId primary key, Name).</summary>
+    public const string CustomersTable = "Customers";
+
+    /// <summary>
+    /// Relational child table (OrderId primary key, CustomerId, OrderDate, Amount),
+    /// related to <see cref="CustomersTable"/> by <c>FK_Orders_Customers</c>.
+    /// </summary>
+    public const string OrdersTable = "Orders";
+
+    /// <summary>Name of the index Access gives a primary key.</summary>
+    public const string PrimaryKeyIndex = "PrimaryKey";
+
+    /// <summary>Non-unique index on <c>Orders.OrderDate</c>.</summary>
+    public const string OrderDateIndex = "IX_Orders_OrderDate";
+
+    /// <summary>Rows in <see cref="CustomersTable"/>.</summary>
+    public const int RelationalCustomers = 1_000;
+
+    /// <summary>
+    /// Rows in <see cref="OrdersTable"/>: 10 per customer. Kept at 10,000 because
+    /// creating the relationship over 20,000 orders that already have two indexes
+    /// fails: the full index rebuild needs a REFERENCE index usage map, which the
+    /// writer cannot write yet (see <c>docs/design/read-performance-bottlenecks.md</c>).
+    /// </summary>
+    public const int RelationalOrders = 10_000;
+
+    /// <summary>Attachment table (Id primary key, Files attachment).</summary>
+    public const string DocumentsTable = "Documents";
+
+    /// <summary>The Attachment column of <see cref="DocumentsTable"/>.</summary>
+    public const string DocumentsAttachmentColumn = "Files";
+
+    /// <summary>
+    /// Rows in <see cref="DocumentsTable"/>, each with one attachment. Kept small
+    /// because each <c>AddAttachmentAsync</c> rebuilds the hidden flat table's
+    /// indexes (see <c>docs/design/read-performance-bottlenecks.md</c>).
+    /// </summary>
+    public const int AttachmentDocuments = 150;
+
+    /// <summary>Bytes in each attachment of <see cref="DocumentsTable"/>.</summary>
+    public const int AttachmentBytes = 16 * 1024;
+
     /// <summary>Rows in <see cref="NumericTable"/>.</summary>
     public const int NumericRows = 25_000;
 
@@ -108,6 +150,10 @@ internal static class SyntheticDatabases
 
     /// <summary>Gets the path of an <c>AccdbAesCfbWrapped</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
     public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_aes_v1.accdb");
+
+    public static string RelationalDbPath => Path.Combine(TempRoot, $"Relational_{RelationalCustomers}_{RelationalOrders}_v1.accdb");
+
+    public static string AttachmentDbPath => Path.Combine(TempRoot, $"Attachments_{AttachmentDocuments}_v1.accdb");
 
     /// <summary>Gets the total MEMO characters in <see cref="LargeLongValueTable"/>.</summary>
     public static long LargeLongValueMemoChars { get; } = SumLargeLongValueLengths(IsLargeMemoRow, LargeMemoLength);
@@ -208,6 +254,117 @@ internal static class SyntheticDatabases
         await AccessWriter.EncryptAsync(building, AesPassword.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped).ConfigureAwait(false);
         File.Move(building, AesNumericDbPath);
     }
+
+    /// <summary>
+    /// Ensures <see cref="RelationalDbPath"/> exists: <see cref="RelationalCustomers"/>
+    /// customers and <see cref="RelationalOrders"/> orders (order <c>n</c> belongs to
+    /// customer <c>((n - 1) % 1000) + 1</c>, is dated <see cref="OrderDate"/>(n), and
+    /// each customer's k-th order has Amount <c>20 * k</c>), with
+    /// <see cref="OrderDateIndex"/> and the <c>FK_Orders_Customers</c> relationship,
+    /// created after the inserts so they skip the per-row referential check.
+    /// </summary>
+    /// <returns>A task that completes when the file exists.</returns>
+    public static async Task EnsureRelationalAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        if (File.Exists(RelationalDbPath))
+        {
+            return;
+        }
+
+        string building = Path.ChangeExtension(RelationalDbPath, ".building.accdb");
+        File.Delete(building);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(building, DatabaseFormat.AceAccdb).ConfigureAwait(false))
+        {
+            await writer.CreateTableAsync(
+                CustomersTable,
+                [
+                    new("CustomerId", typeof(int)) { IsPrimaryKey = true },
+                    new("Name", typeof(string), 64),
+                ]).ConfigureAwait(false);
+            await writer.CreateTableAsync(
+                OrdersTable,
+                [
+                    new("OrderId", typeof(int)) { IsPrimaryKey = true },
+                    new("CustomerId", typeof(int)),
+                    new("OrderDate", typeof(DateTime)),
+                    new("Amount", typeof(decimal)),
+                ],
+                [new IndexDefinition(OrderDateIndex, "OrderDate")]).ConfigureAwait(false);
+
+            var customers = new List<object[]>(RelationalCustomers);
+            for (int id = 1; id <= RelationalCustomers; id++)
+            {
+                customers.Add([id, "Customer " + id.ToString(CultureInfo.InvariantCulture)]);
+            }
+
+            await writer.InsertRowsAsync(CustomersTable, customers).ConfigureAwait(false);
+
+            var orders = new List<object[]>(RelationalOrders);
+            for (int id = 1; id <= RelationalOrders; id++)
+            {
+                orders.Add([id, ((id - 1) % RelationalCustomers) + 1, OrderDate(id), (decimal)((((id - 1) / RelationalCustomers) + 1) * 20)]);
+            }
+
+            await writer.InsertRowsAsync(OrdersTable, orders).ConfigureAwait(false);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Orders_Customers", CustomersTable, "CustomerId", OrdersTable, "CustomerId")).ConfigureAwait(false);
+        }
+
+        File.Move(building, RelationalDbPath);
+    }
+
+    /// <summary>
+    /// Ensures <see cref="AttachmentDbPath"/> exists: <see cref="AttachmentDocuments"/>
+    /// rows, each with one <see cref="AttachmentBytes"/>-byte attachment added through
+    /// <c>AddAttachmentAsync</c>. The file names end in <c>.dat</c>, so the writer
+    /// stores the data deflate-compressed, as Access does for types it does not
+    /// keep raw; the bytes are pseudo-random, so they barely compress.
+    /// </summary>
+    /// <returns>A task that completes when the file exists.</returns>
+    public static async Task EnsureAttachmentsAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        if (File.Exists(AttachmentDbPath))
+        {
+            return;
+        }
+
+        string building = Path.ChangeExtension(AttachmentDbPath, ".building.accdb");
+        File.Delete(building);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(building, DatabaseFormat.AceAccdb).ConfigureAwait(false))
+        {
+            await writer.CreateTableAsync(
+                DocumentsTable,
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new(DocumentsAttachmentColumn, typeof(byte[])) { IsAttachment = true },
+                ]).ConfigureAwait(false);
+
+            var rows = new List<object[]>(AttachmentDocuments);
+            for (int id = 1; id <= AttachmentDocuments; id++)
+            {
+                rows.Add([id, DBNull.Value]);
+            }
+
+            await writer.InsertRowsAsync(DocumentsTable, rows).ConfigureAwait(false);
+            for (int id = 1; id <= AttachmentDocuments; id++)
+            {
+                await writer.AddAttachmentAsync(
+                    DocumentsTable,
+                    DocumentsAttachmentColumn,
+                    new Dictionary<string, object?> { ["Id"] = id },
+                    new AttachmentInput("document" + id.ToString(CultureInfo.InvariantCulture) + ".dat", MakeRandomBytes(id, AttachmentBytes))).ConfigureAwait(false);
+            }
+        }
+
+        File.Move(building, AttachmentDbPath);
+    }
+
+    /// <summary>Gets the OrderDate of order <paramref name="orderId"/>: one hour after the previous order, from 2020-01-01.</summary>
+    /// <param name="orderId">The order id.</param>
+    /// <returns>The order's date.</returns>
+    public static DateTime OrderDate(int orderId) => new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Unspecified).AddHours(orderId);
 
     public static bool IsLargeMemoRow(int id) => id % 10 == 0;
 
@@ -538,6 +695,15 @@ internal static class SyntheticDatabases
         }
 
         return new string(buffer);
+    }
+
+    private static byte[] MakeRandomBytes(int seed, int length)
+    {
+        byte[] bytes = new byte[length];
+#pragma warning disable CA5394 // A fixed seed makes the fixture reproducible; nothing here is security-sensitive.
+        new Random(seed).NextBytes(bytes);
+#pragma warning restore CA5394
+        return bytes;
     }
 
     private static byte[] MakeOlePayload(int seed, int length)
