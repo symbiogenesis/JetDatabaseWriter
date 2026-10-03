@@ -785,6 +785,7 @@ internal sealed class TableSchemaEditor(
             await this.TransplantTempTableToOriginalAsync(
                 tableName,
                 entry.TDefPage,
+                tableDef,
                 tempName,
                 tempEntry.TDefPage,
                 renamedLvProp,
@@ -870,9 +871,24 @@ internal sealed class TableSchemaEditor(
         }
     }
 
+    /// <summary>
+    /// Moves the rebuilt copy onto the original TDEF page, so the complex columns'
+    /// <c>MSysComplexColumns</c> rows keep naming the table, and frees the original's
+    /// storage.
+    /// </summary>
+    /// <param name="tableName">The table being rewritten.</param>
+    /// <param name="originalTdefPage">The original's TDEF page, which the copy takes over.</param>
+    /// <param name="originalDef">The original's definition, with its calculated result types.</param>
+    /// <param name="tempName">The rebuilt copy's name.</param>
+    /// <param name="tempTdefPage">The rebuilt copy's TDEF page.</param>
+    /// <param name="lvProp">The persisted properties for the table's catalog row.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the copy has replaced the original.</returns>
+    /// <exception cref="NotSupportedException">The rebuilt copy's TDEF spans more than one page.</exception>
     private async ValueTask TransplantTempTableToOriginalAsync(
         string tableName,
         long originalTdefPage,
+        TableDef originalDef,
         string tempName,
         long tempTdefPage,
         byte[]? lvProp,
@@ -886,7 +902,7 @@ internal sealed class TableSchemaEditor(
                 throw new NotSupportedException("Complex table schema rewrite currently requires a single-page rebuilt TDEF.");
             }
 
-            await this.ReclaimTableStoragePagesAsync(originalTdefPage, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
+            await this.ReclaimTableStoragePagesAsync(originalTdefPage, originalDef, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
             await this.PatchTablePageOwnersAsync(tempTdefPage, originalTdefPage, cancellationToken).ConfigureAwait(false);
             await db.WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
         }
@@ -1100,6 +1116,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
     private async ValueTask DropTableCoreAsync(string tableName, bool rewriting, CancellationToken cancellationToken)
     {
+        Dictionary<long, TableDef> definitions = await this.ReadDefinitionsBeforeDropAsync(tableName, cancellationToken).ConfigureAwait(false);
         UserTableCatalogDeletionResult deleted = await catalogWriter.DeleteUserTableCatalogRowsAsync(
             tableName,
             tdefPage: null,
@@ -1131,22 +1148,59 @@ internal sealed class TableSchemaEditor(
 
         foreach (long tdefPage in deleted.TDefPages)
         {
-            await this.ReclaimDroppedTablePagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            await this.ReclaimTableStoragePagesAsync(tdefPage, definitions.GetValueOrDefault(tdefPage), includeTDefRoot: true, cancellationToken).ConfigureAwait(false);
         }
 
         constraints.Unregister(tableName);
         catalog.Invalidate();
     }
 
-    private ValueTask ReclaimDroppedTablePagesAsync(long tdefPage, CancellationToken cancellationToken)
-        => this.ReclaimTableStoragePagesAsync(tdefPage, includeTDefRoot: true, cancellationToken);
+    /// <summary>
+    /// Reads the definition of each user table named <paramref name="tableName"/>,
+    /// by TDEF page, while its <c>MSysObjects</c> row still holds the calculated
+    /// columns' <c>ResultType</c>. A calculated column whose result is Memo or OLE
+    /// can have another descriptor type in an Access-authored table, and the
+    /// reclaim needs the result type to find the LVAL rows its values point to.
+    /// </summary>
+    /// <param name="tableName">The table about to be dropped.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The definitions, by TDEF page.</returns>
+    private async ValueTask<Dictionary<long, TableDef>> ReadDefinitionsBeforeDropAsync(string tableName, CancellationToken cancellationToken)
+    {
+        var definitions = new Dictionary<long, TableDef>();
+        foreach (CatalogEntry entry in await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(entry.Name, tableName, StringComparison.OrdinalIgnoreCase)
+                && await catalog.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false) is TableDef tableDef)
+            {
+                definitions[entry.TDefPage] = tableDef;
+            }
+        }
 
-    private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, bool includeTDefRoot, CancellationToken cancellationToken)
+        return definitions;
+    }
+
+    /// <summary>
+    /// Frees a table's storage: its data pages, the LVAL rows its rows' long values
+    /// point to, the pages its usage maps list after the first two (index pages, and
+    /// in an Access-authored table each long-value column's LVAL pages), its usage-map
+    /// page, and its TDEF pages.
+    /// </summary>
+    /// <param name="tdefPage">The table's first TDEF page.</param>
+    /// <param name="tableDef">
+    /// The table's definition, read with its calculated result types before its
+    /// catalog row was deleted; <see langword="null"/> reads it from the TDEF, by
+    /// descriptor type alone.
+    /// </param>
+    /// <param name="includeTDefRoot">Whether to free the first TDEF page too; a transplant keeps it.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the pages are freed.</returns>
+    private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, TableDef? tableDef, bool includeTDefRoot, CancellationToken cancellationToken)
     {
         var pagesToFree = new SortedSet<long>();
         var longValueRoots = new List<LongValueDescriptor>();
 
-        TableDef? tableDef = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        tableDef ??= await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         long totalPages = db.PageCount;
         if (tableDef is not null)
         {

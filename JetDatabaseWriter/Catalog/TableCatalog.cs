@@ -97,6 +97,26 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
     }
 
     /// <summary>
+    /// Reads the table definition rooted at <paramref name="tdefPage"/>, or returns
+    /// <see langword="null"/> when the page holds none. When this catalog has a
+    /// <see cref="ColumnPropertyReader"/>, each calculated column carries its persisted
+    /// <c>ResultType</c>. That type comes from the table's <c>MSysObjects</c> row, so
+    /// a caller that deletes the row reads the definition first.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
+    {
+        TableDef? tableDef = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tableDef is not null)
+        {
+            await this.ApplyCalculatedResultTypesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        }
+
+        return tableDef;
+    }
+
+    /// <summary>
     /// Discards the cached user-table list and calculated result types so the
     /// next lookup re-scans <c>MSysObjects</c>.
     /// </summary>

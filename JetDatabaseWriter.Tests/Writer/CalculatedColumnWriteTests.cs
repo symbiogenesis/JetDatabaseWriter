@@ -10,6 +10,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -1335,6 +1337,71 @@ public sealed class CalculatedColumnWriteTests
     }
 
     /// <summary>
+    /// AllNames's cached Memo values (in a Text descriptor) are kept in LVAL rows.
+    /// Dropping the Access-authored table, or rebuilding it for AddColumnAsync,
+    /// releases all of them. Access lists the LVAL pages it wrote in AllNames's
+    /// column usage maps, and the drop frees those pages. A row the writer adds
+    /// gets an LVAL page that no usage map lists, so only the row's header leads
+    /// to it. The drop deletes the catalog row that holds the <c>ResultType</c>
+    /// before it reclaims the table's pages. So it used to read AllNames as Text,
+    /// skip that header and leave the writer's LVAL row allocated and unreachable.
+    /// </summary>
+    /// <param name="operation">"drop" (DropTableAsync) or "addColumn" (a schema rewrite that drops the original).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("drop")]
+    [InlineData("addColumn")]
+    public async Task AccessAuthoredCalculatedMemo_DropOrRewrite_ReleasesItsLvalRows(string operation)
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(
+                "Table1",
+                new RowValues { ["FirstName"] = new string('f', 200), ["LastName"] = new string('l', 200), ["Salary"] = 1m, ["Popularity"] = 1m },
+                TestContext.Current.CancellationToken);
+        }
+
+        List<uint> lvalRows = await ReadLongValueRowPointersAsync(stream, "Table1", "AllNames");
+        Assert.NotEmpty(lvalRows);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            if (operation == "drop")
+            {
+                await writer.DropTableAsync("Table1", TestContext.Current.CancellationToken);
+            }
+            else
+            {
+                await writer.AddColumnAsync("Table1", new("Note", typeof(string), maxLength: 20), TestContext.Current.CancellationToken);
+            }
+        }
+
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        DatabaseFile db = harness.Database;
+        var live = new List<string>();
+        foreach (uint pointer in lvalRows)
+        {
+            int pageNumber = LongValueStore.PageNumber(pointer);
+            int rowIndex = LongValueStore.RowIndex(pointer);
+            if (await harness.Services.PageAllocator.IsPageFreeAsync(pageNumber, TestContext.Current.CancellationToken))
+            {
+                continue;
+            }
+
+            byte[] page = await db.ReadPageCopyAsync(pageNumber, TestContext.Current.CancellationToken);
+            int slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.DataPage.RowsStart + (rowIndex * 2)));
+            if (LongValueStore.IsLvalPage(page) && (slot & Constants.DataPage.DeletedRowFlag) == 0)
+            {
+                live.Add($"page {pageNumber} row {rowIndex}");
+            }
+        }
+
+        Assert.True(live.Count == 0, $"AllNames's LVAL rows are still live after {operation}: {string.Join(", ", live)}.");
+    }
+
+    /// <summary>
     /// A Boolean expression in a Byte calculated column stores 255 for True and 0
     /// for False (the OLE Automation conversion), on insert and when an update
     /// recomputes it.
@@ -1635,6 +1702,45 @@ public sealed class CalculatedColumnWriteTests
 
         Assert.True(mismatches.Count == 0, string.Join(Environment.NewLine, mismatches));
         return table;
+    }
+
+    /// <summary>
+    /// Returns the first LVAL row pointer of each external long value that
+    /// <paramref name="columnName"/> holds in <paramref name="tableName"/>.
+    /// </summary>
+    /// <param name="stream">The database.</param>
+    /// <param name="tableName">The table.</param>
+    /// <param name="columnName">The Memo or OLE column, or a calculated column with such a result.</param>
+    /// <returns>The row pointers.</returns>
+    private static async Task<List<uint>> ReadLongValueRowPointersAsync(MemoryStream stream, string tableName, string columnName)
+    {
+        stream.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
+        TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
+        DatabaseFile db = harness.Database;
+        ColumnInfo column = tableDef.Columns.Single(c => c.Name == columnName);
+        var pointers = new List<uint>();
+        await db.ForEachLiveTableRowAsync(
+            entry.TDefPage,
+            (row, _) =>
+            {
+                int rowStart = row.Location.RowStart;
+                int rowSize = row.Location.RowSize;
+                Assert.True(db.TryParseRowLayout(row.Page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice slice = db.ResolveColumnSlice(row.Page, rowStart, rowSize, layout, column);
+                if (slice.DataLen >= Constants.LongValue.HeaderSize
+                    && LongValueDescriptor.TryRead(row.Page.AsSpan(rowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor)
+                    && descriptor.IsExternal
+                    && descriptor.FirstDp != 0)
+                {
+                    pointers.Add(descriptor.FirstDp);
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            TestContext.Current.CancellationToken);
+        return pointers;
     }
 
     private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)
