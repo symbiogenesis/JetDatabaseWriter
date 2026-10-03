@@ -1,4 +1,4 @@
-At `6eab703`, none of the bugs from my earlier report was fixed. The five commits fixed the code's structure, not its behaviour: my four repros still failed, re-checking the code turned up nine more data-loss or corruption bugs that I ran myself, and no test covered any of them. All of those (bugs 1–12) and every item the re-check agents reproduced are now fixed on main, each with regression tests; see "Fixed since 6eab703". The one exception is a CLR `ValidationRule` delegate, which can't be stored in the file, so it still applies only in the writer that declared it; this is now documented, and `ValidationRuleExpression` is the stored alternative. The fixes turned up follow-ups, listed under each entry. They are being fixed in sixteen groups. Each group lands on main once its commits are reviewed, verified with a clean Release build and both test legs, and recorded here, so some entries at the end of "Fixed since 6eab703" are still partial and say what is left. The Jet3 long-value bug found while fixing them is fixed. The suite runs on net10.0 and on net8.0, which loads the netstandard2.1 build: 9,726 passed, 0 failed, and the 29 DAO tests skipped on each leg as usual.
+At `6eab703`, none of the bugs from my earlier report was fixed. The five commits fixed the code's structure, not its behaviour: my four repros still failed, re-checking the code turned up nine more data-loss or corruption bugs that I ran myself, and no test covered any of them. All of those (bugs 1–12) and every item the re-check agents reproduced are now fixed on main, each with regression tests; see "Fixed since 6eab703". The one exception is a CLR `ValidationRule` delegate, which can't be stored in the file, so it still applies only in the writer that declared it; this is now documented, and `ValidationRuleExpression` is the stored alternative. The fixes turned up follow-ups, listed under each entry. They are being fixed in sixteen groups. Each group lands on main once its commits are reviewed, verified with a clean Release build and both test legs, and recorded here, so some entries at the end of "Fixed since 6eab703" are still partial and say what is left. The Jet3 long-value bug found while fixing them is fixed. The suite runs on net10.0 and on net8.0, which loads the netstandard2.1 build: 9,796 passed, 0 failed, and the 29 DAO tests skipped on each leg as usual.
 
 ## What the five commits fixed
 - **The service-locator problem is gone.** Nothing outside the facades takes `AccessWriter`, `AccessReader` or `AccessBase` any more. `WriterServices` and `ReaderServices` now wire everything explicitly, the two dependency cycles are removed, and `ServiceGraphTests` guards this.
@@ -175,8 +175,15 @@ At `6eab703`, none of the bugs from my earlier report was fixed. The five commit
     - `CalculatedExpressionAccessSemanticsTests` covers the conversions, operators and Null logic.
     - `ColumnConstraintTests.DateArithmeticDefaultAndRule_AreApplied_InEveryWriter` and `SingleQuotedDefaultAndHexRule_AreApplied_InEveryWriter` cover Jet3, Jet4 and ACCDB in every write mode.
     - `CalculatedColumnWriteTests.CreateTable_SingleQuotedAndHexExpressions_AreAcceptedAndEvaluated`.
+  - Dates as text. A date that an expression turned into text went through `Convert.ToString` with the invariant culture. That covers `&`, `CStr`, `Format` with no format, a Text result column and a Text default. So `#2020-01-31 18:30:05#` became `01/31/2020 18:30:05`, and midnight kept `00:00:00`. VBA writes `1/31/2020 6:30:05 PM` and `1/31/2020`. The new `CalculatedExpressionCoercion.ToGeneralDateText` follows OLE Automation's `VarBstrFromDate` for en-US, measured with oleaut32:
+    - no zero padding, and a 12-hour clock with AM/PM;
+    - no time part at midnight, and no date part on day 0;
+    - a fraction of a second rounds up only when it is over one half.
+
+    `ToText`, `Format(d, "General Date")`, `Format(d, "")` and `FormatDateTime(d, vbGeneralDate)` use it. Access formats with the Windows locale; the library always uses the en-US form, whatever the current culture. Tests:
+    - `CalculatedExpressionAccessSemanticsTests.DateToText_IsEnUsGeneralDate`, `DateToText_RoundsToTheNearestSecond` and `DateToText_IgnoresTheCurrentCulture`, under de-DE, ja-JP and en-GB;
+    - `CalculatedColumnWriteTests.InsertAndUpdate_DateInTextExpression_StoresGeneralDate`, under de-DE in every write mode.
   - Not repaired: cached values that earlier builds wrote.
-  - In progress (expressions): culture-independent General Date text for dates converted to text.
 - **Index maintenance left page runs it had reserved marked used when it bailed or threw.** Several index paths reserved a run through `PageAllocator` before they knew they would link it, and no exit path gave it back, so the pages stayed used and unreachable until Access compacted the file:
   - A later index bailing in `TryMaintainIndexesIncrementalAsync` left the earlier rebuilt trees behind: 21 pages on Jet4 and ACCDB and 41 on Jet3 for a 4,000-row primary key.
   - A unique violation in `RebuildIndexesAsync` left 11 or 21.
@@ -236,7 +243,7 @@ The Jet3 long-value bug that was listed here is fixed; see "Fixed since 6eab703"
 1. **Finish the follow-up fixes (wave 1, in progress).** Every follow-up was reproduced and given a fix plan, and the fixes are being made in sixteen groups. Each group lands with regression tests, as described in the intro. Already on main:
    - the Jet3 long values and the row-bound bug;
    - complex-column index keys, references and the ComplexID counter;
-   - calculated-column result types and most of the expression semantics;
+   - calculated-column result types and the expression semantics;
    - the index page-run release and the ACCDB 302-table limit;
    - the CI, publishing and versioning work.
 
@@ -248,7 +255,7 @@ The Jet3 long-value bug that was listed here is fixed; see "Fixed since 6eab703"
    - An explicit NULL inserted into a column with a stored default, such as any Number column in an older Access file, stores the default (constraints entry). It will store NULL, as Access SQL does. An omitted column, or the new `DbDefault.Value`, gets the default (defaults).
    - `RenameColumnAsync` leaves calculated, validation-rule and default expressions naming the old column (RenameColumn entry). It will rewrite them, and `DropColumnAsync` will refuse to drop a column an expression names (rename-expressions).
    - `DetectEncryptionFormatAsync` reports an unencrypted writer-created Jet4 file as `Jet4Rc4`, so `EncryptAsync` refuses it, and new Jet3 files store UTF-8 text (encryption entry; encryption-detect).
-   - The rest: the Jet3 foreign-key entries (index-followups); Access object-name validation and scaffolder name collisions (names-scaffold); the foreign-key check on updates that don't change the key, seen on Northwind (northwind-fk); relationship caching and the AutoNumber seed scan (perf-followups); `RandomAccess` page reads (randomaccess-perf); and the remaining expression, complex-column and tooling commits.
+   - The rest: the Jet3 foreign-key entries (index-followups); Access object-name validation and scaffolder name collisions (names-scaffold); the foreign-key check on updates that don't change the key, seen on Northwind (northwind-fk); relationship caching and the AutoNumber seed scan (perf-followups); `RandomAccess` page reads (randomaccess-perf); and the remaining complex-column and tooling commits.
 2. **Make every write atomic and crash-safe (wave 2).** Without a transaction, update and delete on a wide table written by an earlier build apply their row changes and then throw. A cascade update to two child tables can stop after the first (wide-table and OLE entries), and an update whose re-insert fails loses the row. This comes with the transactions design flaw:
    - statement-level savepoints;
    - a sidecar rollback journal, on by default for path-opened files, so a crash during commit can be rolled back;
