@@ -1,7 +1,10 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
+using System.Data;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -209,6 +212,103 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         }
 
         Assert.Equal(["5|", "6|5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
+    }
+
+    /// <summary>
+    /// The Access-authored relationships of NorthwindTraders.accdb resolve
+    /// their tables, including Orders, whose <c>MSysObjects</c> row is an
+    /// overflow row: an update moves an order line to another existing order
+    /// and is refused for a missing one, a delete of an order status that
+    /// orders use is refused, and a delete of an order cascades to its lines.
+    /// </summary>
+    /// <param name="mode">How the writer runs the operations.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task AccessAuthoredForeignKeys_Northwind_ResolveTheirTables(WriteMode mode)
+    {
+        if (!File.Exists(TestDatabases.NorthwindTraders))
+        {
+            Assert.Skip("NorthwindTraders.accdb is unavailable on this machine.");
+        }
+
+        await using MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, Ct);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(1, await writer.UpdateRowsAsync("OrderDetails", RowCriteria.Where("OrderDetailID", 1), new RowValues { ["OrderID"] = 2 }, Ct));
+
+                InvalidOperationException update = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.UpdateRowsAsync("OrderDetails", RowCriteria.Where("OrderDetailID", 1), new RowValues { ["OrderID"] = 99999 }, Ct));
+                Assert.Contains(
+                    "UPDATE of 'OrderDetails' violates foreign-key constraint 'New_New_OrdersOrderDetails': no matching row in 'Orders'",
+                    update.Message,
+                    StringComparison.Ordinal);
+
+                InvalidOperationException delete = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.DeleteRowsAsync("OrderStatus", RowCriteria.Where("OrderStatusID", 3), Ct));
+                Assert.Contains("DELETE on 'OrderStatus' violates foreign-key constraint 'New_New_OrdersStatusOrders'", delete.Message, StringComparison.Ordinal);
+                Assert.Contains("dependent row(s) in 'Orders'", delete.Message, StringComparison.Ordinal);
+
+                // New_New_OrdersOrderDetails cascades deletes, including to
+                // the line just moved to order 2.
+                Assert.Equal(1, await writer.DeleteRowsAsync("Orders", RowCriteria.Where("OrderID", 2), Ct));
+            });
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        using DataTable details = await reader.ReadDataTableAsync("OrderDetails", cancellationToken: Ct);
+        Assert.Empty(details.Select("OrderDetailID = 1 OR OrderID = 2"));
+        Assert.NotEmpty(details.Select("OrderID = 1"));
+        using DataTable orders = await reader.ReadDataTableAsync("Orders", cancellationToken: Ct);
+        Assert.Empty(orders.Select("OrderID = 2"));
+    }
+
+    /// <summary>
+    /// The Access 97 relationship 'Table3Table1' of indexTestV1997.mdb resolves
+    /// Table3, which the catalog once missed: an update of Table1.otherfk2 to
+    /// another Table3 id succeeds and one to a missing id is refused.
+    /// </summary>
+    /// <param name="mode">How the writer runs the operations.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task AccessAuthoredForeignKeys_Jet3IndexTest_ResolveTheirTables(WriteMode mode)
+    {
+        if (!File.Exists(TestDatabases.IndexTestV1997))
+        {
+            Assert.Skip("Jet3 index fixture is unavailable on this machine.");
+        }
+
+        await using MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.IndexTestV1997, Ct);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            Assert.Equal(DatabaseFormat.Jet3Mdb, writer.DatabaseFormat);
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(1, await writer.UpdateRowsAsync("Table1", RowCriteria.Where("otherfk2", 10), new RowValues { ["otherfk2"] = 13 }, Ct));
+
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.UpdateRowsAsync("Table1", RowCriteria.Where("otherfk2", 13), new RowValues { ["otherfk2"] = 999 }, Ct));
+                Assert.Contains(
+                    "UPDATE of 'Table1' violates foreign-key constraint 'Table3Table1': no matching row in 'Table3'",
+                    ex.Message,
+                    StringComparison.Ordinal);
+            });
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        using DataTable table1 = await reader.ReadDataTableAsync("Table1", cancellationToken: Ct);
+        Assert.Equal(
+            [11, 11, 13, 13],
+            table1.AsEnumerable().Select(row => Convert.ToInt32(row["otherfk2"], CultureInfo.InvariantCulture)).Order());
     }
 
     /// <summary>
