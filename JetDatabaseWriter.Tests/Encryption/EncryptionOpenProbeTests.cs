@@ -77,6 +77,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(AdventureWorks, AccessEncryptionFormat.None)]
     [InlineData(Northwind, AccessEncryptionFormat.None)]
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task ReaderOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
@@ -101,6 +102,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task WriterOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {

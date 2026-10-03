@@ -97,6 +97,11 @@ public sealed class CreateDatabaseTests
         Assert.NotEqual(0x07, bytes[0x62]);
         Assert.NotEqual(0xE4, bytes[0x3C]);
 
+        // Raw byte 0x62 is a creation-date byte of the masked password area,
+        // not an encryption flag.
+        ms.Position = 0;
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, TestContext.Current.CancellationToken));
+
         EncryptionManager.TransformHeaderMask(bytes);
         Assert.Equal(0xE4, bytes[0x3C]);
         Assert.Equal(0x04, bytes[0x3D]);

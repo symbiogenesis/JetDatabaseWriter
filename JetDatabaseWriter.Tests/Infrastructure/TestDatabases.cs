@@ -16,7 +16,11 @@ using Xunit;
 /// </summary>
 internal static class TestDatabases
 {
-    /// <summary>The password required to open <see cref="AesEncrypted"/>.</summary>
+    /// <summary>
+    /// The password the synthetic encrypted fixtures use. It is the password
+    /// <see cref="AesEncrypted"/> was compacted with, which DAO treated as the
+    /// source's password, so that file has none.
+    /// </summary>
     public const string AesEncryptedPassword = "secret";
 
     // ── In-repo (project-owned) databases ────────────────────────────
@@ -50,12 +54,14 @@ internal static class TestDatabases
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "CompositeTextIndex.accdb");
 
     /// <summary>
-    /// ACCDB created by Access 16 CompactDatabase with password.
-    /// Header byte 0x62 = 0x07 (bits 0/1/2 set); version = 0x03 (Access 2010 format).
-    /// The reader detects this as requiring a password (ACCDB AES check fires).
-    /// Data pages are in ACE native format; password is stored via ACE internal scheme
-    /// (not the Jet4 XOR scheme). Opening with password via
-    /// <see cref="OpenAsync"/> succeeds (handled automatically by that helper).
+    /// ACCDB (ACE version 3) created by Access 16 with
+    /// <c>DBEngine.CompactDatabase(plain, dest, ";;", 4, ";pwd=secret")</c>.
+    /// Despite its name it is neither encrypted nor password-protected: the
+    /// fifth argument is the source's password and option 4 is
+    /// <c>dbDecrypt</c>, so its header password area holds Access's
+    /// empty-password pattern. Its creation day makes raw header byte
+    /// <c>0x62</c> read <c>0x07</c>, which the reader once took for the ACCDB
+    /// legacy password flag.
     /// </summary>
     public static readonly string AesEncrypted =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "AesEncrypted.accdb");
@@ -260,9 +266,13 @@ internal static class TestDatabases
 
     // ── MemberData sets (properties) ──────────────────────────────────
 
-    /// <summary>Gets all in-repo + baseline Jackcess databases (skips any that don't exist or can't be opened).</summary>
+    /// <summary>
+    /// Gets the in-repo databases the reader can open (skips any that don't exist or can't be opened).
+    /// <see cref="AesEncrypted"/> is left out: it is a compacted copy of
+    /// <see cref="NorthwindTraders"/>, so it would only repeat Northwind's rows.
+    /// </summary>
     public static TheoryData<string> All =>
-        ToTheoryData(InRepoDatabases.Where(IsReadable));
+        ToTheoryData(InRepoDatabases.Where(static p => p != AesEncrypted && IsReadable(p)));
 
     /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
     public static TheoryData<string> Small => ToTheoryData(
@@ -326,15 +336,6 @@ internal static class TestDatabases
 
     public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
-        // Auto-supply the known password for the encrypted fixture so MemberData-driven
-        // tests (e.g. AllExisting) can open it without each test having to know the
-        // password. Callers that want to test the password path explicitly should call
-        // AccessReader.OpenAsync directly.
-        if (options is null && string.Equals(path, AesEncrypted, StringComparison.OrdinalIgnoreCase))
-        {
-            options = new AccessReaderOptions { Password = AesEncryptedPassword.AsMemory(), UseLockFile = false };
-        }
-
         options ??= new AccessReaderOptions { UseLockFile = false };
 
         return AccessReader.OpenAsync(path, options, cancellationToken);

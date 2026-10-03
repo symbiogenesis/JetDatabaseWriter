@@ -905,12 +905,14 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 | Format | Versions | Detection | Key derivation | Page / payload cipher |
 |---|---|---|---|---|
 | Jet3 page XOR | Access 97 (`.mdb`) | header byte `0x62` bit `0x01` | static 128-byte mask | XOR (no password required) |
-| Jet4 RC4 | Access 2000–2003 (`.mdb`) | header byte `0x62` value `0x02` / `0x03` | password XOR-verified at `0x42`; `dbKey` at `0x3E` | per-page RC4 with `MD5(dbKey ‖ pageNumber)` |
-| ACCDB legacy password | Access 2007+ (`.accdb`, `;pwd=...`) | header byte `0x62` value `0x07` | password XOR-verified at `0x42` | none (password only) |
+| Jet4 RC4 | Access 2000–2003 (`.mdb`) | raw header byte `0x62` value `0x02` / `0x03`, and a password in the header password area at `0x42` | password XOR-verified at `0x42`; `dbKey` at `0x3E` | per-page RC4 with `MD5(dbKey ‖ pageNumber)` |
+| ACCDB legacy password | Access 2007+ (`.accdb`) | raw header byte `0x62` value `0x07`, and a password in the header password area at `0x42` | password XOR-verified at `0x42` | none (password only) |
 | ACCDB AES-128 (CFB-wrapped) | Access 2007+ (`.accdb`) | CFB magic `D0 CF 11 E0` + Jet4-style header password | SHA-256(password) → 16 bytes | per-page AES-128-ECB |
 | ACCDB Standard (Office 2007) | Access 2007 (`.accdb`) | CFB compound document with `EncryptionInfo` version (3,2) or (4,2), AlgID `0x6601` | MS-OFFCRYPTO §2.3.6 PBKDF: SHA-1 + 50 000 iterations + 16-byte salt | AES-128-CBC with zero IV over whole `EncryptedPackage` stream |
 | ACCDB Agile (Access-native, default for new ACCDB encryption) | Access 2010 SP1+, Microsoft 365 (`.accdb`) | Flat Agile header: masked encoding key at page-0 `0x3E`, `EncryptionInfo` length at `0x299`, descriptor at `0x29B`; written by `AccessEncryptionFormat.AccdbAgile` | ECMA-376 §2.3.4.11 PBKDF: SHA-512 + `spinCount` iterations + spec block keys (`0xfea7d2763b4b9e79`, `0xd7aa0f6d3061344e`, `0x146e0be7abacd0d6`) | AES-256-CBC per data page; IV `SHA-512(keyDataSalt || (uint32_le(pageNumber) XOR encodingKey))[:16]` |
 | ACCDB Agile (Office Crypto CFB) | Access 2010 SP1+, Office Crypto wrappers (`.accdb`) | CFB v4 compound document with Agile `EncryptionInfo` version (4,4) and `EncryptedPackage`; readable from existing files and written by `AccessEncryptionFormat.AccdbAgileCfb` | ECMA-376 §2.3.4.11 PBKDF: SHA-512 + `spinCount` iterations + spec block keys | AES-256-CBC over 4096-byte `EncryptedPackage` segments |
+
+Header byte `0x62` lies inside the header password area (`0x42..0x69`), which Access masks with the fixed page-0 header keystream. On a file without a password, Access fills that area with the creation date's whole days repeated, so the raw byte at `0x62` depends on the day the file was created. The Jet4 RC4 and ACCDB legacy password flags therefore count only when the unmasked area holds something other than that empty-password pattern.
 
 ---
 

@@ -13,18 +13,21 @@ public enum AccessEncryptionFormat
     None = 0,
 
     /// <summary>
-    /// Jet4 RC4 page encryption (Access 2000 – 2003 <c>.mdb</c>). Encryption flag
-    /// <c>0x02</c> at header offset <c>0x62</c>, password XOR-verified at
-    /// <c>0x42</c>, RC4 database key at <c>0x3E</c>, per-page RC4 with key
-    /// <c>MD5(dbKey ‖ pageNumber)[..4]</c>.
+    /// Jet4 RC4 page encryption (Access 2000 – 2003 <c>.mdb</c>). Password
+    /// XOR-verified in the header password area at <c>0x42</c>, encryption flag
+    /// <c>0x02</c> or <c>0x03</c> in raw header byte <c>0x62</c>, RC4 database
+    /// key at <c>0x3E</c>, per-page RC4 with key <c>MD5(dbKey ‖ pageNumber)[..4]</c>.
+    /// Byte <c>0x62</c> lies inside the password area, which Access masks and,
+    /// on a file without a password, fills with a pattern derived from the
+    /// creation date, so the flag is detected only when the area holds a password.
     /// </summary>
     Jet4Rc4 = 1,
 
     /// <summary>
-    /// ACCDB legacy password-only protection (<c>;pwd=...</c> introduced by
-    /// <c>DBEngine.CompactDatabase</c>). Encryption flag <c>0x07</c> at header
-    /// offset <c>0x62</c>; password XOR-verified at <c>0x42</c>; pages are not
-    /// encrypted.
+    /// ACCDB legacy password-only protection, on every ACE version. Password
+    /// XOR-verified in the header password area at <c>0x42</c>, flag <c>0x07</c>
+    /// in raw header byte <c>0x62</c>, detected, as for <see cref="Jet4Rc4"/>,
+    /// only when the area holds a password; pages are not encrypted.
     /// </summary>
     AccdbLegacyPassword = 2,
 

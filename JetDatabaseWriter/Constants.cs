@@ -342,6 +342,52 @@ internal static class Constants
     }
 
     /// <summary>
+    /// Offsets in the page-0 database header. Access XORs the header bytes
+    /// from <see cref="MaskStart"/> on with a fixed RC4 keystream
+    /// (<see cref="MaskLength"/> bytes on Jet4 / ACE, <see cref="Jet3MaskLength"/>
+    /// on Jet3), so every field from <see cref="MaskStart"/> on is named by
+    /// its offset in the unmasked header.
+    /// </summary>
+    public static class DatabaseHeader
+    {
+        /// <summary>The header bytes the open path reads and hands to <see cref="DatabaseFile"/> (0x80).</summary>
+        public const int Length = 0x80;
+
+        /// <summary>First masked header byte (0x18).</summary>
+        public const int MaskStart = 0x18;
+
+        /// <summary>Masked header bytes on Jet4 / ACE: <c>0x18..0x97</c>.</summary>
+        public const int MaskLength = 128;
+
+        /// <summary>Masked header bytes on Jet3: <c>0x18..0x95</c>.</summary>
+        public const int Jet3MaskLength = 126;
+
+        /// <summary>Jet3 sort order (u16 LCID, 0x3A).</summary>
+        public const int Jet3SortOrder = 0x3A;
+
+        /// <summary>Database code page (u16, 0x3C).</summary>
+        public const int CodePage = 0x3C;
+
+        /// <summary>Database encoding key (u32, 0x3E); 0 on a file Access did not encrypt.</summary>
+        public const int EncodingKey = 0x3E;
+
+        /// <summary>Header password area (0x42).</summary>
+        public const int Password = 0x42;
+
+        /// <summary>Length of the Jet3 header password area (20 bytes, <c>0x42..0x55</c>).</summary>
+        public const int Jet3PasswordLength = 20;
+
+        /// <summary>Length of the Jet4 / ACE header password area (40 bytes, <c>0x42..0x69</c>).</summary>
+        public const int PasswordLength = 40;
+
+        /// <summary>Jet4 / ACE sort order (u16 LCID, 0x6E).</summary>
+        public const int SortOrder = 0x6E;
+
+        /// <summary>Jet4 / ACE creation date (OLE Automation date as an f64, 0x72).</summary>
+        public const int CreationDate = 0x72;
+    }
+
+    /// <summary>
     /// Page type discriminator bytes stored at offset 0 of JET pages.
     /// </summary>
     public static class PageTypes

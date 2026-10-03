@@ -59,8 +59,11 @@ internal static class EncryptionManager
     ];
 
     /// <summary>
-    /// ACE legacy password mask used for password-only ACCDB files
-    /// created via DBEngine.CompactDatabase(..., ";pwd=...").
+    /// Password mask of the library's ACCDB legacy password scheme
+    /// (<see cref="AccessEncryptionFormat.AccdbLegacyPassword"/>). It was fitted
+    /// to <c>AesEncrypted.accdb</c>, an Access 16 <c>CompactDatabase</c> output
+    /// that turned out to hold no password, so no Access-authored file is known
+    /// to use it.
     /// </summary>
     internal static readonly byte[] AccdbLegacyPasswordMask =
     [
@@ -80,8 +83,8 @@ internal static class EncryptionManager
     internal static ReadOnlySpan<byte> Jet4PasswordMaskForWrite => Jet4PasswordMask;
 
     /// <summary>
-    /// Gets a read-only view of the ACCDB legacy password XOR mask (the one used by
-    /// <c>DBEngine.CompactDatabase(..., ";pwd=...")</c>). Exposed for
+    /// Gets a read-only view of the ACCDB legacy password XOR mask
+    /// (<see cref="AccdbLegacyPasswordMask"/>). Exposed for
     /// <see cref="EncryptionConverter"/>.
     /// </summary>
     internal static ReadOnlySpan<byte> AccdbLegacyPasswordMaskForWrite => AccdbLegacyPasswordMask;
@@ -135,12 +138,11 @@ internal static class EncryptionManager
         uint? rc4DbKey = null;
         byte[]? aesPageKey = null;
 
-        // Offset 0x14: Jet/ACE format version byte.
-        byte ver = header[0x14];
-
-        // Jet4 .mdb (Access 2000 – 2003) — flag at 0x62 governs encryption.
-        // ACCDB format (ver >= 2, Access 2007+) reuses this offset for unrelated
-        // bits, so the Jet4 detection only applies to ver == 1.
+        // Jet4 .mdb (Access 2000 – 2003): the library's Jet4 RC4 scheme keeps
+        // its flag in raw header byte 0x62. That byte is byte 32 of the masked
+        // header password area, which on a file without a password holds a
+        // creation-date byte, so the flag counts only when the area holds a
+        // password.
         if (format == DatabaseFormat.Jet4Mdb && header.Length > 0x62)
         {
             byte encFlag = header[0x62];
@@ -149,7 +151,7 @@ internal static class EncryptionManager
             //   0x01 = Office97 password only (no page encryption)
             //   0x02 = RC4 page encryption
             //   0x03 = RC4 + password
-            if (encFlag is >= 0x01 and <= 0x03)
+            if (encFlag is >= 0x01 and <= 0x03 && HasHeaderPassword(header, format))
             {
                 if (password.IsEmpty)
                 {
@@ -172,14 +174,13 @@ internal static class EncryptionManager
             }
         }
 
-        // ACCDB legacy password-only mode (standard ACCDB header, ver >= 3).
-        // Many normal ACCDB files reuse overlapping bits at 0x62, so we only
-        // enforce password verification for the known legacy-password signature
-        // emitted by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
-        if (format == DatabaseFormat.AceAccdb && ver >= 3 && !isLegacyAesCfb && header.Length > 0x62)
+        // ACCDB legacy password-only mode, on every ACE version: flag 0x07 in
+        // raw header byte 0x62, which, as for Jet4, counts only when the
+        // header password area holds a password.
+        if (format == DatabaseFormat.AceAccdb && !isLegacyAesCfb && header.Length > 0x62)
         {
             byte encFlag = header[0x62];
-            if (encFlag == 0x07)
+            if (encFlag == 0x07 && HasHeaderPassword(header, format))
             {
                 if (password.IsEmpty)
                 {
@@ -285,11 +286,123 @@ internal static class EncryptionManager
     internal static void TransformHeaderMask(byte[] headerPage)
     {
         Guard.NotNull(headerPage, nameof(headerPage));
-        int length = Math.Min(128, headerPage.Length - 0x18);
+        int length = Math.Min(Constants.DatabaseHeader.MaskLength, headerPage.Length - Constants.DatabaseHeader.MaskStart);
         if (length > 0)
         {
-            Rc4Transform(headerPage, 0x18, length, HeaderRc4Key);
+            Rc4Transform(headerPage, Constants.DatabaseHeader.MaskStart, length, HeaderRc4Key);
         }
+    }
+
+    /// <summary>
+    /// <para>
+    /// Returns <see langword="true"/> when the page-0 header password area
+    /// holds a password. The area lies in the masked header region. On a
+    /// database without a password Access fills it with zeros (Jet3) or with
+    /// the whole days of the creation date at <c>0x72</c>, as a little-endian
+    /// <see cref="int"/>, repeated (Jet4 / ACE); anything else is a password.
+    /// </para>
+    /// <para>
+    /// Raw header byte <c>0x62</c>, where the library's Jet4 RC4 and ACCDB
+    /// legacy password schemes keep their flag, is byte 32 of the Jet4 / ACE
+    /// area. On a file without a password it is a creation-date byte, so its
+    /// raw value says nothing unless this returns <see langword="true"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="header">Raw page-0 bytes: at least the password area and, on Jet4 / ACE, the creation date (0x7A bytes).</param>
+    /// <param name="format">The database format.</param>
+    /// <returns><see langword="true"/> when the password area holds a password; <see langword="false"/> when it holds Access's empty-password pattern or the header is too short to hold the area.</returns>
+    internal static bool HasHeaderPassword(byte[] header, DatabaseFormat format)
+    {
+        bool jet3 = format == DatabaseFormat.Jet3Mdb;
+        int passwordLength = jet3 ? Constants.DatabaseHeader.Jet3PasswordLength : Constants.DatabaseHeader.PasswordLength;
+        int length = jet3
+            ? Constants.DatabaseHeader.Password + passwordLength
+            : Constants.DatabaseHeader.CreationDate + sizeof(double);
+        if (header is null || header.Length < length)
+        {
+            return false;
+        }
+
+        byte[] unmasked = new byte[length];
+        Buffer.BlockCopy(header, 0, unmasked, 0, length);
+        Rc4Transform(unmasked, Constants.DatabaseHeader.MaskStart, length - Constants.DatabaseHeader.MaskStart, HeaderRc4Key);
+
+        ReadOnlySpan<byte> area = unmasked.AsSpan(Constants.DatabaseHeader.Password, passwordLength);
+        bool allZero = true;
+        foreach (byte b in area)
+        {
+            allZero &= b == 0;
+        }
+
+        if (allZero)
+        {
+            return false;
+        }
+
+        Span<byte> pattern = stackalloc byte[4];
+        if (jet3 || !TryGetEmptyPasswordPattern(unmasked, pattern))
+        {
+            return true;
+        }
+
+        for (int i = 0; i < area.Length; i++)
+        {
+            if (area[i] != pattern[i % pattern.Length])
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Writes the password area of a database without a password into an
+    /// unmasked page-0 header, as Access writes it: zeros on Jet3, and on
+    /// Jet4 / ACE the creation date's whole days repeated. A creation date
+    /// that is not a finite day number leaves zeros, which
+    /// <see cref="HasHeaderPassword"/> also reads as no password.
+    /// </summary>
+    /// <param name="unmaskedHeader">Page-0 bytes with the header mask removed: at least the password area and, on Jet4 / ACE, the creation date.</param>
+    /// <param name="format">The database format.</param>
+    internal static void WriteEmptyHeaderPassword(Span<byte> unmaskedHeader, DatabaseFormat format)
+    {
+        bool jet3 = format == DatabaseFormat.Jet3Mdb;
+        Span<byte> area = unmaskedHeader.Slice(
+            Constants.DatabaseHeader.Password,
+            jet3 ? Constants.DatabaseHeader.Jet3PasswordLength : Constants.DatabaseHeader.PasswordLength);
+
+        Span<byte> pattern = stackalloc byte[4];
+        if (jet3 || !TryGetEmptyPasswordPattern(unmaskedHeader, pattern))
+        {
+            area.Clear();
+            return;
+        }
+
+        for (int i = 0; i < area.Length; i++)
+        {
+            area[i] = pattern[i % pattern.Length];
+        }
+    }
+
+    /// <summary>
+    /// Builds the 4-byte Jet4 / ACE empty-password pattern: the whole days of
+    /// the creation date at <c>0x72</c> (truncated toward zero, as Access
+    /// does) as a little-endian <see cref="int"/>.
+    /// </summary>
+    /// <param name="unmaskedHeader">Unmasked page-0 bytes holding the creation date.</param>
+    /// <param name="pattern">Receives the 4-byte pattern.</param>
+    /// <returns><see langword="false"/> when the creation date is not a finite number in <see cref="int"/> range.</returns>
+    private static bool TryGetEmptyPasswordPattern(ReadOnlySpan<byte> unmaskedHeader, Span<byte> pattern)
+    {
+        double creationDate = ReadDoubleLittleEndian(unmaskedHeader.Slice(Constants.DatabaseHeader.CreationDate, sizeof(double)));
+        if (!double.IsFinite(creationDate) || creationDate < int.MinValue || creationDate > int.MaxValue)
+        {
+            return false;
+        }
+
+        Wi32(pattern, 0, (int)creationDate);
+        return true;
     }
 
     /// <summary>
