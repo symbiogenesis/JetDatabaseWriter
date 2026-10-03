@@ -101,6 +101,21 @@ the rebuilt descriptor carries the result type, as the writer's own tables do.
 Rows that earlier builds of this library inserted into or updated in such
 tables were encoded by the descriptor type and are not repaired.
 
+Access also gives each long-value column of an ACCDB table, `AllNames`
+included, its own owned-pages and free-space usage maps. In `Table1` these are
+rows 2 and 3 of the table's usage-map page (page 0x57). Both list LVAL page
+0x59. Row 4 is the index's map. The writer does not add the LVAL pages it
+allocates to any usage map, so only the row's header leads to a value it
+writes. `DropTableAsync` and the schema rewrites free two things:
+
+- every page that a usage-map row after the first two lists;
+- the long values that each row's headers name.
+
+A drop deletes the table's `MSysObjects` row, which holds `ResultType`, before
+it frees the pages. So `TableSchemaEditor` first reads the table definition
+through `TableCatalog.ReadTableDefAsync`. With the descriptor type alone, the
+free skipped `AllNames`' headers and left the writer's LVAL rows allocated.
+
 `RenameColumnAsync` also rewrites the renamed column's references in every
 `Expression`, `ValidationRule` and `DefaultValue` of the table, before anything
 is written. `ExpressionFieldReferences` scans the stored text without parsing
