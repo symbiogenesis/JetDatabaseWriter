@@ -30,6 +30,8 @@ Current concern: ordinary MEMO/OLE row deletion passes the owning `TableDef` int
 
 Decision point: if Access frees old LVAL pages without scrubbing them, add a normal reclamation path independent of `SecureEraseMode`. If Access leaves them until Compact & Repair, keep the current default behavior and document the probe result.
 
+Releasing a long value already works row by row, because Access packs several values onto one LVAL page (the SectionText MEMOs of Learn IDs 1-6 in NorthwindTraders.accdb share page 521, and nwind.mdb has 26 pages that start more than one value). `LongValueEncoder.DeallocateLongValueAsync`, used by secure-erase deletes, `DropTableAsync` and schema rewrites, marks each of the value's LVAL rows deleted, zeroes it under `SecureEraseMode.DeletedRowsAndFreedPages`, and frees the page only when no other live row is left on it. A chain hop that does not name a live row of an LVAL page (type `0x01` with the `LVAL` signature) ends the walk without freeing anything. `DeleteRows_SecureEraseMode_SharedAccessLvalPage_KeepsOtherRowsLongValues` and `LongValueReleaseTests` cover it. The released row's space on a shared page stays unused until the page's last live row is released, because the writer always puts new long values on new LVAL pages.
+
 ### 3. Design a managed Compact & Repair style rebuild API
 
 - [ ] Sketch an API such as `CompactDatabaseAsync` that writes live database content into a new stream or file.

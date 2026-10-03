@@ -28,7 +28,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAllocator)
+/// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
+internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAllocator, AccessWriterOptions options)
 {
     /// <summary>
     /// Pre-encode pass for row insert: any MEMO / OLE value whose payload
@@ -246,14 +247,34 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         return roots;
     }
 
+    /// <summary>
+    /// Releases the LVAL rows of a long value that is being deleted, as
+    /// <see cref="ReleaseLvalRowAsync"/> describes for each row.
+    /// </summary>
+    /// <param name="descriptor">The value's descriptor.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
     internal async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
-        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReadNextLongValueDpAsync, pageAllocator.DeallocatePageAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReleaseLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
-    private async ValueTask<uint> ReadNextLongValueDpAsync(uint currentDp, CancellationToken cancellationToken)
+    /// <summary>
+    /// Releases the LVAL row <paramref name="lvalDp"/> names and returns the
+    /// next-row pointer it starts with. Access packs several values onto one
+    /// LVAL page, so while another live row is on the page only this row's
+    /// slot is marked deleted, and its bytes are zeroed under
+    /// <see cref="SecureEraseMode.DeletedRowsAndFreedPages"/>. The page is
+    /// freed once no other live row is left on it. A pointer that does not
+    /// name a live row of an LVAL page releases nothing and returns 0, so a
+    /// damaged chain never frees a page of another kind.
+    /// </summary>
+    /// <param name="lvalDp">The row pointer (<c>page &lt;&lt; 8 | row</c>).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The next-row pointer stored at the start of the row, or 0.</returns>
+    private async ValueTask<uint> ReleaseLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
-        long pageNumber = LongValueStore.PageNumber(currentDp);
-        int rowIndex = LongValueStore.RowIndex(currentDp);
-        if (pageNumber <= 0)
+        long pageNumber = LongValueStore.PageNumber(lvalDp);
+        int rowIndex = LongValueStore.RowIndex(lvalDp);
+        if (pageNumber <= 1 || pageNumber >= db.PageCount)
         {
             return 0;
         }
@@ -261,20 +282,48 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         byte[] lvalPage = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (lvalPage[0] != Constants.PageTypes.Data)
+            if (!LongValueStore.IsLvalPage(lvalPage))
             {
                 return 0;
             }
 
+            RowBound? released = null;
+            bool otherLiveRows = false;
             foreach (RowBound rowBound in db.EnumerateLiveRowBounds(lvalPage))
             {
-                if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
+                if (rowBound.RowIndex == rowIndex)
                 {
-                    return Ru32(lvalPage, rowBound.RowStart);
+                    released = rowBound;
+                }
+                else
+                {
+                    otherLiveRows = true;
                 }
             }
 
-            return 0;
+            if (released is not RowBound row)
+            {
+                return 0;
+            }
+
+            uint nextDp = row.RowSize >= 4 ? Ru32(lvalPage, row.RowStart) : 0;
+            if (otherLiveRows)
+            {
+                if (options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                {
+                    Array.Clear(lvalPage, row.RowStart, row.RowSize);
+                }
+
+                int slotOffset = db.DataPage.RowsStart + (rowIndex * 2);
+                Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
+                await db.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+
+            return nextDp;
         }
         finally
         {
