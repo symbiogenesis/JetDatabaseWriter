@@ -304,6 +304,55 @@ public sealed class Jet3LongValueTests
         }
     }
 
+    /// <summary>
+    /// mdbtools' nwind.mdb is an Access 97 Northwind that packs several long
+    /// values onto many of its LVAL pages. Its Employees and Categories tables
+    /// are listed only since the catalog scan follows overflow rows, so their
+    /// long values are checked here: a single-page MEMO and two chained OLE
+    /// pictures, against SHA-256 hashes taken from an independent parse of the
+    /// Jet3 pages.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Fact]
+    public async Task AccessAuthoredJet3LongValues_Nwind_ReadExactly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        if (!File.Exists(TestDatabases.MdbtoolsNwind))
+        {
+            Assert.Skip("nwind.mdb is unavailable on this machine.");
+        }
+
+        Encoding cp1252 = CodePagesEncodingProvider.Instance.GetEncoding(1252)!;
+        await using (AccessReader reader = await AccessReader.OpenAsync(TestDatabases.MdbtoolsNwind, new AccessReaderOptions { UseLockFile = false }, ct))
+        {
+            int id = await OrdinalAsync(reader, "Employees", "EmployeeID", ct);
+            int notes = await OrdinalAsync(reader, "Employees", "Notes", ct);
+            List<object[]> rows = await reader.Rows("Employees", cancellationToken: ct).ToListAsync(ct);
+            string notesText = Assert.IsType<string>(Assert.Single(rows, r => Convert.ToInt32(r[id], System.Globalization.CultureInfo.InvariantCulture) == 2)[notes]);
+            Assert.Equal(448, notesText.Length);
+            Assert.Equal("3082CCEC23B35826522F0034576478A357CA4EC1FC6359E522FFE5789F1D6D05", Sha256(cp1252.GetBytes(notesText)));
+
+            List<string[]> strings = await reader.RowsAsStrings("Employees", cancellationToken: ct).ToListAsync(ct);
+            Assert.Contains(strings, r => r[notes] == notesText);
+        }
+
+        // Public OLE reads unwrap the OLE package, so the exact stored bytes come
+        // from the writer's snapshot, which updates and schema rewrites copy.
+        await using (var copy = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.MdbtoolsNwind, ct)))
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(copy, cancellationToken: ct))
+        {
+            using DataTable categories = await harness.Services.Snapshots.ReadTableSnapshotAsync("Categories", ct);
+            byte[] picture = Assert.IsType<byte[]>(categories.Rows.Cast<DataRow>().Single(r => Convert.ToInt32(r["CategoryID"], System.Globalization.CultureInfo.InvariantCulture) == 1)["Picture"]);
+            Assert.Equal(10746, picture.Length);
+            Assert.Equal("94CE40D8F8D1294F02CA7101B7A8C393140FD3F617947C81EA7C8ADB70BCE007", Sha256(picture));
+
+            using DataTable employees = await harness.Services.Snapshots.ReadTableSnapshotAsync("Employees", ct);
+            byte[] photo = Assert.IsType<byte[]>(employees.Rows.Cast<DataRow>().Single(r => Convert.ToInt32(r["EmployeeID"], System.Globalization.CultureInfo.InvariantCulture) == 1)["Photo"]);
+            Assert.Equal(21626, photo.Length);
+            Assert.Equal("0FEFEA1C00180A14F01278E124445C03578914CAAC1EDE2318D3A328A7A11FE9", Sha256(photo));
+        }
+    }
+
     [Fact]
     public async Task CreateTable_LvPropOver256Bytes_PropertiesRoundTrip()
     {
