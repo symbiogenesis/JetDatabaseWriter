@@ -37,7 +37,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and sync/async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…) |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
-| ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
+| ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all readable; all but Access-native flat Agile writable in place |
 | ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
@@ -864,9 +864,11 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 ## Encryption Support
 
-All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are fully **read- and write-supported**. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/AccessWriterOptions.cs); the format is auto-detected from the file header. For new encrypted ACCDB output, omit `targetFormat` or choose `AccessEncryptionFormat.AccdbAgile`; Access-native Agile is the default and recommended writer target.
+All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are **read-supported**, and all of them except Access-native flat Agile can be opened by `AccessWriter` and edited in place (see below). Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/AccessWriterOptions.cs); the format is auto-detected from the file header. For new encrypted ACCDB output, omit `targetFormat` or choose `AccessEncryptionFormat.AccdbAgile`; Access-native Agile is the default `EncryptAsync` target, but `AccessWriter` cannot open it afterwards (see below).
 
-- **In-place mutation.** Flat Access formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 page encryption, and Access-native Agile) re-encrypt modified pages on flush. Office Crypto / CFB containers that the reader opens are re-emitted as CFB v4 on `DisposeAsync` when mutated; `AccessEncryptionFormat.AccdbAgile` writes the modern Access-native flat Agile layout, while `AccessEncryptionFormat.AccdbAgileCfb` writes an Office Crypto Agile wrapper.
+- **In-place mutation.** Flat Access formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, and AES-128 page encryption) re-encrypt modified pages on flush. Office Crypto / CFB containers that the reader opens are re-emitted as CFB v4 on `DisposeAsync` when mutated; `AccessEncryptionFormat.AccdbAgile` writes the modern Access-native flat Agile layout, while `AccessEncryptionFormat.AccdbAgileCfb` writes an Office Crypto Agile wrapper.
+- **Access-native flat Agile is read-only.** `AccessWriter.OpenAsync` (path and stream overloads) throws `NotSupportedException` for an `AccessEncryptionFormat.AccdbAgile` file before writing anything, because the writer has no AES-CBC page cipher for that layout. Read it with `AccessReader`; to change its data, call `AccessWriter.DecryptAsync`, edit the decrypted file, then `AccessWriter.EncryptAsync` again, or re-encrypt it as `AccessEncryptionFormat.AccdbAgileCfb`, which the writer can open. `EncryptAsync` still defaults to flat Agile for `.accdb`, so pass `AccdbAgileCfb` when the file must stay writable.
+- **Open cost.** Opening a reader or writer reads page 0 to detect flat Agile; only a flat Agile file is then read and decrypted in full (into memory). The CFB Office Crypto formats (Standard, Agile CFB) are also decrypted in full on open.
 - **Encryption mutation APIs.** `AccessWriter.EncryptAsync(path, password, targetFormat: null, …)`, `AccessWriter.DecryptAsync(path, password, …)`, and `AccessWriter.ChangePasswordAsync(path, oldPassword, newPassword, …)` add, remove, or rotate encryption (and switch formats) on an existing file. When `targetFormat` is omitted or `null`, `EncryptAsync` chooses the best supported target for the file kind: Jet4 RC4 for Jet4 `.mdb`, and Access-native Agile for `.accdb`. These APIs accept `ReadOnlyMemory<char>`; pass a mutable `char[]` / `Memory<char>` when the caller needs to erase its own password buffer after the awaited operation completes. Use `AccessWriter.DetectEncryptionFormatAsync(path)` to discover the current format.
 
 | Format | Versions | Detection | Key derivation | Page / payload cipher |
@@ -890,6 +892,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Transaction durability
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
+
+### Encryption
+- **`AccessWriter` cannot open Access-native flat Agile (`AccessEncryptionFormat.AccdbAgile`) files.** `OpenAsync` throws `NotSupportedException` and leaves the file untouched. This is the format `EncryptAsync` picks by default for `.accdb`. Decrypt, edit, and re-encrypt, or use `AccessEncryptionFormat.AccdbAgileCfb` for files the writer must open. See [Encryption Support](#encryption-support).
 
 ### Compact & Repair
 - **`ShrinkDatabaseAsync` is a tail shrinker, not a full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.

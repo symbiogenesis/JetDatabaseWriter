@@ -40,7 +40,10 @@ public enum AccessEncryptionFormat
     /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
     /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
     /// is embedded in page 0 and data pages are encrypted in place. This is the
-    /// default and recommended writer target for new encrypted ACCDB output.
+    /// default <c>EncryptAsync</c> target for new encrypted ACCDB output.
+    /// <c>AccessWriter.OpenAsync</c> rejects files in this format with
+    /// <see cref="System.NotSupportedException"/>; use <see cref="AccdbAgileCfb"/>
+    /// for encrypted files the writer must open.
     /// </summary>
     AccdbAgile = 4,
 

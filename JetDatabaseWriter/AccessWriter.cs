@@ -88,12 +88,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the specified database.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the file uses Access-native flat Agile encryption (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. The file is not modified.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         options ??= new AccessWriterOptions();
+        await ThrowIfFlatAgileAsync(path, cancellationToken).ConfigureAwait(false);
         await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
 
         FileStream fs = CreateStream(path);
@@ -110,6 +112,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the stream holds an Access-native flat Agile database (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. Nothing is written to the stream.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
@@ -120,6 +123,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
             byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+
+            // Access-native flat Agile encrypts every page with AES-CBC keyed
+            // from the descriptor in page 0. The page cipher has no writer
+            // path, so refuse before anything is written.
+            if (!EncryptionManager.IsCompoundFileEncrypted(header) &&
+                await EncryptionManager.IsFlatAgileEncryptedAsync(stream, cancellationToken).ConfigureAwait(false))
+            {
+                throw FlatAgileNotSupported();
+            }
 
             // Office Crypto API ("Agile") encrypted .accdb files are real OLE
             // compound documents (CFB) wrapping an EncryptedPackage stream.
@@ -329,7 +341,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
     /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>.</param>
+    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>, which <c>OpenAsync</c> cannot open for writing; choose <see cref="AccessEncryptionFormat.AccdbAgileCfb"/> when the file must stay writable.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
@@ -389,7 +401,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
     /// <param name="newPassword">The password to apply. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>.</param>
+    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>, which <c>OpenAsync</c> cannot open for writing; choose <see cref="AccessEncryptionFormat.AccdbAgileCfb"/> when the file must stay writable.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask EncryptAsync(
@@ -697,6 +709,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private static FileStream CreateStream(string path) =>
         DatabaseFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
+
+    /// <summary>
+    /// Refuses a flat Agile file before the path overload verifies the
+    /// password or opens the file for writing. Reads page 0 only.
+    /// </summary>
+    /// <param name="path">Path to the .mdb or .accdb file.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="NotSupportedException">Thrown when page 0 carries a flat Agile descriptor.</exception>
+    private static async ValueTask ThrowIfFlatAgileAsync(string path, CancellationToken cancellationToken)
+    {
+        bool isFlatAgile;
+        await using (FileStream probe = DatabaseFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous))
+        {
+            isFlatAgile = await EncryptionManager.IsFlatAgileEncryptedAsync(probe, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (isFlatAgile)
+        {
+            throw FlatAgileNotSupported();
+        }
+    }
+
+    private static NotSupportedException FlatAgileNotSupported() => new(
+        "This .accdb file uses Access-native Agile encryption (AccessEncryptionFormat.AccdbAgile), " +
+        "which AccessWriter cannot edit in place. Open it with AccessReader to read it. To write to it, " +
+        "remove the encryption with AccessWriter.DecryptAsync, write to the decrypted file, then encrypt it " +
+        "again with AccessWriter.EncryptAsync. Files encrypted as AccessEncryptionFormat.AccdbAgileCfb can be " +
+        "opened for writing.");
 
     private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken = default)
     {
