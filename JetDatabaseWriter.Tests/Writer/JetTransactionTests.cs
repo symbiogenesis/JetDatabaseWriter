@@ -513,6 +513,46 @@ public sealed class JetTransactionTests
         await writer.InsertRowAsync("Items", [1, "A"], TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateTables_UntilCatalogNeedsNewPage_InTransaction_ResolvesEveryTable(DatabaseFormat format)
+    {
+        // Enough tables that MSysObjects spills onto data pages the
+        // transaction appends. Catalog lookups read those pages from the
+        // journal, past the physical end of the file.
+        const int tableCount = 80;
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            format,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            for (int i = 0; i < tableCount; i++)
+            {
+                string tableName = "Items" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await writer.CreateTableAsync(tableName, ItemsSchema(), TestContext.Current.CancellationToken);
+                await writer.InsertRowAsync(tableName, [i, "Row" + i], TestContext.Current.CancellationToken);
+            }
+
+            await tx.CommitAsync(TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(tableCount, tables.Count);
+        for (int i = 0; i < tableCount; i++)
+        {
+            string tableName = "Items" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal(1, await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken));
+        }
+    }
+
     private static async Task BufferMultiPageInsertAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
         var rows = new List<object[]>(100);

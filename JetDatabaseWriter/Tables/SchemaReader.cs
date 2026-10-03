@@ -142,8 +142,8 @@ internal sealed class SchemaReader(
 
         return new DatabaseStatistics
         {
-            TotalPages = db.DatabaseStream.Length / db.PageSizeBytes,
-            DatabaseSizeBytes = db.DatabaseStream.Length,
+            TotalPages = db.PageCount,
+            DatabaseSizeBytes = db.DatabaseLengthBytes,
             TableCount = userTables.Count,
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
