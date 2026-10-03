@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -107,6 +108,22 @@ internal sealed class TableDataWriter(
         where TItem : class
     {
         yield return item;
+    }
+
+    private static bool AssignsAutoNumberColumn(TableDef tableDef, IEnumerable<int> assignedColumns)
+    {
+        foreach (int columnIndex in assignedColumns)
+        {
+            // Complex columns carry the 0x07 marker in the flag byte, not real flag bits.
+            ColumnInfo column = tableDef.Columns[columnIndex];
+            if (column.Type is not ColumnType.AttachmentType and not ColumnType.ComplexType
+                && (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal async ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken)
@@ -245,7 +262,7 @@ internal sealed class TableDataWriter(
                 newRow[update.Key] = update.Value;
             }
 
-            await constraints.ApplyCalculatedAsync(tableName, tableDef, newRow, force: true, cancellationToken).ConfigureAwait(false);
+            await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
             // The row is deleted and re-inserted, so every carried MEMO / OLE
             // value must have been read; refuse before any page is touched.
@@ -338,6 +355,19 @@ internal sealed class TableDataWriter(
         if (!incremental)
         {
             await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+
+        // An explicit AutoNumber value raises the TDEF high-water exactly as it
+        // does on insert, so Access never issues that number again.
+        if (AssignsAutoNumberColumn(tableDef, updateIndexes.Keys))
+        {
+            var newRows = new List<object[]>(pendingUpdates.Count);
+            foreach ((_, _, object[] newRow) in pendingUpdates)
+            {
+                newRows.Add(newRow);
+            }
+
+            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, cancellationToken).ConfigureAwait(false);
         }
 
         return pendingUpdates.Count;
