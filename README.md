@@ -361,8 +361,10 @@ await foreach (object[] row in reader.Rows("Documents", cancellationToken: cance
     }
 }
 
-// Multi-value columns: ComplexCellValue.ReadMultiValueItems(cell)
+// Multi-value and version-history columns: ComplexCellValue.ReadMultiValueItems(cell)
 ```
+
+For a version-history column (an append-only Memo column's history), `ReadMultiValueItems` and `GetMultiValueItemsAsync` return one item per version, with its text in `Value` and the time Access recorded it in `Modified`; `Modified` is `null` for multi-value items.
 
 `RowsAsStrings(...)` and `ReadTableAsStringsAsync(...)` return the same cell as a `data:application/octet-stream;base64,...` URI (empty string when the row has none). The cell layout is documented on `ComplexCellValue`.
 

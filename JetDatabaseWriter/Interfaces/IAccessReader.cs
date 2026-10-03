@@ -266,14 +266,17 @@ public interface IAccessReader : IAccessBase
     /// Returns every value stored in the hidden flat child table backing the
     /// Access 2007+ Multi-Value column <paramref name="columnName"/> on
     /// <paramref name="tableName"/>, paired with the parent row's per-row
-    /// complex reference value so callers can group items by parent.
+    /// complex reference value so callers can group items by parent. For a
+    /// Version-history column, each item is one version of the append-only Memo
+    /// column, with the time Access recorded it in <see cref="MultiValueItem.Modified"/>,
+    /// in the flat table's order.
     /// </summary>
     /// <remarks>
     /// Row reads return the same items per parent row: the column's cell holds them as a
     /// <see cref="ComplexCellValue"/> cell, decoded by <see cref="ComplexCellValue.ReadMultiValueItems(byte[])"/>.
     /// </remarks>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
-    /// <param name="columnName">Multi-Value column name (case-insensitive).</param>
+    /// <param name="columnName">Multi-Value or Version-history column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>One <see cref="MultiValueItem"/> per flat-table row. Empty when the column is unknown or has no rows.</returns>
     public ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);

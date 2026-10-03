@@ -218,6 +218,63 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
             => ComplexCellValue.ReadMultiValueItems(Assert.IsType<byte[]>(cell)).Select(i => Assert.IsType<string>(i.Value));
     }
 
+    /// <summary>
+    /// A version-history cell carries each version's <c>Modified_&lt;GUID&gt;</c>
+    /// timestamp from the flat table, not just its text.
+    /// </summary>
+    /// <param name="path">The fixture path.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
+    public async Task Rows_AccessFixture_VersionHistoryCellsCarryModified(string path)
+    {
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        Dictionary<string, object[]> rows = await ReadFixtureRowsAsync(reader);
+        const int versionHistory = 1;
+
+        // The flat table holds the FK, the version text (Memo), Modified_<GUID> and its AutoNumber key.
+        ComplexColumnInfo column = Assert.Single(await reader.GetComplexColumnsAsync("Table1", TestContext.Current.CancellationToken), c => c.Kind == ComplexColumnKind.VersionHistory);
+        List<object[]> flatRows = await reader.Rows(column.FlatTableName, cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
+        int text = Array.FindIndex(flatRows[0], v => v is string);
+        int modified = Array.FindIndex(flatRows[0], v => v is DateTime);
+        var modifiedByText = flatRows.ToDictionary(r => (string)r[text], r => (DateTime)r[modified], StringComparer.Ordinal);
+        Assert.Equal(5, modifiedByText.Count);
+
+        IReadOnlyList<MultiValueItem> row3 = ReadItems(rows["row3"][versionHistory]);
+        Assert.Equal(["row3-memo", "row3-memo-revised", "row3-memo-again"], row3.Select(i => (string)i.Value!));
+        Assert.All(row3, item =>
+        {
+            DateTime when = Assert.NotNull(item.Modified);
+            Assert.Equal(new DateTime(2011, 9, 12), when.Date);
+            Assert.Equal(modifiedByText[(string)item.Value!], when);
+        });
+
+        Assert.Equal(modifiedByText["row2-memo"], Assert.Single(ReadItems(rows["row2"][versionHistory])).Modified);
+        Assert.Equal(modifiedByText["row4-memo"], Assert.Single(ReadItems(rows["row4"][versionHistory])).Modified);
+
+        // Multi-value cells carry no timestamp.
+        Assert.All(ReadItems(rows["row3"][4]), item => Assert.Null(item.Modified));
+
+        static IReadOnlyList<MultiValueItem> ReadItems(object cell) => ComplexCellValue.ReadMultiValueItems(Assert.IsType<byte[]>(cell));
+    }
+
+    [Fact]
+    public void ComplexCellValue_VersionHistoryCell_RoundTrips()
+    {
+        MultiValueItem[] items =
+        [
+            new() { ConceptualTableId = 3, Value = "first", Modified = new DateTime(2011, 9, 12, 21, 21, 19) },
+            new() { ConceptualTableId = 3, Value = "second", Modified = null },
+            new() { ConceptualTableId = 3, Value = null, Modified = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc) },
+        ];
+
+        byte[] cell = ComplexCellValue.EncodeVersionHistoryItems(3, items);
+
+        Assert.Equal((byte)'V', cell[3]);
+        Assert.Equal(items, ComplexCellValue.ReadMultiValueItems(cell));
+        Assert.Equal(DateTimeKind.Utc, ComplexCellValue.ReadMultiValueItems(cell)[2].Modified!.Value.Kind);
+    }
+
     [Fact]
     public async Task GetAttachmentsAsync_AccessAuthoredCompressedAttachment_IsInflated()
     {
@@ -255,7 +312,9 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
     {
         byte[] multiValueCell = ComplexCellValue.EncodeMultiValueItems(7, [new MultiValueItem { ConceptualTableId = 7, Value = 1 }]);
         byte[] attachmentCell = ComplexCellValue.EncodeAttachments(7, [new AttachmentRecord { ConceptualTableId = 7, FileName = "a.txt" }]);
+        byte[] versionHistoryCell = ComplexCellValue.EncodeVersionHistoryItems(7, [new MultiValueItem { ConceptualTableId = 7, Value = "v", Modified = DateTime.UnixEpoch }]);
 
+        Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments(versionHistoryCell));
         Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments(multiValueCell));
         Assert.Throws<FormatException>(() => ComplexCellValue.ReadMultiValueItems(attachmentCell));
         Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments([1, 2, 3]));
