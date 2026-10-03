@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Splits a LINQ query expression tree into the operators the provider can execute
@@ -205,11 +206,14 @@ internal static class AccessQueryTranslator
         _ => throw new NotSupportedException("Expected a lambda argument in the query expression."),
     };
 
-    private static object? EvaluateConstant(Expression expression) => expression switch
-    {
-        ConstantExpression constant => constant.Value,
-        _ => Expression.Lambda(expression).Compile().DynamicInvoke(),
-    };
+    /// <summary>
+    /// Evaluates a <c>Skip</c> or <c>Take</c> count: a constant (which <see cref="Queryable"/>
+    /// makes of the outer operators' counts) or a captured variable inside an include's
+    /// navigation lambda is read without compiling, and anything computed is compiled once.
+    /// </summary>
+    /// <param name="expression">The count expression.</param>
+    /// <returns>The count's value.</returns>
+    private static object? EvaluateConstant(Expression expression) => ClosureValueReader.Evaluate(expression);
 
     /// <summary>
     /// Resolves an <c>Include</c> / <c>ThenInclude</c> navigation lambda into the navigation
