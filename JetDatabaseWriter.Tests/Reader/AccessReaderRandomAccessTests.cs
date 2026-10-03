@@ -25,7 +25,10 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PageReadOptimizationMode.Auto, reader.PageReadOptimizationMode);
-        Assert.True(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
+
+        // The netstandard2.1 build has no RandomAccess API and reads every page through
+        // the stream; only the net10.0 build switches to random-access reads.
+        Assert.Equal(!LibraryTarget.IsNetStandard, FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 

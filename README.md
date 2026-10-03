@@ -84,6 +84,10 @@ dotnet add package JetDatabaseWriter
 Install-Package JetDatabaseWriter
 ```
 
+### NuGet target compatibility
+
+The package ships two builds. Apps on .NET 10 or later get the `net10.0` build; apps on .NET Core 3.x and .NET 5 through 9 get the `netstandard2.1` build, which brings in `System.Linq.Async`, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` for the APIs .NET 10 has built in. The test suite runs against both: once on .NET 10 and once on .NET 8, where it loads the `netstandard2.1` build. The two builds read and write databases the same way, except that only the `net10.0` build reads pages from a file path with `RandomAccess`; the `netstandard2.1` build reads them through the stream.
+
 ### Usage
 
 ```csharp

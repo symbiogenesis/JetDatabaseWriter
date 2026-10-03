@@ -12,11 +12,13 @@ applyTo: "**/*Tests*/**,**/*.Tests.csproj"
 - Use `using Xunit;`. Do not add `using Xunit.Abstractions;` or package references to `xunit.runner.visualstudio`, `xunit.abstractions`, or `xunit.assert`.
 - Use `dotnet test --project JetDatabaseWriter.Tests` as the base CLI command, adding the MTP options listed below as needed.
 - The repo uses SDK 10.x, so MTP options are passed directly to `dotnet test`. Never use a `--` separator before MTP options.
+- `JetDatabaseWriter.Tests` targets `net10.0` and `net8.0`. The `net8.0` leg loads the library's `netstandard2.1` build, so a plain `dotnet test` runs the suite twice. Add `-f net10.0` for a quicker local loop, and run both before pushing. Test code must compile on both: polyfills for newer BCL types go in `JetDatabaseWriter.Tests/Polyfills`, and `LibraryTarget.IsNetStandard` tells a test which library build it loaded. The scaffolding tests build for `net10.0` only.
 
 ## Run Tests
 
 | Goal | Command |
 |---|---|
+| Run one target framework only | `dotnet test --project JetDatabaseWriter.Tests -f net10.0` |
 | Run one fully-qualified method | `dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests.ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList"` |
 | Run all tests in a class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests"` |
 | Run all tests in a namespace | `dotnet test --project JetDatabaseWriter.Tests --filter-namespace "JetDatabaseWriter.Tests.Internal"` |
