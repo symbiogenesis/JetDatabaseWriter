@@ -169,7 +169,6 @@ Primary code path:
 
 - `LongValueDecoder.ReadLongValueAsync`
 - `LongValueDecoder.ReadLongValueRawBytesAsync`
-- `LongValueDecoder.ReadOleValueBytesAsync`
 - `LongValueDecoder.ReadLvalChainAsync`
 - `LongValueDecoder.LocateLvalRowAsync`
 - `LongValueDecoder.DecodeLongValue`

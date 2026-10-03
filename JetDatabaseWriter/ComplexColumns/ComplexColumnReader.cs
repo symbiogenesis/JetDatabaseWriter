@@ -819,7 +819,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         int idxFileData = td.FindColumnIndex("FileData");
 
         var result = new List<AttachmentRecord>();
-        await foreach (object?[] row in rows.EnumerateRawOleTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
         {
             byte[] fileData = idxFileData >= 0 && row[idxFileData] is byte[] stored ? stored : [];
             string fileType = ReadStringOrNull(row, idxFileType) ?? string.Empty;
@@ -887,7 +887,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         }
 
         var result = new List<MultiValueItem>();
-        await foreach (object?[] row in rows.EnumerateRawOleTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
         {
             result.Add(new MultiValueItem
             {

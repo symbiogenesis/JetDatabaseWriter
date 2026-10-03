@@ -89,8 +89,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     /// Reads every live row of <paramref name="tableName"/> (a user or system
     /// table) into a <see cref="DataTable"/>, for writer workflows that insert
     /// the rows again. Complex columns stay as their raw references, OLE cells
-    /// hold the stored bytes exactly (no package unwrap or signature slicing),
-    /// and a MEMO / OLE value whose stored data cannot be read becomes an
+    /// hold the stored bytes, as in every typed read, and a MEMO / OLE value whose stored data cannot be read becomes an
     /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
     /// refuses to store, instead of a placeholder. MEMO / OLE columns are
     /// therefore typed <see cref="object"/>. Returns an empty table when no

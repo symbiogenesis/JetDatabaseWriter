@@ -41,11 +41,10 @@ internal sealed class RowDecodePlan
 
     /// <summary>
     /// Gets a value indicating whether MEMO / OLE values are decoded for a
-    /// write-back: OLE cells carry the stored bytes exactly (no OLE package
-    /// unwrap or file-signature slicing), and a value whose stored bytes cannot
-    /// be read decodes to an <see cref="UnreadableLongValue"/>, which the writer
-    /// refuses to store, instead of a placeholder such as <c>"(memo)"</c>, an
-    /// empty array or <see cref="DBNull"/>.
+    /// write-back: a value whose stored bytes cannot be read decodes to an
+    /// <see cref="UnreadableLongValue"/>, which the writer refuses to store,
+    /// instead of a placeholder such as <c>"(memo)"</c>, an empty array or
+    /// <see cref="DBNull"/>. OLE cells hold their stored bytes in every plan.
     /// </summary>
     internal bool PreservesLongValueBytes { get; }
 
@@ -301,14 +300,10 @@ internal sealed class RowDecodePlan
                 return isOle ? Array.Empty<byte>() : string.Empty;
             }
 
-            if (!isOle)
-            {
-                return longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
-            }
-
-            return preserveBytes
+            // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
+            return isOle
                 ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)
-                : OleObjectDecoder.DecodeOleValueBytes(page, valueStart, inlineLength);
+                : longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
         }
 
         needsLongValue = true;

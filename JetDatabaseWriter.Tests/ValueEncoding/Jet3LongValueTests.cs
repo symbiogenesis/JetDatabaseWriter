@@ -349,8 +349,8 @@ public sealed class Jet3LongValueTests
             Assert.Contains(strings, r => r[notes] == notesText);
         }
 
-        // Public OLE reads unwrap the OLE package, so the exact stored bytes come
-        // from the writer's snapshot, which updates and schema rewrites copy.
+        // The writer's snapshot, which updates and schema rewrites copy, holds the
+        // stored bytes, as the public OLE reads now return them too.
         await using (var copy = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.MdbtoolsNwind, ct)))
         await using (WriterHarness harness = await WriterHarness.OpenAsync(copy, cancellationToken: ct))
         {

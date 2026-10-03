@@ -51,6 +51,8 @@ JetDatabaseWriter/
 │   ├── IndexMetadata.cs
 │   ├── LinkedTableInfo.cs
 │   ├── MultiValueItem.cs
+│   ├── OleObjectContent.cs                (what an OLE Object value holds, as OleObjectValue unwraps it)
+│   ├── OleObjectValue.cs                  (unwraps OLE Object values, which reads return as stored bytes)
 │   ├── RelationshipDefinition.cs
 │   ├── RelationshipMetadata.cs
 │   ├── RowCriteria.cs
@@ -69,6 +71,7 @@ JetDatabaseWriter/
 │   ├── IndexQueryKind.cs                  (internal index-query predicate kind)
 │   ├── IntermediateOpType.cs
 │   ├── LinkedTableKind.cs
+│   ├── OleObjectKind.cs                   (NotWrapped, EmbeddedFile, LinkedFile, EmbeddedObject, Unknown)
 │   ├── PageReadOptimizationMode.cs        (reader random-access/read-ahead optimization policy)
 │   ├── SecureEraseMode.cs
 │   ├── SystemTableIndexMaintenancePath.cs (last system-table index-maintenance path used by writer)
@@ -127,7 +130,7 @@ JetDatabaseWriter/
 │   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection, via EntityMap)
 │   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
-│   ├── OleObjectDecoder.cs                (unwraps OLE envelopes, detects file signatures and data-URI formatting)
+│   ├── OleObjectDecoder.cs                (structured OLE Object parser behind OleObjectValue, media type from a signature at offset 0, data URIs of stored bytes)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues, through the reader's page cache)
 │   ├── RowDecoder.cs                      (decodes a cached data page's rows to typed values or strings, resolving LVAL chains)
 │   ├── DirectRowDecoderBuilder.cs         (builds optimized row decode delegates)

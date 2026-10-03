@@ -14,6 +14,15 @@ using JetDatabaseWriter.Models;
 /// Interface for reading Microsoft Access JET databases (.mdb / .accdb).
 /// Provides methods for listing tables, reading data, and streaming large datasets.
 /// </summary>
+/// <remarks>
+/// Every typed read (the row streams, the <see cref="DataTable"/> and POCO reads, index
+/// seeks and LINQ queries) returns an OLE Object value as its stored bytes, as DAO, ADO
+/// and Jackcess do: an object Access inserted keeps Access's OLE header and the OLE
+/// object stream around the file or document. <see cref="OleObjectValue"/> unwraps them
+/// on request (<see cref="OleObjectValue.GetContent(byte[])"/>). The string reads render
+/// an OLE value as a <c>data:</c> URI of the stored bytes, whose media type comes from a
+/// file signature at the first byte, or is <c>application/octet-stream</c>.
+/// </remarks>
 public interface IAccessReader : IAccessBase
 {
     /// <summary>Gets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>

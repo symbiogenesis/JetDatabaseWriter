@@ -67,7 +67,7 @@ internal sealed class ColumnPropertyReader(DatabaseFile db, RowDecoder rows)
         bool[] wantedColumns = new bool[msys.Columns.Count];
         wantedColumns[idxId] = true;
         wantedColumns[idxLvProp] = true;
-        await foreach (object?[] row in rows.EnumerateRawOleTypedRowsForTdefAsync(2, msys, wantedColumns, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(2, msys, wantedColumns, cancellationToken).ConfigureAwait(false))
         {
             if (row[idxId] is int id && id == tdefPage)
             {

@@ -175,43 +175,18 @@ internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
         }
     }
 
-    internal async ValueTask<byte[]> ReadOleValueBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
-    {
-        if (!LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor))
-        {
-            return [];
-        }
-
-        switch (descriptor.StorageMode)
-        {
-            case Constants.LongValue.InlineStorageMode:
-                int memoStart = start + Constants.LongValue.HeaderSize;
-                int inlineLen = Math.Min(descriptor.Length, row.Length - memoStart);
-                return inlineLen <= 0 ? [] : OleObjectDecoder.DecodeOleValueBytes(row, memoStart, inlineLen);
-
-            case Constants.LongValue.SinglePageStorageMode:
-                LvalRowLocation oleLoc = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
-                int oleSize = Math.Min(oleLoc.Size, descriptor.Length);
-                return !oleLoc.Failed && oleSize > 0
-                    ? OleObjectDecoder.DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)
-                    : [];
-
-            default:
-                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
-                return chain.Data != null
-                    ? OleObjectDecoder.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length, allowInputReuse: true)
-                    : [];
-        }
-    }
-
+    /// <summary>
+    /// Decodes a MEMO value's stored bytes as text, or renders an OLE value's stored
+    /// bytes as a <c>data:</c> URI (<see cref="OleObjectDecoder.ToDataUri"/>): the
+    /// media type of a file signature at the first byte, else
+    /// <c>application/octet-stream</c>, and every stored byte.
+    /// </summary>
+    /// <param name="buffer">The buffer holding the value.</param>
+    /// <param name="offset">The value's offset.</param>
+    /// <param name="length">The value's length.</param>
+    /// <param name="isOle">Whether the value is an OLE value.</param>
     internal string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle)
-    {
-        if (isOle)
-        {
-            return OleObjectDecoder.TryDecodeOleObject(buffer, offset, length)
-                ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length));
-        }
-
-        return db.DecodeTextForFormat(buffer, offset, length);
-    }
+        => isOle
+            ? OleObjectDecoder.ToDataUri(buffer, offset, length)
+            : db.DecodeTextForFormat(buffer, offset, length);
 }
