@@ -96,15 +96,18 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously drops the named column from an existing table. The column's data is
     /// permanently lost. Implemented by copying the remaining columns to a new schema and
     /// renaming the result back to <paramref name="tableName"/>. The table must retain at
-    /// least one column after the drop, and the column must not be a key column of a
-    /// foreign-key relationship (drop the relationship first, as Microsoft Access requires).
+    /// least one column after the drop, the column must not be a key column of a
+    /// foreign-key relationship (drop the relationship first, as Microsoft Access requires),
+    /// and no other column's calculated expression, validation rule or default value
+    /// expression may name it (change or drop that column first). A mention inside a string
+    /// literal, or in the dropped column's own rule, does not count.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="columnName">The column to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value in a column being kept whose stored data cannot be read; copying the row would lose that value. An unreadable value in the dropped column does not block the drop.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when the column is the table's last column or a relationship key column.</exception>
+    /// <exception cref="InvalidOperationException">Thrown, before the table changes, when the column is the table's last column, a relationship key column, or named by another column's calculated expression, validation rule or default value expression; the message names that column and its expression.</exception>
     public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -112,8 +112,12 @@ own name as `[New]`. Other qualified names (`[Other].[Old]`, `Forms![F]![Old]`)
 are left alone. Every Access-authored expression in the fixtures uses
 `[Field]` brackets. A rename whose new name contains `]` throws
 `ArgumentException` when an expression names the column, since a bracketed
-name cannot hold `]`. What Access itself does when a field that a calculated
-column uses is renamed is not verified.
+name cannot hold `]`. `DropColumnAsync` uses the same scan to refuse, with
+`InvalidOperationException` and before anything is written, to drop a column
+that another column's `Expression`, `ValidationRule` or `DefaultValue` names; a
+mention in a string literal, or in the dropped column's own rule, does not
+block it. What Access itself does when a field that a calculated column uses
+is renamed or deleted is not verified.
 
 Two result types have Access-specific payload encodings inside the wrapper:
 

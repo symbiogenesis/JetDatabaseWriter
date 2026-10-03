@@ -37,7 +37,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// index entries, its partners' links to it, and renamed key columns in
 /// <c>MSysRelationships</c>). A renamed column's new name is written into the
 /// calculated expressions, validation rules and defaults that name it. A
-/// column that a relationship uses as a key column cannot be dropped.
+/// column that a relationship uses as a key column, or that another column's
+/// expression names, cannot be dropped.
 /// Dropped tables return their data, LVAL, index, usage-map, and TDEF pages to
 /// the global free map. The public facade owns the auto-commit scope around
 /// each call.
@@ -350,7 +351,10 @@ internal sealed class TableSchemaEditor(
     /// renamed column, so they keep evaluating: <c>[Old]</c> and a bare
     /// <c>Old</c>, qualified by the table's own name or not, become
     /// <c>[New]</c>, and the rest of the text is kept as it was
-    /// (<see cref="ExpressionFieldReferences"/>). <c>ValidationText</c> and
+    /// (<see cref="ExpressionFieldReferences"/>). Refuses to drop a column
+    /// that one of them names, as for a relationship key column: the
+    /// expression would name a column that no longer exists, and a rule or
+    /// default would silently stop applying. <c>ValidationText</c> and
     /// <c>Description</c> are free text and are left alone.
     /// </summary>
     /// <param name="tableName">The table being rewritten, which may qualify a reference.</param>
@@ -358,6 +362,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="newDefs">The projected columns, updated in place.</param>
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
     /// <exception cref="ArgumentException">A renamed reference would need a name containing <c>]</c>, or would push an expression past the engine's limits.</exception>
+    /// <exception cref="InvalidOperationException">A surviving column's expression names a dropped column.</exception>
     private static void ProjectExpressionReferences(
         string tableName,
         List<ColumnDefinition> existingDefs,
@@ -367,7 +372,19 @@ internal sealed class TableSchemaEditor(
         foreach (ColumnDefinition existing in existingDefs)
         {
             string? mapped = mapColumnName(existing.Name);
-            if (mapped is null || string.Equals(mapped, existing.Name, StringComparison.Ordinal))
+            if (mapped is null)
+            {
+                foreach (ColumnDefinition survivor in newDefs)
+                {
+                    ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "calculated expression", survivor.CalculationExpression);
+                    ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "validation rule", survivor.ValidationRuleExpression);
+                    ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "default value", survivor.DefaultValueExpression);
+                }
+
+                continue;
+            }
+
+            if (string.Equals(mapped, existing.Name, StringComparison.Ordinal))
             {
                 continue;
             }
@@ -432,6 +449,15 @@ internal sealed class TableSchemaEditor(
         return renamed;
     }
 
+    private static void ThrowIfNamesDroppedColumn(string tableName, string droppedColumn, ColumnDefinition survivor, string property, string? expression)
+    {
+        if (ExpressionFieldReferences.References(expression, droppedColumn, tableName))
+        {
+            throw new InvalidOperationException(
+                $"Cannot drop column '{droppedColumn}' from table '{tableName}': the {property} of column '{survivor.Name}' ('{expression}') names it. Change or drop that column first.");
+        }
+    }
+
     private static bool FitsExpressionLimits(string expression)
     {
         try
@@ -478,7 +504,7 @@ internal sealed class TableSchemaEditor(
     /// the column references in the table's expressions.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns or drops a relationship key column.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name cannot be written into an expression that names it.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     private async ValueTask RewriteTableAsync(
@@ -548,9 +574,9 @@ internal sealed class TableSchemaEditor(
 
         this.ThrowIfTooManyColumns(tableName, newDefs.Count);
 
-        // Carry renamed columns into the expressions that name them, before
-        // anything is written; the LvProp blob and the constraint registry are
-        // both built from newDefs.
+        // Carry renamed columns into the expressions that name them, and refuse
+        // to drop a column one of them names, before anything is written; the
+        // LvProp blob and the constraint registry are both built from newDefs.
         ProjectExpressionReferences(tableName, existingDefs, newDefs, mapColumnName);
 
         // Capture the table's relationship state, and refuse to drop a

@@ -171,7 +171,8 @@ public sealed record ColumnDefinition
     /// When both are set, the declaring writer uses the CLR <see cref="DefaultValue"/> and
     /// persists this expression, so later writers use the expression. When a column the
     /// expression names is renamed with <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>,
-    /// its references become <c>[New]</c>.
+    /// its references become <c>[New]</c>, and <see cref="Interfaces.IAccessSchema.DropColumnAsync"/>
+    /// refuses to drop another column the expression names.
     /// </para>
     /// <para>
     /// The expression is evaluated with this library's calculated-column expression engine.
@@ -205,7 +206,9 @@ public sealed record ColumnDefinition
     /// (<c>"Len([Code]) = 3"</c>). Comparisons with Null are Null and only a False result
     /// rejects, so a rule that does not test for Null accepts Null. When a column the rule
     /// names is renamed with <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>, its
-    /// references become <c>[New]</c>, so the rule stays enforced.
+    /// references become <c>[New]</c>, so the rule stays enforced, and
+    /// <see cref="Interfaces.IAccessSchema.DropColumnAsync"/> refuses to drop another column
+    /// the rule names.
     /// </para>
     /// <para>
     /// The rule is evaluated with this library's calculated-column expression engine. A rule
@@ -370,7 +373,9 @@ public sealed record ColumnDefinition
     /// as the <see cref="Constants.ColumnPropertyNames.Expression"/> property.
     /// When a column the expression names is renamed with
     /// <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>, its references
-    /// (<c>[Old]</c> or a bare <c>Old</c>) become <c>[New]</c>.
+    /// (<c>[Old]</c> or a bare <c>Old</c>) become <c>[New]</c>, and
+    /// <see cref="Interfaces.IAccessSchema.DropColumnAsync"/> refuses to drop
+    /// a column the expression names.
     /// </summary>
     public string? CalculationExpression { get; init; }
 
