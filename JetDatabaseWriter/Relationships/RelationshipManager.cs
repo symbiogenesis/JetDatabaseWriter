@@ -849,10 +849,10 @@ internal sealed class RelationshipManager(
     // before the row copy (so the copy's single index rebuild fills the FK
     // leaves), and CompleteRewriteAsync once the copy has replaced the table.
     // This works the same on every format. An FK entry whose partner does not
-    // link back, such as one naming the freed TDEF page of a table that
-    // earlier builds dropped without unlinking it, is not captured, so the
-    // rewrite drops it rather than re-emitting a pointer at a freed or
-    // reused page.
+    // link back to it, such as one naming the freed TDEF page of a table that
+    // earlier builds dropped without unlinking it, or one naming itself, is
+    // not captured, so the rewrite drops it rather than re-emitting a pointer
+    // at a freed or reused page.
 
     /// <summary>
     /// Captures the relationship state of <paramref name="tableName"/> before a
@@ -876,7 +876,7 @@ internal sealed class RelationshipManager(
         foreach (FkLogicalIndexSnapshot entry in await this.ReadFkLogicalIndexesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false))
         {
             if (entry.RelIdxNum < 0
-                || await this.PartnerLinksBackAsync(entry.RelTblPage, entry.RelIdxNum, tdefPage, cancellationToken).ConfigureAwait(false))
+                || await this.PartnerLinksBackAsync(entry.RelTblPage, entry.RelIdxNum, tdefPage, entry.IndexNumber, cancellationToken).ConfigureAwait(false))
             {
                 fkEntries.Add(entry);
             }
@@ -1170,29 +1170,39 @@ internal sealed class RelationshipManager(
     }
 
     /// <summary>
-    /// Returns whether the TDEF at <paramref name="partnerTdefPage"/> holds an
-    /// FK logical-idx entry numbered <paramref name="partnerIndexNumber"/>
-    /// whose <c>rel_tbl_page</c> is <paramref name="tdefPage"/>: the partner of
-    /// an entry on <paramref name="tdefPage"/> that names it, linking back. For
-    /// a self-referencing entry both pages are the same TDEF. Returns
-    /// <see langword="false"/> for a dangling entry, whose partner page is out
-    /// of range, freed, holds no parseable TDEF, or holds a table without that
-    /// entry. Earlier builds' <c>DropTableAsync</c> left such entries naming
-    /// the freed TDEF page of a dropped table, or the unrelated table that took
-    /// the page later.
+    /// Returns whether the FK logical-idx entry numbered
+    /// <paramref name="indexNumber"/> on <paramref name="tdefPage"/> has a
+    /// partner that links back: another FK entry, numbered
+    /// <paramref name="partnerIndexNumber"/> on the TDEF at
+    /// <paramref name="partnerTdefPage"/>, whose <c>rel_tbl_page</c> is
+    /// <paramref name="tdefPage"/> and whose <c>rel_idx_num</c> is
+    /// <paramref name="indexNumber"/>, as on both sides of every writer-created
+    /// relationship and every relationship in the Access fixtures. For a
+    /// self-referencing entry both pages are the same TDEF, and the partner
+    /// must be a different entry.
+    /// Returns <see langword="false"/> for a dangling entry: its partner page
+    /// is out of range, freed, holds no parseable TDEF or holds a table
+    /// without that entry, the partner names a different entry, or the entry
+    /// names itself. Earlier builds' <c>DropTableAsync</c> left such entries
+    /// naming the freed TDEF page of a dropped table, or the unrelated table
+    /// that took the page later, and their schema rewrites turned one into an
+    /// entry naming itself when the rebuilt copy took that page.
     /// </summary>
     /// <param name="partnerTdefPage">The page the entry names (<c>rel_tbl_page</c>).</param>
     /// <param name="partnerIndexNumber">The partner entry the entry names (<c>rel_idx_num</c>).</param>
     /// <param name="tdefPage">The TDEF page that holds the entry.</param>
+    /// <param name="indexNumber">The entry's own <c>index_num</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>Whether the partner entry exists and points back.</returns>
+    /// <returns>Whether the partner entry exists and points back at the entry.</returns>
     private async ValueTask<bool> PartnerLinksBackAsync(
         long partnerTdefPage,
         int partnerIndexNumber,
         long tdefPage,
+        int indexNumber,
         CancellationToken cancellationToken)
     {
-        if (!this.IsTDefPageCandidate(partnerTdefPage))
+        if (!this.IsTDefPageCandidate(partnerTdefPage)
+            || (partnerTdefPage == tdefPage && partnerIndexNumber == indexNumber))
         {
             return false;
         }
@@ -1215,7 +1225,8 @@ internal sealed class RelationshipManager(
             int f = this.db.IndexLayoutInfo.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
             if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] == (byte)IndexKind.ForeignKey
                 && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset) == partnerIndexNumber
-                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) == tdefPage)
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) == tdefPage
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset) == indexNumber)
             {
                 return true;
             }
