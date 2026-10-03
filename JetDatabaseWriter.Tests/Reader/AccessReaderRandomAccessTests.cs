@@ -260,6 +260,9 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     /// <summary>
     /// A caller with a <see cref="SynchronizationContext"/>, such as a UI thread,
     /// never waits on the disk: its page reads still run on the thread pool.
+    /// That holds when the context runs on a thread-pool thread too, as
+    /// Blazor Server's renderer context does, so the context alone keeps the
+    /// reads offloaded.
     /// </summary>
     /// <remarks>
     /// Read-ahead is off. With it, the library's <c>ConfigureAwait(false)</c>
@@ -269,8 +272,11 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     /// Without it, every page the scan moves onto is read from the context's
     /// thread, so the move waits for the offloaded read.
     /// </remarks>
-    [Fact]
-    public async Task Rows_OnThreadWithSynchronizationContext_DoNotReadInline()
+    /// <param name="onThreadPool"><see langword="true"/> to run the context on a thread-pool thread; <see langword="false"/> for a dedicated thread.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rows_OnThreadWithSynchronizationContext_DoNotReadInline(bool onThreadPool)
     {
         const int rowCount = 2_000;
         string path = await this.CreateReadableDatabaseAsync(rowCount);
@@ -285,11 +291,64 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             },
             TestContext.Current.CancellationToken);
 
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         ScanCompletion scan = await SingleThreadSynchronizationContext.RunAsync(
-            () => ScanCountingPendingMovesAsync(reader, TestContext.Current.CancellationToken));
+            async () =>
+            {
+                Assert.Equal(onThreadPool, Thread.CurrentThread.IsThreadPoolThread);
+                return await ScanCountingPendingMovesAsync(reader, cancellationToken);
+            },
+            onThreadPool);
 
         Assert.Equal(rowCount, scan.Rows);
         Assert.True(scan.PendingMovesAfterFirst > 0, "Every row completed synchronously, so a page read blocked the context's thread.");
+    }
+
+    /// <summary>
+    /// A caller running under a <see cref="TaskScheduler"/> other than the
+    /// default keeps its page reads offloaded, even on a thread-pool thread
+    /// with no synchronization context: the scheduler may limit how many of
+    /// its tasks run at once, so a blocking read would hold one of its slots.
+    /// </summary>
+    /// <remarks>
+    /// The exclusive scheduler of a <see cref="ConcurrentExclusiveSchedulerPair"/>
+    /// runs its tasks on pool threads, so the scheduler is the only thing that
+    /// keeps the reads offloaded. Read-ahead is off, as in
+    /// <see cref="Rows_OnThreadWithSynchronizationContext_DoNotReadInline"/>.
+    /// </remarks>
+    [Fact]
+    public async Task Rows_OnThreadPoolUnderCustomTaskScheduler_DoNotReadInline()
+    {
+        const int rowCount = 2_000;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageCacheSize = 0,
+                PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        var schedulers = new ConcurrentExclusiveSchedulerPair();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        ScanCompletion scan = await Task.Factory.StartNew(
+            async () =>
+            {
+                Assert.True(Thread.CurrentThread.IsThreadPoolThread, "The exclusive scheduler ran the scan off the thread pool.");
+                Assert.Null(SynchronizationContext.Current);
+                Assert.Same(schedulers.ExclusiveScheduler, TaskScheduler.Current);
+                return await ScanCountingPendingMovesAsync(reader, cancellationToken);
+            },
+            cancellationToken,
+            TaskCreationOptions.DenyChildAttach,
+            schedulers.ExclusiveScheduler).Unwrap();
+        schedulers.Complete();
+
+        Assert.Equal(rowCount, scan.Rows);
+        Assert.True(scan.PendingMovesAfterFirst > 0, "Every row completed synchronously, so a page read blocked a thread of the caller's scheduler.");
     }
 
     /// <summary>
@@ -490,36 +549,56 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     private readonly record struct ScanCompletion(int Rows, int PendingMovesAfterFirst);
 
     /// <summary>
-    /// Runs work on a dedicated thread whose <see cref="SynchronizationContext"/>
+    /// Runs work on one thread whose <see cref="SynchronizationContext"/>
     /// queues every continuation back to that thread, as a UI thread does.
     /// </summary>
     private sealed class SingleThreadSynchronizationContext : SynchronizationContext, IDisposable
     {
         private readonly BlockingCollection<(SendOrPostCallback Callback, object? State)> queue = [];
 
-        /// <summary>Runs <paramref name="work"/> on a new thread with this context installed and returns its result.</summary>
+        /// <summary>
+        /// Runs <paramref name="work"/> on a new thread, or on a thread-pool
+        /// thread that it holds until the work completes, with this context
+        /// installed, and returns its result.
+        /// </summary>
         /// <typeparam name="T">The result type.</typeparam>
         /// <param name="work">The work to start on the thread.</param>
+        /// <param name="onThreadPool"><see langword="true"/> to run on a thread-pool thread; <see langword="false"/> for a dedicated thread.</param>
         /// <returns>The work's result.</returns>
-        public static async Task<T> RunAsync<T>(Func<Task<T>> work)
+        public static async Task<T> RunAsync<T>(Func<Task<T>> work, bool onThreadPool)
         {
             var started = new TaskCompletionSource<Task<T>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var thread = new Thread(() =>
+            void Pump()
             {
+                SynchronizationContext? previous = Current;
                 using var context = new SingleThreadSynchronizationContext();
                 SetSynchronizationContext(context);
-                Task<T> task = work();
-                _ = task.ContinueWith(_ => context.queue.CompleteAdding(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-                started.SetResult(task);
-                foreach ((SendOrPostCallback callback, object? state) in context.queue.GetConsumingEnumerable())
+                try
                 {
-                    callback(state);
+                    Task<T> task = work();
+                    _ = task.ContinueWith(_ => context.queue.CompleteAdding(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    started.SetResult(task);
+                    foreach ((SendOrPostCallback callback, object? state) in context.queue.GetConsumingEnumerable())
+                    {
+                        callback(state);
+                    }
                 }
-            })
+                finally
+                {
+                    // A pool thread goes back to the pool without the context.
+                    SetSynchronizationContext(previous);
+                }
+            }
+
+            if (onThreadPool)
             {
-                IsBackground = true,
-            };
-            thread.Start();
+                _ = ThreadPool.QueueUserWorkItem(_ => Pump());
+            }
+            else
+            {
+                new Thread(Pump) { IsBackground = true }.Start();
+            }
+
             return await (await started.Task.ConfigureAwait(false)).ConfigureAwait(false);
         }
 
