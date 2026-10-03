@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>JetDatabaseWriter.Scaffold</RootNamespace>
     <AssemblyName>JetDatabaseWriter.Scaffold</AssemblyName>
+    <!-- Run with dotnet run (see the README); it is not published as a package or tool. -->
+    <IsPackable>false</IsPackable>
     <!-- CA1303: literal strings are fine in a CLI tool; CA1849: sync Console is fine for a CLI -->
     <NoWarn>$(NoWarn);CA1303;CA1849</NoWarn>
   </PropertyGroup>

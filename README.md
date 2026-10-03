@@ -960,6 +960,8 @@ dotnet build JetDatabaseWriter.slnx -c Release
 dotnet test --project JetDatabaseWriter.Tests -c Release --no-build
 ```
 
+Releases are published from version tags; [PUBLISH.md](PUBLISH.md) describes the steps.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.

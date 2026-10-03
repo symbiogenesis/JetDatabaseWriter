@@ -32,8 +32,11 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # MinVer computes the package version from the tags, so fetch the full history.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # global.json pins the .NET 10 SDK that builds everything. The .NET 8 SDK is
       # installed only for its runtime, which runs the net8.0 test leg; that leg loads
@@ -69,8 +72,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nupkg
-          path: |
-            artifacts/nupkg/*.nupkg
-            artifacts/nupkg/*.snupkg
+          path: artifacts/nupkg/*.nupkg
           if-no-files-found: error
           retention-days: 7

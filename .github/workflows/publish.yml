@@ -25,8 +25,8 @@ jobs:
           name: nupkg
           path: nupkg
 
-      # The tag must name the version CI packed, so a mistyped tag can't publish
-      # something else.
+      # MinVer packs a tagged commit as the tag's version. This catches a tag it did not
+      # use, such as one that is not a vX.Y.Z version (CI then packs a prerelease).
       - name: Check package version
         shell: pwsh
         env:
