@@ -226,9 +226,9 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously deletes a foreign-key relationship previously created with
     /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.
     /// Removes every row in <c>MSysRelationships</c> whose <c>szRelationship</c> matches
-    /// <paramref name="relationshipName"/> (case-insensitive) and, on Jet4 / ACE
-    /// (<c>.accdb</c>) databases, removes the corresponding per-TDEF foreign-key
-    /// logical-index entries on both the PK-side and FK-side TDEFs so the next
+    /// <paramref name="relationshipName"/> (case-insensitive) and removes the
+    /// corresponding per-TDEF foreign-key logical-index entries on both the
+    /// PK-side and FK-side TDEFs, on every format, so the next
     /// reader observes the relationship gone immediately (without waiting for a
     /// Microsoft Access Compact &amp; Repair pass).
     /// </summary>
@@ -256,9 +256,9 @@ public interface IAccessSchema : IAccessBase
     /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.
     /// Updates the <c>szRelationship</c> column of every matching row in
     /// <c>MSysRelationships</c> (case-insensitive lookup on
-    /// <paramref name="oldName"/>). On Jet4 / ACE databases, the matching
-    /// per-TDEF foreign-key logical-index name cookies are rewritten through the
-    /// logical TDEF-chain writer so reopened readers see the new name immediately.
+    /// <paramref name="oldName"/>). The matching per-TDEF foreign-key
+    /// logical-index name cookies are rewritten through the logical TDEF-chain
+    /// writer so reopened readers see the new name immediately.
     /// </summary>
     /// <param name="oldName">Case-insensitive existing relationship name.</param>
     /// <param name="newName">New relationship name. Must not match any existing

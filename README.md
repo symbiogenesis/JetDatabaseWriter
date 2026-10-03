@@ -643,7 +643,7 @@ await writer.RenameColumnAsync("Contacts", "Score", "Rating");
 await writer.DropColumnAsync("Contacts", "Phone");
 ```
 
-> These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count. Every column keeps its properties (type, size, precision and scale, Unicode compression, calculated expression, persisted properties), and indexes and foreign-key relationships follow the rebuilt table: on Jet4 / ACE its relationship index entries are re-created and the related tables are re-linked to it, and renaming a key column updates `MSysRelationships`. On Jet3 the rebuilt table's relationship index entries, and the related tables' entries that pointed at it, are removed (the writer cannot emit Jet3 ones); the `MSysRelationships` rows are kept. Dropping a column that a relationship uses as a key column throws `InvalidOperationException`; drop the relationship first.
+> These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count. Every column keeps its properties (type, size, precision and scale, Unicode compression, calculated expression, persisted properties), and indexes and foreign-key relationships follow the rebuilt table: its relationship index entries are re-created and the related tables are re-linked to it, and renaming a key column updates `MSysRelationships`. Dropping a column that a relationship uses as a key column throws `InvalidOperationException`; drop the relationship first.
 
 ### Linked tables
 
@@ -698,9 +698,9 @@ DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationT
 
 ### Foreign-key relationships
 
-Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and, on Jet4 / ACE databases, emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. Jet3 `.mdb` files get only the catalog rows.
+Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. On Jet3 (Access 97) files the entries take the layout Access 97 writes.
 
-`DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the Jet4 / ACE TDEF entries, and leave Type=8 relationship rows in `MSysObjects` for Microsoft Access Compact & Repair to normalize from the canonical relationship rows.
+`DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the TDEF entries on every format, and leave Type=8 relationship rows in `MSysObjects` for Microsoft Access Compact & Repair to normalize from the canonical relationship rows.
 
 **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` and `CascadeDeletes` honour the cascade flags. See the Limitations section for caveats.
 

@@ -245,6 +245,9 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
     [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
@@ -618,17 +621,19 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
 
     /// <summary>
     /// Returns a database holding a parent table for the foreign-key cases:
-    /// on Jet4, a copy of the Access-authored indexTestV2000.mdb, whose
-    /// Table2 is keyed on <c>id</c>; on ACCDB, a fresh file with a ten-row
-    /// parent keyed on <c>Id</c>.
+    /// on Jet3 and Jet4, a copy of the Access-authored indexTestV1997.mdb or
+    /// indexTestV2000.mdb, whose Table2 is keyed on <c>id</c> (writer-created
+    /// .mdb files have no <c>MSysRelationships</c>); on ACCDB, a fresh file
+    /// with a ten-row parent keyed on <c>Id</c>.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <returns>The stream, the parent table and key column, and the parent's key values.</returns>
     private async Task<(MemoryStream Stream, string ParentTable, string ParentKey, List<int> ParentIds)> CreateParentDatabaseAsync(DatabaseFormat format)
     {
-        if (format == DatabaseFormat.Jet4Mdb)
+        if (format != DatabaseFormat.AceAccdb)
         {
-            MemoryStream fixture = await cache.CopyToStreamAsync(TestDatabases.IndexTestV2000, this.ct);
+            string path = format == DatabaseFormat.Jet3Mdb ? TestDatabases.IndexTestV1997 : TestDatabases.IndexTestV2000;
+            MemoryStream fixture = await cache.CopyToStreamAsync(path, this.ct);
             var fixtureIds = new List<int>();
             await using (AccessReader reader = await AccessReader.OpenAsync(fixture, ReaderOptions, leaveOpen: true, this.ct))
             {

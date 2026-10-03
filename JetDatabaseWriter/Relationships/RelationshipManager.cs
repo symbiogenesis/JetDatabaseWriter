@@ -76,8 +76,7 @@ internal sealed class RelationshipManager(
     /// (<c>index_type = 0x02</c>, <c>rel_idx_num</c>, <c>rel_tbl_page</c>)
     /// that drive runtime referential-integrity enforcement by the JET
     /// engine are emitted by <see cref="EmitFkPerTdefEntriesAsync"/> on
-    /// Jet4 / ACE; on Jet3 they are skipped and Microsoft Access regenerates
-    /// them on the next Compact &amp; Repair pass.
+    /// every format, in the shape Access writes for that format.
     /// </remarks>
     internal async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken)
     {
@@ -145,40 +144,43 @@ internal sealed class RelationshipManager(
         // rel_idx_num / rel_tbl_page so the JET engine can locate the partner
         // table without waiting for Microsoft Access Compact & Repair to
         // regenerate them from the MSysRelationships rows above. See
-        // docs/design/index-and-relationship-format-notes.md §7. Jet3 uses a
-        // different (20-byte) logical-idx layout that this library does not
-        // yet exercise — skip silently to keep the catalog row emission
-        // working on .mdb (Access 97) databases.
-        if (this.db.Format != DatabaseFormat.Jet3Mdb)
-        {
-            await this.EmitFkPerTdefEntriesAsync(
-                relationship,
-                primaryEntry.TDefPage,
-                primaryDef,
-                foreignEntry.TDefPage,
-                foreignDef,
-                cancellationToken).ConfigureAwait(false);
+        // docs/design/index-and-relationship-format-notes.md §3.2 and §7.
+        await this.EmitFkPerTdefEntriesAsync(
+            relationship,
+            primaryEntry.TDefPage,
+            primaryDef,
+            foreignEntry.TDefPage,
+            foreignDef,
+            cancellationToken).ConfigureAwait(false);
 
-            // Populate the freshly-allocated FK index leaves so the seek-based
-            // RI enforcement path (EnforceFkOnInsertAsync) sees existing parent
-            // rows. EmitFkPerTdefEntriesAsync emits empty leaves; without this
-            // rebuild a child INSERT immediately after CreateRelationshipAsync
-            // would fail to match a parent row that was inserted before the
-            // relationship existed. Re-read TDEFs because the emit mutates
-            // both sides' TDEF pages in place.
-            TableDef primaryDefAfter = await this.db.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-            await this.indexes.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-            if (foreignEntry.TDefPage != primaryEntry.TDefPage)
-            {
-                TableDef foreignDefAfter = await this.db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
-                await this.indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
-            }
+        // Populate the freshly-allocated FK index leaves so the seek-based
+        // RI enforcement path (EnforceFkOnInsertAsync) sees existing parent
+        // rows. EmitFkPerTdefEntriesAsync emits empty leaves; without this
+        // rebuild a child INSERT immediately after CreateRelationshipAsync
+        // would fail to match a parent row that was inserted before the
+        // relationship existed. Re-read TDEFs because the emit mutates
+        // both sides' TDEF pages in place.
+        TableDef primaryDefAfter = await this.db.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        await this.indexes.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        if (foreignEntry.TDefPage != primaryEntry.TDefPage)
+        {
+            TableDef foreignDefAfter = await this.db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+            await this.indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
         }
     }
 
     // ════════════════════════════════════════════════════════════════
-    // Per-TDEF FK logical-idx entries (Jet4 / ACE only)
+    // Per-TDEF FK logical-idx entries
     // ════════════════════════════════════════════════════════════════
+    //
+    // Jet4 / ACE follow the DAO baseline (§3.4): the FK entry is prepended,
+    // the parent shares the first covering real index, its cascade bytes
+    // stay 0, and a new real index carries the 0x80 flag. Jet3 follows the
+    // only Access 97 evidence, indexTestV1997.mdb: entries and names stay in
+    // case-insensitive name order, the parent shares a unique (primary-key)
+    // covering real index, both sides carry the cascade bytes, and a new real
+    // index has flags 0x00. used_pages stays 0 on Jet3, where the writer keeps
+    // no index usage maps.
 
     /// <summary>
     /// Pre-computed real-idx slot information for one side of a relationship.
@@ -235,7 +237,9 @@ internal sealed class RelationshipManager(
 
         // Read both TDEF pages and decide each side's real-idx slot and new
         // logical-idx number. rel_idx_num cross-references the partner
-        // logical-idx number, not the partner physical real-idx slot.
+        // logical-idx number, not the partner physical real-idx slot. On Jet3
+        // the parent shares a unique covering real index, as Access 97 does.
+        bool jet3 = this.db.Format == DatabaseFormat.Jet3Mdb;
         FkSidePlan pkPlan;
         FkSidePlan fkPlan;
         List<string> pkExistingNames;
@@ -251,74 +255,96 @@ internal sealed class RelationshipManager(
         }
         else
         {
-            (pkPlan, pkExistingNames) = await this.PrepareFkSideAsync(primaryTdefPage, pkColNums, cancellationToken).ConfigureAwait(false);
-            (fkPlan, fkExistingNames) = await this.PrepareFkSideAsync(foreignTdefPage, fkColNums, cancellationToken).ConfigureAwait(false);
+            (pkPlan, pkExistingNames) = await this.PrepareFkSideAsync(primaryTdefPage, pkColNums, preferUnique: jet3, cancellationToken).ConfigureAwait(false);
+            (fkPlan, fkExistingNames) = await this.PrepareFkSideAsync(foreignTdefPage, fkColNums, preferUnique: false, cancellationToken).ConfigureAwait(false);
         }
 
         // Allocate empty leaf pages for any newly-allocated real-idx slots.
         // Both leaf pages are appended before any TDEF mutation so the page
-        // numbers are stable for the cross-referenced first_dp values.
-        if (pkPlan.AllocatesNewRealIdx)
+        // numbers are stable for the cross-referenced first_dp values. Each
+        // side's TDEF write links its leaf; a leaf whose write never happens
+        // goes back to the global usage map.
+        var pkRuns = new ReservedPageRuns(this.pageAllocator);
+        var fkRuns = new ReservedPageRuns(this.pageAllocator);
+        try
         {
-            byte[] leaf = IndexPageCodec.BuildLeafPage(
-                IndexPageLayout.Jet4,
-                this.db.PageSizeBytes,
+            if (pkPlan.AllocatesNewRealIdx)
+            {
+                pkPlan = pkPlan.WithLeafPage(await this.AllocateEmptyFkLeafAsync(primaryTdefPage, pkRuns, cancellationToken).ConfigureAwait(false));
+            }
+
+            if (fkPlan.AllocatesNewRealIdx)
+            {
+                fkPlan = fkPlan.WithLeafPage(await this.AllocateEmptyFkLeafAsync(foreignTdefPage, fkRuns, cancellationToken).ConfigureAwait(false));
+            }
+
+            byte cascadeUpsByte = (byte)(relationship.CascadeUpdates ? 1 : 0);
+            byte cascadeDelsByte = (byte)(relationship.CascadeDeletes ? 1 : 0);
+
+            // Choose unique-within-tdef logical-idx names. DAO uses a hidden .rB/.rC
+            // style logical name on the parent side and the public relationship name
+            // on the child side.
+            string pkName = MakeUniqueParentRelationshipLogicalName(pkExistingNames);
+            string fkName = IndexHelpers.MakeUniqueLogicalIdxName(
+                primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
+                fkExistingNames);
+
+            // Emit both sides. On Jet4 / ACE the PK side carries no cascade
+            // flags, matching the DAO baseline; Access 97 sets them on both.
+            await this.EmitFkLogicalIdxAsync(
                 primaryTdefPage,
-                [],
-                enablePrefixCompression: false);
-            long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
-            pkPlan = pkPlan.WithLeafPage(lp);
-        }
+                pkColNums,
+                pkName,
+                pkPlan,
+                relTblTypeThisSide: Constants.TableDefinition.ParentRelationshipTableType,
+                relIdxNumOtherSide: fkPlan.LogicalIdxNum,
+                relTblPageOther: foreignTdefPage,
+                cascadeUps: jet3 ? cascadeUpsByte : (byte)0,
+                cascadeDels: jet3 ? cascadeDelsByte : (byte)0,
+                pkRuns,
+                cancellationToken).ConfigureAwait(false);
 
-        if (fkPlan.AllocatesNewRealIdx)
-        {
-            byte[] leaf = IndexPageCodec.BuildLeafPage(
-                IndexPageLayout.Jet4,
-                this.db.PageSizeBytes,
+            await this.EmitFkLogicalIdxAsync(
                 foreignTdefPage,
-                [],
-                enablePrefixCompression: false);
-            long lp = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
-            fkPlan = fkPlan.WithLeafPage(lp);
+                fkColNums,
+                fkName,
+                fkPlan,
+                relTblTypeThisSide: Constants.TableDefinition.ChildRelationshipTableType,
+                relIdxNumOtherSide: pkPlan.LogicalIdxNum,
+                relTblPageOther: primaryTdefPage,
+                cascadeUps: cascadeUpsByte,
+                cascadeDels: cascadeDelsByte,
+                fkRuns,
+                cancellationToken).ConfigureAwait(false);
         }
+        catch
+        {
+            await pkRuns.ReleaseAsync().ConfigureAwait(false);
+            await fkRuns.ReleaseAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 
-        byte cascadeUpsByte = (byte)(relationship.CascadeUpdates ? 1 : 0);
-        byte cascadeDelsByte = (byte)(relationship.CascadeDeletes ? 1 : 0);
-
-        // Choose unique-within-tdef logical-idx names. DAO uses a hidden .rB/.rC
-        // style logical name on the parent side and the public relationship name
-        // on the child side.
-        string pkName = MakeUniqueParentRelationshipLogicalName(pkExistingNames);
-        string fkName = IndexHelpers.MakeUniqueLogicalIdxName(
-            primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
-            fkExistingNames);
-
-        // Emit both sides. PK side carries no cascade flags (cascade is an
-        // FK-side property — Access only checks them when modifying the parent
-        // and looking up children).
-        await this.EmitFkLogicalIdxAsync(
-            primaryTdefPage,
-            pkColNums,
-            pkName,
-            pkPlan,
-            relTblTypeThisSide: Constants.TableDefinition.ParentRelationshipTableType,
-            relIdxNumOtherSide: fkPlan.LogicalIdxNum,
-            relTblPageOther: foreignTdefPage,
-            cascadeUps: 0,
-            cascadeDels: 0,
-            cancellationToken).ConfigureAwait(false);
-
-        await this.EmitFkLogicalIdxAsync(
-            foreignTdefPage,
-            fkColNums,
-            fkName,
-            fkPlan,
-            relTblTypeThisSide: Constants.TableDefinition.ChildRelationshipTableType,
-            relIdxNumOtherSide: pkPlan.LogicalIdxNum,
-            relTblPageOther: primaryTdefPage,
-            cascadeUps: cascadeUpsByte,
-            cascadeDels: cascadeDelsByte,
-            cancellationToken).ConfigureAwait(false);
+    /// <summary>
+    /// Allocates and writes the empty leaf a new FK real index starts with,
+    /// in the database format's leaf layout, and records it in
+    /// <paramref name="runs"/> until the TDEF write that links it.
+    /// </summary>
+    /// <param name="tdefPage">The owning table's TDEF page.</param>
+    /// <param name="runs">The runs to record the leaf in.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The leaf page number.</returns>
+    private async ValueTask<long> AllocateEmptyFkLeafAsync(long tdefPage, ReservedPageRuns runs, CancellationToken cancellationToken)
+    {
+        byte[] leaf = IndexPageCodec.BuildLeafPage(
+            IndexPageLayout.ForFormat(this.db.Format),
+            this.db.PageSizeBytes,
+            tdefPage,
+            [],
+            enablePrefixCompression: false);
+        long page = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
+        runs.Add(page, 1);
+        return page;
     }
 
     /// <summary>
@@ -329,11 +355,13 @@ internal sealed class RelationshipManager(
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
+    /// <param name="preferUnique">Whether to share a unique covering real index in preference to the first one (see <see cref="FindCoveringRealIdx"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="NotSupportedException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareFkSideAsync(
         long tdefPage,
         int[] columnNumbers,
+        bool preferUnique,
         CancellationToken cancellationToken)
     {
         LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
@@ -344,7 +372,7 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int sharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int sharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, columnNumbers, in layout, preferUnique);
         List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
 
         int logicalIdxNum = NextLogicalIdxNumber(this.db.IndexLayoutInfo, page, in layout);
@@ -380,8 +408,8 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int pkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-        int fkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int pkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, pkColumnNumbers, in layout, preferUnique: this.db.Format == DatabaseFormat.Jet3Mdb);
+        int fkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, fkColumnNumbers, in layout, preferUnique: false);
         int nextRealIdxNum = layout.NumRealIdx;
 
         bool pkAllocates = pkSharedSlot < 0;
@@ -431,8 +459,10 @@ internal sealed class RelationshipManager(
     /// <param name="relTblPageOther">The relationship table page other.</param>
     /// <param name="cascadeUps">The cascade ups.</param>
     /// <param name="cascadeDels">The cascade dels.</param>
+    /// <param name="newLeafRuns">Holds the new real index's empty leaf until the TDEF write links it.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="NotSupportedException">Thrown when the target TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="indexName"/> is too long for a TDEF name record (more than 255 ANSI bytes on Jet3).</exception>
     private async ValueTask EmitFkLogicalIdxAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -443,6 +473,7 @@ internal sealed class RelationshipManager(
         long relTblPageOther,
         byte cascadeUps,
         byte cascadeDels,
+        ReservedPageRuns newLeafRuns,
         CancellationToken cancellationToken)
     {
         LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
@@ -517,16 +548,18 @@ internal sealed class RelationshipManager(
         // On Jet4/ACE it starts with the 0x00000783 leading magic, distinct
         // from the format-wide 0x00000659 cookie; DAO validates it during
         // CompactDatabase / OpenRecordset on tables with FK indexes. flags
-        // carries the 0x80 bit Access sets on every Jet4 index. used_pages
-        // starts at 0; MaintainIndexesAsync patches the DAO-shaped index
-        // usage-map pointer after rebuilding.
+        // carries the 0x80 bit Access sets on every Jet4 index; Access 97
+        // writes 0x00 for an FK index. used_pages starts at 0;
+        // MaintainIndexesAsync patches the DAO-shaped index usage-map pointer
+        // after rebuilding on Jet4/ACE. Its statistics slot in the skip block
+        // stays zero.
         if (sidePlan.AllocatesNewRealIdx)
         {
             lay.WriteRealIdxDescriptor(
                 newTd,
                 newRealIdxDescStart + oldRealIdxPhysLen,
                 columnNumbers,
-                Constants.TableDefinition.UnknownIndexFlag,
+                this.db.Format == DatabaseFormat.Jet3Mdb ? (byte)0 : Constants.TableDefinition.UnknownIndexFlag,
                 sidePlan.NewLeafPageNumber);
         }
 
@@ -587,6 +620,8 @@ internal sealed class RelationshipManager(
         // not counted in tdef_len, matching BuildTDefPageWithIndexOffsets.
         Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
 
+        // This write links the new real index's leaf.
+        newLeafRuns.MarkLinked();
         await this.WriteLogicalTDefChainAsync(
             chain,
             newTd,
@@ -674,24 +709,62 @@ internal sealed class RelationshipManager(
     /// Real-idx sharing per §3.3: returns the existing real-idx slot whose col_map
     /// matches <paramref name="columnNumbers"/> exactly (in declaration
     /// order); -1 when no covering real-idx exists. The col_map is fixed at
-    /// 10 slots × {col_num(2), col_order(1)} on every format.
+    /// 10 slots × {col_num(2), col_order(1)} on every format. With
+    /// <paramref name="preferUnique"/>, a covering slot flagged unique or
+    /// backing the primary-key logical index wins over an earlier non-unique
+    /// one: Access 97 shared Table2's <c>PrimaryKey</c> real index, not its
+    /// <c>id</c> index on the same column, for the parent side of
+    /// 'Table2Table1' in indexTestV1997.mdb.
     /// </summary>
     /// <param name="lay">The format's TDEF index layout.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="columnNumbers">The column numbers.</param>
-    /// <param name="realIdxDescStart">The real index desc start.</param>
-    /// <param name="numRealIdx">The number of real index.</param>
-    private static int FindCoveringRealIdx(IndexLayout lay, byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
+    /// <param name="layout">The parsed TDEF layout.</param>
+    /// <param name="preferUnique">Whether a unique covering slot wins over the first covering slot.</param>
+    private static int FindCoveringRealIdx(IndexLayout lay, byte[] td, int[] columnNumbers, in FkTDefLayout layout, bool preferUnique)
     {
-        for (int ri = 0; ri < numRealIdx; ri++)
+        int first = -1;
+        for (int ri = 0; ri < layout.NumRealIdx; ri++)
         {
-            if (IndexHelpers.RealIdxColMapMatches(lay, td, lay.RealIdxPhysOffset(realIdxDescStart, ri), columnNumbers))
+            int phys = lay.RealIdxPhysOffset(layout.RealIdxDescStart, ri);
+            if (!IndexHelpers.RealIdxColMapMatches(lay, td, phys, columnNumbers))
+            {
+                continue;
+            }
+
+            if (!preferUnique)
             {
                 return ri;
             }
+
+            if ((td[lay.FlagsAbsoluteOffset(phys)] & Constants.TableDefinition.UniqueIndexFlag) != 0
+                || BacksPrimaryKey(lay, td, in layout, ri))
+            {
+                return ri;
+            }
+
+            if (first < 0)
+            {
+                first = ri;
+            }
         }
 
-        return -1;
+        return first;
+    }
+
+    private static bool BacksPrimaryKey(IndexLayout lay, byte[] td, in FkTDefLayout layout, int realIdxNum)
+    {
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int f = lay.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] == (byte)IndexKind.PrimaryKey
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset) == realIdxNum)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool ColumnNumbersEqual(int[] left, int[] right)
@@ -744,12 +817,7 @@ internal sealed class RelationshipManager(
     // before it writes anything, EmitFkEntriesForRewriteAsync on the copy
     // before the row copy (so the copy's single index rebuild fills the FK
     // leaves), and CompleteRewriteAsync once the copy has replaced the table.
-    //
-    // Jet3 is the exception: this library cannot emit the Jet3 FK entry
-    // layout (CreateRelationshipAsync skips it too), so on Jet3 the copy gets
-    // no FK entries and CompleteRewriteAsync removes the partners' entries
-    // that pointed at the old TDEF, instead of leaving them pointing at a
-    // freed page. The MSysRelationships rows still describe the relationship.
+    // This works the same on every format.
 
     /// <summary>
     /// Captures the relationship state of <paramref name="tableName"/> before a
@@ -836,7 +904,7 @@ internal sealed class RelationshipManager(
     /// relationship) is pointed at <paramref name="finalTdefPage"/> and its
     /// partner's new number. Partner tables are not touched here; see
     /// <see cref="CompleteRewriteAsync"/>. The new FK leaves are empty until the
-    /// caller rebuilds the copy's indexes. Emits nothing on Jet3.
+    /// caller rebuilds the copy's indexes.
     /// </summary>
     /// <param name="state">The state captured before the rewrite.</param>
     /// <param name="targetTdefPage">The TDEF page of the rebuilt copy.</param>
@@ -856,7 +924,7 @@ internal sealed class RelationshipManager(
         CancellationToken cancellationToken)
     {
         var newIndexNumbers = new Dictionary<int, int>();
-        if (state.FkEntries.Count == 0 || this.db.Format == DatabaseFormat.Jet3Mdb)
+        if (state.FkEntries.Count == 0)
         {
             return newIndexNumbers;
         }
@@ -880,8 +948,9 @@ internal sealed class RelationshipManager(
             }
         }
 
-        // Each emitted entry is prepended to the logical-idx list, so emitting
-        // last-to-first keeps the original entry order. Each one also takes the
+        // On Jet4/ACE each emitted entry is prepended to the logical-idx list,
+        // so emitting last-to-first keeps the original entry order; on Jet3
+        // each goes in at its name's sorted position. Each one also takes the
         // next free logical-idx number, which lets a self-referencing pair
         // learn its partner's number before either side is written.
         LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(targetTdefPage, cancellationToken).ConfigureAwait(false);
@@ -905,31 +974,38 @@ internal sealed class RelationshipManager(
                 ? partnerNumber
                 : entry.RelIdxNum;
 
-            (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], cancellationToken).ConfigureAwait(false);
+            // A parent-side entry on Jet3 shares a unique covering real index,
+            // as in CreateRelationshipAsync.
+            bool preferUnique = this.db.Format == DatabaseFormat.Jet3Mdb
+                && entry.RelTblType == Constants.TableDefinition.ParentRelationshipTableType;
+            (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], preferUnique, cancellationToken).ConfigureAwait(false);
             plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber] };
-            if (plan.AllocatesNewRealIdx)
+            var runs = new ReservedPageRuns(this.pageAllocator);
+            try
             {
-                byte[] leaf = IndexPageCodec.BuildLeafPage(
-                    IndexPageLayout.Jet4,
-                    this.db.PageSizeBytes,
-                    targetTdefPage,
-                    [],
-                    enablePrefixCompression: false);
-                long leafPage = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
-                plan = plan.WithLeafPage(leafPage);
-            }
+                if (plan.AllocatesNewRealIdx)
+                {
+                    plan = plan.WithLeafPage(await this.AllocateEmptyFkLeafAsync(targetTdefPage, runs, cancellationToken).ConfigureAwait(false));
+                }
 
-            await this.EmitFkLogicalIdxAsync(
-                targetTdefPage,
-                columnNumbers[i],
-                IndexHelpers.MakeUniqueLogicalIdxName(entry.Name, existingNames),
-                plan,
-                relTblTypeThisSide: entry.RelTblType,
-                relIdxNumOtherSide: relIdxNum,
-                relTblPageOther: selfReferencing ? finalTdefPage : entry.RelTblPage,
-                cascadeUps: entry.CascadeUps,
-                cascadeDels: entry.CascadeDels,
-                cancellationToken).ConfigureAwait(false);
+                await this.EmitFkLogicalIdxAsync(
+                    targetTdefPage,
+                    columnNumbers[i],
+                    IndexHelpers.MakeUniqueLogicalIdxName(entry.Name, existingNames),
+                    plan,
+                    relTblTypeThisSide: entry.RelTblType,
+                    relIdxNumOtherSide: relIdxNum,
+                    relTblPageOther: selfReferencing ? finalTdefPage : entry.RelTblPage,
+                    cascadeUps: entry.CascadeUps,
+                    cascadeDels: entry.CascadeDels,
+                    runs,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await runs.ReleaseAsync().ConfigureAwait(false);
+                throw;
+            }
         }
 
         return newIndexNumbers;
@@ -940,7 +1016,7 @@ internal sealed class RelationshipManager(
     /// Points each partner table's FK logical-idx entry at
     /// <paramref name="finalTdefPage"/> and at the re-emitted entry's new
     /// logical-idx number, or removes the partner's entry when this side was
-    /// not re-emitted (Jet3), and writes renamed key columns into the
+    /// not re-emitted, and writes renamed key columns into the
     /// <c>MSysRelationships</c> rows.
     /// </summary>
     /// <param name="state">The state captured before the rewrite.</param>
@@ -1189,8 +1265,8 @@ internal sealed class RelationshipManager(
     // Reverses CreateRelationshipAsync:
     //   • DropRelationshipAsync rewrites MSysRelationships as the remaining
     //     live rows, excluding rows whose szRelationship matches, and
-    //     (Jet4/ACE) removes the matching FK logical-idx entry from each
-    //     side's TDEF, then conservatively
+    //     removes the matching FK logical-idx entry from each side's TDEF
+    //     (the writer's own and those Access wrote), then conservatively
     //     reclaims any trailing real-idx physical-descriptor slots that the
     //     removal left unreferenced (common case: FK got the last slot on
     //     its TDEF and the slot is reclaimed cleanly; non-trailing orphans
@@ -1200,16 +1276,17 @@ internal sealed class RelationshipManager(
     //     ListIndexesAsync iterates by num_idx so the FK stops surfacing
     //     immediately regardless of whether the real-idx slot was reclaimed.
     //   • RenameRelationshipAsync rewrites MSysRelationships as live rows
-    //     with szRelationship replaced on every match and (Jet4/ACE) updates
-    //     the matching FK logical-idx name cookie on each side's TDEF through
-    //     the logical-chain writer. Relationship Type=8 MSysObjects rows are
+    //     with szRelationship replaced on every match and updates the
+    //     matching FK logical-idx name cookie on each side's TDEF through the
+    //     logical-chain writer (on Jet3 the entry also moves to its new name's
+    //     sorted position). Relationship Type=8 MSysObjects rows are
     //     deliberately not renamed or deleted here; DAO Compact & Repair
     //     normalizes them from MSysRelationships, while manual mutation of
     //     those rows has proven less compact-safe.
 
     /// <summary>
-    /// Asynchronously deletes a foreign-key relationship and its Jet4 / ACE
-    /// per-TDEF logical-index entries.
+    /// Asynchronously deletes a foreign-key relationship and its per-TDEF
+    /// logical-index entries.
     /// </summary>
     /// <param name="relationshipName">The case-insensitive relationship name to delete.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -1250,40 +1327,36 @@ internal sealed class RelationshipManager(
             throw new InvalidOperationException($"No relationship named '{relationshipName}' was found.");
         }
 
-        // Jet4/ACE only — Jet3 never received the per-TDEF FK logical-idx entries.
-        if (this.db.Format != DatabaseFormat.Jet3Mdb)
-        {
-            await this.ForEachRelationshipFkPairAsync(
-                matches,
-                async (ctx, ct) =>
+        await this.ForEachRelationshipFkPairAsync(
+            matches,
+            async (ctx, ct) =>
+            {
+                // Remove the matching FK logical-idx entry from each side.
+                // Self-referential relationships (PK and FK on same TDEF) need
+                // both removals to target distinct entries — pass the column
+                // list to disambiguate.
+                int pkReleased = await this.TryRemoveFkLogicalIdxEntryAsync(ctx.PkEntry.TDefPage, ctx.PkColNums, ctx.FkEntry.TDefPage, ct).ConfigureAwait(false);
+                int fkReleased = await this.TryRemoveFkLogicalIdxEntryAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, ct).ConfigureAwait(false);
+
+                // Reclaim trailing real-idx slots that are no longer
+                // referenced by any logical-idx entry. PK-side typically
+                // shares its real-idx slot with the existing PK logical-idx
+                // (no reclaim possible), but the FK-side's real-idx is
+                // usually its own and can be reclaimed cleanly. Self-
+                // referential: PK and FK live on the same TDEF and both
+                // removals already happened above; one reclaim pass covers
+                // both released slots.
+                if (pkReleased >= 0)
                 {
-                    // Remove the matching FK logical-idx entry from each side.
-                    // Self-referential relationships (PK and FK on same TDEF) need
-                    // both removals to target distinct entries — pass the column
-                    // list to disambiguate.
-                    int pkReleased = await this.TryRemoveFkLogicalIdxEntryAsync(ctx.PkEntry.TDefPage, ctx.PkColNums, ctx.FkEntry.TDefPage, ct).ConfigureAwait(false);
-                    int fkReleased = await this.TryRemoveFkLogicalIdxEntryAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, ct).ConfigureAwait(false);
+                    await this.TryReclaimTrailingRealIdxAsync(ctx.PkEntry.TDefPage, ct).ConfigureAwait(false);
+                }
 
-                    // Reclaim trailing real-idx slots that are no longer
-                    // referenced by any logical-idx entry. PK-side typically
-                    // shares its real-idx slot with the existing PK logical-idx
-                    // (no reclaim possible), but the FK-side's real-idx is
-                    // usually its own and can be reclaimed cleanly. Self-
-                    // referential: PK and FK live on the same TDEF and both
-                    // removals already happened above; one reclaim pass covers
-                    // both released slots.
-                    if (pkReleased >= 0)
-                    {
-                        await this.TryReclaimTrailingRealIdxAsync(ctx.PkEntry.TDefPage, ct).ConfigureAwait(false);
-                    }
-
-                    if (fkReleased >= 0 && ctx.PkEntry.TDefPage != ctx.FkEntry.TDefPage)
-                    {
-                        await this.TryReclaimTrailingRealIdxAsync(ctx.FkEntry.TDefPage, ct).ConfigureAwait(false);
-                    }
-                },
-                cancellationToken).ConfigureAwait(false);
-        }
+                if (fkReleased >= 0 && ctx.PkEntry.TDefPage != ctx.FkEntry.TDefPage)
+                {
+                    await this.TryReclaimTrailingRealIdxAsync(ctx.FkEntry.TDefPage, ct).ConfigureAwait(false);
+                }
+            },
+            cancellationToken).ConfigureAwait(false);
 
         var remainingRows = new List<object[]>(allRows.Count - matches.Count);
         foreach (RelationshipRowSnapshot row in allRows)
@@ -1298,8 +1371,8 @@ internal sealed class RelationshipManager(
     }
 
     /// <summary>
-    /// Asynchronously renames a foreign-key relationship and its Jet4 / ACE
-    /// per-TDEF logical-index name cookies.
+    /// Asynchronously renames a foreign-key relationship and its per-TDEF
+    /// logical-index name cookies.
     /// </summary>
     /// <param name="oldName">The case-insensitive existing relationship name.</param>
     /// <param name="newName">The new relationship name.</param>
@@ -1378,30 +1451,26 @@ internal sealed class RelationshipManager(
         await this.catalog.RewriteRowsAsync(msysRelTdefPage, msysRelDef, replacementRows, cancellationToken).ConfigureAwait(false);
 
         // Update the TDEF logical-idx name cookies on both sides so the
-        // on-disk index name matches the catalog row. Jet3 never received
-        // FK logical-idx entries, so this is a no-op there.
-        if (this.db.Format != DatabaseFormat.Jet3Mdb)
-        {
-            await this.ForEachRelationshipFkPairAsync(
-                matches,
-                async (ctx, ct) =>
-                {
-                    // Reproduce the cookie-naming convention from CreateRelationshipAsync:
-                    // PK side uses the relationship name; FK side appends "_FK"
-                    // when both endpoints land on the same TDEF (self-referential).
-                    string newPkBase = newName;
-                    string newFkBase = ctx.PkEntry.TDefPage == ctx.FkEntry.TDefPage
-                        ? newName + "_FK"
-                        : newName;
+        // on-disk index name matches the catalog row.
+        await this.ForEachRelationshipFkPairAsync(
+            matches,
+            async (ctx, ct) =>
+            {
+                // Reproduce the cookie-naming convention from CreateRelationshipAsync:
+                // PK side uses the relationship name; FK side appends "_FK"
+                // when both endpoints land on the same TDEF (self-referential).
+                string newPkBase = newName;
+                string newFkBase = ctx.PkEntry.TDefPage == ctx.FkEntry.TDefPage
+                    ? newName + "_FK"
+                    : newName;
 
-                    string newPkName = await this.PickUniqueLogicalIdxNameAsync(ctx.PkEntry.TDefPage, newPkBase, ct).ConfigureAwait(false);
-                    _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.PkEntry.TDefPage, ctx.PkColNums, ctx.FkEntry.TDefPage, newPkName, ct).ConfigureAwait(false);
+                string newPkName = await this.PickUniqueLogicalIdxNameAsync(ctx.PkEntry.TDefPage, newPkBase, ct).ConfigureAwait(false);
+                _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.PkEntry.TDefPage, ctx.PkColNums, ctx.FkEntry.TDefPage, newPkName, ct).ConfigureAwait(false);
 
-                    string newFkName = await this.PickUniqueLogicalIdxNameAsync(ctx.FkEntry.TDefPage, newFkBase, ct).ConfigureAwait(false);
-                    _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, newFkName, ct).ConfigureAwait(false);
-                },
-                cancellationToken).ConfigureAwait(false);
-        }
+                string newFkName = await this.PickUniqueLogicalIdxNameAsync(ctx.FkEntry.TDefPage, newFkBase, ct).ConfigureAwait(false);
+                _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, newFkName, ct).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1438,8 +1507,8 @@ internal sealed class RelationshipManager(
     /// <paramref name="otherTdefPage"/>. Returns the real-idx slot number that
     /// the removed FK entry referenced (so the caller can attempt
     /// <see cref="TryReclaimTrailingRealIdxAsync"/>), or <c>-1</c> when no
-    /// matching entry exists (already removed, or never created — Jet3 path,
-    /// or out-of-band catalog).
+    /// matching entry exists (already removed, never created, or an
+    /// out-of-band catalog).
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
@@ -1625,10 +1694,11 @@ internal sealed class RelationshipManager(
     /// <paramref name="columnNumbers"/> AND whose <c>rel_tbl_page</c> equals
     /// <paramref name="otherTdefPage"/>. Returns <see langword="true"/> when
     /// an entry was found and renamed; <see langword="false"/> otherwise
-    /// (already renamed, never created — Jet3 or out-of-band catalog).
+    /// (already renamed, never created, or an out-of-band catalog).
     /// Variable-length name records: shrink/grow is handled by shifting the
     /// trailing variable-column block; growth can spill into a continuation page
-    /// through the logical TDEF-chain writer.
+    /// through the logical TDEF-chain writer. On Jet3 the entry then moves to
+    /// its new name's sorted position.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
@@ -1697,10 +1767,77 @@ internal sealed class RelationshipManager(
         // Write the new length-prefixed name into the freed slot.
         Buffer.BlockCopy(newNameRecord, 0, td, oldNameStart, newNameRecord.Length);
 
+        // Jet3 keeps entries and names in name order, so the renamed entry
+        // moves to its new name's position.
+        if (this.db.Format == DatabaseFormat.Jet3Mdb
+            && !this.TryMoveLogicalIdxEntryToNameOrder(td, in layout, matchEntryIdx))
+        {
+            return false;
+        }
+
         // Update tdef_len.
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Moves the logical-idx entry at <paramref name="entryIndex"/>, and its
+    /// name record, to the position <see cref="FkEntryInsertPosition"/> gives
+    /// its name among the others, shifting the entries and names between. The
+    /// entry keeps its <c>index_num</c>, which is what partner entries name,
+    /// and the sections keep their sizes. Returns <see langword="false"/>
+    /// when the name section cannot be walked.
+    /// </summary>
+    /// <param name="td">The logical TDEF bytes, edited in place.</param>
+    /// <param name="layout">The parsed layout; the name records may have changed length since.</param>
+    /// <param name="entryIndex">The entry to move.</param>
+    private bool TryMoveLogicalIdxEntryToNameOrder(byte[] td, in FkTDefLayout layout, int entryIndex)
+    {
+        IndexLayout lay = this.db.IndexLayoutInfo;
+        int entrySize = lay.LogicalEntrySize;
+        var entries = new List<byte[]>(layout.NumIdx);
+        var nameRecords = new List<byte[]>(layout.NumIdx);
+        var names = new List<string>(layout.NumIdx);
+        int pos = layout.LogIdxNamesStart;
+        for (int i = 0; i < layout.NumIdx; i++)
+        {
+            entries.Add(td.AsSpan(lay.LogicalIdxEntryOffset(layout.LogIdxStart, i), entrySize).ToArray());
+            int start = pos;
+            if (this.db.ReadColumnName(td, ref pos, out string name) < 0)
+            {
+                return false;
+            }
+
+            nameRecords.Add(td.AsSpan(start, pos - start).ToArray());
+            names.Add(name);
+        }
+
+        byte[] entry = entries[entryIndex];
+        byte[] nameRecord = nameRecords[entryIndex];
+        string movedName = names[entryIndex];
+        entries.RemoveAt(entryIndex);
+        nameRecords.RemoveAt(entryIndex);
+        names.RemoveAt(entryIndex);
+        int target = this.FkEntryInsertPosition(names, movedName);
+        entries.Insert(target, entry);
+        nameRecords.Insert(target, nameRecord);
+
+        int write = layout.LogIdxStart;
+        foreach (byte[] bytes in entries)
+        {
+            Buffer.BlockCopy(bytes, 0, td, write, bytes.Length);
+            write += bytes.Length;
+        }
+
+        write = layout.LogIdxNamesStart;
+        foreach (byte[] bytes in nameRecords)
+        {
+            Buffer.BlockCopy(bytes, 0, td, write, bytes.Length);
+            write += bytes.Length;
+        }
+
         return true;
     }
 
