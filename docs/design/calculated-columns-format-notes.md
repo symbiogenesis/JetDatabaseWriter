@@ -32,7 +32,7 @@ Each ACE column descriptor is 25 bytes. The byte at **offset 16** is the
 | `CALCULATED_EXT_FLAG_MASK` | `0xC0` | `JetFormat.CALCULATED_EXT_FLAG_MASK` |
 
 Mirrored in this codebase as `Constants.CalculatedColumn.ExtFlagMask`.
-`DatabaseFile.ReadTableDefAsync` reads it into `ColumnInfo.ExtraFlags` and exposes
+`TableDefReader.ReadTableDefAsync` reads it into `ColumnInfo.ExtraFlags` and exposes
 `ColumnInfo.IsCalculated`.
 
 ### 2. Persisted expression & result type (LvProp)
@@ -162,7 +162,7 @@ Delivered:
 - `Constants.ColumnPropertyNames.Expression` / `.ResultType`.
 - `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip + truncation tests).
 - `ColumnInfo.ExtraFlags` + `ColumnInfo.IsCalculated`.
-- `DatabaseFile.ReadTableDefAsync` reads byte at descriptor offset 16 (ACE only;
+- `TableDefReader.ReadTableDefAsync` reads byte at descriptor offset 16 (ACE only;
   Jet3 hard-coded to `0`).
 - `ColumnDefinition` / `ColumnMetadata` `IsCalculated`, `CalculationExpression`,
   `CalculatedResultType` properties.

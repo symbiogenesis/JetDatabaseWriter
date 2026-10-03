@@ -11,7 +11,7 @@ JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
-├── DatabaseFile.cs                        (one open database: composes its JetFormat and its PageFile or Pager and forwards to them; TDEF parsing, owned-page and live-row enumeration)
+├── DatabaseFile.cs                        (one open database: composes its JetFormat, its PageFile or Pager and its TableDefReader and forwards to them; TDEF write-backs, owned-page and live-row enumeration)
 ├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
@@ -228,6 +228,7 @@ JetDatabaseWriter/
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
 │   ├── LogicalTDefChain.cs                (logical TDEF bytes spanning chained table-definition pages)
 │   ├── PersistedPropertyProjector.cs      (carries a table's LvProp blob through AddColumn / DropColumn / RenameColumn)
+│   ├── TableDefReader.cs                  (reads TDEF chains and parses them into TableDef: columns, names, row count)
 │   ├── Expressions/
 │   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
@@ -401,7 +402,8 @@ Each facade owns one **`DatabaseFile`**, which composes the file's parts and for
 
 - its format profile, `JetFormat` (`DatabaseFile.Profile`): the format, page size, code page, byte layouts and text codecs, built once from the header;
 - its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. The reader's object graph holds no `Pager`, so its write forwarders throw;
-- TDEF parsing, and owned data-page and live-row enumeration.
+- its TDEF parser, `TableDefReader` (`DatabaseFile.TableDefs`), which reads a table's TDEF chain through the page file and parses its columns, so over the writer's `Pager` it sees a transaction's pending TDEF pages; the in-place TDEF write-backs (`WriteTDefChainInPlaceAsync`, `WriteTDefInt32Async`) stay on `DatabaseFile` until the writer gets its own TDEF writer;
+- owned data-page and live-row enumeration.
 
 Its `PageCount` is the one end of file: inside a transaction the `Pager` includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds the `DatabaseFile`, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
 

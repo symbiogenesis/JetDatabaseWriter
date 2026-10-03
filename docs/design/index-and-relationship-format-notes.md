@@ -31,13 +31,13 @@ Phases R2/R3 require the encoded sort-key implementation that the writer also ne
 
 ## 3. TDEF layout (per [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) "TDEF (Table Definition) Pages")
 
-The TDEF page chain (page type `0x02`, linked through `next_pg` at offset `4`) is concatenated by `DatabaseFile.ReadTDefBytesAsync` into a single byte array. Within that buffer, the layout (Jet4 / ACE) is:
+The TDEF page chain (page type `0x02`, linked through `next_pg` at offset `4`) is concatenated by `TableDefReader.ReadTDefBytesAsync` into a single byte array. Within that buffer, the layout (Jet4 / ACE) is:
 
 | Section | Size | Notes |
 |---|---|---|
 | Page header | 8 bytes | `page_type=0x02`, `unknown=0x01`, `tdef_id`, `next_pg` |
 | Jet4 TDEF block | 55 bytes | `tdef_len`, `unknown`, `num_rows`, `autonumber`, `autonum_flag`, `unknown[3]`, `ct_autonum`, `unknown[8]`, `table_type`, `max_cols`, `num_var_cols`, `num_cols`, **`num_idx`** at relative offset 39 (absolute 47 from page start), **`num_real_idx`** at absolute 51, `used_pages`, `free_pages` |
-| Real-index entries | `num_real_idx × 12` (Jet4) / `× 8` (Jet3) | Already skipped by `DatabaseFile.ReadTableDefAsync`. Per mdbtools each Jet4 entry: `unknown(4) + num_idx_rows(4) + unknown(4)` |
+| Real-index entries | `num_real_idx × 12` (Jet4) / `× 8` (Jet3) | Already skipped by `TableDefReader.ReadTableDefAsync`. Per mdbtools each Jet4 entry: `unknown(4) + num_idx_rows(4) + unknown(4)` |
 | Column descriptors | `num_cols × 25` (Jet4) / `× 18` (Jet3) | Already parsed |
 | Column names | `num_cols ×` length-prefixed | 2-byte len + UTF-16 (Jet4); 1-byte len + ANSI (Jet3) |
 | **Real-index "physical" descriptors** | `num_real_idx × 52` (Jet4) / `× 39` (Jet3) | See §3.1 |
@@ -531,7 +531,7 @@ Writer-side wiring (in `AccessWriter`):
 
 - `FkContext.SeekIndexes : Dictionary<string, ParentSeekIndex?>` — per-call cache. Resolution attempts the lookup once per relationship; a `null` entry is a "do not retry" sentinel that pins this relationship to the W10 HashSet fallback for the rest of the call.
 - `ResolveParentSeekIndexAsync(rel, ctx, ct)` — locates the parent TDEF, finds the real-idx whose `col_map` exactly covers `rel.PrimaryColumns` (in declaration order), captures the per-column ascending flag (`(col_order & 0x01) != 0`), and the FK-side row indexes used to extract values from the inserter's `object[]`.
-- `TryFindCoveringRealIdxAsync(tdefPage, targetColNums, ct)` — TDEF walk (re-uses the same `LocateRealIdxDescStart` helper that W9b uses to navigate past the column-name section). Reads the whole TDEF chain through `DatabaseFile.ReadTDefBytesAsync`, so wide parents whose real-idx descriptors sit on a continuation page resolve too. Returns `null` when `first_dp == 0` or no slot's `col_map` matches.
+- `TryFindCoveringRealIdxAsync(tdefPage, targetColNums, ct)` — TDEF walk (re-uses the same `LocateRealIdxDescStart` helper that W9b uses to navigate past the column-name section). Reads the whole TDEF chain through `TableDefReader.ReadTDefBytesAsync`, so wide parents whose real-idx descriptors sit on a continuation page resolve too. Returns `null` when `first_dp == 0` or no slot's `col_map` matches.
 - `TryEncodeSeekKey(idx, values)` — concatenates per-column `IndexKeyEncoder.EncodeEntry` blocks in col_map order using the same direction flag the leaf was emitted with. Returns `null` when the encoder rejects any value (`NotSupportedException` / `ArgumentException` / `OverflowException`), which falls the caller through to the HashSet path.
 - `IndexKeyEncoder.IsColumnTypeSeekable(byte)` — gates resolution (excludes `Boolean`; descriptor-scale `Numeric` participates because `ParentSeekKeyColumn` / `ChildSeekKeyColumn` carry `NumericScale` and the Jet4-vs-ACE numeric twiddle flag from TDEF resolution).
 - `CreateRelationshipAsync` now calls `MaintainIndexesAsync` on both endpoint TDEFs after `EmitFkPerTdefEntriesAsync` so the W9b empty leaf is replaced by a populated B-tree before the very next child INSERT runs the seek probe. Without this, inserting a child immediately after declaring a relationship over a parent that already had rows would always fall through to the HashSet path on the first call.
@@ -596,7 +596,7 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
   ACE). Index maintenance and the unique pre-check used to read only the first
   TDEF page, so on those tables the fast path bailed, the bulk rebuild returned
   silently, and unique indexes went unenforced. Every index path now reads the
-  whole chain (`DatabaseFile.ReadTDefChainAsync` / `ReadTDefBytesAsync`) and
+  whole chain (`TableDefReader.ReadTDefChainAsync` / `ReadTDefBytesAsync`) and
   writes `first_dp` / `used_pages` patches back to whichever physical page
   holds them (`DatabaseFile.WriteTDefChainInPlaceAsync`,
   `WriteTDefInt32Async`). A TDEF whose index section still cannot be parsed
@@ -776,7 +776,7 @@ What's persisted:
 
 - `ColumnDefinition.NumericPrecision` (`byte`, default 18) and `NumericScale` (`byte`, default 0) — the Access "Number → Decimal" UI defaults. Validation: precision must be 1–28, scale must be ≤ precision and ≤ 28.
 - `AccessWriter.BuildTableDefinition` writes precision at TDEF column-descriptor offset 11 and scale at offset 12 for every `Numeric (0x10)` column on Jet4 / ACE. Jet3 has no NUMERIC, so `JetTypeInfo.ResolveStorageType` creates a Jet3 `decimal` column as Currency (`0x05`), whose index keys are int64 keys like any Currency column, and refuses a declared scale above 4 or more than 14 integer digits (Currency's largest value is 922,337,203,685,477.5807, so a 15-digit declaration allows values it cannot hold). These are the same bytes Jackcess' `FixedPointColumnDescriptor` reads on parse, and the same bytes Access-authored `fixedNumericTest.accdb` carries (verified via `docs/design/format-probe-appendix-complex.md` — descriptor bytes `12 00 00 00` = precision 0x12 = 18, scale 0).
-- `DatabaseFile.ReadTableDefAsync` parses both bytes back into `ColumnInfo.NumericPrecision` / `NumericScale`. `ColumnMetadata` exposes them on the public reader API.
+- `TableDefReader.ReadTableDefAsync` parses both bytes back into `ColumnInfo.NumericPrecision` / `NumericScale`. `ColumnMetadata` exposes them on the public reader API.
 
 What changed in encoding: new `IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, declaredScale, legacy)` rounds the input value to the declared scale via `decimal.Round(d, declaredScale, MidpointRounding.ToEven)` before delegating to the existing `EncodeNumericEntry`. This matches Access's "round half to even" (banker's rounding) on store. Half-even is `MidpointRounding.ToEven`'s default behaviour and is what Access has used since at least Jet 4.
 
@@ -869,7 +869,7 @@ The "trailing only" restriction sidesteps the cross-TDEF renumbering problem: if
 1. Locates the matching FK logical-idx entry the same way drop does (`index_type == 0x02` + `rel_tbl_page` + `RealIdxColMapMatches`).
 2. Walks the names section to find the entry's variable-length name byte range.
 3. Computes `delta = newNameRecordSize - oldNameRecordSize` and shifts the trailing variable-column block (rest of names + var-col block) by `delta` via `Buffer.BlockCopy` (overlap-safe).
-4. Writes the new length-prefixed name (UTF-16 on Jet4/ACE, ANSI on Jet3, `DatabaseFile.EncodeTDefNameRecord`) and updates `tdef_len`. On Jet3 the entry and its name then move to the new name's case-insensitive sorted position.
+4. Writes the new length-prefixed name (UTF-16 on Jet4/ACE, ANSI on Jet3, `JetFormat.EncodeTDefNameRecord`) and updates `tdef_len`. On Jet3 the entry and its name then move to the new name's case-insensitive sorted position.
 
 The cookie name reproduces `CreateRelationshipAsync`'s convention: PK side uses `newName`; FK side uses `newName + "_FK"` for self-referential relationships. Disambiguation against existing names on the same TDEF runs through the new `PickUniqueLogicalIdxNameAsync` helper (reuses `MakeUniqueLogicalIdxName`). Growth is handled by the logical TDEF-chain writer, so a rename can spill into a continuation page instead of leaving the cookie stale.
 
@@ -938,7 +938,7 @@ W4-C-8+ caveats:
 
 Before this, `RelationshipManager` only had Jet4 layout code and skipped Jet3: `CreateRelationshipAsync` wrote the `MSysRelationships` rows but no TDEF entries, `DropRelationshipAsync` left the entries of an Access-authored relationship in place, and a schema rewrite (AddColumn / DropColumn / RenameColumn) removed the partners' entries instead of re-linking them. Enforcement was unaffected, since it reads `MSysRelationships`.
 
-- The FK helpers read and write every format's layout through `IndexLayout` (`WriteRealIdxDescriptor`, `WriteLogicalEntry`, the sizes and offsets), `DatabaseFile.EncodeTDefNameRecord` and `IndexHelpers.RealIdxColMapMatches(IndexLayout, …)`. A probe that creates, renames, rewrites and drops relationships on `NorthwindTraders.accdb` and `indexTestV2000.mdb` produced identical TDEF bytes before and after that refactor.
+- The FK helpers read and write every format's layout through `IndexLayout` (`WriteRealIdxDescriptor`, `WriteLogicalEntry`, the sizes and offsets), `JetFormat.EncodeTDefNameRecord` and `IndexHelpers.RealIdxColMapMatches(IndexLayout, …)`. A probe that creates, renames, rewrites and drops relationships on `NorthwindTraders.accdb` and `indexTestV2000.mdb` produced identical TDEF bytes before and after that refactor.
 - On Jet3 the entries take the Access 97 shape of §3.1 / §3.2: 20-byte entries, a new 39-byte real index with `flags = 0x00`, `used_pages = 0` and a zero statistics slot, an ANSI name record inserted at its case-insensitive sorted position (`FkEntryInsertPosition`; existing entries are not re-sorted), the parent sharing a unique or primary-key covering real index, and the cascade bytes on both sides. A rename moves the entry to its new name's position. FK leaves are built with the Jet3 page layout.
 - Create, drop, rename and the schema-rewrite re-emission run on every format. A Jet3 table in a writer-created relationship now takes the full index rebuild on every insert, update and delete (bail `C1c`), as Jet4/ACE tables already did. Before, it stayed on the incremental path. The cost per mutation grows with the table (on Jet4/ACCDB, 400 single inserts took 0.4-0.6 s and 1,500 about 4 s).
 - Each rebuild places a multi-page tree on new pages. Jet4/ACE free the tree it replaces through the index usage-map row. Jet3 has no such row the writer can read back, so at first every mutation left both of a child's old trees allocated: 10 inserts, an update and a delete on a 1,500-row child leaked 216 pages, 18 per mutation. `RebuildIndexesAsync` now walks each Jet3 tree from its old `first_dp` before it writes anything and frees it after the TDEF write, for the same tables Jet4/ACE free them on (not `MSys*`, complex flat tables or tables with Memo, OLE or complex columns). It does so only for a real index whose `used_pages` is 0, which is every index the writer creates. An Access-authored Jet3 index keeps a usage-map row that still lists its old pages, so its replaced tree stays allocated until Compact & Repair rather than being freed under that row.

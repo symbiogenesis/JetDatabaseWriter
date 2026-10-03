@@ -91,6 +91,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.Pages = writable
             ? new Pager(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType)
             : new PageFile(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType);
+        this.TableDefs = new TableDefReader(this.Pages, this.Profile);
     }
 
     internal delegate ValueTask<bool> TableRowVisitor(TableRow row, CancellationToken cancellationToken);
@@ -109,6 +110,14 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// forward to it; the write members throw on a read-only file.
     /// </summary>
     internal PageFile Pages { get; }
+
+    /// <summary>
+    /// Gets the file's table-definition reader, which reads TDEF chains
+    /// through <see cref="Pages"/>. The TDEF members below forward to it; the
+    /// in-place TDEF write-backs stay here until the writer gets its own
+    /// TDEF writer.
+    /// </summary>
+    internal TableDefReader TableDefs { get; }
 
     // ── Format-specific layouts (forwarders to Profile) ──────────────
 
@@ -317,48 +326,21 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal ValueTask<byte[]> ReadPageCopyAsync(long pageNumber, CancellationToken cancellationToken = default)
         => this.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
 
-    // ── TDEF parsing ─────────────────────────────────────────────────
+    // ── TDEF parsing (forwarders to TableDefs) ───────────────────────
 
-    /// <summary>
-    /// Concatenates the TDEF page chain starting at <paramref name="startPage"/>
-    /// into a single byte array. Pages after the first have their 8-byte
-    /// TDEF header stripped before appending. Returns <see langword="null"/>
-    /// when the page is not a valid TDEF root.
-    /// </summary>
+    /// <summary>Reads a TDEF page chain as logical bytes — see <see cref="TableDefReader.ReadTDefBytesAsync"/>.</summary>
     /// <param name="startPage">The start page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
-    {
-        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
-            startPage,
-            this.PageSizeBytes,
-            this.ReadPageAsync,
-            ReturnPage,
-            retainPageNumbers: false,
-            cancellationToken).ConfigureAwait(false);
+    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
+    internal ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
+        => this.TableDefs.ReadTDefBytesAsync(startPage, cancellationToken);
 
-        return chain?.Bytes;
-    }
-
-    /// <summary>
-    /// Reads the TDEF page chain starting at <paramref name="startPage"/> as a
-    /// logical buffer that remembers its physical pages, so fields patched at
-    /// logical offsets can be written back with
-    /// <see cref="WriteTDefChainInPlaceAsync"/>. Throws when the page is not a
-    /// TDEF root.
-    /// </summary>
+    /// <summary>Reads a TDEF page chain that remembers its physical pages — see <see cref="TableDefReader.ReadTDefChainAsync"/>.</summary>
     /// <param name="startPage">The first TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">The page at <paramref name="startPage"/> is not a table definition.</exception>
-    internal async ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
-        => await LogicalTDefChain.ReadAsync(
-            startPage,
-            this.PageSizeBytes,
-            this.ReadPageAsync,
-            ReturnPage,
-            retainPageNumbers: true,
-            cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"The table definition at page {startPage} could not be read.");
+    /// <returns>The chain.</returns>
+    internal ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
+        => this.TableDefs.ReadTDefChainAsync(startPage, cancellationToken);
 
     /// <summary>
     /// Writes a chain read by <see cref="ReadTDefChainAsync"/> back in place,
@@ -386,122 +368,20 @@ internal sealed class DatabaseFile : IAsyncDisposable
         await this.WriteTDefChainInPlaceAsync(chain, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
-    {
-        byte[]? td = await this.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+    /// <summary>Reads and parses a table definition — see <see cref="TableDefReader.ReadTableDefAsync"/>.</summary>
+    /// <param name="tdefPage">The first TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The table definition, or <see langword="null"/>.</returns>
+    internal ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
+        => this.TableDefs.ReadTableDefAsync(tdefPage, cancellationToken);
 
-        if (td == null || td.Length < this.TDef.BlockEnd)
-        {
-            return null;
-        }
-
-        int numCols = Ru16(td, this.TDef.NumCols);
-        int numRealIdx = Ri32(td, this.TDef.NumRealIdx);
-
-        // Safety: corrupt or unusual TDEFs can report absurd index counts
-        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            numRealIdx = 0;
-        }
-
-        if (numCols > Constants.TableDefinition.MaxColumns)
-        {
-            return null;
-        }
-
-        // Column descriptors follow immediately after block + first real-idx entries
-        int colStart = this.TDef.BlockEnd + (numRealIdx * this.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * this.ColumnDescriptor.Size);
-
-        if (namePos > td.Length)
-        {
-            return null;
-        }
-
-        var descriptors = new List<ParsedColumnDescriptor>(numCols);
-        for (int i = 0; i < numCols; i++)
-        {
-            int o = colStart + (i * this.ColumnDescriptor.Size);
-            if (o + this.ColumnDescriptor.Size > td.Length)
-            {
-                break;
-            }
-
-            var type = (ColumnType)td[o + this.ColumnDescriptor.TypeOff];
-
-            // Extra flags byte at descriptor offset 16 (Jet4/ACE only — the
-            // Jet3 18-byte descriptor has no such slot). Carries the Access
-            // 2010+ calculated-column marker (Jackcess CALCULATED_EXT_FLAG_MASK
-            // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
-            // round-trip through the schema-rewrite path; harmless for cols
-            // Access wrote with the slot at zero.
-            byte extraFlags = this.Format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0;
-            int misc = Ri32(td, o + this.ColumnDescriptor.MiscOff);
-
-            // For Numeric the misc 4-byte slot reuses bytes 11/12
-            // (descriptor-relative) to carry the declared precision and
-            // scale Access shows in Design View. Same byte positions as
-            // the Jackcess `FixedPointColumnDescriptor` parser. Other
-            // column types leave these at 0.
-            byte numericPrecision = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff] : (byte)0;
-            byte numericScale = type == NumericType ? td[o + this.ColumnDescriptor.MiscOff + 1] : (byte)0;
-
-            descriptors.Add(new ParsedColumnDescriptor(
-                type,
-                Ru16(td, o + this.ColumnDescriptor.NumOff),
-                Ru16(td, o + this.ColumnDescriptor.VarOff),
-                Ru16(td, o + this.ColumnDescriptor.FixedOff),
-                Ru16(td, o + this.ColumnDescriptor.SzOff),
-                td[o + this.ColumnDescriptor.FlagsOff],
-                extraFlags,
-                misc,
-                numericPrecision,
-                numericScale));
-        }
-
-        // Column names follow directly after all descriptors (in TDEF / descriptor order).
-        // Names MUST be read before sorting so each name maps to the correct descriptor.
-        var cols = new List<ColumnInfo>(descriptors.Count);
-        bool readNames = true;
-        for (int i = 0; i < descriptors.Count; i++)
-        {
-            string name = string.Empty;
-            if (readNames)
-            {
-                int nameLen = this.ReadColumnName(td, ref namePos, out string parsedName);
-                if (nameLen >= 0)
-                {
-                    name = parsedName;
-                }
-                else
-                {
-                    readNames = false;
-                }
-            }
-
-            cols.Add(descriptors[i].ToColumnInfo(name));
-        }
-
-        // Sort by col_num AFTER names are assigned.
-        cols.Sort((a, b) => a.ColNum.CompareTo(b.ColNum));
-
-        // Detect deleted-column gaps: if ColNum sequence has gaps, flag it
-        bool hasDeletedColumns = cols.Count >= 2
-            && cols[^1].ColNum - cols[0].ColNum != cols.Count - 1;
-
-        var tableDef = new TableDef
-        {
-            Columns = cols,
-            RowCount = Ru32(td, this.TDef.NumRows),
-            HasDeletedColumns = hasDeletedColumns,
-        };
-        tableDef.InitializeColumnMetadata();
-        return tableDef;
-    }
-
-    internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
-        => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+    /// <summary>Reads a table definition or throws — see <see cref="TableDefReader.ReadRequiredTableDefAsync"/>.</summary>
+    /// <param name="tdefPage">The first TDEF page.</param>
+    /// <param name="tableName">The table's name, for the error message.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The table definition.</returns>
+    internal ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
+        => this.TableDefs.ReadRequiredTableDefAsync(tdefPage, tableName, cancellationToken);
 
     /// <summary>Reads the per-row column count at <paramref name="rowStart"/> — see <see cref="JetFormat.ReadRowColumnCount"/>.</summary>
     /// <param name="page">The page bytes.</param>
@@ -1404,32 +1284,4 @@ internal sealed class DatabaseFile : IAsyncDisposable
     // ── Inner types ──────────────────────────────────────────────────
 
     internal readonly record struct TableRow(byte[] Page, RowLocation Location);
-
-    private readonly record struct ParsedColumnDescriptor(
-        ColumnType Type,
-        int ColNum,
-        int VarIdx,
-        int FixedOff,
-        int Size,
-        byte Flags,
-        byte ExtraFlags,
-        int Misc,
-        byte NumericPrecision,
-        byte NumericScale)
-    {
-        internal ColumnInfo ToColumnInfo(string name) => new()
-        {
-            Name = name,
-            Type = this.Type,
-            ColNum = this.ColNum,
-            VarIdx = this.VarIdx,
-            FixedOff = this.FixedOff,
-            Size = this.Size,
-            Flags = this.Flags,
-            ExtraFlags = this.ExtraFlags,
-            Misc = this.Misc,
-            NumericPrecision = this.NumericPrecision,
-            NumericScale = this.NumericScale,
-        };
-    }
 }

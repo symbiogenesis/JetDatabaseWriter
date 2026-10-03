@@ -16,7 +16,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// no longer re-implement the same ~50-line decode each.
 /// <para>
 /// Callers pass the logical TDEF buffer (every page of the chain, as
-/// <see cref="DatabaseFile.ReadTDefBytesAsync"/> stitches it) and locate
+/// <see cref="Schema.TableDefReader.ReadTDefBytesAsync"/> stitches it) and locate
 /// <c>realIdxDescStart</c> with <see cref="LocateRealIdxDescStart"/>, which
 /// walks the per-format column-name block.
 /// Pass <c>logIdxNames</c> when the caller needs best-effort
@@ -135,7 +135,7 @@ internal static class IndexCatalogReader
             numRealIdx = 0;
         }
 
-        // Section walk mirrors DatabaseFile.ReadTableDefAsync and FormatProbe.
+        // Section walk mirrors TableDefReader.ReadTableDefAsync and FormatProbe.
         int realIdxDescStart = LocateRealIdxDescStart(db, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
