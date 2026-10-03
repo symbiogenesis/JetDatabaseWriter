@@ -15,9 +15,11 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 /// decides precedence: <c>^</c> binds tighter than unary minus and associates
 /// left to right, then <c>*</c> <c>/</c>, <c>\</c>, <c>Mod</c>, <c>+</c>
 /// <c>-</c>, <c>&amp;</c>, comparisons, <c>Not</c>, <c>And</c>, <c>Or</c>,
-/// <c>Xor</c>, <c>Eqv</c>, <c>Imp</c>. Syntax the Access grammar does not
-/// accept (including Excel's postfix <c>%</c>) throws
-/// <see cref="ArgumentException"/> naming the expression.
+/// <c>Xor</c>, <c>Eqv</c>, <c>Imp</c>. Text literals may be double- or
+/// single-quoted (<c>'it''s'</c>), and <c>&amp;H</c>/<c>&amp;O</c> radix
+/// literals are typed as in VBA. Syntax the Access grammar does not accept
+/// (including Excel's postfix <c>%</c>) throws <see cref="ArgumentException"/>
+/// naming the expression.
 /// </summary>
 internal static class CalculatedExpressionNormalizer
 {
@@ -25,25 +27,6 @@ internal static class CalculatedExpressionNormalizer
     {
         string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn);
         return AccessExpressionNormalizer.Normalize(prepared, expression);
-    }
-
-    /// <summary>
-    /// Definition-time check run when a calculated column is created or added:
-    /// rejects operators that Access does not have, so a spreadsheet-only
-    /// expression such as <c>5%</c> is refused before it reaches the file.
-    /// </summary>
-    /// <param name="columnName">The calculated column's name, for the error message.</param>
-    /// <param name="expression">The expression text as the caller supplied it.</param>
-    /// <exception cref="ArgumentException">The expression uses the spreadsheet <c>%</c> operator.</exception>
-    internal static void ValidateDefinition(string columnName, string expression)
-    {
-        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out _);
-        if (AccessExpressionNormalizer.ContainsPercentOperator(prepared))
-        {
-            throw new ArgumentException(
-                $"Column '{columnName}': calculated-column expression '{expression}' uses '%', which is not an Access operator. Divide by 100 instead.",
-                nameof(expression));
-        }
     }
 
     private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn)
@@ -60,7 +43,18 @@ internal static class CalculatedExpressionNormalizer
         for (int i = 0; i < trimmed.Length; i++)
         {
             char ch = trimmed[i];
-            if (ch == '"')
+            if (ch == '\'' && TryFindClosingQuote(trimmed, i, '\'', out int closingQuote))
+            {
+                // Access also accepts single-quoted text ('' is a quote). Rewrite it
+                // as the double-quoted literal the downstream grammar reads, so the
+                // brackets, # and % inside it stay text.
+                string inner = trimmed.Substring(i + 1, closingQuote - i - 1).Replace("''", "'", StringComparison.Ordinal);
+                builder.Append('"')
+                    .Append(inner.Replace("\"", "\"\"", StringComparison.Ordinal))
+                    .Append('"');
+                i = closingQuote;
+            }
+            else if (ch == '"')
             {
                 builder.Append(ch);
                 i++;
@@ -123,6 +117,38 @@ internal static class CalculatedExpressionNormalizer
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Finds the quote that closes the string literal opening at
+    /// <paramref name="openingQuote"/>, where a doubled quote is an escaped one.
+    /// </summary>
+    /// <param name="text">The expression text.</param>
+    /// <param name="openingQuote">The index of the opening quote.</param>
+    /// <param name="quote">The quote character.</param>
+    /// <param name="closingQuote">The index of the closing quote.</param>
+    /// <returns><see langword="false"/> when the literal is not terminated.</returns>
+    private static bool TryFindClosingQuote(string text, int openingQuote, char quote, out int closingQuote)
+    {
+        for (int index = openingQuote + 1; index < text.Length; index++)
+        {
+            if (text[index] != quote)
+            {
+                continue;
+            }
+
+            if (index + 1 < text.Length && text[index + 1] == quote)
+            {
+                index++;
+                continue;
+            }
+
+            closingQuote = index;
+            return true;
+        }
+
+        closingQuote = -1;
+        return false;
+    }
+
     private sealed class AccessExpressionNormalizer
     {
         private const int UnaryLevel = 6;
@@ -163,7 +189,7 @@ internal static class CalculatedExpressionNormalizer
 
         public static string Normalize(string expression, string originalExpression)
         {
-            List<Token> tokens = Tokenize(expression);
+            List<Token> tokens = Tokenize(expression, originalExpression);
             if (tokens.Exists(static token => token.IsPercent))
             {
                 throw new ArgumentException(
@@ -182,10 +208,7 @@ internal static class CalculatedExpressionNormalizer
             return normalized;
         }
 
-        public static bool ContainsPercentOperator(string expression)
-            => Tokenize(expression).Exists(static token => token.IsPercent);
-
-        private static List<Token> Tokenize(string expression)
+        private static List<Token> Tokenize(string expression, string originalExpression)
         {
             var result = new List<Token>();
             for (int charIndex = 0; charIndex < expression.Length;)
@@ -289,6 +312,12 @@ internal static class CalculatedExpressionNormalizer
                     continue;
                 }
 
+                if (current == '&' && IsOperandPosition(result) && TryReadRadixLiteral(expression, ref charIndex, originalExpression, out string literal))
+                {
+                    result.Add(new Token(TokenKind.Value, literal));
+                    continue;
+                }
+
                 if (charIndex + 1 < expression.Length)
                 {
                     string twoChar = expression.Substring(charIndex, 2);
@@ -306,6 +335,126 @@ internal static class CalculatedExpressionNormalizer
 
             result.Add(new Token(TokenKind.End, string.Empty));
             return result;
+        }
+
+        /// <summary>
+        /// Returns whether the next token starts an operand, where <c>&amp;</c> begins a
+        /// radix literal rather than joining text: at the start, or after an operator,
+        /// <c>(</c>, <c>,</c> or a word operator such as <c>And</c> or <c>Mod</c>.
+        /// </summary>
+        /// <param name="tokens">The tokens read so far.</param>
+        /// <returns><see langword="true"/> when an operand is expected.</returns>
+        private static bool IsOperandPosition(List<Token> tokens)
+        {
+            if (tokens.Count == 0)
+            {
+                return true;
+            }
+
+            Token previous = tokens[^1];
+            if (previous.Kind == TokenKind.Word)
+            {
+                return previous.Text.ToUpperInvariant() is not ("NULL" or "TRUE" or "FALSE" or "YES" or "NO" or "ON" or "OFF");
+            }
+
+            return previous.Kind is TokenKind.Operator or TokenKind.Backslash or TokenKind.OpenParen or TokenKind.Comma;
+        }
+
+        /// <summary>
+        /// Reads a VBA radix literal at <paramref name="charIndex"/>: <c>&amp;H</c> and hex
+        /// digits, <c>&amp;O</c> and octal digits, or <c>&amp;</c> and octal digits, with an
+        /// optional <c>&amp;</c> suffix. As in VBA, a value up to <c>&amp;HFFFF</c> is an
+        /// Integer (so <c>&amp;HFFFF</c> is -1), a larger one is a Long
+        /// (<c>&amp;HFFFFFFFF</c> is -1), and the suffix makes it a Long
+        /// (<c>&amp;HFFFF&amp;</c> is 65535).
+        /// </summary>
+        /// <param name="expression">The prepared expression text.</param>
+        /// <param name="charIndex">The index of the <c>&amp;</c>; advanced past the literal when one is read.</param>
+        /// <param name="originalExpression">The expression as written, for error messages.</param>
+        /// <param name="literal">The literal's value as decimal text, parenthesized when negative.</param>
+        /// <returns><see langword="false"/> when no radix literal starts here.</returns>
+        /// <exception cref="ArgumentException"><c>&amp;H</c> or <c>&amp;O</c> has no digits, or the value needs more than 32 bits.</exception>
+        private static bool TryReadRadixLiteral(string expression, ref int charIndex, string originalExpression, out string literal)
+        {
+            literal = string.Empty;
+            int index = charIndex + 1;
+            if (index >= expression.Length)
+            {
+                return false;
+            }
+
+            char marker = expression[index];
+            int radix;
+            if (marker is 'H' or 'h')
+            {
+                radix = 16;
+                index++;
+            }
+            else if (marker is 'O' or 'o')
+            {
+                radix = 8;
+                index++;
+            }
+            else if (marker is >= '0' and <= '7')
+            {
+                radix = 8;
+            }
+            else
+            {
+                return false;
+            }
+
+            int digitsStart = index;
+            ulong value = 0;
+            bool tooLarge = false;
+            while (index < expression.Length && TryGetDigit(expression[index], radix, out int digit))
+            {
+                if (!tooLarge)
+                {
+                    value = (value * (ulong)radix) + (ulong)digit;
+                    tooLarge = value > uint.MaxValue;
+                }
+
+                index++;
+            }
+
+            if (index == digitsStart)
+            {
+                throw new ArgumentException(
+                    $"Calculated-column expression '{originalExpression}' is not valid Access expression syntax: '{expression[charIndex..digitsStart]}' must be followed by {(radix == 16 ? "hexadecimal" : "octal")} digits.");
+            }
+
+            bool longSuffix = index < expression.Length && expression[index] == '&';
+            if (longSuffix)
+            {
+                index++;
+            }
+
+            if (tooLarge)
+            {
+                throw new ArgumentException(
+                    $"Calculated-column expression '{originalExpression}' is not valid Access expression syntax: the literal '{expression[charIndex..index]}' is too large for a Long.");
+            }
+
+            int number = longSuffix || value > ushort.MaxValue
+                ? unchecked((int)(uint)value)
+                : unchecked((short)(ushort)value);
+            string text = number.ToString(CultureInfo.InvariantCulture);
+            literal = number < 0 ? "(" + text + ")" : text;
+            charIndex = index;
+            return true;
+        }
+
+        private static bool TryGetDigit(char ch, int radix, out int digit)
+        {
+            digit = ch switch
+            {
+                >= '0' and <= '9' => ch - '0',
+                >= 'A' and <= 'F' => ch - 'A' + 10,
+                >= 'a' and <= 'f' => ch - 'a' + 10,
+                _ => radix,
+            };
+            return digit < radix;
         }
 
         private static BinaryOperatorInfo? GetBinaryOperator(Token token)

@@ -587,6 +587,58 @@ public sealed class ColumnConstraintTests
     }
 
     /// <summary>
+    /// A single-quoted default (<c>'N/A'</c>) and a rule with a hex literal
+    /// (<c>&lt;=&amp;HFF</c>) are applied in every writer. Before, the expression engine
+    /// rejected both, so the default stored NULL and the rule accepted every value.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="reopened">Whether a later writer, which reads the expressions from the file, does the writes.</param>
+    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(EveryWriterCases))]
+    public async Task SingleQuotedDefaultAndHexRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, string mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "LiteralRule";
+        ColumnDefinition[] columns =
+        [
+            new("Id", typeof(int)),
+            new("Code", typeof(string), maxLength: 10) { DefaultValueExpression = "'N/A'" },
+            new("Mask", typeof(int)) { ValidationRuleExpression = "<=&HFF" },
+        ];
+
+        if (reopened)
+        {
+            await using AccessWriter creator = await OpenWriterAsync(stream);
+            await creator.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+        }
+
+        await WriteInModeAsync(stream, mode, async writer =>
+        {
+            if (!reopened)
+            {
+                await writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+            }
+
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1, ["Mask"] = 255 }, TestContext.Current.CancellationToken);
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync(table, [2, "x", 256], TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Mask"] = 300 }, TestContext.Current.CancellationToken));
+        });
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal("N/A", row["Code"]);
+        Assert.Equal(255, row["Mask"]);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        Assert.Equal("'N/A'", Assert.Single(metadata, c => c.Name == "Code").DefaultValueExpression);
+        Assert.Equal("<=&HFF", Assert.Single(metadata, c => c.Name == "Mask").ValidationRuleExpression);
+    }
+
+    /// <summary>
     /// A CLR <see cref="ColumnDefinition.DefaultValue"/> is persisted as a literal
     /// <c>DefaultValue</c> expression, so a writer that did not declare it still
     /// applies it.

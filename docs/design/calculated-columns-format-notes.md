@@ -188,9 +188,20 @@ Delivered:
   already computed the value.
 - Expressions are normalized for common Access syntax: leading `=` is ignored,
   bracketed column references such as `[Column Name]` resolve against the
-  in-flight row, `#date literal#` becomes `DATEVALUE("date literal")`, and
+  in-flight row, `#date literal#` becomes `DATEVALUE("date literal")`,
+  single-quoted text (`'it''s'`, where `''` is a quote) becomes the
+  double-quoted literal, `&H`/`&O` radix literals become decimal numbers, and
   Access word operators are lowered into evaluator functions before the
-  ClosedXML.Parser pass.
+  ClosedXML.Parser pass. The expression text persisted in the file is never
+  rewritten.
+- Radix literals follow VBA: `&H` takes hex digits, `&O` (or a bare `&`
+  before an octal digit, which OLE Automation also accepts) octal digits, up
+  to 32 bits. A value up to `&HFFFF` is a signed Integer, so `&HFFFF` is -1
+  and `&H8000` is -32768; a larger value is a signed Long (`&HFFFFFFFF` is
+  -1); a trailing `&` makes it a Long (`&HFFFF&` is 65535). `&` starts a
+  literal only where an operand is expected; after an operand it joins text,
+  so `[A]&10` is concatenation. A literal wider than 32 bits, or `&H`/`&O`
+  without digits, throws `ArgumentException` naming the expression.
 - Every expression is parsed with Access (VBA) operator precedence by
   `CalculatedExpressionNormalizer` before ClosedXML.Parser sees it; the
   normalizer emits a formula parenthesized wherever Excel's grammar would
@@ -278,6 +289,8 @@ Supported subset:
   concatenation (`&`), comparisons (`=`, `<>`, `>`, `>=`, `<`, `<=`), logical
   and bitwise word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
   comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).
+- Literals: numbers, double- and single-quoted text, `#date#`, and `&H`/`&O`
+  radix literals.
 - Constants and nulls: `True`/`False`, `Yes`/`No`, `On`/`Off`, common `vb*`
   constants, blank/null nodes, and `DBNull` values from the in-flight row.
 - Built-ins: `IIf`/`IF`, `Nz`, `IsNull`/`IsBlank`, `IsNumeric`/`IsNumber`,

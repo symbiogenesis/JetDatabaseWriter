@@ -96,6 +96,10 @@ public sealed class ConstraintRegistryTests
     [InlineData("[Score] >= 0", -1, false)]
     [InlineData("([Score] And 4) <> 0", 12, true)]
     [InlineData("([Score] And 4) <> 0", 8, false)]
+    [InlineData("<=&HFF", 255, true)]
+    [InlineData("<=&HFF", 256, false)]
+    [InlineData("In (&H10, &O20)", 16, true)]
+    [InlineData("In (&H10, &O20)", 20, false)]
     public async Task ApplyAsync_HydratedValidationRule_NumberColumn_SuppliesTheImplicitOperand(string rule, int? value, bool accepted)
         => await AssertRuleAsync(rule, ColumnType.LongIntegerType, value, accepted);
 
@@ -104,6 +108,9 @@ public sealed class ConstraintRegistryTests
     [InlineData("Like \"A*\"", "Banana", false)]
     [InlineData("Not Like \"A*\"", "Apple", false)]
     [InlineData("Like 'A*'", "Banana", false)]
+    [InlineData("Like 'A*'", "Apple", true)]
+    [InlineData("'M' Or 'F'", "f", true)]
+    [InlineData("<>'it''s'", "it's", false)]
     [InlineData("\"M\" Or \"F\"", "f", true)]
     [InlineData("\"M\" Or \"F\"", "X", false)]
     [InlineData("<>\"\"", "", false)]
@@ -151,6 +158,10 @@ public sealed class ConstraintRegistryTests
     [InlineData("0", ColumnType.MoneyType, typeof(decimal), "0")]
     [InlineData("\"hi\"", ColumnType.TextType, typeof(string), "hi")]
     [InlineData("\"say \"\"hi\"\"\"", ColumnType.TextType, typeof(string), "say \"hi\"")]
+    [InlineData("'N/A'", ColumnType.TextType, typeof(string), "N/A")]
+    [InlineData("='it''s'", ColumnType.TextType, typeof(string), "it's")]
+    [InlineData("=&HFF", ColumnType.LongIntegerType, typeof(int), "255")]
+    [InlineData("&HFFFF&", ColumnType.LongIntegerType, typeof(int), "65535")]
     [InlineData("True", ColumnType.BooleanType, typeof(bool), "True")]
     [InlineData("No", ColumnType.BooleanType, typeof(bool), "False")]
     [InlineData("=No", ColumnType.BooleanType, typeof(bool), "False")]

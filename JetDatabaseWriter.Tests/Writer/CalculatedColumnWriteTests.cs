@@ -1319,6 +1319,43 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(DBNull.Value, none["HasBit2"]);
     }
 
+    /// <summary>
+    /// Single-quoted strings and <c>&amp;H</c> literals are accepted at
+    /// <see cref="AccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>,
+    /// evaluated on insert, and persisted exactly as written.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task CreateTable_SingleQuotedAndHexExpressions_AreAcceptedAndEvaluated()
+    {
+        const string fullName = "[First] & ' ' & [Last]";
+        const string lowBits = "[Flags] And &H0F";
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcLiterals",
+                [
+                    new("First", typeof(string), maxLength: 20),
+                    new("Last", typeof(string), maxLength: 20),
+                    new("Flags", typeof(int)),
+                    new("FullName", typeof(string), maxLength: 50) { IsCalculated = true, CalculationExpression = fullName },
+                    new("LowBits", typeof(int)) { IsCalculated = true, CalculationExpression = lowBits },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcLiterals", ["Ann", "O'Lee", 0x5A, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcLiterals", TestContext.Current.CancellationToken);
+        Assert.Equal(fullName, Assert.Single(metadata, c => c.Name == "FullName").CalculationExpression);
+        Assert.Equal(lowBits, Assert.Single(metadata, c => c.Name == "LowBits").CalculationExpression);
+
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcLiterals", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal("Ann O'Lee", row["FullName"]);
+        Assert.Equal(0x0A, row["LowBits"]);
+    }
+
     private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(

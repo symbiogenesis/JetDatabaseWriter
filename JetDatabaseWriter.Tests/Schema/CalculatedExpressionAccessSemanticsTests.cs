@@ -563,6 +563,99 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.Equal(expected, result);
     }
 
+    /// <summary>
+    /// <c>&amp;H</c> and <c>&amp;O</c> literals (and a bare <c>&amp;</c> before an octal
+    /// digit) follow VBA's typing: up to <c>&amp;HFFFF</c> is a signed Integer, so
+    /// <c>&amp;HFFFF</c> is -1; a larger value is a signed Long; a trailing <c>&amp;</c>
+    /// forces Long.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected value.</param>
+    [Theory]
+    [InlineData("&H10", 16d)]
+    [InlineData("&h1f", 31d)]
+    [InlineData("&HFF", 255d)]
+    [InlineData("&HFFFF", -1d)]
+    [InlineData("&H8000", -32768d)]
+    [InlineData("&H10000", 65536d)]
+    [InlineData("&HFFFFFFFF", -1d)]
+    [InlineData("&HFFFF&", 65535d)]
+    [InlineData("&O17", 15d)]
+    [InlineData("&o17", 15d)]
+    [InlineData("&17", 15d)]
+    [InlineData("[A] + &H10", 17d)]
+    [InlineData("2 ^ &HFFFF", 0.5d)]
+    [InlineData("&HFFFF ^ 2", 1d)]
+    [InlineData("-&H10", -16d)]
+    [InlineData("Abs(&HFFFF)", 1d)]
+    [InlineData("[A] = &H1", -1d)]
+    public void RadixLiterals_FollowVbaTyping(string expression, double expected)
+    {
+        object result = Evaluate(expression, typeof(double), ("A", 1));
+
+        Assert.Equal(expected, Assert.IsType<double>(result));
+    }
+
+    [Theory]
+    [InlineData("&H100000000")]
+    [InlineData("&HG1")]
+    [InlineData("&O8")]
+    [InlineData("&H")]
+    [InlineData("1 + &H")]
+    public void RadixLiteral_Invalid_ThrowsArgumentExceptionNamingExpression(string expression)
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+
+        Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("[A]&10", "x10")]
+    [InlineData("[A] & 10", "x10")]
+    [InlineData("\"x\" & &H10", "x16")]
+    [InlineData("[A] & &O17", "x15")]
+    public void AmpersandAfterOperand_IsConcatenation(string expression, string expected)
+    {
+        object result = Evaluate(expression, typeof(string), ("A", "x"));
+
+        Assert.Equal(expected, result);
+    }
+
+    /// <summary>
+    /// A single-quoted string is a text literal, with <c>''</c> for a quote; brackets,
+    /// <c>#</c> and <c>%</c> inside it are text, not a field, a date or an operator.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected text.</param>
+    [Theory]
+    [InlineData("'abc'", "abc")]
+    [InlineData("'it''s'", "it's")]
+    [InlineData("'say \"hi\"'", "say \"hi\"")]
+    [InlineData("'a' & \"b\"", "ab")]
+    [InlineData("'[Not a field]'", "[Not a field]")]
+    [InlineData("'#1/1/2020#'", "#1/1/2020#")]
+    [InlineData("'5%'", "5%")]
+    [InlineData("[A] & ' ' & [B]", "Al pha")]
+    [InlineData("\"it's\" & 'x'", "it'sx")]
+    [InlineData("[O'Brien] & '!'", "O!")]
+    [InlineData("''", "")]
+    public void SingleQuotedStrings_AreTextLiterals(string expression, string expected)
+    {
+        object result = Evaluate(expression, typeof(string), ("A", "Al"), ("B", "pha"), ("O'Brien", "O"));
+
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("'abc")]
+    [InlineData("[A] & 'x")]
+    public void SingleQuotedString_Unterminated_ThrowsArgumentException(string expression)
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+
+        Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+    }
+
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(
             expression,
