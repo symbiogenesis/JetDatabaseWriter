@@ -422,13 +422,15 @@ public sealed record ColumnDefinition
     /// Jet3 (Access 97) databases have no Decimal type, so on a Jet3
     /// <c>.mdb</c> a decimal column is created as Currency
     /// (<see cref="IsCurrency"/>): neither the precision nor the scale is
-    /// stored, and values keep four decimal places, rounded half to even past
-    /// them, whatever <see cref="NumericScale"/> says. Currency holds 15 digits
-    /// before the decimal point, so <c>CreateTableAsync</c> and
-    /// <c>AddColumnAsync</c> throw <see cref="NotSupportedException"/>, before
-    /// anything is written, when <c>NumericPrecision - NumericScale</c> is
-    /// above 15 (the default Decimal(18,0) included) or
-    /// <see cref="NumericScale"/> is above 4.
+    /// stored or applied to values, which keep four decimal places, rounded
+    /// half to even past them, whatever <see cref="NumericScale"/> says.
+    /// Currency's largest value, 922,337,203,685,477.5807, leaves room for
+    /// every value with up to 14 digits before the decimal point, so
+    /// <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
+    /// <see cref="NotSupportedException"/>, before anything is written, when
+    /// <c>NumericPrecision - NumericScale</c> is above 14 (Decimal(15,0) and
+    /// the default Decimal(18,0) included) or <see cref="NumericScale"/> is
+    /// above 4.
     /// </para>
     /// </remarks>
     public byte NumericPrecision { get; init; } = 18;
