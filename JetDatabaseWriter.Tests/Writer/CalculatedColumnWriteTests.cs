@@ -1362,8 +1362,9 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken);
         }
 
+        // Access's three single-page values, and the writer's.
         List<uint> lvalRows = await ReadLongValueRowPointersAsync(stream, "Table1", "AllNames");
-        Assert.NotEmpty(lvalRows);
+        Assert.Equal(4, lvalRows.Count);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
