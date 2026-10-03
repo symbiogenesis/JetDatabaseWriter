@@ -749,6 +749,13 @@ internal static class Constants
         /// <summary>Conservative maximum number of columns accepted while parsing a TDEF.</summary>
         public const int MaxColumns = 4096;
 
+        /// <summary>
+        /// Most columns a Jet3 (Access 97) table can have: a Jet3 row stores
+        /// <c>num_cols</c> and <c>var_len</c> in one byte each, and Access
+        /// allows 255 fields per table.
+        /// </summary>
+        public const int MaxJet3Columns = 255;
+
         /// <summary>Conservative maximum logical / physical index count accepted while parsing a TDEF.</summary>
         public const int MaxIndexes = 1000;
 

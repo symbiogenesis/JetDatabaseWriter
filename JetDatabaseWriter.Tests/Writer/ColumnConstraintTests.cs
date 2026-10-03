@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -659,14 +660,13 @@ public sealed class ColumnConstraintTests
             new("Id", typeof(int)),
             new("Score", typeof(int)) { DefaultValue = 7 },
             new("Name", typeof(string), maxLength: 20) { DefaultValue = "a \"b\"" },
+            new("Flag", typeof(bool)) { DefaultValue = true },
+            new("When", typeof(DateTime)) { DefaultValue = when },
         ];
 
-        // Jet3 has no Numeric type, and the Jet3 row encoder cannot yet write an
-        // MSysObjects row whose LvProp blob pushes the variable area past 255 bytes.
+        // Jet3 has no Numeric type.
         if (format != DatabaseFormat.Jet3Mdb)
         {
-            columns.Add(new("Flag", typeof(bool)) { DefaultValue = true });
-            columns.Add(new("When", typeof(DateTime)) { DefaultValue = when });
             columns.Add(new("Amount", typeof(decimal)) { DefaultValue = 12.34m, NumericPrecision = 10, NumericScale = 2 });
         }
 
@@ -685,12 +685,64 @@ public sealed class ColumnConstraintTests
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal(7, row["Score"]);
         Assert.Equal("a \"b\"", row["Name"]);
+        Assert.Equal(true, row["Flag"]);
+        Assert.Equal(when, row["When"]);
         if (format != DatabaseFormat.Jet3Mdb)
         {
-            Assert.Equal(true, row["Flag"]);
-            Assert.Equal(when, row["When"]);
             Assert.Equal(12.34m, row["Amount"]);
         }
+    }
+
+    /// <summary>
+    /// On Jet3, four or five CLR <c>DateTime</c> defaults give an LvProp blob
+    /// that is still stored inline (256 bytes or less) but makes the table's
+    /// <c>MSysObjects</c> row longer than 255 bytes. The Jet3 row encoder threw
+    /// <see cref="OverflowException"/> on such a row, so CreateTableAsync failed.
+    /// </summary>
+    /// <param name="defaultCount">The number of defaulted columns.</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Theory]
+    [InlineData(4, "direct")]
+    [InlineData(4, "transactional")]
+    [InlineData(4, "explicit")]
+    [InlineData(5, "direct")]
+    [InlineData(5, "transactional")]
+    [InlineData(5, "explicit")]
+    public async Task Jet3ClrDefaults_LongCatalogRow_AreAppliedByALaterWriter(int defaultCount, string mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
+        const string table = "DateDefaults";
+        DateTime[] defaults = [.. Enumerable.Range(0, defaultCount).Select(i => new DateTime(2024, 1 + i, 2 + i, 8 + i, 30, 0))];
+        List<ColumnDefinition> columns = [new("Id", typeof(int))];
+        for (int i = 0; i < defaultCount; i++)
+        {
+            columns.Add(new ColumnDefinition($"When{i}", typeof(DateTime)) { DefaultValue = defaults[i] });
+        }
+
+        await WriteInModeAsync(stream, mode, writer => writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken).AsTask());
+
+        stream.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.InRange(await ReadCatalogRowLengthAsync(harness.Database, table), 256, 2036);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        for (int i = 0; i < defaultCount; i++)
+        {
+            Assert.Equal(defaults[i], row[$"When{i}"]);
+        }
+
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        Assert.Equal(defaultCount, metadata.Count(c => c.DefaultValueExpression is not null));
     }
 
     /// <summary>
@@ -975,6 +1027,30 @@ public sealed class ColumnConstraintTests
         {
             await work(writer);
         }
+    }
+
+    /// <summary>Returns the stored length of the <c>MSysObjects</c> row named <paramref name="name"/>.</summary>
+    /// <param name="db">The database.</param>
+    /// <param name="name">The object name.</param>
+    /// <returns>The row length in bytes, or -1 when no row has the name.</returns>
+    private static async Task<int> ReadCatalogRowLengthAsync(DatabaseFile db, string name)
+    {
+        TableDef msys = Assert.IsType<TableDef>(await db.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
+        ColumnInfo nameColumn = msys.Columns.Single(c => c.Name == "Name");
+        int length = -1;
+        await db.ForEachLiveTableRowAsync(
+            2,
+            (row, _) =>
+            {
+                if (db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn) == name)
+                {
+                    length = row.Location.RowSize;
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            TestContext.Current.CancellationToken);
+        return length;
     }
 
     private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)

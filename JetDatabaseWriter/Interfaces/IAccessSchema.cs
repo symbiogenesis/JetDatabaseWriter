@@ -40,6 +40,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="columns">Column definitions for the new table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="Exceptions.JetLimitationException">Thrown, before anything is written, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -58,6 +59,7 @@ public interface IAccessSchema : IAccessBase
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="Exceptions.JetLimitationException">Thrown, before anything is written, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -79,6 +81,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
+    /// <exception cref="Exceptions.JetLimitationException">Thrown, before the table changes, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
     public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
 
     /// <summary>

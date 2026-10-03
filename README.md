@@ -886,7 +886,7 @@ try { var dt = await reader.ReadTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
-catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained */ }
+catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained, or a Jet3 table over 255 columns */ }
 catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```
@@ -929,6 +929,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Column defaults and validation rules
 - **Persisted `DefaultValue` and `ValidationRule` expressions run on the library's own expression engine.** An expression that uses syntax or a function the engine does not support (for example `GenGUID()`, `CurrentUser()` or `DLookUp`) is skipped by the writer, not enforced; Microsoft Access still applies it. Table-level (record) validation rules are not enforced, and a CLR `ValidationRule` delegate binds only the writer that created the table.
+
+### Table width
+- **A Jet3 (Access 97) table holds at most 255 columns**, Access's field limit; a Jet3 row stores its column count in one byte. `CreateTableAsync` and `AddColumnAsync` throw `JetLimitationException` for a 256th column before writing anything.
 
 ### Compact & Repair
 - **`ShrinkDatabaseAsync` is a tail shrinker, not a full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.

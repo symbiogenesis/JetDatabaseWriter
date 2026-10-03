@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
@@ -100,6 +101,8 @@ internal sealed class TableSchemaEditor(
         {
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
+
+        this.ThrowIfTooManyColumns(tableName, columns.Count);
 
         // Pre-process the column-level IsPrimaryKey shortcut. Synthesize one
         // composite PK IndexDefinition (named "PrimaryKey") from columns
@@ -319,6 +322,23 @@ internal sealed class TableSchemaEditor(
             : fallback;
 
     /// <summary>
+    /// Rejects a Jet3 table of more than 255 columns before anything is
+    /// written: a Jet3 row stores <c>num_cols</c> in one byte, and Access
+    /// allows 255 fields per table.
+    /// </summary>
+    /// <param name="tableName">The table name, for the message.</param>
+    /// <param name="columnCount">The number of columns the table would have.</param>
+    /// <exception cref="JetLimitationException">The database is Jet3 and <paramref name="columnCount"/> is over 255.</exception>
+    private void ThrowIfTooManyColumns(string tableName, int columnCount)
+    {
+        if (db.Format == DatabaseFormat.Jet3Mdb && columnCount > Constants.TableDefinition.MaxJet3Columns)
+        {
+            throw new JetLimitationException(
+                $"Table '{tableName}' would have {columnCount} columns; a Jet3 (Access 97) table holds at most {Constants.TableDefinition.MaxJet3Columns}.");
+        }
+    }
+
+    /// <summary>
     /// Rebuilds <paramref name="tableName"/> into a temporary copy with the
     /// projected schema, copies every row, and swaps the copy in. The table's
     /// foreign-key index entries are re-emitted on the copy, and its partner
@@ -399,6 +419,8 @@ internal sealed class TableSchemaEditor(
         {
             throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
         }
+
+        this.ThrowIfTooManyColumns(tableName, newDefs.Count);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
