@@ -41,7 +41,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
-/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, and a parent table's complex AutoNumber after a reference is allocated.</param>
+/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 internal sealed class ComplexColumnManager(
     DatabaseFile db,
@@ -460,17 +460,22 @@ internal sealed class ComplexColumnManager(
     }
 
     /// <summary>
-    /// Returns one greater than the largest <c>ComplexID</c> stored in
-    /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty.
+    /// Returns the next <c>ComplexID</c>: one greater than the larger of
+    /// <c>MSysComplexColumns</c>' TDEF AutoNumber counter (the last ID handed
+    /// out; <c>ComplexID</c> carries the AutoNumber flag) and the largest
+    /// <c>ComplexID</c> still stored, so the ID of a dropped complex column is
+    /// never handed out again. The scan covers files whose counter earlier
+    /// builds of this library left at 0.
     /// </summary>
     /// <param name="msysComplexPg">The MSysComplexColumns page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">Every <c>ComplexID</c> up to <see cref="int.MaxValue"/> has been used.</exception>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await this.db.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
-        int maxId = 0;
+        long maxId = await autoNumbers.ReadHighWaterAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
         if (idCol != null)
         {
             await this.db.ForEachLiveTableRowAsync(
@@ -488,7 +493,9 @@ internal sealed class ComplexColumnManager(
                 cancellationToken).ConfigureAwait(false);
         }
 
-        return maxId + 1;
+        return maxId < int.MaxValue
+            ? (int)(maxId + 1)
+            : throw new InvalidOperationException($"'{Constants.SystemTableNames.ComplexColumns}' has used every ComplexID up to {int.MaxValue}.");
     }
 
     /// <summary>
@@ -725,6 +732,11 @@ internal sealed class ComplexColumnManager(
         msysComplex.SetValueByName(values, "ComplexID", complexId);
 
         await indexes.InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        // ComplexID is an AutoNumber column; keep its TDEF counter at the last
+        // ID handed out, as Access does, so neither this library nor Access
+        // reuses it after the column is dropped.
+        await autoNumbers.RaiseHighWaterAsync(pg, complexId, cancellationToken).ConfigureAwait(false);
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──

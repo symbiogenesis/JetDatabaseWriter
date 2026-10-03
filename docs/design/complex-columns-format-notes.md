@@ -59,12 +59,14 @@ The writer does the same. `ConstraintRegistry.ApplyAsync` gives every inserted r
 | Column (verified) | Type | Meaning |
 |---|---|---|
 | `ColumnName` | `Text(510)` | Name of the parent column (e.g. `"Attachments"`). |
-| `ComplexID` | `LongInteger` (fixed_off=12) | Per-database ID for this complex column. **Matches the 4-byte value the parent TDEF stores in the column descriptor's `misc`+`misc_ext` slot** (see §2.1). |
+| `ComplexID` | `LongInteger` (fixed_off=12), AutoNumber (flags `0x17`) | Per-database ID for this complex column. **Matches the 4-byte value the parent TDEF stores in the column descriptor's `misc`+`misc_ext` slot** (see §2.1). |
 | `ComplexTypeObjectID` | `LongInteger` (fixed_off=0) | `MSysObjects.Id` of the **type-template table** — one of `MSysComplexType_Long`, `MSysComplexType_Text`, `MSysComplexType_Attachment`, etc. The template's schema dictates the kind (attachment vs multi-value of a given inner type). |
 | `ConceptualTableID` | `LongInteger` (fixed_off=8) | Parent table object/TDEF page for the complex-column definition. Schema rewrite preserves this identity when possible by transplanting rebuilt storage onto the original TDEF page; copy/swap fallbacks patch the value to the replacement TDEF page. |
 | `FlatTableID` | `LongInteger` (fixed_off=4) | `MSysObjects.Id` of the hidden child ("flat") table. |
 
 The rows above are in the catalog's logical column order; the `fixed_off` values give each column's offset in the physical fixed-width row area, which Access orders independently (`ComplexTypeObjectID`=0, `FlatTableID`=4, `ConceptualTableID`=8, `ComplexID`=12).
+
+`ComplexID` is an AutoNumber column, and the `MSysComplexColumns` TDEF AutoNumber counter (offset 20) holds the last ID handed out, including IDs of complex columns since dropped: 1 in `ComplexFields.accdb`, 7 in both `complexDataTest*.accdb` (whose largest remaining ID is 4) and 3 in `NorthwindTraders.accdb`. `ComplexColumnManager.GetNextComplexIdAsync` allocates one more than the larger of that counter and the largest `ComplexID` still stored (the scan covers files whose counter earlier builds of this library left at 0), and `InsertMSysComplexColumnsRowAsync` raises the counter after each row, so a dropped column's ID is never handed out again. The counter is on a TDEF page, so a rolled-back transaction discards the raise with the rest of its writes. `ComplexColumnsWriterTests` (`CreateTable_ComplexColumns_RaisesComplexIdCounter`, `DropThenAddComplexColumn_DoesNotReuseComplexId`, `CreateTable_AccessFixture_ContinuesFromComplexIdCounter`, `CreateTable_RolledBackTransaction_RestoresComplexIdCounter`) covers this.
 
 There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`ComplexColumnReader.GetComplexColumnsAsync`) already does this scan.
 

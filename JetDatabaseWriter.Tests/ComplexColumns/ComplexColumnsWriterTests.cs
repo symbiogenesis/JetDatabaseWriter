@@ -27,6 +27,18 @@ using Xunit;
 /// </summary>
 public sealed class ComplexColumnsWriterTests
 {
+    /// <summary>Gets the Access-authored ACCDB fixtures with their <c>MSysComplexColumns</c> ComplexID counter.</summary>
+    /// <returns>The fixture paths and counters.</returns>
+    public static TheoryData<string, int> AccessFixtureComplexIdCounters() => new()
+    {
+        { TestDatabases.ComplexFields, 1 },
+
+        // Access handed out ComplexIDs up to 7; the largest still in MSysComplexColumns is 4.
+        { TestDatabases.ComplexDataTestV2007, 7 },
+        { TestDatabases.ComplexDataTestV2010, 7 },
+        { TestDatabases.NorthwindTraders, 3 },
+    };
+
     // ── MSysComplexColumns scaffold ────────────────────────────────────────────
 
     [Fact]
@@ -463,4 +475,109 @@ public sealed class ComplexColumnsWriterTests
         IReadOnlyList<ColumnMetadata> tplMeta = await reader.GetColumnMetadataAsync("MSysComplexType_Text", TestContext.Current.CancellationToken);
         Assert.NotEmpty(tplMeta);
     }
+
+    // ── MSysComplexColumns.ComplexID AutoNumber ───────────────────────────────
+    // ComplexID carries the AutoNumber flag (0x17), and its TDEF counter at
+    // offset 20 is the last ComplexID handed out (1/7/7/3 in the Access
+    // fixtures ComplexFields, complexDataTest V2007/V2010 and Northwind).
+    // New ComplexIDs continue from it and keep it current.
+
+    [Theory]
+    [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task CreateTable_ComplexColumns_RaisesComplexIdCounter(ComplexWriteMode mode)
+    {
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(ms, mode))
+        {
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () => await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken));
+        }
+
+        int[] ids = await ReadComplexIdsAsync(ms, "Docs");
+        Assert.Equal([1, 2], ids);
+        Assert.Equal(2, await ReadComplexIdCounterAsync(ms));
+    }
+
+    [Theory]
+    [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task DropThenAddComplexColumn_DoesNotReuseComplexId(ComplexWriteMode mode)
+    {
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(ms, mode))
+        {
+            await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken);
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () => await writer.DropColumnAsync("Docs", "Tags", TestContext.Current.CancellationToken));
+        }
+
+        // A later session continues from the persisted counter, not from the
+        // largest ComplexID still in MSysComplexColumns.
+        await using (AccessWriter writer = await ComplexColumnTestSupport.OpenWriterAsync(ms, mode))
+        {
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () => await writer.AddColumnAsync("Docs", new ColumnDefinition("More", typeof(byte[])) { IsAttachment = true }, TestContext.Current.CancellationToken));
+        }
+
+        int[] ids = await ReadComplexIdsAsync(ms, "Docs");
+        Assert.Equal([1, 3], ids);
+        Assert.Equal(3, await ReadComplexIdCounterAsync(ms));
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessFixtureComplexIdCounters))]
+    public async Task CreateTable_AccessFixture_ContinuesFromComplexIdCounter(string path, int counter)
+    {
+        await using MemoryStream ms = await ComplexColumnTestSupport.CopyFixtureAsync(path);
+        Assert.Equal(counter, await ReadComplexIdCounterAsync(ms));
+
+        await using (AccessWriter writer = await ComplexColumnTestSupport.OpenWriterAsync(ms))
+        {
+            await writer.CreateTableAsync(
+                "Extra",
+                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }],
+                TestContext.Current.CancellationToken);
+        }
+
+        int[] ids = await ReadComplexIdsAsync(ms, "Extra");
+        Assert.Equal([counter + 1], ids);
+        Assert.Equal(counter + 1, await ReadComplexIdCounterAsync(ms));
+    }
+
+    [Fact]
+    public async Task CreateTable_RolledBackTransaction_RestoresComplexIdCounter()
+    {
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken);
+
+            await using (JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken))
+            {
+                await writer.CreateTableAsync("Other", DocsColumns(), TestContext.Current.CancellationToken);
+                await tx.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+
+            await writer.CreateTableAsync("Third", DocsColumns(), TestContext.Current.CancellationToken);
+        }
+
+        int[] ids = await ReadComplexIdsAsync(ms, "Third");
+        Assert.Equal([3, 4], ids);
+        Assert.Equal(4, await ReadComplexIdCounterAsync(ms));
+    }
+
+    private static List<ColumnDefinition> DocsColumns() =>
+    [
+        new ColumnDefinition("Id", typeof(int)),
+        new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+        new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) },
+    ];
+
+    private static async Task<int[]> ReadComplexIdsAsync(MemoryStream ms, string table)
+    {
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        return [.. (await reader.GetComplexColumnsAsync(table, TestContext.Current.CancellationToken)).Select(c => c.ComplexId).Order()];
+    }
+
+    private static async Task<int> ReadComplexIdCounterAsync(MemoryStream ms) =>
+        ComplexColumnTestSupport.ReadInt32(
+            await ComplexColumnTestSupport.ReadSystemTdefAsync(ms, "MSysComplexColumns"),
+            ComplexColumnTestSupport.AutoNumberOffset);
 }
