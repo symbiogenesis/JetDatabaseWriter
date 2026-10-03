@@ -40,6 +40,7 @@ JetDatabaseWriter/
 │   ├── ColumnPredicate.cs
 │   ├── ColumnPredicateOperator.cs
 │   ├── ColumnSize.cs
+│   ├── ComplexCellValue.cs                (decodes the complex-column cells that row reads return)
 │   ├── ComplexColumnInfo.cs
 │   ├── DatabaseStatistics.cs
 │   ├── Hyperlink.cs
@@ -284,7 +285,7 @@ JetDatabaseWriter/
 │   └── LinkedSourcePolicy.cs              (linked-source open options plus the host path relative sources anchor to)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
-│   ├── ComplexColumnReader.cs             (complex-column metadata, subtypes, and attachment payloads for table scans)
+│   ├── ComplexColumnReader.cs             (complex-column metadata, subtypes, flat-table decode, and the row-read cells)
 │   ├── ComplexItemReader.cs               (attachment and multi-value item reads from the hidden flat tables)
 │   ├── ComplexColumnManager.cs            (write/scaffold/cascade complex column data)
 │   └── Models/
@@ -391,7 +392,7 @@ AccessReader → ReaderServices
   TableReader         → ReaderPageCache, RowDecoder, CatalogReader, ComplexColumnReader, LinkedTableReader
   IndexRowReader      → ReaderPageCache, RowDecoder, CatalogReader, ComplexColumnReader, TableReader
   SchemaReader        → ReaderPageCache, CatalogReader, ComplexColumnReader, LinkedTableReader, TableReader
-  ComplexItemReader   → ComplexColumnReader, TableReader
+  ComplexItemReader   → ComplexColumnReader
   LinkedTableReader   → CatalogReader, LinkedSourcePolicy
   ComplexColumnReader → CatalogReader, RowDecoder
   CatalogReader       → TableCatalog, RowDecoder

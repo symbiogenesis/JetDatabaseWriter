@@ -44,7 +44,7 @@ internal sealed class ReaderServices : IDisposable
         this.Tables = new TableReader(db, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(db, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.Operations);
         this.Schema = new SchemaReader(db, this.PageCache, this.Catalog, complexColumns, this.LinkedTables, this.Tables, this.Operations);
-        this.ComplexItems = new ComplexItemReader(complexColumns, this.Tables, this.Operations);
+        this.ComplexItems = new ComplexItemReader(complexColumns, this.Operations);
     }
 
     /// <summary>Gets the gate every reader operation enters, so disposal can wait for in-flight work.</summary>

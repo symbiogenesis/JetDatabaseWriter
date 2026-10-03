@@ -271,6 +271,9 @@ internal sealed class TableReader(
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
         long rowCount = 0;
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
 
@@ -280,6 +283,11 @@ internal sealed class TableReader(
 
             await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
             {
+                if (td.HasComplexColumns)
+                {
+                    ComplexColumnReader.ResolveStringColumns(row, td.Columns, complexData);
+                }
+
                 yield return row;
                 rowCount++;
             }
@@ -387,6 +395,9 @@ internal sealed class TableReader(
                 return empty;
             }
 
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                : null;
             IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
 
@@ -396,6 +407,11 @@ internal sealed class TableReader(
 
                 await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
                 {
+                    if (td.HasComplexColumns)
+                    {
+                        ComplexColumnReader.ResolveStringColumns(row, td.Columns, complexData);
+                    }
+
                     _ = dt.Rows.Add(row);
                     if (IsRowLimitReached(dt.Rows.Count, maxRows))
                     {
@@ -697,9 +713,9 @@ internal sealed class TableReader(
 
         // Skip per-row decode of columns the mapper never reads. For wide
         // tables and narrow DTOs this can eliminate the bulk of the per-row
-        // decode + boxing cost. We suppress the projection when the table has
-        // complex/attachment columns, because complex resolution needs the
-        // parent-id LongInteger which may not be in the projection set.
+        // decode + boxing cost. Tables with complex/attachment columns still
+        // decode every column. Complex resolution itself only needs each
+        // complex column's own reference, so this could be relaxed.
         bool[]? wantedColumns = td.HasComplexColumns
             ? null
             : RowMapper<T>.GetBoundColumnMask(headers);

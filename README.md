@@ -327,7 +327,24 @@ IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("
 IReadOnlyList<MultiValueItem> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
 ```
 
-The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapper-encoded on disk (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly allocated Access-style LVAL pages (single-page or chained form with the `LVAL` page signature) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
+The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapper-encoded on disk (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions; the reader also accepts the zlib-wrapped deflate that Access writes). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly allocated Access-style LVAL pages (single-page or chained form with the `LVAL` page signature) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
+
+Row reads carry the same items. Complex columns report `ClrType = byte[]`, so `Rows(...)`, `ReadTableAsync(...)`, and `Rows<T>(...)` put every attachment or value of a parent row into one `byte[]` cell (`DBNull` when the row has none); decode it with `ComplexCellValue`:
+
+```csharp
+await foreach (object[] row in reader.Rows("Documents", cancellationToken: cancellationToken))
+{
+    if (row[1] is byte[] cell)
+    {
+        foreach (AttachmentRecord file in ComplexCellValue.ReadAttachments(cell))
+            Console.WriteLine($"{file.FileName}: {file.FileData.Length} bytes");
+    }
+}
+
+// Multi-value columns: ComplexCellValue.ReadMultiValueItems(cell)
+```
+
+`RowsAsStrings(...)` and `ReadTableAsStringsAsync(...)` return the same cell as a `data:application/octet-stream;base64,...` URI (empty string when the row has none). The cell layout is documented on `ComplexCellValue`.
 
 ### Hyperlink columns
 

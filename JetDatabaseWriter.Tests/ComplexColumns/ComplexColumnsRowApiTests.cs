@@ -8,7 +8,6 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
@@ -81,20 +80,30 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void ComplexColumnReader_DecompressAttachmentData_ZlibWrappedSample_InflatesFromHeader()
+    public void AttachmentWrapper_TryDecode_AcceptsAccessZlibWrappedBody()
     {
-        byte[] raw =
-        [
-            0x01, 0xA5, 0x5A,
-            0x78, 0xDA, 0xAB, 0xCA, 0xC9, 0x4C, 0x52, 0x48,
-            0x2C, 0x29, 0x49, 0x4C, 0xCE, 0xC8, 0x4D, 0xCD,
-            0x2B, 0x51, 0x28, 0x48, 0xAC, 0xCC, 0xC9, 0x4F,
-            0x4C, 0x01, 0x00, 0x6B, 0xCA, 0x09, 0x05,
-        ];
+        // Access (and Jackcess) compress with a zlib header and store the
+        // uncompressed content length in dataLen, unlike Encode's raw deflate.
+        byte[] payload = Encoding.UTF8.GetBytes("zlib attachment payload");
+        byte[] ext = Encoding.Unicode.GetBytes("txt\0");
+        byte[] content = new byte[12 + ext.Length + payload.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(content, 12 + ext.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(8), ext.Length);
+        ext.CopyTo(content, 12);
+        payload.CopyTo(content, 12 + ext.Length);
 
-        byte[] decoded = InvokeDecompressAttachmentData(raw, 1);
+        byte[] body = DeflateWithZlib(content);
+        byte[] wrapped = new byte[8 + body.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(wrapped, 1);
+        BinaryPrimitives.WriteInt32LittleEndian(wrapped.AsSpan(4), content.Length);
+        body.CopyTo(wrapped, 8);
 
-        Assert.Equal(Encoding.UTF8.GetBytes("zlib attachment payload"), decoded);
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string decodedExt, out byte[] decoded);
+
+        Assert.True(ok);
+        Assert.Equal("txt", decodedExt);
+        Assert.Equal(payload, decoded);
     }
 
     [Fact]
@@ -478,7 +487,16 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal(new string('x', 80), values[3]);
     }
 
-    private static byte[] InvokeDecompressAttachmentData(byte[] bytes, int offset) => ComplexColumnReader.DecompressAttachmentData(bytes, offset);
+    private static byte[] DeflateWithZlib(byte[] bytes)
+    {
+        using var output = new MemoryStream();
+        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zlib.Write(bytes);
+        }
+
+        return output.ToArray();
+    }
 
     private static byte[] InflateWithZlib(byte[] bytes)
     {

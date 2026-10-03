@@ -2,26 +2,21 @@ namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
-using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Tables;
 
 /// <summary>
 /// Reads the items stored behind an Access 2007+ complex column: the
 /// attachments of an Attachment column and the values of a Multi-value column.
-/// Each lives in a hidden flat child table, which is read through the table
-/// reader and decoded here. Each operation enters the reader's operation gate
-/// so disposal waits for it.
+/// Each lives in a hidden flat child table, which the complex-column reader
+/// decodes with the same code that builds the row-read cells. Each operation
+/// enters the reader's operation gate so disposal waits for it.
 /// </summary>
-/// <param name="complexColumns">Finds the column's flat child table.</param>
-/// <param name="tables">Reads the flat child table.</param>
+/// <param name="complexColumns">Finds and decodes the column's flat child table.</param>
 /// <param name="operations">The reader's operation gate.</param>
-internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, TableReader tables, AsyncReentrantOperationGate operations)
+internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, AsyncReentrantOperationGate operations)
 {
     /// <summary>
     /// Returns every attachment row stored in the hidden flat child table backing
@@ -38,52 +33,9 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         cancellationToken.ThrowIfCancellationRequested();
 
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await tables.ReadTableAsync(info.FlatTableName, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxFileUrl = flat.Columns.IndexOf("FileURL");
-        int idxFileName = flat.Columns.IndexOf("FileName");
-        int idxFileType = flat.Columns.IndexOf("FileType");
-        int idxFileTime = flat.Columns.IndexOf("FileTimeStamp");
-        int idxFileData = flat.Columns.IndexOf("FileData");
-
-        var result = new List<AttachmentRecord>(flat.Rows.Count);
-        foreach (DataRow row in flat.Rows)
-        {
-            int fk = idxFk >= 0 && row[idxFk] is not DBNull ? Convert.ToInt32(row[idxFk], CultureInfo.InvariantCulture) : 0;
-            byte[] rawData = ExtractOleBytesBestEffort(idxFileData >= 0 ? row[idxFileData] : null);
-            byte[] decoded = rawData;
-            string ext = idxFileType >= 0 && row[idxFileType] is not DBNull ? Convert.ToString(row[idxFileType], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
-            if (rawData.Length > 0 && AttachmentWrapper.TryDecode(rawData, out string decodedExt, out byte[] payload))
-            {
-                decoded = payload;
-                if (string.IsNullOrEmpty(ext))
-                {
-                    ext = decodedExt;
-                }
-            }
-
-            result.Add(new AttachmentRecord
-            {
-                ConceptualTableId = fk,
-                FileName = idxFileName >= 0 && row[idxFileName] is not DBNull ? Convert.ToString(row[idxFileName], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty,
-                FileType = ext,
-                FileURL = idxFileUrl >= 0 && row[idxFileUrl] is not DBNull ? Convert.ToString(row[idxFileUrl], CultureInfo.InvariantCulture) : null,
-                FileTimeStamp = idxFileTime >= 0 && row[idxFileTime] is DateTime dt ? dt : null,
-                FileData = decoded,
-            });
-        }
-
-        return result;
+        return info == null
+            ? []
+            : await complexColumns.ReadAttachmentsAsync(info, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -101,86 +53,9 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         cancellationToken.ThrowIfCancellationRequested();
 
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await tables.ReadTableAsync(info.FlatTableName, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxValue = flat.Columns.IndexOf("value");
-        if (idxValue < 0)
-        {
-            for (int i = 0; i < flat.Columns.Count; i++)
-            {
-                if (i != idxFk)
-                {
-                    idxValue = i;
-                    break;
-                }
-            }
-        }
-
-        var result = new List<MultiValueItem>(flat.Rows.Count);
-        foreach (DataRow row in flat.Rows)
-        {
-            int fk = idxFk >= 0 && row[idxFk] is not DBNull ? Convert.ToInt32(row[idxFk], CultureInfo.InvariantCulture) : 0;
-            object? value = idxValue >= 0 && row[idxValue] is not DBNull ? row[idxValue] : null;
-            result.Add(new MultiValueItem
-            {
-                ConceptualTableId = fk,
-                Value = value,
-            });
-        }
-
-        return result;
-    }
-
-    private static byte[] ExtractOleBytesBestEffort(object? cell)
-    {
-        if (cell is null or DBNull)
-        {
-            return [];
-        }
-
-        if (cell is byte[] b)
-        {
-            return b;
-        }
-
-        if (cell is string s)
-        {
-            return BinaryStringParser.TryDecodeBase64DataUri(s, out byte[] bytes) ? bytes : [];
-        }
-
-        return [];
-    }
-
-    private static int FindFlatLongFkIndex(DataTable flat)
-    {
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            DataColumn c = flat.Columns[i];
-            if (c.DataType == typeof(int) && c.ColumnName.StartsWith('_'))
-            {
-                return i;
-            }
-        }
-
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            if (flat.Columns[i].DataType == typeof(int))
-            {
-                return i;
-            }
-        }
-
-        return -1;
+        return info == null
+            ? []
+            : await complexColumns.ReadMultiValueItemsAsync(info, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<ComplexColumnInfo?> FindComplexColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)

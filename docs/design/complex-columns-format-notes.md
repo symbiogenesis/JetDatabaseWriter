@@ -4,7 +4,7 @@
 **Empirical appendix:** [`format-probe-appendix-complex.md`](../format-probe/format-probe-appendix-complex.md) — annotated hex dumps of `MSysComplexColumns`, every `MSysComplexType_*` template table, an attachment-bearing parent table (`Documents`), and the hidden flat tables from `ComplexFields.accdb`. Regenerate via `dotnet run --project JetDatabaseWriter.FormatProbe -- complex`.
 **Validation requirement:** see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
-> ⚠️ Reverse-engineered notes. mdbtools documents complex columns only superficially. The authoritative open-source reference is [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache-2.0) — specifically `com.healthmarketscience.jackcess.impl.complex.*`. Field names and offsets in this document are derived from Jackcess source and the existing reader code in this repo (`AccessReader.BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`).
+> ⚠️ Reverse-engineered notes. mdbtools documents complex columns only superficially. The authoritative open-source reference is [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache-2.0) — specifically `com.healthmarketscience.jackcess.impl.complex.*`. Field names and offsets in this document are derived from Jackcess source and the existing reader code in this repo (`ComplexColumnReader`, `AttachmentWrapper`).
 
 ---
 
@@ -51,7 +51,7 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 The rows above are in the catalog's logical column order; the `fixed_off` values give each column's offset in the physical fixed-width row area, which Access orders independently (`ComplexTypeObjectID`=0, `FlatTableID`=4, `ConceptualTableID`=8, `ComplexID`=12).
 
-There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
+There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`ComplexColumnReader.GetComplexColumnsAsync`) already does this scan.
 
 `MSysComplexColumns` is now created by the ACCDB full-catalog scaffold on every fresh ACCDB built via `CreateDatabaseAsync` (Phase C1, 2026-04-25). That same scaffold also creates the core `MSysACEs`, `MSysQueries`, and `MSysRelationships` tables expected by DAO compatibility paths. The catalog rows carry `Flags = 0x80000000` so the tables are excluded from `ListTablesAsync`. ACE only — Jet3/Jet4 `.mdb` scaffolds skip these tables.
 
@@ -67,7 +67,7 @@ There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. T
 The flat table has all the value-bearing columns of the complex type, plus two extra columns:
 
 1. An **autonumber Long primary key** column.
-2. A **Long FK column** that holds the same per-row complex reference value used in the parent row. This is what the reader joins on (`AccessReader.BuildComplexColumnDataAsync`).
+2. A **Long FK column** that holds the same per-row complex reference value used in the parent row. This is what the reader joins on (`ComplexColumnReader.BuildColumnDataAsync`). Both Access and this writer name it `_<userColumnName>`; the reader takes the first `LongInteger` column whose name starts with `_`, else the first `LongInteger` column. The other `LongInteger` column, `<parentTable>_<userColumnName>`, is the flat table's own autonumber key and is not a join key.
 
 The flat table also requires:
 
@@ -116,13 +116,13 @@ Only meaningful on memo columns marked "Append Only" in Access. Lowest-priority 
 
 ## 3. Attachment payload format
 
-The reader already decodes this; see `AccessReader.DecodeAttachmentFileData`. The writer needs to round-trip the encoder.
+The reader decodes this in `AttachmentWrapper.TryDecode`, from the stored `FileData` bytes (the flat table's OLE column is read raw, without the OLE-package unwrap and file-signature sniffing that ordinary OLE columns get). The writer encodes it in `AttachmentWrapper.Encode`.
 
 ### 3.1 Wrapper layout
 
 ```text
 +0   uint32 LE   typeFlag       0x00 = raw, 0x01 = deflate-compressed
-+4   uint32 LE   dataLen        length of (header + payload), excluding wrapper
++4   uint32 LE   dataLen        Access/Jackcess: uncompressed length of (header + payload). This writer: length of the stored body.
 +8   ----        contentStream  raw OR deflate-wrapped bytes follow
 ```
 
@@ -150,13 +150,15 @@ private static final Set<String> COMPRESSED_FORMATS = new HashSet<String>(
 
 Match case-insensitively against `FileType` (which Jackcess lowercases on store). Jackcess uses `Deflater(3)` (level 3, raw deflate without zlib wrapper). HACKING.md notes "if a memo field is marked for compression, only at value which is at most 1024 characters when uncompressed can be compressed" — that's a memo-compression rule, not an attachment rule, so it does not apply here.
 
-> The compression flag is `0x01 = zlib-deflate`. The existing reader uses `System.IO.Compression.DeflateStream`, which does **raw deflate** (no zlib header). The reader works against fixtures, so raw deflate is correct — Jackcess's "zlib" comment in the field name is a misnomer.
+> The compression flag is `0x01 = zlib-deflate`. Access-authored files (`ComplexFields.accdb`, Jackcess `complexDataTest*.accdb`) store a **zlib-wrapped** stream (`78 5E` header) whose `dataLen` is the uncompressed content length. `AttachmentWrapper.Encode` writes **raw deflate** with `dataLen` = compressed length. `AttachmentWrapper.TryDecode` accepts both: when the body starts with a valid zlib header it inflates after the 2-byte header, otherwise (or if that fails to parse) it inflates the body as raw deflate, and in both cases the compressed body runs to the end of the value.
 
 ## 4. Reader / writer phases
 
 ### 4.1 Reader
 
-The reader (see §1) implements `Attachment` / `Complex` column-type recognition, the `MSysComplexColumns` join (`BuildComplexColumnDataAsync`), and attachment payload decode (raw + deflate; `DecodeAttachmentFileData`). Schema metadata is exposed via `IAccessReader.GetComplexColumnsAsync`; typed item enumeration is exposed via `GetAttachmentsAsync` / `GetMultiValueItemsAsync` (see §4.2 C4).
+The reader (see §1) implements `Attachment` / `Complex` column-type recognition, the `MSysComplexColumns` join, and attachment payload decode (`AttachmentWrapper.TryDecode`, §3). Schema metadata is exposed via `IAccessReader.GetComplexColumnsAsync`; typed item enumeration is exposed via `GetAttachmentsAsync` / `GetMultiValueItemsAsync` (see §4.2 C4).
+
+Row reads (`Rows`, `ReadTableAsync`, `Rows<T>`, index seeks and `Query<T>`) replace each complex column's 4-byte reference with a `ComplexCellValue` cell (`byte[]`, since complex columns report `ClrType = byte[]`). `ComplexColumnReader.BuildColumnDataAsync` reads each flat table once per scan, groups its rows by the FK back-reference, and encodes one cell per parent reference holding **every** attachment (decoded payload, file name, type, URL, timestamp) or every multi-value / version-history value. A row whose reference has no flat rows reads as `DBNull`. `ComplexCellValue.ReadAttachments` / `ReadMultiValueItems` decode a cell into the same records `GetAttachmentsAsync` / `GetMultiValueItemsAsync` return, because both paths share `ComplexColumnReader`'s flat-table decode. `RowsAsStrings` and `ReadTableAsStringsAsync` return the same cell as a `data:application/octet-stream;base64,` URI, or an empty string. A version-history cell carries only the history text, like `GetMultiValueItemsAsync`; the `Modified` timestamp column is not included.
 
 ### 4.2 Writer
 
@@ -253,7 +255,7 @@ Surgical post-rewrite cleanup runs from the rewrite path itself:
 C9 caveats:
 
 - **Adding a brand-new complex column to an existing table works** because `PrepareComplexColumnAllocationsAsync` allocates fresh IDs for the appended `ColumnDefinition` (its `ComplexId == 0`), and `EmitComplexColumnArtifactsAsync` runs at the end of `CreateTableAsync` (called by the rewrite for the temp table) to emit the new flat child + `MSysComplexColumns` row. The pre-existing complex columns continue to ride through unchanged.
-- **`AddAttachmentAsync` / `AddMultiValueItemAsync` after rename still work** because the FK back-reference column on the flat table (`_<userColumnName>`) keeps its original name; the reader resolves the flat table via `MSysComplexColumns.FlatTableID` and `GetAttachmentsAsync` joins via the parent's auto-number primary key without consulting the parent's complex slot. The `AddComplexItemCoreAsync` parent-row predicate matches on the user's PK columns, not on the renamed complex column.
+- **`AddAttachmentAsync` / `AddMultiValueItemAsync` after rename still work** because the FK back-reference column on the flat table (`_<userColumnName>`) keeps its original name; the reader resolves the flat table via `MSysComplexColumns.FlatTableID` and `GetAttachmentsAsync` returns every flat row tagged with its FK back-reference; row reads join that FK to the parent's complex slot, which the rebuild preserves (next bullet). The `AddComplexItemCoreAsync` parent-row predicate matches on the user's PK columns, not on the renamed complex column.
 - **Per-row complex slots are preserved on rebuild.** `ReadDataTableForSchemaRewriteAsync` keeps `ComplexIdRef` values for complex columns, and `RowEncoder` writes those values back to the rebuilt parent row so flat-table FK joins continue to resolve after `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`.
 - **Validation.** Round-trip through this library's reader is verified in `JetDatabaseWriter.Tests/ComplexColumns/ComplexColumnsSchemaEvolutionTests.cs` (7 tests covering AddColumn / DropColumn / RenameColumn for both the complex column itself and a non-complex sibling, plus AddColumn of a brand-new attachment column on a table that already has one). Automated DAO CompactDatabase coverage now includes `AddColumnAsync` on a Northwind-hosted writer-created table with attachment and multi-value columns in `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair`; see [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
@@ -303,5 +305,5 @@ General DAO validation rules live in [dao-validation-strategy.md](dao-validation
 - [Jackcess `AttachmentColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/AttachmentColumnInfoImpl.java) — wrapper-header encoder/decoder, COMPRESSED_FORMATS skip-list
 - [Jackcess `ComplexColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/ComplexColumnInfoImpl.java) — flat-table protocol (PK + FK columns, `diffFlatColumns`)
 - [Jackcess `ComplexDataType.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/complex/ComplexDataType.java) — type-discriminator integer values
-- This repo: `JetDatabaseWriter/AccessReader.cs` `BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`, `DecompressAttachmentData`
+- This repo: `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs` (`BuildColumnDataAsync`, flat-table decode), `JetDatabaseWriter/ComplexColumns/Models/AttachmentWrapper.cs`, `JetDatabaseWriter/Models/ComplexCellValue.cs`
 - Companion design doc: [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md)
