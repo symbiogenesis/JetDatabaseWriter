@@ -37,42 +37,41 @@ internal sealed class RelationshipEnforcer(
     private readonly RelationshipSeekPlanner seekPlanner = new(db, tableCatalog);
     private readonly RelationshipChildRowLocator childRowLocator = new(db);
 
-    public static void AugmentParentSetsAfterInsert(string primaryTable, TableDef tableDef, object[] insertedValues, FkContext ctx)
+    /// <summary>
+    /// Records the key of a row just inserted into <paramref name="tableName"/>
+    /// in <see cref="FkContext.InsertedParentKeys"/> for every relationship that
+    /// relates the table to itself, so a later row of the same batch can
+    /// reference it. The table's indexes take the batch's rows only after the
+    /// last one is written, so an index seek cannot see them yet.
+    /// </summary>
+    /// <param name="tableName">The table the row was inserted into.</param>
+    /// <param name="tableDef">The table's definition.</param>
+    /// <param name="insertedValues">The inserted row, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    public static void AugmentParentSetsAfterInsert(string tableName, TableDef tableDef, object[] insertedValues, FkContext ctx)
     {
         foreach (FkRelationship rel in ctx.All)
         {
-            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? set))
-            {
-                continue;
-            }
-
-            int[] primaryColumnIndexes = new int[rel.PrimaryColumns.Count];
-            bool ok = true;
-            for (int index = 0; index < rel.PrimaryColumns.Count; index++)
-            {
-                primaryColumnIndexes[index] = tableDef.FindColumnIndex(rel.PrimaryColumns[index]);
-                if (primaryColumnIndexes[index] < 0)
-                {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if (!ok)
+            if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(rel.ForeignTable, tableName, StringComparison.OrdinalIgnoreCase)
+                || !TryMapColumns(rel.PrimaryColumns, tableDef, out int[] primaryColumnIndexes))
             {
                 continue;
             }
 
             string? key = RelationshipKeyBuilder.Build(insertedValues, primaryColumnIndexes);
-            if (key != null)
+            if (key == null)
             {
-                _ = set.Add(key);
+                continue;
             }
+
+            if (!ctx.InsertedParentKeys.TryGetValue(rel.Name, out HashSet<string>? inserted))
+            {
+                inserted = new HashSet<string>(StringComparer.Ordinal);
+                ctx.InsertedParentKeys[rel.Name] = inserted;
+            }
+
+            _ = inserted.Add(key);
         }
     }
 
@@ -513,8 +512,9 @@ internal sealed class RelationshipEnforcer(
     /// <summary>
     /// Checks that the non-null foreign key <paramref name="key"/> of
     /// <paramref name="values"/> names an existing row of the relationship's
-    /// primary table: by a seek on the parent's index when one covers the
-    /// key, otherwise against the parent's key set.
+    /// primary table: a row this call has already inserted, otherwise by a
+    /// seek on the parent's index when one covers the key and can encode it,
+    /// otherwise against the parent's key set.
     /// </summary>
     /// <param name="rel">The relationship.</param>
     /// <param name="foreignTable">The table being written.</param>
@@ -533,20 +533,14 @@ internal sealed class RelationshipEnforcer(
         FkCheckKind kind,
         CancellationToken cancellationToken)
     {
+        if (ctx.InsertedParentKeys.TryGetValue(rel.Name, out HashSet<string>? inserted) && inserted.Contains(key))
+        {
+            return;
+        }
+
         ParentSeekIndex? seekIndex = await this.seekPlanner.ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
         if (seekIndex != null)
         {
-            if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? pendingSet))
-            {
-                pendingSet = new HashSet<string>(StringComparer.Ordinal);
-                ctx.ParentKeySets[rel.Name] = pendingSet;
-            }
-
-            if (pendingSet.Contains(key))
-            {
-                return;
-            }
-
             byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIndex, values);
             if (encodedKey != null)
             {

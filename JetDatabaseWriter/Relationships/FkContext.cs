@@ -12,7 +12,21 @@ internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
 {
     public IReadOnlyList<FkRelationship> All { get; } = all;
 
+    /// <summary>
+    /// Gets the normalized keys of every row of a relationship's primary
+    /// table, by relationship name, read once per call when a foreign key
+    /// cannot be checked by an index seek.
+    /// </summary>
     public Dictionary<string, HashSet<string>> ParentKeySets { get; }
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the primary keys of the rows this call has inserted so far, by
+    /// the name of a self-referencing relationship, so a later row of the
+    /// same batch can reference an earlier one before the batch's index
+    /// maintenance adds it to the index.
+    /// </summary>
+    public Dictionary<string, HashSet<string>> InsertedParentKeys { get; }
         = new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, ParentSeekIndex?> SeekIndexes { get; }
