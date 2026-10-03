@@ -29,9 +29,11 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// using fixed-width sort keys; <c>Text (0x0A)</c> and <c>Memo (0x0C)</c>
 /// using the General Legacy text encoder; and <c>Guid (0x0F)</c>,
 /// <c>Binary (0x09)</c>, and <c>DateTimeExtended (0x14)</c> using the
-/// Jackcess "general binary entry" wrapping. OLE, Attachment, and Complex
-/// columns are intentionally unsupported because Access does not permit
-/// indexes on them.
+/// Jackcess "general binary entry" wrapping. <c>Attachment (0x11)</c> and
+/// <c>Complex (0x12)</c> keys are the parent row's per-row complex reference,
+/// encoded like <c>LongInteger</c>: users cannot index those columns, but
+/// Access gives each one its own unique, Required index. OLE columns are
+/// unsupported because Access does not permit indexes on them.
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -152,7 +154,12 @@ internal static class IndexKeyEncoder
                 return r;
             }
 
+            // Access indexes each complex column (its unique, Required
+            // <column>_<32 hex> index) on the parent row's per-row complex
+            // reference, keyed exactly like a Long Integer.
             case LongIntegerType:
+            case ComplexType:
+            case AttachmentType:
             {
                 byte[] r = new byte[4];
                 BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
@@ -210,8 +217,6 @@ internal static class IndexKeyEncoder
             case MemoType:
             case GuidType:
             case NumericType:
-            case AttachmentType:
-            case ComplexType:
             case DateTimeExtendedType:
                 throw new NotSupportedException(
                     $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is not supported. " +
@@ -690,6 +695,7 @@ internal static class IndexKeyEncoder
     private static int ToInt32(object value) => value switch
     {
         int i => i,
+        ComplexIdRef reference => reference.Id,
         short s => s,
         byte b => b,
         sbyte sb => sb,

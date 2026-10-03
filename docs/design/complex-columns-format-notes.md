@@ -37,6 +37,8 @@ Inside the parent table's TDEF column descriptor block (25 bytes per col on Jet4
 
 Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column for row-layout purposes. The 4-byte payload in each data row is the per-row complex reference value that joins this parent row to child rows in the flat table's FK column. The `MSysComplexColumns.ConceptualTableID` catalog column is separate: it identifies the parent table object/TDEF page for the complex-column definition.
 
+Access gives every complex column its own index on that reference: unique, Required, and named `<column>_<32 hex>` (truncated so the name fits in 64 characters), for example `Attachments_CFC7F98A63064F2DBDB6822D653AB763` in `ComplexFields.accdb`, `attach-data_071D71EDD53D45A1A9089929F06857D9` and `VersionHistory_F5F8918F-0A3F-4D_6E54CCBB170741DD8FD837271ED8B90C` in `complexDataTest*.accdb`, and `ProductCategoryImage_5C9A6A17CF9D4E1CA64DB2DECECEBB16` in `NorthwindTraders.accdb`. Its keys use the Long Integer layout (`7F` + big-endian int with the sign bit flipped; `7F 80 00 00 01` for reference 1), as Jackcess `IndexData` maps `COMPLEX_TYPE` to its integer descriptor. `IndexKeyEncoder` encodes `Complex` / `Attachment` keys that way, so updates, deletes and inserts on Access tables with complex columns keep these indexes current (`ComplexColumnIndexFixtureTests`). Users still cannot declare an index on a complex column, and tables the writer creates do not yet get this index.
+
 ### 2.2 `MSysComplexColumns` catalog table
 
 **Verified against `ComplexFields.accdb`** ([appendix](../format-probe/format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns** (column names and order below are probe-confirmed):
