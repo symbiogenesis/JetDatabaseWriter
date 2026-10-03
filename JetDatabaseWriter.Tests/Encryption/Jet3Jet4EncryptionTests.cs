@@ -22,7 +22,7 @@ using Xunit;
 ///   2. Jet4 RC4 flag  — password verified against the XOR-encoded header hash (0x42)
 ///   3. Jet4 RC4 pages — RC4 page decryption
 ///   4. ACCDB AES      — detection and page decryption (OLE2 CFB magic)
-///   5. ACCDB AES      — genuine AesEncrypted.accdb fixture from Access 16 CompactDatabase.
+///   5. ACCDB AES      — writer round trip through a synthetic legacy AES CFB-wrapped file.
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable

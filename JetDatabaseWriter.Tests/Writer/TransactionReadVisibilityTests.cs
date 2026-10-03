@@ -305,17 +305,8 @@ public sealed class TransactionReadVisibilityTests
     {
         const string password = "visibility";
 
-        // Writer-created .mdb files carry header bytes EncryptAsync reads as
-        // Jet4 RC4 already, so the Jet4 case starts from an Access-authored file.
         await using var ms = new MemoryStream();
-        if (format == DatabaseFormat.Jet4Mdb)
-        {
-            await ms.WriteAsync(await File.ReadAllBytesAsync(TestDatabases.AdventureWorks, Ct), Ct);
-        }
-
-        await using (AccessWriter writer = format == DatabaseFormat.Jet4Mdb
-            ? await OpenWriterAsync(ms, WriteMode.Direct)
-            : await CreateWriterAsync(ms, format, WriteMode.Direct))
+        await using (AccessWriter writer = await CreateWriterAsync(ms, format, WriteMode.Direct))
         {
             await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 50)], Ct);
             for (int id = 1; id <= 3; id++)

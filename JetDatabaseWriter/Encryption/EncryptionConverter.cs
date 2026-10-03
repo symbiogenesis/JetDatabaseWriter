@@ -534,18 +534,18 @@ internal static class EncryptionConverter
             return AccessEncryptionFormat.None;
         }
 
+        // Raw byte 0x62 is byte 32 of the masked header password area. On a
+        // file without a password it is a creation-date byte, so a flag value
+        // there counts only when the area holds a password.
         byte flag = header[0x62];
 
-        if (fmt == DatabaseFormat.Jet4Mdb)
+        // 0x02 / 0x03 = RC4 page encryption.
+        if (fmt == DatabaseFormat.Jet4Mdb && flag is 0x02 or 0x03 && EncryptionManager.HasHeaderPassword(header, fmt))
         {
-            // 0x02 / 0x03 = RC4 page encryption.
-            if ((flag & 0x02) != 0)
-            {
-                return AccessEncryptionFormat.Jet4Rc4;
-            }
+            return AccessEncryptionFormat.Jet4Rc4;
         }
 
-        if (fmt == DatabaseFormat.AceAccdb && flag == 0x07)
+        if (fmt == DatabaseFormat.AceAccdb && flag == 0x07 && EncryptionManager.HasHeaderPassword(header, fmt))
         {
             return AccessEncryptionFormat.AccdbLegacyPassword;
         }

@@ -3,8 +3,12 @@ namespace JetDatabaseWriter.Tests.Encryption;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -12,31 +16,35 @@ using Xunit;
 /// <summary>
 /// <para>Regression tests for ACCDB (ACE) legacy password verification.</para>
 /// <para>
-/// The <c>AesEncrypted.accdb</c> fixture was created with:
-///   <c>$access.DBEngine.CompactDatabase(plain, dest, ";;", 4, ";pwd=secret")</c>
-/// using Access 16 COM automation. Its characteristics:
-///   • Header bytes: 00 01 00 00 (standard ACCDB, NOT CFB magic)
-///   • Version byte 0x14: 0x03 (Access 2010 / ACE 14)
-///   • Encryption flag 0x62: 0x07 (bits 0/1/2 set)
-///   • Data pages: NOT AES-encrypted; readable without decryption
-///   • Password: stored via ACE internal scheme, not the Jet4 XOR mask at 0x42.
+/// The protected database is <c>NorthwindTraders.accdb</c> (ACE version 3)
+/// encrypted with <see cref="AccessEncryptionFormat.AccdbLegacyPassword"/>:
+/// flag <c>0x07</c> in raw header byte <c>0x62</c> and the password
+/// XOR-encoded in the header password area at <c>0x42</c>; data pages stay
+/// unencrypted. Opening without a password, or with a wrong or empty one,
+/// throws <see cref="UnauthorizedAccessException"/>; the right password
+/// opens it and returns data.
 /// </para>
 /// <para>
-/// The reader detects the ACE password flag at offset 0x62 for ACCDB files
-/// (ver ≥ 2) and verifies the password using the ACE internal scheme. Opening
-/// without a password, or with the wrong password, throws
-/// <see cref="UnauthorizedAccessException"/>; opening with the correct password
-/// succeeds and returns data.
+/// These tests used to open <c>AesEncrypted.accdb</c>, which was taken for a
+/// password-protected file. It holds no password: its creation day makes raw
+/// byte <c>0x62</c> read <c>0x07</c>, and the library's legacy password mask
+/// had been fitted to its empty-password pattern, so "secret" happened to
+/// verify against it.
 /// </para>
 /// </summary>
-/// <param name="db">The database input.</param>
-public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+public sealed class AcePasswordVerificationTests
 {
+    private const string Password = TestDatabases.AesEncryptedPassword;
+
     private static readonly AccessReaderOptions CorrectPasswordOptions = new()
     {
-        Password = TestDatabases.AesEncryptedPassword.AsMemory(),
+        Password = Password.AsMemory(),
         UseLockFile = false,
     };
+
+    private static readonly Lazy<Task<byte[]>> ProtectedNorthwind = new(BuildProtectedNorthwindAsync);
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. PASSWORD DETECTION — reader must detect that a password is required
@@ -45,10 +53,8 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AccdbPassword_OpenWithoutPassword_ThrowsUnauthorizedAccessException()
     {
-        // AesEncrypted.accdb has a password set via ACE CompactDatabase.
-        // The reader must detect the password flag and throw when no password is provided.
         UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            async () => await AccessReader.OpenAsync(TestDatabases.AesEncrypted, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
+            async () => await OpenProtectedAsync(new AccessReaderOptions { UseLockFile = false }));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -63,8 +69,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
             UseLockFile = false,
         };
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            async () => await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await OpenProtectedAsync(options));
     }
 
     [Fact]
@@ -77,8 +82,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
             UseLockFile = false,
         };
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            async () => await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await OpenProtectedAsync(options));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -88,30 +92,28 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AccdbPassword_OpenWithCorrectPassword_Succeeds()
     {
-        // The correct password should open the database without error.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        await reader.ListTablesAsync(Ct);
     }
 
     [Fact]
-    public async Task AccdbPassword_ListTables_WithCorrectPassword_ReturnsNonEmpty()
+    public async Task AccdbPassword_ListTables_WithCorrectPassword_ReturnsTheSourceTables()
     {
-        // After authentication, ListTables should return the original database tables.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(Ct);
 
+        await using AccessReader source = await TestDatabases.OpenAsync(TestDatabases.NorthwindTraders, cancellationToken: Ct);
         Assert.NotEmpty(tables);
+        Assert.Equal(await source.ListTablesAsync(Ct), tables);
     }
 
     [Fact]
     public async Task AccdbPassword_ReadTable_WithCorrectPassword_ReturnsRows()
     {
-        // Reading table data after password verification should return valid rows.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.NotEmpty(tables);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        string table = await FirstTableWithRowsAsync(reader);
 
-        DataTable dt = await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "Table should contain rows after password authentication.");
     }
@@ -119,21 +121,18 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AccdbPassword_StreamRows_WithCorrectPassword_ReturnsRows()
     {
-        // Streaming rows should work normally after password verification.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.NotEmpty(tables);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        string table = await FirstTableWithRowsAsync(reader);
 
-        int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int count = await reader.Rows(table, cancellationToken: Ct).CountAsync(Ct);
         Assert.True(count > 0, "StreamRows should yield rows after password authentication.");
     }
 
     [Fact]
     public async Task AccdbPassword_GetStatistics_WithCorrectPassword_ReturnsValidStats()
     {
-        // Statistics should be accessible after correct password authentication.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        DatabaseStatistics stats = await reader.GetStatisticsAsync(Ct);
 
         Assert.True(stats.TableCount > 0, "Should report tables after authentication.");
         Assert.True(stats.TotalRows > 0, "Should report rows after authentication.");
@@ -142,17 +141,68 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AccdbPassword_GetColumnMetadata_WithCorrectPassword_ReturnsColumns()
     {
-        // Column metadata should be fully readable after password verification.
-        AccessReader reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        await using AccessReader reader = await OpenProtectedAsync(CorrectPasswordOptions);
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(Ct);
         Assert.NotEmpty(tables);
 
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], Ct);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {
             Assert.False(string.IsNullOrEmpty(col.Name), "Column name should be readable.");
             Assert.NotEqual(typeof(object), col.ClrType);
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 3. AesEncrypted.accdb — the fixture these tests once used has no password
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task AesEncryptedFixture_IsNotPasswordProtected()
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.AesEncrypted, Ct);
+
+        // ACE version 3, and raw byte 0x62 reads 0x07, the legacy password
+        // flag value, yet the header password area holds no password.
+        Assert.Equal(3, bytes[0x14]);
+        Assert.Equal(0x07, bytes[0x62]);
+        Assert.False(EncryptionManager.HasHeaderPassword(bytes, DatabaseFormat.AceAccdb));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(TestDatabases.AesEncrypted, Ct));
+
+        await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, new AccessReaderOptions { UseLockFile = false }, Ct);
+        Assert.NotEmpty(await reader.ListTablesAsync(Ct));
+    }
+
+    // ───── Helpers ───────────────────────────────────────────────────
+
+    private static async Task<byte[]> BuildProtectedNorthwindAsync()
+    {
+        byte[] source = await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, CancellationToken.None);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(source.AsMemory(), CancellationToken.None);
+        stream.Position = 0;
+        await AccessWriter.EncryptAsync(stream, Password.AsMemory(), AccessEncryptionFormat.AccdbLegacyPassword, CancellationToken.None);
+        return stream.ToArray();
+    }
+
+    private static async Task<AccessReader> OpenProtectedAsync(AccessReaderOptions options)
+    {
+        byte[] bytes = await ProtectedNorthwind.Value;
+        Assert.Equal(AccessEncryptionFormat.AccdbLegacyPassword, EncryptionConverter.Detect(bytes));
+        return await AccessReader.OpenAsync(new MemoryStream(bytes, writable: false), options, leaveOpen: false, Ct);
+    }
+
+    private static async Task<string> FirstTableWithRowsAsync(AccessReader reader)
+    {
+        foreach (string table in await reader.ListTablesAsync(Ct))
+        {
+            if (await reader.GetRealRowCountAsync(table, Ct) > 0)
+            {
+                return table;
+            }
+        }
+
+        throw new InvalidOperationException("No table has rows.");
     }
 }
