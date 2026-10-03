@@ -434,18 +434,20 @@ internal static class JetTypeInfo
     internal const byte CurrencyScale = 4;
 
     /// <summary>
-    /// The digits a Currency value holds before the decimal point; the largest
-    /// is 922,337,203,685,477.5807.
+    /// The most digits before the decimal point for which Currency holds every
+    /// value. Its largest value, 922,337,203,685,477.5807, has fifteen, but a
+    /// fifteen-digit value from 922,337,203,685,477.5808 up does not fit.
     /// </summary>
-    internal const byte CurrencyIntegerDigits = 15;
+    internal const byte CurrencyIntegerDigits = 14;
 
     /// <summary>
     /// Returns the column type <paramref name="format"/> stores a column of
     /// <paramref name="declaredType"/> as, and checks a <c>Numeric</c>
     /// column's precision and scale. Jet3 (Access 97) has no Decimal type, so
-    /// a decimal column there is stored as Currency, whose fixed scale of
-    /// <see cref="CurrencyScale"/> and <see cref="CurrencyIntegerDigits"/>
-    /// integer digits must hold the declared scale and precision. Every other
+    /// a decimal column there is stored as Currency, which must hold every
+    /// value the declared precision and scale allow: a scale of at most
+    /// <see cref="CurrencyScale"/> and at most
+    /// <see cref="CurrencyIntegerDigits"/> integer digits. Every other
     /// type, and every type on Jet4 and ACCDB, is stored as declared. A
     /// descriptor type carried over by a schema rewrite
     /// (<see cref="ColumnDefinition.ColumnTypeOverride"/>) is kept, so a Jet3
@@ -477,10 +479,11 @@ internal static class JetTypeInfo
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Jet3 (Access 97) databases have no Decimal type, so a decimal column is stored as Currency, "
-                + $"which holds {CurrencyIntegerDigits} digits before the decimal point and {CurrencyScale} after it. "
-                + $"Decimal({precision},{scale}) needs {integerDigits} before it and {scale} after it. "
+                + $"which keeps {CurrencyScale} decimal places and reaches 922,337,203,685,477.5807, "
+                + $"so it holds every value with up to {CurrencyIntegerDigits} digits before the decimal point. "
+                + $"Decimal({precision},{scale}) allows {integerDigits} digits before it and {scale} after it. "
                 + $"Declare a NumericScale of at most {CurrencyScale} and a NumericPrecision of at most NumericScale + {CurrencyIntegerDigits}, "
-                + "set IsCurrency, or use a double column.");
+                + "set IsCurrency for Currency's full range, or use a double column.");
         }
 
         return MoneyType;

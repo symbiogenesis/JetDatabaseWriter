@@ -68,13 +68,14 @@ public sealed class Jet3DecimalColumnTests
                     [
                         new ColumnDefinition("Id", typeof(int)),
                         new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 },
-                        new ColumnDefinition("Wide", typeof(decimal)) { NumericPrecision = 19, NumericScale = 4 },
+                        new ColumnDefinition("Wide", typeof(decimal)) { NumericPrecision = 18, NumericScale = 4 },
                     ],
                     ct);
                 await writer.InsertRowAsync(TableName, [1, 12.34m, 95.5m], ct);
                 await writer.InsertRowAsync(TableName, [2, 0.75m, -0.0001m], ct);
-                await writer.InsertRowAsync(TableName, [3, 12_345_678.9m, 922_337_203_685_477.5807m], ct);
+                await writer.InsertRowAsync(TableName, [3, 12_345_678.9m, 99_999_999_999_999.9999m], ct);
                 await writer.InsertRowAsync(TableName, [4, 12.345m, DBNull.Value], ct);
+                await writer.InsertRowAsync(TableName, [5, -1m, -99_999_999_999_999.9999m], ct);
             },
             ct);
 
@@ -93,8 +94,9 @@ public sealed class Jet3DecimalColumnTests
         [
             [1, 12.34m, 95.5m],
             [2, 0.75m, -0.0001m],
-            [3, 12_345_678.9m, 922_337_203_685_477.5807m],
+            [3, 12_345_678.9m, 99_999_999_999_999.9999m],
             [4, 12.345m, DBNull.Value],
+            [5, -1m, -99_999_999_999_999.9999m],
         ];
 
         using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
@@ -103,11 +105,15 @@ public sealed class Jet3DecimalColumnTests
     }
 
     /// <summary>
-    /// Currency holds four decimal places and fifteen digits before the point.
-    /// A declared scale above four, or more integer digits
-    /// (<c>NumericPrecision - NumericScale</c>) than fifteen, including the
-    /// default Decimal(18,0), throws <see cref="NotSupportedException"/>
-    /// naming the column before anything is written.
+    /// Currency keeps four decimal places and its largest value is
+    /// 922,337,203,685,477.5807, so it holds every value of a declaration
+    /// with at most fourteen integer digits
+    /// (<c>NumericPrecision - NumericScale</c>). A declared scale above four,
+    /// or more integer digits, throws <see cref="NotSupportedException"/>
+    /// naming the column before anything is written. That includes fifteen
+    /// integer digits, such as Decimal(15,0) and Decimal(19,4), whose valid
+    /// values from 922,337,203,685,477.5808 up would not fit, and the
+    /// default Decimal(18,0).
     /// </summary>
     /// <param name="precision">The declared precision; 0 leaves the default.</param>
     /// <param name="scale">The declared scale.</param>
@@ -116,6 +122,9 @@ public sealed class Jet3DecimalColumnTests
     [InlineData(0, 0)]
     [InlineData(18, 0)]
     [InlineData(16, 0)]
+    [InlineData(15, 0)]
+    [InlineData(16, 1)]
+    [InlineData(19, 4)]
     [InlineData(20, 4)]
     [InlineData(10, 5)]
     [InlineData(28, 28)]
@@ -144,14 +153,59 @@ public sealed class Jet3DecimalColumnTests
                 TableName,
                 [
                     new ColumnDefinition("Id", typeof(int)),
-                    new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 19, NumericScale = 4 },
-                    new ColumnDefinition("Whole", typeof(decimal)) { NumericPrecision = 15 },
+                    new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 18, NumericScale = 4 },
+                    new ColumnDefinition("Whole", typeof(decimal)) { NumericPrecision = 14 },
                 ],
                 ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
         Assert.Equal(TableName, Assert.Single(await reader.ListTablesAsync(ct)));
+    }
+
+    /// <summary>
+    /// Each widest declaration Jet3 accepts, fourteen integer digits with a
+    /// scale of 0 to 4, stores its largest and smallest values exactly.
+    /// </summary>
+    /// <param name="scale">The declared scale; the precision is fourteen more.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task CreateTable_WidestAcceptedDecimal_StoresItsExtremeValues(int scale)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
+        decimal step = 1m;
+        for (int i = 0; i < scale; i++)
+        {
+            step /= 10m;
+        }
+
+        // The declaration's largest value: fourteen nines, then `scale` nines after the point.
+        decimal largest = 100_000_000_000_000m - step;
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = (byte)(14 + scale), NumericScale = (byte)scale },
+                ],
+                ct);
+            await writer.InsertRowsAsync(TableName, [[1, largest], [2, -largest], [3, step]], ct);
+        }
+
+        Assert.Equal(ColumnType.MoneyType, (await ReadColumnDescriptorsAsync(ms, ct))[1].Type);
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        Assert.Equal(
+            [largest, -largest, step],
+            table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amt"]));
     }
 
     /// <summary>
@@ -233,6 +287,7 @@ public sealed class Jet3DecimalColumnTests
             foreach (ColumnDefinition column in new[]
             {
                 new ColumnDefinition("Fee", typeof(decimal)) { NumericPrecision = 10, NumericScale = 5 },
+                new ColumnDefinition("Fee", typeof(decimal)) { NumericPrecision = 15 },
                 new ColumnDefinition("Fee", typeof(decimal)),
             })
             {
@@ -292,8 +347,9 @@ public sealed class Jet3DecimalColumnTests
     }
 
     /// <summary>
-    /// A value outside the Currency range throws <see cref="OverflowException"/>,
-    /// and a batch holding one writes no row.
+    /// A value outside the Currency range, which is also outside every
+    /// declaration Jet3 accepts, throws <see cref="OverflowException"/>, and a
+    /// batch holding one writes no row.
     /// </summary>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Fact]
@@ -306,7 +362,7 @@ public sealed class Jet3DecimalColumnTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 15 }],
+                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 14 }],
                 ct);
 
             await Assert.ThrowsAsync<OverflowException>(async () =>
