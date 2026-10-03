@@ -74,13 +74,19 @@ public sealed record ColumnDefinition
     /// </para>
     /// <para>
     /// Every writer, including the one that declares it, stores the value the literal
-    /// denotes. A <see cref="DateTime"/> default is persisted and applied to the whole
-    /// second, the resolution of an Access date literal. A <see cref="double"/> or
-    /// <see cref="float"/> default is applied as its literal reads back in the column's
-    /// type, so <c>0.1f</c> on a Double column stores 0.1; NaN and infinities have no
-    /// literal, and <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
-    /// <see cref="ArgumentException"/> for them. When <see cref="DefaultValueExpression"/>
-    /// is also set, the declaring writer stores this value as given.
+    /// denotes for a number and for a value of the column's own type. A number of any
+    /// CLR type is applied as its literal reads back in the column's type, so <c>0.1f</c>
+    /// on a Double column stores 0.1, and a <see cref="decimal"/> on a Double or Single
+    /// column stores the floating-point value nearest its digits. <c>CreateTableAsync</c>
+    /// and <c>AddColumnAsync</c> throw <see cref="ArgumentException"/> for a number the
+    /// column's type cannot hold, such as 1e39 on a Single column or 300 on a Byte
+    /// column, and for NaN and infinities, which have no literal. A
+    /// <see cref="DateTime"/> default is persisted and applied to the whole second, the
+    /// resolution of an Access date literal. A Boolean, text or date default on a column
+    /// of another type is not yet stored the same way in every writer: <c>true</c> on a
+    /// Number column stores 1 in the declaring writer and -1, as in Access, in a later
+    /// one. When <see cref="DefaultValueExpression"/> is also set, the declaring writer
+    /// stores this value as given.
     /// </para>
     /// <para>
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,

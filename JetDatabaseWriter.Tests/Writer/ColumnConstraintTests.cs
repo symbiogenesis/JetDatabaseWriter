@@ -690,7 +690,11 @@ public sealed class ColumnConstraintTests
         Assert.Equal(12.34m, row["Amount"]);
     }
 
-    /// <summary>Gets each floating-point and date CLR default case in every format.</summary>
+    /// <summary>
+    /// Gets each floating-point, decimal and date CLR default case in every format. A
+    /// Jet3 decimal column is Currency, which keeps four decimal places, so the case
+    /// that needs more runs on Jet4 and ACCDB only.
+    /// </summary>
     public static TheoryData<DatabaseFormat, string> ClrDefaultCases
     {
         get
@@ -698,9 +702,14 @@ public sealed class ColumnConstraintTests
             var data = new TheoryData<DatabaseFormat, string>();
             foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
             {
-                foreach (string kind in new[] { "TinyDouble", "LongDouble", "SubnormalSingle", "SingleOnDouble", "DateWithMilliseconds" })
+                foreach (string kind in new[] { "TinyDouble", "LongDouble", "SubnormalSingle", "SingleOnDouble", "DecimalOnDouble", "DecimalOnSingle", "DateWithMilliseconds" })
                 {
                     data.Add(format, kind);
+                }
+
+                if (format != DatabaseFormat.Jet3Mdb)
+                {
+                    data.Add(format, "DoubleOnDecimal");
                 }
             }
 
@@ -713,9 +722,10 @@ public sealed class ColumnConstraintTests
     /// declaring writer and a later one, which reads the literal back, store the same
     /// value. A Double or Single literal used to be parsed as a decimal, so a later
     /// writer stored 0 for 1e-30 and lost digits of others; the declaring writer stored
-    /// 0.1f on a Double column as 0.10000000149011612 where the literal says 0.1; and a
-    /// date default, persisted to the whole second, kept its milliseconds only in the
-    /// declaring writer.
+    /// 0.1f on a Double column as 0.10000000149011612 where the literal says 0.1, and
+    /// converted a decimal on a Double or Single column where a later writer parses its
+    /// literal; and a date default, persisted to the whole second, kept its milliseconds
+    /// only in the declaring writer.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="kind">The default; see <see cref="ClrDefaultCase"/>.</param>
@@ -776,6 +786,68 @@ public sealed class ColumnConstraintTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.DoesNotContain("NonFinite", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A numeric default the column's type cannot hold is rejected before anything is
+    /// written. It used to be accepted: a later writer, which reads the persisted literal,
+    /// stored NULL, while the declaring writer stored infinity for 1e39 on a Single
+    /// column and threw on every insert that left the column out for the others.
+    /// </summary>
+    /// <param name="kind">The default; see <see cref="UnstorableNumericDefault"/>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("DoubleTooLargeForSingle")]
+    [InlineData("IntegerTooLargeForByte")]
+    [InlineData("DoubleTooLargeForDecimal")]
+    [InlineData("NumberOnGuid")]
+    public async Task CreateTable_NumericDefaultTheColumnCannotHold_IsRejected(string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync("Unstorable", [new("Id", typeof(int)), UnstorableNumericDefault(kind)], TestContext.Current.CancellationToken));
+            Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("columns", ex.ParamName);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("Unstorable", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// AddColumn rejects a numeric default the column's type cannot hold the same way,
+    /// before the table is rebuilt, so the table and its row are unchanged.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task AddColumn_NumericDefaultTheColumnCannotHold_IsRejected(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Existing";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(table, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1], TestContext.Current.CancellationToken);
+
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.AddColumnAsync(table, UnstorableNumericDefault("DoubleTooLargeForSingle"), TestContext.Current.CancellationToken));
+            Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("column", ex.ParamName);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        Assert.Equal(["Id"], metadata.Select(c => c.Name));
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(1, Assert.Single(dt.AsEnumerable())["Id"]);
     }
 
     /// <summary>Gets each generated column kind, with a default declared on it, in every format that has the kind.</summary>
@@ -1270,8 +1342,13 @@ public sealed class ColumnConstraintTests
     /// <param name="kind">
     /// <c>TinyDouble</c> (1e-30), <c>LongDouble</c> (17 significant digits),
     /// <c>SubnormalSingle</c> (the smallest float), <c>SingleOnDouble</c> (0.1f on a
-    /// Double column, which stores 0.1) or <c>DateWithMilliseconds</c> (stored to the
-    /// whole second).
+    /// Double column, which stores 0.1), <c>DecimalOnDouble</c> (a decimal that
+    /// <see cref="Convert.ToDouble(decimal)"/> rounds an ulp off), <c>DecimalOnSingle</c>
+    /// (a decimal just above the midpoint of two floats, which
+    /// <see cref="Convert.ToSingle(decimal)"/> rounds down through a double),
+    /// <c>DoubleOnDecimal</c> (17 significant digits, which
+    /// <see cref="Convert.ToDecimal(double)"/> cuts to 15) or <c>DateWithMilliseconds</c>
+    /// (stored to the whole second).
     /// </param>
     /// <returns>The column definition and the stored value.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is none of these.</exception>
@@ -1281,7 +1358,31 @@ public sealed class ColumnConstraintTests
         "LongDouble" => (new("Value", typeof(double)) { DefaultValue = 1.2345678901234567e-20 }, 1.2345678901234567e-20),
         "SubnormalSingle" => (new("Value", typeof(float)) { DefaultValue = float.Epsilon }, float.Epsilon),
         "SingleOnDouble" => (new("Value", typeof(double)) { DefaultValue = 0.1f }, 0.1),
+        "DecimalOnDouble" => (new("Value", typeof(double)) { DefaultValue = 0.0000000000000000000123456789m }, 1.23456789e-20),
+        "DecimalOnSingle" => (new("Value", typeof(float)) { DefaultValue = 1.00000005960464477539062501m }, 1.0000001f),
+        "DoubleOnDecimal" => (new("Value", typeof(decimal)) { DefaultValue = 1.2345678901234567, NumericPrecision = 28, NumericScale = 20 }, 1.2345678901234567m),
         "DateWithMilliseconds" => (new("Value", typeof(DateTime)) { DefaultValue = new DateTime(2024, 2, 29, 8, 30, 15, 123) }, new DateTime(2024, 2, 29, 8, 30, 15)),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <summary>
+    /// Builds a column named <c>Value</c> with a numeric CLR default its type cannot
+    /// hold, so the literal it would be persisted as gives a later writer no default.
+    /// </summary>
+    /// <param name="kind">
+    /// <c>DoubleTooLargeForSingle</c> (1e39 on a Single column),
+    /// <c>IntegerTooLargeForByte</c> (300 on a Byte column),
+    /// <c>DoubleTooLargeForDecimal</c> (1e300 on a decimal column) or
+    /// <c>NumberOnGuid</c> (5 on a GUID column).
+    /// </param>
+    /// <returns>The column definition.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is none of these.</exception>
+    private static ColumnDefinition UnstorableNumericDefault(string kind) => kind switch
+    {
+        "DoubleTooLargeForSingle" => new("Value", typeof(float)) { DefaultValue = 1e39 },
+        "IntegerTooLargeForByte" => new("Value", typeof(byte)) { DefaultValue = 300 },
+        "DoubleTooLargeForDecimal" => new("Value", typeof(decimal)) { DefaultValue = 1e300 },
+        "NumberOnGuid" => new("Value", typeof(Guid)) { DefaultValue = 5 },
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 

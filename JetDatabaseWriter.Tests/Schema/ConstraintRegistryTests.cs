@@ -467,6 +467,39 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(1, values[0]);
     }
 
+    /// <summary>
+    /// A numeric CLR default is registered as the value its persisted literal reads back
+    /// as in the column's type, whatever the CLR type of the value, and a number the
+    /// column's type cannot hold gives no default, as in a writer that reads the literal
+    /// from the file. A decimal on a Double or Single column used to be converted, not
+    /// parsed, and 1e39 on a Single column stored infinity.
+    /// </summary>
+    /// <param name="kind"><c>DecimalOnDouble</c>, <c>DecimalOnSingle</c>, <c>DoubleTooLargeForSingle</c> or <c>IntegerTooLargeForByte</c>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("DecimalOnDouble")]
+    [InlineData("DecimalOnSingle")]
+    [InlineData("DoubleTooLargeForSingle")]
+    [InlineData("IntegerTooLargeForByte")]
+    public async Task Register_NumericClrDefault_IsAppliedAsItsLiteralReadsBack(string kind)
+    {
+        (ColumnType Type, ColumnDefinition Column, object Expected) testCase = kind switch
+        {
+            "DecimalOnDouble" => (ColumnType.DoubleType, new ColumnDefinition("Score", typeof(double)) { DefaultValue = 0.0000000000000000000123456789m }, 1.23456789e-20),
+            "DecimalOnSingle" => (ColumnType.FloatType, new ColumnDefinition("Score", typeof(float)) { DefaultValue = 1.00000005960464477539062501m }, 1.0000001f),
+            "DoubleTooLargeForSingle" => (ColumnType.FloatType, new ColumnDefinition("Score", typeof(float)) { DefaultValue = 1e39 }, DBNull.Value),
+            _ => (ColumnType.ByteType, new ColumnDefinition("Score", typeof(byte)) { DefaultValue = 300 }, DBNull.Value),
+        };
+        TableDef tableDef = SingleColumnTable(testCase.Type);
+        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        registry.Register("T", [testCase.Column]);
+        object[] values = [DbDefault.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(testCase.Expected, values[0]);
+    }
+
     [Fact]
     public async Task ApplyUpdateAsync_HydratedValidationRule_ChecksOnlyAssignedColumns()
     {

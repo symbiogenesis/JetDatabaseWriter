@@ -422,6 +422,11 @@ internal sealed class TableSchemaEditor(
     /// column reaches <see cref="RewriteTableAsync"/> without this check; the
     /// constraint registry ignores it. A floating-point CLR default must be
     /// finite, because Access has no literal to persist NaN or an infinity as.
+    /// A numeric CLR default persisted as a literal (no
+    /// <see cref="ColumnDefinition.DefaultValueExpression"/>) must give the
+    /// column a value when that literal is read back as the column's type, as
+    /// every writer applies it (<see cref="ColumnDefaultValue.TryReadBackNumber"/>);
+    /// 1e39 on a Single column or 300 on a Byte column would give none.
     /// </summary>
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
@@ -438,6 +443,15 @@ internal sealed class TableSchemaEditor(
             if (column.DefaultValue is double d ? !double.IsFinite(d) : column.DefaultValue is float f && !float.IsFinite(f))
             {
                 throw new ArgumentException($"Column '{column.Name}': a floating-point DefaultValue must be finite; Access has no literal for NaN or an infinity.", paramName);
+            }
+
+            if (string.IsNullOrWhiteSpace(column.DefaultValueExpression)
+                && ColumnDefaultValue.TryReadBackNumber(column.DefaultValue, column.ClrType, out object? stored)
+                && stored is null)
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}': the {column.DefaultValue!.GetType().Name} DefaultValue {JetExpressionConverter.ToJetExpression(column.DefaultValue)} cannot be stored in a {column.ClrType.Name} column.",
+                    paramName);
             }
 
             return;

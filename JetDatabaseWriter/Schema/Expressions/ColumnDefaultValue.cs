@@ -75,6 +75,43 @@ internal sealed class ColumnDefaultValue
     }
 
     /// <summary>
+    /// Reads a numeric CLR <c>DefaultValue</c> back from the literal it is persisted as
+    /// (<see cref="JetExpressionConverter.ToJetExpression"/>), the way a writer that
+    /// loads the literal from the file evaluates it for a column of
+    /// <paramref name="clrType"/>. The declaring writer applies this value, so it stores
+    /// what every later writer stores: <c>0.1f</c> on a Double column is 0.1, and a
+    /// <see cref="decimal"/> on a Double or Single column is parsed rather than converted.
+    /// </summary>
+    /// <param name="value">The CLR default.</param>
+    /// <param name="clrType">The CLR type the column stores.</param>
+    /// <param name="stored">
+    /// The value the literal gives, converted to <paramref name="clrType"/>; or
+    /// <see langword="null"/> when <paramref name="value"/> is not a number or its literal
+    /// gives no default: a NaN or infinity, which has no literal, or a number the column's
+    /// type cannot hold, such as 1e39 in a Single column or 300 in a Byte column.
+    /// </param>
+    /// <returns>Whether <paramref name="value"/> is a number of any CLR numeric type.</returns>
+    public static bool TryReadBackNumber(object? value, Type clrType, out object? stored)
+    {
+        stored = null;
+        if (value is not (byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal))
+        {
+            return false;
+        }
+
+        if (NumericLiteral.TryParse(JetExpressionConverter.ToJetExpression(value)!, out NumericLiteral number)
+            && new ColumnDefaultValue(null, number, null).TryEvaluate(
+                clrType,
+                static () => throw new InvalidOperationException("A numeric literal needs no evaluation context."),
+                out object evaluated))
+        {
+            stored = evaluated;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Evaluates the default and converts it to <paramref name="clrType"/>. Returns
     /// <see langword="false"/>, leaving the column null, when the expression is
     /// unsupported, evaluates to Null, uses a function or name this library cannot
