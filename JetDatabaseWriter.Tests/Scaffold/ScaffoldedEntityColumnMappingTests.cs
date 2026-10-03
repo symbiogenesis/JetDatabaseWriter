@@ -115,6 +115,71 @@ public sealed class ScaffoldedEntityColumnMappingTests
         Assert.Equal(["Jones", "Smith"], entities.Select(e => (string?)lastName.GetValue(e)).Order(StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// A table named "Column Attribute" used to give a class named ColumnAttribute, which
+    /// captured every <c>[Column]</c> in its namespace, and a table named DateTime a class
+    /// that typed every date column as itself. Both now get an <c>Entity</c> class, and the
+    /// generated types insert and read through the original tables.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ScaffoldedEntity_TableNamedColumnAttribute_RoundTrips()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = new();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("Column Attribute", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Last Name", typeof(string), maxLength: 50)], ct);
+            await writer.CreateTableAsync("DateTime", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("When", typeof(DateTime))], ct);
+        }
+
+        ms.Position = 0;
+        List<(string Table, IReadOnlyList<ColumnMetadata> Columns)> tables = [];
+        await using (AccessReader schemaReader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            foreach (string table in await schemaReader.ListTablesAsync(ct))
+            {
+                tables.Add((table, await schemaReader.GetColumnMetadataAsync(table, ct)));
+            }
+        }
+
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
+        Assert.Equal("ColumnAttributeEntity", classNames["Column Attribute"]);
+        Assert.Equal("DateTimeEntity", classNames["DateTime"]);
+
+        Assembly assembly = ScaffoldCompilation.CompileCleanly(
+            tables.Select(t => EntityEmitter.Emit(classNames[t.Table], t.Table, t.Columns, [], "Generated", useRecords: false, nullable: true)));
+        Type people = assembly.GetType("Generated.ColumnAttributeEntity", throwOnError: true)!;
+        Type dates = assembly.GetType("Generated.DateTimeEntity", throwOnError: true)!;
+        Assert.Equal(typeof(DateTime?), dates.GetProperty("When")!.PropertyType);
+
+        object person = people.GetConstructor(Type.EmptyTypes)!.Invoke(null);
+        people.GetProperty("Id")!.SetValue(person, 1);
+        people.GetProperty("LastName")!.SetValue(person, "Smith");
+        object date = dates.GetConstructor(Type.EmptyTypes)!.Invoke(null);
+        dates.GetProperty("Id")!.SetValue(date, 1);
+        dates.GetProperty("When")!.SetValue(date, new DateTime(2024, 2, 29, 8, 30, 0, DateTimeKind.Unspecified));
+
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            MethodInfo insert = typeof(AccessWriter).GetMethods()
+                .Single(m => m.Name == nameof(AccessWriter.InsertRowAsync) && m.IsGenericMethodDefinition);
+            await (ValueTask)insert.MakeGenericMethod(people).Invoke(writer, ["Column Attribute", person, ct])!;
+            await (ValueTask)insert.MakeGenericMethod(dates).Invoke(writer, ["DateTime", date, ct])!;
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
+        MethodInfo rows = typeof(AccessReader).GetMethods()
+            .Single(m => m.Name == nameof(AccessReader.Rows) && m.IsGenericMethodDefinition && m.GetParameters().Length == 3);
+        object readPerson = Assert.Single(await ((IAsyncEnumerable<object>)rows.MakeGenericMethod(people).Invoke(reader, ["Column Attribute", null, ct])!).ToListAsync(ct));
+        Assert.Equal("Smith", people.GetProperty("LastName")!.GetValue(readPerson));
+        object readDate = Assert.Single(await ((IAsyncEnumerable<object>)rows.MakeGenericMethod(dates).Invoke(reader, ["DateTime", null, ct])!).ToListAsync(ct));
+        Assert.Equal(new DateTime(2024, 2, 29, 8, 30, 0, DateTimeKind.Unspecified), dates.GetProperty("When")!.GetValue(readDate));
+    }
+
     private static List<ColumnMetadata> PeopleColumns() =>
     [
         new() { Name = "Person ID", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },

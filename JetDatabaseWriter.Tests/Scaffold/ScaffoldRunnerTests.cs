@@ -2,9 +2,11 @@ namespace JetDatabaseWriter.Tests.Scaffold;
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -377,6 +379,143 @@ public sealed class ScaffoldRunnerTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => runner.RunAsync(this.outputDir, "NS", useRecords: false, nullable: false, cts.Token));
     }
+
+    /// <summary>
+    /// Tables whose cleaned names collide with each other, or with a type the generated
+    /// code names, each get a file and a class of their own, and the files compile together
+    /// with every class mapped to its table and every property typed as its column.
+    /// </summary>
+    /// <param name="useRecords">Whether to emit records.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_CollidingNames_WritesOneCompilableFilePerTable(bool useRecords)
+    {
+        Dictionary<string, List<ColumnMetadata>> columnsByTable = new(StringComparer.Ordinal)
+        {
+            ["Orders"] = [Col("Id", typeof(int)), Col("Order Date", typeof(DateTime)), Col("Key", typeof(Guid)), Col("Link", typeof(Hyperlink)), Col("Photo", typeof(byte[]))],
+            ["Order Details"] = [Col("Id", typeof(int)), Col("OrderId", typeof(int)), Col("Unit Price", typeof(decimal))],
+            ["OrderDetails"] = [Col("Id", typeof(int)), Col("OrderId", typeof(int)), Col("Note", typeof(string))],
+            ["Column Attribute"] = [Col("Id", typeof(int)), Col("Last Name", typeof(string)), Col("DateTimeID", typeof(int))],
+            ["DateTime"] = [Col("Id", typeof(int)), Col("When", typeof(DateTime))],
+            ["A_b"] = [Col("Id", typeof(int))],
+            ["Ab"] = [Col("Id", typeof(int))],
+            ["Column"] = [Col("Id", typeof(int)), Col("Value", typeof(string))],
+            ["Table"] = [Col("Id", typeof(int))],
+            ["System"] = [Col("Id", typeof(int)), Col("Stamp", typeof(TimeSpan))],
+            ["ToString"] = [Col("Id", typeof(int))],
+            ["###"] = [Col("Id", typeof(int))],
+            ["$$$"] = [Col("Id", typeof(int))],
+        };
+        List<RelationshipMetadata> relationships =
+        [
+            new() { Name = "OrdersOrderDetails", PrimaryTable = "Orders", PrimaryColumns = ["Id"], ForeignTable = "Order Details", ForeignColumns = ["OrderId"] },
+            new() { Name = "OrdersOrderDetails2", PrimaryTable = "Orders", PrimaryColumns = ["Id"], ForeignTable = "OrderDetails", ForeignColumns = ["OrderId"] },
+            new() { Name = "DateTimeColumnAttribute", PrimaryTable = "DateTime", PrimaryColumns = ["Id"], ForeignTable = "Column Attribute", ForeignColumns = ["DateTimeID"] },
+        ];
+
+        await using var reader = new FakeAccessReader([.. columnsByTable.Keys], columnsByTable, relationships: relationships);
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+
+        int result = await runner.RunAsync(this.outputDir, "MyApp.Models", useRecords, nullable: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(columnsByTable.Count, result);
+        string[] files = Directory.GetFiles(this.outputDir, "*.cs");
+        Assert.Equal(columnsByTable.Count, files.Length);
+        Assert.Equal(
+            ["AB2.cs", "Ab.cs", "Column.cs", "ColumnAttributeEntity.cs", "DateTimeEntity.cs", "OrderDetails.cs", "OrderDetails2.cs", "Orders.cs", "SystemEntity.cs", "Table.cs", "ToStringEntity.cs", "Unknown.cs", "Unknown2.cs"],
+            files.Select(Path.GetFileName).Order(StringComparer.Ordinal));
+
+        List<string> sources = [];
+        foreach (string file in files)
+        {
+            sources.Add(await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+
+        Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
+        Dictionary<string, Type> typeByTable = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Type type in assembly.GetTypes().Where(t => t.Namespace == "MyApp.Models"))
+        {
+            typeByTable.Add(type.GetCustomAttribute<TableAttribute>()?.Name ?? type.Name, type);
+        }
+
+        Assert.Equal(columnsByTable.Keys.Order(StringComparer.OrdinalIgnoreCase), typeByTable.Keys.Order(StringComparer.OrdinalIgnoreCase));
+        foreach ((string table, List<ColumnMetadata> columns) in columnsByTable)
+        {
+            Type type = typeByTable[table];
+            foreach (ColumnMetadata column in columns)
+            {
+                PropertyInfo property = Assert.Single(
+                    type.GetProperties(),
+                    p => string.Equals(p.GetCustomAttribute<ColumnAttribute>()?.Name ?? p.Name, column.Name, StringComparison.OrdinalIgnoreCase));
+                Assert.Equal(column.ClrType, Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType);
+            }
+        }
+
+        Type orders = typeByTable["Orders"];
+        Assert.Equal(
+            new[] { typeByTable["Order Details"], typeByTable["OrderDetails"] }.OrderBy(t => t.Name, StringComparer.Ordinal),
+            orders.GetProperties()
+                .Where(p => p.PropertyType.IsGenericType && p.PropertyType.GetGenericTypeDefinition() == typeof(ICollection<>))
+                .Select(p => p.PropertyType.GetGenericArguments()[0])
+                .OrderBy(t => t.Name, StringComparer.Ordinal));
+        Assert.Contains(typeByTable["Column Attribute"].GetProperties(), p => p.PropertyType == typeByTable["DateTime"]);
+    }
+
+    /// <summary>
+    /// A navigation names the related table's class, so a relationship whose parent table
+    /// could not be read must not produce one: the child would not compile on its own.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task RunAsync_SkippedParentTable_EmitsNoNavigationToIt()
+    {
+        await using var reader = new FakeAccessReader(
+            tables: ["Parent", "Child"],
+            columnsByTable: new() { ["Child"] = [Col("Id", typeof(int)), Col("ParentId", typeof(int))] },
+            failingTables: new() { ["Parent"] = new InvalidOperationException("corrupt table") },
+            relationships: [new() { Name = "ParentChild", PrimaryTable = "Parent", PrimaryColumns = ["Id"], ForeignTable = "Child", ForeignColumns = ["ParentId"] }]);
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+
+        int result = await runner.RunAsync(this.outputDir, "NS", useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, result);
+        string child = await File.ReadAllTextAsync(Path.Combine(this.outputDir, "Child.cs"), TestContext.Current.CancellationToken);
+        Type type = ScaffoldCompilation.CompileCleanly(child).GetType("NS.Child", throwOnError: true)!;
+        Assert.Equal(["Id", "ParentId"], type.GetProperties().Select(p => p.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("My-App")]
+    [InlineData("1Models")]
+    [InlineData("class")]
+    [InlineData("MyApp.namespace")]
+    [InlineData("MyApp..Models")]
+    [InlineData("MyApp.")]
+    [InlineData("")]
+    public async Task RunAsync_InvalidNamespace_ReturnsMinusOneAndWritesNoFiles(string ns)
+    {
+        await using var reader = new FakeAccessReader(
+            tables: ["Customers"],
+            columnsByTable: new() { ["Customers"] = [Col("Id", typeof(int))] });
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+
+        int result = await runner.RunAsync(this.outputDir, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(-1, result);
+        Assert.Contains($"Error: '{ns}' is not a valid C# namespace.", stderr.ToString(), StringComparison.Ordinal);
+        Assert.Empty(Directory.GetFiles(this.outputDir));
+    }
+
+    private static ColumnMetadata Col(string name, Type clrType) =>
+        new() { Name = name, ClrType = clrType, IsNullable = clrType != typeof(byte[]), TypeName = clrType.Name, Size = ColumnSize.FromBytes(4) };
 
     /// <summary>
     /// Minimal fake implementing only the methods ScaffoldRunner uses.

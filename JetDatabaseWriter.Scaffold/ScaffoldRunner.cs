@@ -19,13 +19,17 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
 {
     /// <summary>
     /// Generates C# entity files for all user tables visible through the configured reader.
+    /// Every table's columns are read first, so each table gets a class and file name no
+    /// other table and no type the generated code uses has
+    /// (<see cref="ScaffoldNames.AllocateClassNames"/>), and navigations name only the
+    /// classes that are generated.
     /// </summary>
     /// <param name="outputDir">Directory to write generated .cs files into.</param>
     /// <param name="ns">Namespace for generated classes.</param>
     /// <param name="useRecords">Whether to emit C# records instead of classes.</param>
     /// <param name="nullable">Whether to emit nullable reference type annotations.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The number of models generated, or -1 on failure.</returns>
+    /// <returns>The number of models generated, or -1 when <paramref name="ns"/> is not a valid C# namespace.</returns>
     public async Task<int> RunAsync(
         string outputDir,
         string ns,
@@ -33,6 +37,12 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
         bool nullable,
         CancellationToken cancellationToken = default)
     {
+        if (!ScaffoldNames.IsValidNamespace(ns))
+        {
+            await error.WriteLineAsync($"Error: '{ns}' is not a valid C# namespace.");
+            return -1;
+        }
+
         Directory.CreateDirectory(outputDir);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken);
@@ -55,23 +65,26 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             relationships = [];
         }
 
-        Dictionary<string, List<ScaffoldNavigation>> navigationsByTable = NavigationResolver.Resolve(tables, relationships);
-
-        int generated = 0;
+        var scaffolded = new List<(string Table, IReadOnlyList<ColumnMetadata> Columns)>(tables.Count);
         foreach (string table in tables)
         {
-            IReadOnlyList<ColumnMetadata> columns;
             try
             {
-                columns = await reader.GetColumnMetadataAsync(table, cancellationToken);
+                scaffolded.Add((table, await reader.GetColumnMetadataAsync(table, cancellationToken)));
             }
             catch (Exception ex) when (ex is InvalidOperationException or IOException)
             {
                 await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
-                continue;
             }
+        }
 
-            string className = NameCleaner.ToClassName(table);
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(scaffolded);
+        Dictionary<string, List<ScaffoldNavigation>> navigationsByTable = NavigationResolver.Resolve(classNames, relationships);
+
+        int generated = 0;
+        foreach ((string table, IReadOnlyList<ColumnMetadata> columns) in scaffolded)
+        {
+            string className = classNames[table];
             string filePath = Path.Combine(outputDir, $"{className}.cs");
 
             IReadOnlyList<ScaffoldNavigation> navigations = navigationsByTable.TryGetValue(table, out List<ScaffoldNavigation>? navs)

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Scaffold;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -13,7 +14,9 @@ using JetDatabaseWriter.Models;
 internal static class NavigationResolver
 {
     /// <summary>
-    /// Builds the navigation properties for every scaffolded table.
+    /// Builds the navigation properties for every scaffolded table, with the class names
+    /// <see cref="ScaffoldNames.AllocateClassNames"/> gives the tables when their columns
+    /// are not known.
     /// </summary>
     /// <param name="tables">The user tables being scaffolded.</param>
     /// <param name="relationships">The database relationships.</param>
@@ -21,19 +24,31 @@ internal static class NavigationResolver
     public static Dictionary<string, List<ScaffoldNavigation>> Resolve(
         IReadOnlyList<string> tables,
         IReadOnlyList<RelationshipMetadata> relationships)
+        => Resolve(
+            ScaffoldNames.AllocateClassNames([.. tables.Select(table => (table, (IReadOnlyList<ColumnMetadata>)[]))]),
+            relationships);
+
+    /// <summary>
+    /// Builds the navigation properties for the tables in <paramref name="classNames"/>.
+    /// A relationship is skipped unless both of its tables are there, so a navigation
+    /// never names a class that is not generated.
+    /// </summary>
+    /// <param name="classNames">The class name of each table being generated, keyed by table name.</param>
+    /// <param name="relationships">The database relationships.</param>
+    /// <returns>A map from table name to its navigation properties.</returns>
+    public static Dictionary<string, List<ScaffoldNavigation>> Resolve(
+        IReadOnlyDictionary<string, string> classNames,
+        IReadOnlyList<RelationshipMetadata> relationships)
     {
         var byTable = new Dictionary<string, List<ScaffoldNavigation>>(StringComparer.OrdinalIgnoreCase);
-        var known = new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase);
 
         foreach (RelationshipMetadata relationship in relationships)
         {
-            if (!known.Contains(relationship.ForeignTable) || !known.Contains(relationship.PrimaryTable))
+            if (!classNames.TryGetValue(relationship.ForeignTable, out string? childClass)
+                || !classNames.TryGetValue(relationship.PrimaryTable, out string? parentClass))
             {
                 continue;
             }
-
-            string parentClass = NameCleaner.ToClassName(relationship.PrimaryTable);
-            string childClass = NameCleaner.ToClassName(relationship.ForeignTable);
 
             // Child -> parent reference, named after the FK column (stripped of its
             // "Id" suffix, EF-style) so multiple FKs to the same parent stay distinct.
