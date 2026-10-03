@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -23,10 +24,30 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
     internal async ValueTask<long> AllocatePageAsync(byte[] page, CancellationToken cancellationToken)
     {
         long pageNumber = await this.ReserveContiguousPagesAsync(1, cancellationToken).ConfigureAwait(false);
-        await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await this.ReleaseReservedPagesAsync(pageNumber, 1).ConfigureAwait(false);
+            throw;
+        }
+
         return pageNumber;
     }
 
+    /// <summary>
+    /// Reserves <paramref name="pageCount"/> contiguous pages, reusing the
+    /// first free run the global usage map lists or appending blank pages at
+    /// the end of the file. If the reservation fails partway, the pages it has
+    /// already taken are given back before the exception propagates.
+    /// </summary>
+    /// <param name="pageCount">The number of pages to reserve.</param>
+    /// <param name="cancellationToken">A token used to cancel the reservation.</param>
+    /// <returns>The first page of the reserved run.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="pageCount"/> is not positive.</exception>
+    /// <exception cref="IOException">Thrown when appended pages do not land contiguously.</exception>
     internal async ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken)
     {
         if (pageCount <= 0)
@@ -38,9 +59,20 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         long reusableStart = FindContiguousRun(freePages, pageCount);
         if (reusableStart > 0)
         {
-            for (int offset = 0; offset < pageCount; offset++)
+            int marked = 0;
+            try
             {
-                await this.SetPageFreeStateAsync(reusableStart + offset, free: false, cancellationToken).ConfigureAwait(false);
+                for (; marked < pageCount; marked++)
+                {
+                    await this.SetPageFreeStateAsync(reusableStart + marked, free: false, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // The page whose update threw may or may not be marked; the
+                // run was free a moment ago, so marking it free again is safe.
+                await this.RestoreFreeStateAsync(reusableStart, Math.Min(marked + 1, pageCount)).ConfigureAwait(false);
+                throw;
             }
 
             return reusableStart;
@@ -48,20 +80,62 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
         byte[] blankPage = new byte[db.PageSizeBytes];
         long firstAppendedPage = -1;
-        for (int offset = 0; offset < pageCount; offset++)
+        int appended = 0;
+        try
         {
-            long appendedPage = await db.AppendPageAsync(blankPage, cancellationToken).ConfigureAwait(false);
-            if (offset == 0)
+            for (int offset = 0; offset < pageCount; offset++)
             {
-                firstAppendedPage = appendedPage;
+                long appendedPage = await db.AppendPageAsync(blankPage, cancellationToken).ConfigureAwait(false);
+                if (offset == 0)
+                {
+                    firstAppendedPage = appendedPage;
+                }
+                else if (appendedPage != firstAppendedPage + offset)
+                {
+                    await this.ReleaseReservedPagesAsync(appendedPage, 1).ConfigureAwait(false);
+                    throw new IOException("Contiguous append reservation was interrupted by a non-contiguous page assignment.");
+                }
+
+                appended++;
             }
-            else if (appendedPage != firstAppendedPage + offset)
+        }
+        catch
+        {
+            if (appended > 0)
             {
-                throw new IOException("Contiguous append reservation was interrupted by a non-contiguous page assignment.");
+                await this.ReleaseReservedPagesAsync(firstAppendedPage, appended).ConfigureAwait(false);
             }
+
+            throw;
         }
 
         return firstAppendedPage;
+    }
+
+    /// <summary>
+    /// Gives back pages a caller reserved but never linked into the file, the
+    /// way <see cref="DeallocatePageAsync"/> frees one page: each is stamped
+    /// freed and marked free in the global usage map. It runs on failure paths,
+    /// so it ignores cancellation and never throws: an I/O failure, a disposed
+    /// file or an exhausted transaction page budget stops it quietly and leaves
+    /// the remaining pages allocated, as they were before.
+    /// </summary>
+    /// <param name="firstPage">The first page of the run.</param>
+    /// <param name="pageCount">The number of pages in the run.</param>
+    /// <returns>A task that completes when the run has been released or the release has given up.</returns>
+    internal async ValueTask ReleaseReservedPagesAsync(long firstPage, int pageCount)
+    {
+        try
+        {
+            for (int offset = 0; offset < pageCount; offset++)
+            {
+                await this.DeallocatePageAsync(firstPage + offset, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (IsBestEffortReleaseFailure(ex))
+        {
+            // Best effort: the rest of the run stays allocated.
+        }
     }
 
     internal async ValueTask DeallocatePageAsync(long pageNumber, CancellationToken cancellationToken)
@@ -174,6 +248,9 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
     private static bool IsPhysicallyReusableFreePage(byte[] page)
         => page[0] is Constants.PageTypes.Freed or 0x00;
 
+    private static bool IsBestEffortReleaseFailure(Exception ex)
+        => ex is IOException or InvalidDataException or ObjectDisposedException or NotSupportedException or JetLimitationException;
+
     private static long FindContiguousRun(List<long> freePages, int pageCount)
     {
         if (freePages.Count == 0)
@@ -216,6 +293,29 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// Marks <paramref name="pageCount"/> pages from <paramref name="firstPage"/>
+    /// free again after a reuse reservation failed partway. The pages were
+    /// free and untouched, so only the global usage map changes. Best effort,
+    /// like <see cref="ReleaseReservedPagesAsync"/>.
+    /// </summary>
+    /// <param name="firstPage">The first page of the run.</param>
+    /// <param name="pageCount">The number of pages to mark free.</param>
+    private async ValueTask RestoreFreeStateAsync(long firstPage, int pageCount)
+    {
+        try
+        {
+            for (int offset = 0; offset < pageCount; offset++)
+            {
+                await this.SetPageFreeStateAsync(firstPage + offset, free: true, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (IsBestEffortReleaseFailure(ex))
+        {
+            // Best effort: the rest of the run stays marked used.
+        }
     }
 
     private async ValueTask<List<long>> EnumerateMappedFreePagesAsync(CancellationToken cancellationToken)

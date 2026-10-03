@@ -58,31 +58,134 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
             return false;
         }
 
-        IndexBTreeBuildResult build;
-        try
-        {
-            long provisionalFirstPage = db.PageCount;
-            build = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, spliced, provisionalFirstPage);
-            long firstNewPage = await pageAllocator.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
-            if (firstNewPage != provisionalFirstPage)
-            {
-                build = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, spliced, firstNewPage);
-            }
-        }
-        catch (ArgumentOutOfRangeException)
+        // TryPlaceTreeAsync releases its own run when it cannot place the
+        // tree; the run is linked by the first_dp patch below.
+        var runs = new ReservedPageRuns(pageAllocator);
+        IndexBTreeBuildResult? build = await this.TryPlaceTreeAsync(layout, tdefPage, spliced, runs, cancellationToken).ConfigureAwait(false);
+        if (build is not { } placed)
         {
             return false;
         }
 
-        long expectedPage = build.FirstPageNumber;
-        foreach (byte[] page in build.Pages)
+        runs.MarkLinked();
+        await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)placed.RootPageNumber), cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Builds a B-tree over <paramref name="entries"/>, reserves its pages,
+    /// and writes them. See <see cref="TryPlaceTreeAsync(Func{long, IndexBTreeBuildResult}, ReservedPageRuns, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="layout">The index page layout.</param>
+    /// <param name="tdefPage">The owning table's TDEF page, stamped on every index page.</param>
+    /// <param name="entries">The sorted leaf entries.</param>
+    /// <param name="runs">Records the written run until the caller links it.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The placed tree, or <see langword="null"/> when it cannot be built.</returns>
+    internal ValueTask<IndexBTreeBuildResult?> TryPlaceTreeAsync(
+        IndexPageLayout layout,
+        long tdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        ReservedPageRuns runs,
+        CancellationToken cancellationToken)
+        => this.TryPlaceTreeAsync(
+            firstPage => IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, entries, firstPage),
+            runs,
+            cancellationToken);
+
+    /// <summary>
+    /// Builds a tree with <paramref name="buildAt"/> at the provisional end of
+    /// file, then places it with <see cref="PlaceBuiltTreeAsync"/>. Returns
+    /// <see langword="null"/>, with nothing reserved, when the tree cannot be
+    /// built (<see cref="ArgumentOutOfRangeException"/>: an entry larger than a
+    /// page, or page numbers past the 24-bit limit).
+    /// </summary>
+    /// <param name="buildAt">Builds the tree with its first page at the given page number; production passes <see cref="IndexBTreeBuilder.Build(IndexPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>.</param>
+    /// <param name="runs">Records the written run until the caller links it.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The placed tree, or <see langword="null"/> when it cannot be built.</returns>
+    internal async ValueTask<IndexBTreeBuildResult?> TryPlaceTreeAsync(
+        Func<long, IndexBTreeBuildResult> buildAt,
+        ReservedPageRuns runs,
+        CancellationToken cancellationToken)
+    {
+        IndexBTreeBuildResult provisional;
+        try
         {
-            await db.WritePageAsync(expectedPage, page, cancellationToken).ConfigureAwait(false);
-            expectedPage++;
+            provisional = buildAt(db.PageCount);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
         }
 
-        await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)build.RootPageNumber), cancellationToken).ConfigureAwait(false);
-        return true;
+        return await this.PlaceBuiltTreeAsync(provisional, buildAt, runs, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reserves a contiguous run for <paramref name="provisional"/>'s pages,
+    /// rebuilds the tree with <paramref name="buildAt"/> when the allocator
+    /// hands back a different first page (the child and sibling pointers
+    /// inside the tree must name the pages it lands on), and writes every page.
+    /// The written run is recorded in <paramref name="runs"/>: nothing points
+    /// at it yet, so the caller must call <see cref="ReservedPageRuns.MarkLinked"/>
+    /// before the write that links it (a <c>first_dp</c> patch or a usage-map
+    /// row), and <see cref="ReservedPageRuns.ReleaseAsync"/> when it abandons
+    /// it. If the relocated build fails or changes size, the run is released
+    /// and the method returns <see langword="null"/>; if a page write or the
+    /// relocated build throws anything else, the run is released and the
+    /// exception propagates.
+    /// </summary>
+    /// <param name="provisional">The tree built at the provisional first page, which fixes the page count.</param>
+    /// <param name="buildAt">Rebuilds the tree with its first page at the given page number.</param>
+    /// <param name="runs">Records the written run until the caller links it.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The tree as written, or <see langword="null"/> when it could not be placed.</returns>
+    internal async ValueTask<IndexBTreeBuildResult?> PlaceBuiltTreeAsync(
+        IndexBTreeBuildResult provisional,
+        Func<long, IndexBTreeBuildResult> buildAt,
+        ReservedPageRuns runs,
+        CancellationToken cancellationToken)
+    {
+        int pageCount = provisional.Pages.Count;
+        long firstPage = await pageAllocator.ReserveContiguousPagesAsync(pageCount, cancellationToken).ConfigureAwait(false);
+        bool placed = false;
+        try
+        {
+            IndexBTreeBuildResult build = provisional;
+            if (firstPage != provisional.FirstPageNumber)
+            {
+                try
+                {
+                    build = buildAt(firstPage);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return null;
+                }
+
+                if (build.Pages.Count != pageCount)
+                {
+                    return null;
+                }
+            }
+
+            for (int i = 0; i < pageCount; i++)
+            {
+                await db.WritePageAsync(firstPage + i, build.Pages[i], cancellationToken).ConfigureAwait(false);
+            }
+
+            runs.Add(firstPage, pageCount);
+            placed = true;
+            return build;
+        }
+        finally
+        {
+            if (!placed)
+            {
+                await pageAllocator.ReleaseReservedPagesAsync(firstPage, pageCount).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
