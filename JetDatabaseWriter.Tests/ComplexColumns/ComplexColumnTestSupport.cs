@@ -15,6 +15,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -119,6 +120,38 @@ internal static class ComplexColumnTestSupport
         List<LocatedRow> rows = await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct);
         byte[] tdef = await harness.Database.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
         return new RawTable(table.Definition, [.. rows.Select(r => r.Values)], tdef);
+    }
+
+    /// <summary>
+    /// Rewrites a table the way builds before per-row reference allocation
+    /// left it: every complex slot of every row null and the TDEF complex
+    /// AutoNumber 0. Flat rows are left alone.
+    /// </summary>
+    /// <param name="ms">The database stream.</param>
+    /// <param name="tableName">The user table name.</param>
+    public static async Task ClearComplexReferencesAsync(MemoryStream ms, string tableName)
+    {
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        DatabaseFile db = harness.Database;
+        ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
+        foreach (RowLocation location in await db.GetLiveRowLocationsAsync(table.Entry.TDefPage, Ct))
+        {
+            byte[] page = await db.ReadPageCopyAsync(location.PageNumber, Ct);
+            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.ReadRowColumnCount(page, location.RowStart));
+            Span<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
+            foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType or ColumnType.AttachmentType))
+            {
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, false);
+                page.AsSpan(location.RowStart + db.RowFields.NumCols + column.FixedOff, 4).Clear();
+            }
+
+            await db.WritePageAsync(location.PageNumber, page, Ct);
+        }
+
+        byte[] tdef = await db.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+        tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
+        await db.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
     }
 
     /// <summary>Reads the TDEF page of a system table such as <c>MSysComplexColumns</c>.</summary>

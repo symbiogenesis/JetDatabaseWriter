@@ -890,7 +890,7 @@ internal static class JetTypeInfo
         }
         else
         {
-            mask[byteOffset] &= (byte)~(1 << bitOffset);
+            mask[byteOffset] &= unchecked((byte)~(1 << bitOffset));
         }
     }
 

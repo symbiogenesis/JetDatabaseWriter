@@ -169,11 +169,13 @@ public interface IAccessWriter : IAccessBase
 
     /// <summary>
     /// Asynchronously appends one file to a parent row's Access 2007+ Attachment
-    /// column. Locates the parent row by composite primary-key tuple, lazily
-    /// allocates a per-row complex reference value, patches the parent row's
-    /// complex-column slot with that ID, and inserts a row into the hidden flat
-    /// child table carrying the wrapper-encoded payload (per
-    /// <see href="docs/design/complex-columns-format-notes.md" /> §3).
+    /// column. Locates the parent row by the supplied key columns and inserts a
+    /// row into the hidden flat child table carrying the wrapper-encoded payload
+    /// (per <see href="docs/design/complex-columns-format-notes.md" /> §3),
+    /// joined to the parent through the row's per-row complex reference. When
+    /// the parent row has no reference yet, it first gets the next one from the
+    /// table's complex AutoNumber, stored in every null complex slot of the row,
+    /// so a deleted row's reference is never handed out again.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Attachment column on <paramref name="tableName"/>.</param>
@@ -197,10 +199,12 @@ public interface IAccessWriter : IAccessBase
 
     /// <summary>
     /// Asynchronously appends one value to a parent row's Access 2007+ Multi-Value
-    /// column. Locates the parent row by composite primary-key tuple, lazily
-    /// allocates a per-row complex reference value, patches the parent row's
-    /// complex-column slot with that ID, and inserts a row into the hidden flat
-    /// child table whose <c>value</c> column carries <paramref name="value"/>.
+    /// column. Locates the parent row by the supplied key columns and inserts a
+    /// row into the hidden flat child table whose <c>value</c> column carries
+    /// <paramref name="value"/>, joined to the parent through the row's per-row
+    /// complex reference. When the parent row has no reference yet, it first
+    /// gets the next one from the table's complex AutoNumber, stored in every
+    /// null complex slot of the row.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Multi-Value column on <paramref name="tableName"/>.</param>

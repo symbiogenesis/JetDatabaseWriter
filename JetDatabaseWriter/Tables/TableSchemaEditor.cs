@@ -494,11 +494,13 @@ internal sealed class TableSchemaEditor(
             tempDef = await db.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
         }
 
-        // The temp TDEF starts with an AutoNumber counter of 0. Carry the
-        // original's high-water value (and anything larger the copied rows
-        // hold) over to it, or values freed by deleting the top rows would be
-        // handed out again once the temp table takes the original's place.
+        // The temp TDEF starts with its AutoNumber and complex AutoNumber
+        // counters at 0. Carry the original's high-water values (and anything
+        // larger the copied rows hold) over to it, or values and per-row
+        // complex references freed by deleting the top rows would be handed
+        // out again once the temp table takes the original's place.
         long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        long complexHighWater = await autoNumbers.ReadComplexHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var writtenRows = new List<LocatedRow>(projectedRows.Count);
         foreach (object[] projected in projectedRows)
         {
@@ -506,9 +508,11 @@ internal sealed class TableSchemaEditor(
             RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
             writtenRows.Add(new LocatedRow(location, projected));
             autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
+            complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
         }
 
         await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
+        await autoNumbers.RaiseComplexHighWaterAsync(tempEntry.TDefPage, complexHighWater, cancellationToken).ConfigureAwait(false);
 
         // Rebuild forwarded indexes once after the bulk row copy completes,
         // so we don't pay the rebuild cost per row. The rebuild keys the rows

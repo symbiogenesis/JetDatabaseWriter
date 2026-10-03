@@ -1,0 +1,319 @@
+namespace JetDatabaseWriter.Tests.ComplexColumns;
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Tests.Infrastructure;
+using Xunit;
+using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
+
+/// <summary>
+/// Per-row complex references (the 4-byte value in a parent row's complex
+/// slot that joins it to its flat rows) come from the ACE TDEF complex
+/// AutoNumber at offset 28, the last reference handed out, as Access and
+/// Jackcess allocate them. Each row gets one reference shared by all its
+/// complex columns, and the counter is raised on use and carried across
+/// schema rewrites, so a deleted row's reference is never handed out again
+/// and a writer-added row never takes the reference an Access row owns.
+/// </summary>
+public sealed class ComplexColumnsReferenceAllocationTests
+{
+    private static readonly Dictionary<string, object?> Row1 = new() { ["Id"] = 1 };
+
+    private static readonly Dictionary<string, object?> Row2 = new() { ["Id"] = 2 };
+
+    private static readonly Dictionary<string, object?> Row3 = new() { ["Id"] = 3 };
+
+    private static readonly ComplexDataColumn[] ComplexDataColumns =
+    [
+        new("VersionHistory_F5F8918F-0A3F-4DA9-AE71-184EE5012880", "VersionHistory_F5F8918F-0A3F-4D_6E54CCBB170741DD8FD837271ED8B90C"),
+        new("multi-value-data", "multi-value-data_F4C67B0F60124C1989D5583C00CF76E2"),
+        new("attach-data", "attach-data_071D71EDD53D45A1A9089929F06857D9"),
+    ];
+
+    /// <summary>Gets the complexDataTest fixtures with their TDEF complex AutoNumber, in every write mode.</summary>
+    public static TheoryData<string, int, ComplexWriteMode> AccessFixturesAndModes()
+    {
+        var data = new TheoryData<string, int, ComplexWriteMode>();
+        foreach (ComplexWriteMode mode in Enum.GetValues<ComplexWriteMode>())
+        {
+            data.Add(TestDatabases.ComplexDataTestV2007, 7, mode);
+            data.Add(TestDatabases.ComplexDataTestV2010, 8, mode);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddAttachment_AfterDeletingTopParent_DoesNotReuseReference(ComplexWriteMode mode)
+    {
+        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(mode);
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal([1, 3], docs.Rows.Select(r => (int)r[0]));
+        object[] row3 = docs.Rows[1];
+        Assert.Equal(3, Slot(docs, row3, "Files"));
+        Assert.Equal(3, Slot(docs, row3, "Tags"));
+        Assert.Equal(3, docs.ComplexAutoNumber);
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["three.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Where(a => a.ConceptualTableId == 3).Select(a => a.FileName));
+        Assert.Equal([7], (await reader.GetMultiValueItemsAsync("Docs", "Tags", Ct)).Where(i => i.ConceptualTableId == 3).Select(i => i.Value));
+    }
+
+    [Fact]
+    public async Task AddItem_EarlierBuildRowWithNullSlots_PatchesEveryNullComplexSlotOfTheRow()
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
+        }
+
+        await ClearComplexReferencesAsync(ms, "Docs");
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms))
+        {
+            await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct);
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Null(Slot(docs, docs.Rows[0], "Files"));
+        Assert.Null(Slot(docs, docs.Rows[0], "Tags"));
+        Assert.Equal(1, Slot(docs, docs.Rows[1], "Files"));
+        Assert.Equal(1, Slot(docs, docs.Rows[1], "Tags"));
+        Assert.Equal(1, docs.ComplexAutoNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessFixturesAndModes))]
+    public async Task AddMultiValue_AccessFixtureRowInsertedByWriter_DoesNotTakeAnotherRowsReference(string fixture, int counter, ComplexWriteMode mode)
+    {
+        await using MemoryStream ms = await CopyFixtureAsync(fixture);
+        Assert.Equal(counter, (await ReadRawTableAsync(ms, "Table1")).ComplexAutoNumber);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "row5" }, Ct);
+                var key = new Dictionary<string, object?> { ["id"] = "row5" };
+                await writer.AddMultiValueItemAsync("Table1", "multi-value-data", key, "writer-value", Ct);
+                await writer.AddAttachmentAsync("Table1", "attach-data", key, new AttachmentInput("w.txt", Encoding.UTF8.GetBytes("writer attachment")), Ct);
+            });
+        }
+
+        RawTable table = await ReadRawTableAsync(ms, "Table1");
+        object[] row5 = Assert.Single(table.Rows, r => (string)r[0] == "row5");
+        foreach (ComplexDataColumn column in ComplexDataColumns)
+        {
+            Assert.Equal(counter + 1, Slot(table, row5, column.Name));
+        }
+
+        Assert.Equal(counter + 1, table.ComplexAutoNumber);
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        var rows = (await reader.Rows("Table1", cancellationToken: Ct).ToListAsync(Ct)).ToDictionary(r => (string)r[0]);
+        Assert.IsType<DBNull>(rows["row4"][4]);
+        Assert.Equal(["writer-value"], ComplexCellValue.ReadMultiValueItems(Assert.IsType<byte[]>(rows["row5"][4])).Select(i => i.Value));
+        Assert.Equal(["w.txt"], ComplexCellValue.ReadAttachments(Assert.IsType<byte[]>(rows["row5"][5])).Select(a => a.FileName));
+        Assert.Equal(["value1", "value4"], ComplexCellValue.ReadMultiValueItems(Assert.IsType<byte[]>(rows["row2"][4])).Select(i => i.Value));
+
+        // The writer keeps Access's unique complex indexes current.
+        foreach (ComplexDataColumn column in ComplexDataColumns)
+        {
+            List<byte[]> keys = await ReadIndexLeafKeysAsync(ms, "Table1", column.Index);
+            Assert.Equal(table.Rows.Count, keys.Count);
+            Assert.Equal([0x7F, 0x80, 0x00, 0x00, (byte)(counter + 1)], keys[^1]);
+        }
+    }
+
+    [Fact]
+    public async Task AddAttachment_ZeroCounterFile_SeedsAboveExistingReferences()
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row1, new AttachmentInput("one.txt", [1]), Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
+        }
+
+        Assert.Equal([1, 2], (await ReadRawTableAsync(ms, "Docs")).Rows.Select(r => ((ComplexIdRef)r[1]).Id));
+        await ZeroComplexAutoNumberAsync(ms, "Docs");
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms))
+        {
+            await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row3, new AttachmentInput("three.txt", [3]), Ct);
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(3, Slot(docs, docs.Rows[2], "Files"));
+        Assert.Equal(3, docs.ComplexAutoNumber);
+    }
+
+    [Fact]
+    public async Task AddAttachment_RolledBackTransaction_RestoresCounter()
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowAsync("Docs", [1, DBNull.Value, DBNull.Value], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row1, new AttachmentInput("one.txt", [1]), Ct);
+
+            await using (JetTransaction tx = await writer.BeginTransactionAsync(Ct))
+            {
+                await writer.InsertRowAsync("Docs", [2, DBNull.Value, DBNull.Value], Ct);
+                await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
+                await tx.RollbackAsync(Ct);
+            }
+
+            // The rolled-back reference 2 is handed out again, as the TDEF
+            // counter the rollback discarded says it was never used.
+            await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row3, new AttachmentInput("three.txt", [3]), Ct);
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal([1, 3], docs.Rows.Select(r => (int)r[0]));
+        Assert.Equal(2, Slot(docs, docs.Rows[1], "Files"));
+        Assert.Equal(2, docs.ComplexAutoNumber);
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["one.txt", "three.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => a.FileName));
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task SchemaRewrite_KeepsComplexAutoNumber(ComplexWriteMode mode)
+    {
+        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(ComplexWriteMode.Direct);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            // A table with a surviving complex column is transplanted onto its TDEF page.
+            await RunAsync(writer, mode, async () => await writer.AddColumnAsync("Docs", new ColumnDefinition("Note", typeof(string), maxLength: 20), Ct));
+        }
+
+        Assert.Equal(3, (await ReadRawTableAsync(ms, "Docs")).ComplexAutoNumber);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            // Dropping a complex column takes the copy-and-swap path onto a new TDEF page.
+            await RunAsync(writer, mode, async () => await writer.DropColumnAsync("Docs", "Tags", Ct));
+        }
+
+        Assert.Equal(3, (await ReadRawTableAsync(ms, "Docs")).ComplexAutoNumber);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.InsertRowAsync("Docs", [4, DBNull.Value, DBNull.Value], Ct);
+                await writer.AddAttachmentAsync("Docs", "Files", new Dictionary<string, object?> { ["Id"] = 4 }, new AttachmentInput("four.txt", [4]), Ct);
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(4, Slot(docs, Assert.Single(docs.Rows, r => (int)r[0] == 4), "Files"));
+        Assert.Equal(4, docs.ComplexAutoNumber);
+    }
+
+    [Fact]
+    public void TDefHeaderLayout_ComplexAutoNumber_IsAceOnly()
+    {
+        Assert.Equal(-1, TDefHeaderLayout.For(DatabaseFormat.Jet3Mdb).ComplexAutoNumber);
+        Assert.Equal(-1, TDefHeaderLayout.For(DatabaseFormat.Jet4Mdb).ComplexAutoNumber);
+        Assert.Equal(28, TDefHeaderLayout.For(DatabaseFormat.AceAccdb).ComplexAutoNumber);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public async Task ComplexHighWater_JetMdb_IsNeverWritten(DatabaseFormat format)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, WriterOptions(ComplexWriteMode.Direct), leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], Ct);
+        }
+
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("T", Ct)).Entry.TDefPage;
+        byte[] before = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
+        var autoNumbers = new AutoNumberMaintainer(harness.Database);
+
+        await autoNumbers.RaiseComplexHighWaterAsync(tdefPage, 99, Ct);
+
+        Assert.Equal(before, await harness.Database.ReadPageCopyAsync(tdefPage, Ct));
+        Assert.Equal(0, await autoNumbers.ReadComplexHighWaterAsync(tdefPage, Ct));
+    }
+
+    /// <summary>
+    /// Docs(Id, Files attachment, Tags multi-value int): rows 1 and 2 get
+    /// attachments, row 2 a tag; row 2 is deleted, then row 3 is inserted and
+    /// given an attachment and a tag.
+    /// </summary>
+    /// <param name="mode">The write mode.</param>
+    private static async Task<MemoryStream> CreateDeletedTopParentScenarioAsync(ComplexWriteMode mode)
+    {
+        var ms = new MemoryStream();
+        await using AccessWriter writer = await CreateWriterAsync(ms, mode);
+        await CreateDocsAsync(writer);
+        await RunAsync(writer, mode, async () =>
+        {
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row1, new AttachmentInput("one.txt", Encoding.UTF8.GetBytes("payload one")), Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", Encoding.UTF8.GetBytes("payload two")), Ct);
+            await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct);
+        });
+
+        await RunAsync(writer, mode, async () =>
+        {
+            Assert.Equal(1, await writer.DeleteRowsAsync("Docs", "Id", 2, Ct));
+            await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row3, new AttachmentInput("three.txt", Encoding.UTF8.GetBytes("payload three")), Ct);
+            await writer.AddMultiValueItemAsync("Docs", "Tags", Row3, 7, Ct);
+        });
+
+        return ms;
+    }
+
+    private static async Task CreateDocsAsync(AccessWriter writer) =>
+        await writer.CreateTableAsync(
+            "Docs",
+            [
+                new ColumnDefinition("Id", typeof(int)),
+                new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) },
+            ],
+            Ct);
+
+    private static async Task ZeroComplexAutoNumberAsync(MemoryStream ms, string tableName)
+    {
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct)).Entry.TDefPage;
+        byte[] tdef = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
+        tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
+        await harness.Database.WritePageAsync(tdefPage, tdef, Ct);
+    }
+
+    /// <summary>A complexDataTest Table1 complex column and the unique index Access keeps on it.</summary>
+    /// <param name="Name">The column name.</param>
+    /// <param name="Index">The index name.</param>
+    private sealed record ComplexDataColumn(string Name, string Index);
+}
