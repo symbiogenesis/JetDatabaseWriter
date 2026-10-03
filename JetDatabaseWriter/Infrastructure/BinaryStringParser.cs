@@ -4,9 +4,6 @@ using System;
 
 internal static class BinaryStringParser
 {
-    public static bool TryDecodeBase64DataUri(string value, out byte[] bytes) =>
-        TryDecodeBase64DataUri(value, requiredMediaType: null, out bytes);
-
     public static bool TryDecodeBase64DataUri(string value, string? requiredMediaType, out byte[] bytes)
     {
         bytes = [];

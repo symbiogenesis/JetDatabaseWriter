@@ -14,12 +14,6 @@ using System.IO;
 /// <param name="reason">Why the value cannot be read.</param>
 internal sealed class UnreadableLongValue(string columnName, string reason)
 {
-    /// <summary>Gets the column whose value cannot be read.</summary>
-    internal string ColumnName => columnName;
-
-    /// <summary>Gets why the value cannot be read.</summary>
-    internal string Reason => reason;
-
     /// <summary>
     /// Throws when <paramref name="values"/> holds an <see cref="UnreadableLongValue"/>.
     /// Writers call this before they delete the row being rewritten.

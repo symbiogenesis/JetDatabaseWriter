@@ -35,10 +35,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pages">The reader's page cache.</param>
 /// <param name="rows">Decodes rows from cached pages.</param>
 /// <param name="catalog">Resolves user and system tables by name.</param>
-/// <param name="complexColumns">Loads attachment payloads for complex columns.</param>
+/// <param name="complexColumns">Builds the complex-column cells (every attachment or multi-value item of a row) that replace each row's complex reference.</param>
 /// <param name="linked">Reads names that resolve to linked tables.</param>
 /// <param name="operations">The reader's operation gate.</param>
-/// <param name="options">The reader options; supply the page-cache size and read-ahead mode.</param>
+/// <param name="options">The reader options; supply the read-ahead mode (<see cref="AccessReaderOptions.PageReadOptimizationMode"/>).</param>
 internal sealed class TableReader(
     DatabaseFile db,
     ReaderPageCache pages,

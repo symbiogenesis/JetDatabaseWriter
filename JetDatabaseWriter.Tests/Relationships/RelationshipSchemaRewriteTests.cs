@@ -319,10 +319,8 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     /// an FK logical index), which must key every row the transaction can see,
     /// at its real location. After commit, a child of the new parent is
     /// accepted and each cascade deletes exactly that parent's children. The
-    /// child inserted in the transaction references a parent committed before
-    /// it: after the parent's key column is renamed, the FK insert check falls
-    /// back to reading the relationship catalog and the parent through the
-    /// snapshot reader, which does not see the transaction.
+    /// child inserted in the transaction references parent 2, which was committed
+    /// before the transaction began.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="operation"><c>rename</c>, <c>add</c>, <c>drop</c>, <c>renameKey</c> (renames the relationship key column) or <c>none</c> (inserts only).</param>

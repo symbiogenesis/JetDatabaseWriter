@@ -28,8 +28,7 @@ using Xunit;
 /// it uses. No collaborator may hold or receive a facade, <see cref="AccessBase"/>,
 /// or a composition root; each collaborator graph must be acyclic; the facade
 /// must not be reachable from its services at runtime; and the facades expose
-/// no internal members beyond the few that production code calls across the
-/// reader / writer boundary.
+/// no internal members.
 /// </summary>
 public sealed class ServiceGraphTests
 {
@@ -184,7 +183,7 @@ public sealed class ServiceGraphTests
         // page cache keeps pages between calls.
         Assert.Single(reachable, item => item is DatabaseFile);
         Assert.Contains(database, reachable);
-        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.False(cache.IsEnabled));
+        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(FacadeInternals.ReadPrivateField(cache, "pageCache")));
         Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
 
@@ -232,12 +231,11 @@ public sealed class ServiceGraphTests
     /// <see cref="DatabaseFile"/> instead of a reader opened over it.
     /// </summary>
     /// <param name="facade">The facade type.</param>
-    /// <param name="expected">The internal members production code calls.</param>
     [Theory]
-    [InlineData(typeof(AccessBase), new string[0])]
-    [InlineData(typeof(AccessReader), new string[0])]
-    [InlineData(typeof(AccessWriter), new string[0])]
-    public void Facade_ExposesOnlyTheInternalMembersProductionCodeCalls(Type facade, string[] expected)
+    [InlineData(typeof(AccessBase))]
+    [InlineData(typeof(AccessReader))]
+    [InlineData(typeof(AccessWriter))]
+    public void Facade_ExposesNoInternalMembers(Type facade)
     {
         ArgumentNullException.ThrowIfNull(facade);
 
@@ -254,7 +252,7 @@ public sealed class ServiceGraphTests
 
         string[] actual = [.. fields.Concat(methods).Concat(nestedTypes).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
-        Assert.Equal(expected.Order(StringComparer.Ordinal), actual);
+        Assert.Empty(actual);
     }
 
     private static async ValueTask<MemoryStream> CreateDatabaseAsync()

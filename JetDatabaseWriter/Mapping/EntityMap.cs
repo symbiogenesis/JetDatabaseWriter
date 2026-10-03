@@ -40,7 +40,6 @@ internal sealed class EntityMap
 
     private EntityMap(Type type)
     {
-        this.EntityType = type;
         this.TableName = type.GetCustomAttribute<TableAttribute>(inherit: true) is { Name.Length: > 0 } table
             ? table.Name
             : type.Name;
@@ -85,9 +84,6 @@ internal sealed class EntityMap
 
         this.Properties = properties;
     }
-
-    /// <summary>Gets the mapped CLR type.</summary>
-    public Type EntityType { get; }
 
     /// <summary>Gets the table name the type binds to: its <c>[Table]</c> name, or the type name.</summary>
     public string TableName { get; }

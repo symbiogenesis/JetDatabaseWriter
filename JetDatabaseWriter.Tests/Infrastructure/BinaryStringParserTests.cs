@@ -19,7 +19,7 @@ public sealed class BinaryStringParserTests
     [Fact]
     public void TryDecodeBase64DataUri_DecodesPayload()
     {
-        bool decoded = BinaryStringParser.TryDecodeBase64DataUri("data:image/png;base64,AAECAwQ=", out byte[] bytes);
+        bool decoded = BinaryStringParser.TryDecodeBase64DataUri("data:image/png;base64,AAECAwQ=", null, out byte[] bytes);
 
         byte[] expected = [0, 1, 2, 3, 4];
         Assert.True(decoded);
@@ -45,7 +45,7 @@ public sealed class BinaryStringParserTests
     [InlineData("not-a-data-uri")]
     public void TryDecodeBase64DataUri_RejectsMalformedDataUri(string value)
     {
-        bool decoded = BinaryStringParser.TryDecodeBase64DataUri(value, out byte[] bytes);
+        bool decoded = BinaryStringParser.TryDecodeBase64DataUri(value, null, out byte[] bytes);
 
         Assert.False(decoded);
         Assert.Empty(bytes);

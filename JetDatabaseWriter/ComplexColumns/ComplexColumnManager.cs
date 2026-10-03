@@ -837,7 +837,7 @@ internal sealed class ComplexColumnManager(
             : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
 
         // The flat table carries an autoincrement scalar PK column.
-        // ApplyConstraintsAsync hydrates the constraint registry from the
+        // ConstraintRegistry.ApplyAsync hydrates the constraint registry from the
         // persisted FLAG_AUTO_LONG bit and seeds the next value from the
         // larger of the flat table's TDEF AutoNumber counter and its existing
         // rows, so AddAttachmentAsync / AddMultiValueItemAsync stay a

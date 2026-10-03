@@ -278,18 +278,6 @@ internal sealed class ConstraintRegistry(
         return checkpoints;
     }
 
-    public async ValueTask ApplyCalculatedAsync(string tableName, TableDef tableDef, object[] values, bool force, CancellationToken cancellationToken)
-    {
-        List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
-        if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
-        {
-            return;
-        }
-
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force);
-        ValidateCalculatedResults(tableName, list, values);
-    }
-
     /// <summary>
     /// Applies the update-time constraint pass to <paramref name="values"/>, the
     /// full post-update image of one row. Every column in

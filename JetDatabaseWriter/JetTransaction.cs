@@ -86,7 +86,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// If the commit fails before it writes the first page (for example
+    /// If the commit fails before the first page write starts (for example
     /// because <paramref name="cancellationToken"/> was cancelled, or the
     /// commit lock timed out), the file is unchanged and
     /// <see cref="IsRolledBack"/> is <see langword="true"/>.
@@ -94,10 +94,11 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <para>
     /// Once the first page write starts, cancellation is ignored and the
     /// commit runs to completion, because stopping partway would leave the
-    /// file holding only part of the transaction. If an I/O error stops it
-    /// instead, the exception propagates, neither <see cref="IsCommitted"/>
-    /// nor <see cref="IsRolledBack"/> is set, and the file may hold part of
-    /// the transaction; restore it from a copy taken before the commit.
+    /// file holding only part of the transaction. If an I/O error or a
+    /// page-lock timeout stops it instead, the exception propagates, neither
+    /// <see cref="IsCommitted"/> nor <see cref="IsRolledBack"/> is set, and the
+    /// file may hold part of the transaction; restore it from a copy taken
+    /// before the commit.
     /// </para>
     /// </remarks>
     /// <param name="cancellationToken">A token used to cancel the commit before it starts writing pages.</param>

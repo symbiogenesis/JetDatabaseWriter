@@ -30,7 +30,7 @@ public sealed class ConstraintRegistryTests
     }
 
     [Fact]
-    public async Task ApplyCalculatedAsync_HydratedCalculatedColumn_UsesPersistedResultTypeClrProjection()
+    public async Task ApplyAsync_HydratedCalculatedColumn_UsesPersistedResultTypeClrProjection()
     {
         var tableDef = new TableDef
         {
@@ -55,7 +55,7 @@ public sealed class ConstraintRegistryTests
             (_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
         object[] values = [12, DBNull.Value];
 
-        await registry.ApplyCalculatedAsync("Calc", tableDef, values, force: false, TestContext.Current.CancellationToken);
+        _ = await registry.ApplyAsync("Calc", tableDef, values, TestContext.Current.CancellationToken);
 
         bool isHigh = Assert.IsType<bool>(values[1]);
         Assert.True(isHigh);
