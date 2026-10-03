@@ -61,9 +61,11 @@ internal sealed class TableDataWriter(
     /// <summary>
     /// Projects a named-column <see cref="RowValues"/> onto a positional
     /// <c>object[]</c> in table-column order. Columns not named in the row are
-    /// left as <see cref="DBNull.Value"/> so AutoNumber columns generate, column
-    /// defaults apply, and any other omitted column stores database null. Unknown
-    /// column names throw.
+    /// set to <see cref="DbDefault.Value"/>, so AutoNumber columns generate, column
+    /// defaults apply, and any other omitted column stores database null. A
+    /// named column whose value is <see langword="null"/> becomes
+    /// <see cref="DBNull.Value"/> and stores database null even when it has a
+    /// default. Unknown column names throw.
     /// </summary>
     /// <param name="tableDef">The target table definition.</param>
     /// <param name="tableName">The table name, for error messages.</param>
@@ -76,10 +78,7 @@ internal sealed class TableDataWriter(
         Guard.NotNull(row, paramName);
 
         object[] values = new object[tableDef.Columns.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = DBNull.Value;
-        }
+        Array.Fill(values, DbDefault.Value);
 
         foreach (KeyValuePair<string, object?> pair in row)
         {
@@ -237,6 +236,13 @@ internal sealed class TableDataWriter(
             if (columnIndex < 0)
             {
                 throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
+            }
+
+            if (kvp.Value is DbDefault)
+            {
+                throw new ArgumentException(
+                    $"Column '{kvp.Key}': DbDefault.Value is accepted only by inserts; an update never applies a default.",
+                    nameof(updatedValues));
             }
 
             updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;

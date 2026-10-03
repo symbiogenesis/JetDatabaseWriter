@@ -175,11 +175,11 @@ public sealed class ConstraintRegistryTests
     [InlineData("=#2020-01-31# & \"\"", ColumnType.TextType, typeof(string), "1/31/2020")]
     [InlineData("{guid 12345678-1234-1234-1234-1234567890ab}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
     [InlineData("{guid {12345678-1234-1234-1234-1234567890AB}}", ColumnType.GuidType, typeof(Guid), "12345678-1234-1234-1234-1234567890ab")]
-    public async Task ApplyAsync_HydratedDefaultValue_FillsNull(string expression, ColumnType type, Type expectedType, string expectedText)
+    public async Task ApplyAsync_HydratedDefaultValue_FillsDbDefault(string expression, ColumnType type, Type expectedType, string expectedText)
     {
         TableDef tableDef = SingleColumnTable(type);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
@@ -214,7 +214,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.DoubleType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
@@ -237,7 +237,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.FloatType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
@@ -254,7 +254,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.FloatType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "1E+39")));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
@@ -301,7 +301,7 @@ public sealed class ConstraintRegistryTests
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties(
             ("Today", Constants.ColumnPropertyNames.DefaultValue, "Date()"),
             ("Stamp", Constants.ColumnPropertyNames.DefaultValue, "=Now()")));
-        object[] values = [DBNull.Value, DBNull.Value];
+        object[] values = [DbDefault.Value, DbDefault.Value];
 
         // Access Date() and Now() read the local clock.
         DateTime before = DateTimeOffset.Now.DateTime;
@@ -318,7 +318,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.DateTimeType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "=Date()+7")));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         // Access Date() reads the local clock.
         DateTime before = DateTimeOffset.Now.DateTime.Date;
@@ -340,6 +340,52 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(3, values[0]);
     }
 
+    /// <summary>
+    /// An explicit <see cref="DBNull"/> is stored as null, as an explicit Null is in an
+    /// Access SQL INSERT; only <see cref="DbDefault"/> takes the persisted or CLR default.
+    /// </summary>
+    /// <param name="clrDefault">Whether the default is registered as a CLR default rather than read from the file.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyAsync_ExplicitDbNull_IsNotReplacedByDefault(bool clrDefault)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "7")));
+        if (clrDefault)
+        {
+            registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+        }
+
+        object[] explicitNull = [DBNull.Value];
+        _ = await registry.ApplyAsync("T", tableDef, explicitNull, TestContext.Current.CancellationToken);
+        Assert.Equal(DBNull.Value, explicitNull[0]);
+
+        object[] requested = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", tableDef, requested, TestContext.Current.CancellationToken);
+        Assert.Equal(7, requested[0]);
+    }
+
+    /// <summary>
+    /// <see cref="DbDefault"/> never reaches the row encoder: it becomes
+    /// <see cref="DBNull"/> even when the registry skips the table because its
+    /// constraint list does not line up with the table definition.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_DbDefault_IsReplacedWhenConstraintsAreSkipped()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }, new ColumnDefinition("Other", typeof(int))]);
+        object[] values = [DbDefault.Value];
+
+        Assert.Null(await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
+
+        Assert.Equal(DBNull.Value, values[0]);
+    }
+
     [Theory]
     [InlineData("=CurrentUser()")]
     [InlineData("GenUniqueID()")]
@@ -350,7 +396,7 @@ public sealed class ConstraintRegistryTests
         // "text" cannot become a Long Integer, so it is skipped like an unknown function.
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
@@ -366,7 +412,7 @@ public sealed class ConstraintRegistryTests
             ("Score", Constants.ColumnPropertyNames.ValidationRule, ">=0")));
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await registry.ApplyAsync("T", tableDef, [DBNull.Value], TestContext.Current.CancellationToken));
+            await registry.ApplyAsync("T", tableDef, [DbDefault.Value], TestContext.Current.CancellationToken));
     }
 
     /// <summary>
@@ -380,7 +426,7 @@ public sealed class ConstraintRegistryTests
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
         registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }]);
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 

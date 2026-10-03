@@ -39,15 +39,17 @@ public sealed class ColumnConstraintTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, DbDefault.Value], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [2, 7], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [3, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(2, dt.Rows.Count);
+        Assert.Equal(3, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
+        Assert.Equal(DBNull.Value, dt.Rows[2]["Score"]);
     }
 
     [Theory]
@@ -96,8 +98,9 @@ public sealed class ColumnConstraintTests
         DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
         DataRow third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
 
+        // An explicit null is stored as null even though Score has a default.
         Assert.Equal(DBNull.Value, first["Name"]);
-        Assert.Equal(42, first["Score"]);
+        Assert.Equal(DBNull.Value, first["Score"]);
 
         Assert.Equal(DBNull.Value, second["Name"]);
         Assert.Equal(DBNull.Value, second["Score"]);
@@ -489,7 +492,7 @@ public sealed class ColumnConstraintTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(table, [1, DBNull.Value, null], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, DbDefault.Value, DbDefault.Value], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [2, 3, "given"], TestContext.Current.CancellationToken);
         }
 
@@ -993,7 +996,7 @@ public sealed class ColumnConstraintTests
                 await writer.InsertRowAsync(table, [2, 11], TestContext.Current.CancellationToken));
             await Assert.ThrowsAsync<ArgumentException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = -1 }, TestContext.Current.CancellationToken));
-            await writer.InsertRowAsync(table, [3, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [3, DbDefault.Value], TestContext.Current.CancellationToken);
 
             if (commit)
             {

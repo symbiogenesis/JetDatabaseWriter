@@ -14,11 +14,13 @@ using JetDatabaseWriter.Infrastructure;
 /// <remarks>
 /// <para>
 /// Column names are matched case-insensitively against the target table. On insert,
-/// columns that are not named are left to the engine's default: an AutoNumber column
-/// generates its next value, and any other omitted column stores its default value, or
+/// columns that are not named are left out, as columns missing from an Access SQL
+/// <c>INSERT</c> column list are: an AutoNumber column generates its next value, a
+/// calculated column is computed, and any other column stores its default value, or
 /// database null when it has none. <see langword="null"/> and <see cref="DBNull.Value"/>
-/// are equivalent: on insert they behave like an omitted column, and on update they
-/// set the column to database null.
+/// are equivalent and set the column to database null, on insert even when the column
+/// has a default value. Set a column to <see cref="DbDefault.Value"/> to store its
+/// default on insert; an update rejects it.
 /// </para>
 /// <para>
 /// Instances support collection-initializer syntax and a fluent <see cref="Set"/>
@@ -84,7 +86,7 @@ public sealed class RowValues : IEnumerable<KeyValuePair<string, object?>>
 
     /// <summary>Assigns a value to a column and returns this instance for chaining.</summary>
     /// <param name="columnName">The column name (case-insensitive).</param>
-    /// <param name="value">The value to assign. <see langword="null"/> and <see cref="DBNull.Value"/> are equivalent; see the remarks for how inserts and updates treat them.</param>
+    /// <param name="value">The value to assign. <see langword="null"/> and <see cref="DBNull.Value"/> are equivalent and store database null; <see cref="DbDefault.Value"/> stores the column's default on insert. See the remarks.</param>
     /// <returns>This instance.</returns>
     public RowValues Set(string columnName, object? value)
     {

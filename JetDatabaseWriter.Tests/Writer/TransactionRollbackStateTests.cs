@@ -151,7 +151,7 @@ public sealed class TransactionRollbackStateTests
             await writer.DropTableAsync("T", TestContext.Current.CancellationToken);
             await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync("T", [2, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [2, DbDefault.Value], TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -237,7 +237,7 @@ public sealed class TransactionRollbackStateTests
             // A committed rewrite carries the rules forward by column name.
             await writer.AddColumnAsync("T", new ColumnDefinition("Late", typeof(int)), TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync("T", [1, DBNull.Value, 5, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1, DbDefault.Value, 5, DBNull.Value], TestContext.Current.CancellationToken);
             _ = await Assert.ThrowsAsync<ArgumentException>(async () =>
                 await writer.InsertRowAsync("T", [2, -1, 5, DBNull.Value], TestContext.Current.CancellationToken));
         }

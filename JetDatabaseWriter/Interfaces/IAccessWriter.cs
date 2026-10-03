@@ -42,19 +42,21 @@ public interface IAccessWriter : IAccessBase
     /// Values must be in the same order as the table's columns.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, a column with a default value stores that default, and any other column stores database null.</param>
+    /// <param name="values">Column values in table-column order. Every value is stored as given: <see langword="null"/> and <see cref="System.DBNull.Value"/> store database null, as an explicit Null does in an Access SQL INSERT, even when the column has a default value, and a NOT NULL column rejects them. Pass <see cref="DbDefault.Value"/> to store the column's default value instead, or database null when it has none. An AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, and a calculated column is computed, for any of the three.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber, its per-row complex reference or its default value, or database null when it has none of them.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no readable property maps to is left out of the insert: it gets its next AutoNumber, its per-row complex reference, its computed value or its default value, or database null when it has none of them. A mapped property whose value is <see langword="null"/> stores database null, even when the column has a default value.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="item">The object whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new();
 
@@ -62,19 +64,21 @@ public interface IAccessWriter : IAccessBase
     /// Asynchronously inserts multiple rows into the specified table in a single operation.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both mean no value: an AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, a column with a default value stores that default, and any other column stores database null.</param>
+    /// <param name="rows">Collection of rows, each containing column values in table-column order. Every value is stored as given: <see langword="null"/> and <see cref="System.DBNull.Value"/> store database null, as an explicit Null does in an Access SQL INSERT, even when the column has a default value, and a NOT NULL column rejects them. Pass <see cref="DbDefault.Value"/> to store the column's default value instead, or database null when it has none. An AutoNumber column generates its next value, a complex (Attachment / multi-value) column gets the row's per-row complex reference, and a calculated column is computed, for any of the three.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no property maps to is treated as omitted: it gets its next AutoNumber, its per-row complex reference or its default value, or database null when it has none of them.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped. A column no readable property maps to is left out of the insert: it gets its next AutoNumber, its per-row complex reference, its computed value or its default value, or database null when it has none of them. A mapped property whose value is <see langword="null"/> stores database null, even when the column has a default value.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="items">Collection of objects whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new();
 
@@ -82,15 +86,20 @@ public interface IAccessWriter : IAccessBase
     /// Asynchronously inserts a single row described by named columns. Column identity
     /// is by name rather than position, removing the silent-corruption risk of a
     /// positional <c>object?[]</c> whose order drifts from the schema. Columns not named
-    /// are left to the engine's default (an AutoNumber column generates its next value;
-    /// a complex column gets the row's per-row complex reference; any other omitted
-    /// column stores its default value, or database null when it has none).
+    /// are left out of the insert, as columns missing from an Access SQL INSERT column
+    /// list are: an AutoNumber column generates its next value, a complex column gets the
+    /// row's per-row complex reference, a calculated column is computed, and any other
+    /// column stores its default value, or database null when it has none. A named column
+    /// set to <see langword="null"/> or <see cref="System.DBNull.Value"/> stores database
+    /// null even when it has a default value; set it to <see cref="DbDefault.Value"/> to
+    /// store the default.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="row">The named-column values to insert.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.ArgumentException">Thrown when <paramref name="row"/> names a column that does not exist on the table.</exception>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask InsertRowAsync(string tableName, RowValues row, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -102,6 +111,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
     /// <exception cref="System.ArgumentException">Thrown when any row names a column that does not exist on the table.</exception>
+    /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -112,10 +122,10 @@ public interface IAccessWriter : IAccessBase
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="criteria">The row filter. An empty criteria matches every row.</param>
-    /// <param name="updatedValues">The named columns to assign on each matching row.</param>
+    /// <param name="updatedValues">The named columns to assign on each matching row. <see langword="null"/> and <see cref="System.DBNull.Value"/> set a column to database null; <see cref="DbDefault.Value"/> is rejected, because an update never applies a default.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    /// <exception cref="System.ArgumentException">Thrown when the criteria or updated values name a column that does not exist on the table, or when a column's validation rule rejects an assigned value.</exception>
+    /// <exception cref="System.ArgumentException">Thrown when the criteria or updated values name a column that does not exist on the table, when an updated value is <see cref="DbDefault.Value"/>, or when a column's validation rule rejects an assigned value.</exception>
     /// <exception cref="System.InvalidOperationException">Thrown when an assigned NOT NULL or AutoNumber column is set to null. Constraint checks run before any row is written, so a rejected update changes nothing.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before any row changes, when a matching row holds a MEMO or OLE value in a column not being assigned whose stored data cannot be read; rewriting the row would lose that value. Assigning a new value to that column is allowed. A cascade update checks each child table the same way before changing that table's rows; when several relationships cascade, child tables rewritten before the refusal keep their new keys unless the update runs in a transaction or with <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</exception>
     public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default);
@@ -131,10 +141,10 @@ public interface IAccessWriter : IAccessBase
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
     /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
-    /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply. <see langword="null"/> and <see cref="System.DBNull.Value"/> both clear the column to database null.</param>
+    /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply. <see langword="null"/> and <see cref="System.DBNull.Value"/> both clear the column to database null. <see cref="DbDefault.Value"/> is rejected, because an update never applies a default.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    /// <exception cref="System.ArgumentException">Thrown when a column's validation rule rejects an assigned value.</exception>
+    /// <exception cref="System.ArgumentException">Thrown when an updated value is <see cref="DbDefault.Value"/>, or when a column's validation rule rejects an assigned value.</exception>
     /// <exception cref="System.InvalidOperationException">Thrown when an assigned NOT NULL or AutoNumber column is set to null.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before any row changes, when a matching row holds a MEMO or OLE value in a column not being assigned whose stored data cannot be read; rewriting the row would lose that value. Assigning a new value to that column is allowed. A cascade update checks each child table the same way before changing that table's rows; when several relationships cascade, child tables rewritten before the refusal keep their new keys unless the update runs in a transaction or with <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</exception>
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
