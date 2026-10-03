@@ -71,6 +71,18 @@ public sealed class TableScanReadAheadTests : IDisposable
         return data;
     }
 
+    public static TheoryData<DatabaseFormat, PageReadOptimizationMode> PlainFileConcurrencyCases()
+    {
+        var data = new TheoryData<DatabaseFormat, PageReadOptimizationMode>();
+        foreach (DatabaseFormat format in (DatabaseFormat[])[DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb])
+        {
+            data.Add(format, PageReadOptimizationMode.Auto);
+            data.Add(format, PageReadOptimizationMode.Disabled);
+        }
+
+        return data;
+    }
+
     [Theory]
     [MemberData(nameof(PlainScanCases))]
     public async Task Scans_TinyOrNoPageCache_ReadAheadAndReturnEveryRow(DatabaseFormat format, int cacheSize, PageReadOptimizationMode mode)
@@ -231,6 +243,75 @@ public sealed class TableScanReadAheadTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Eight scans on one path-opened reader at once, so page reads from many
+    /// pool threads share the reader's file handle: positional reads in
+    /// <c>Auto</c>, seek-and-read under the I/O gate in <c>Disabled</c>. The
+    /// long-value table adds LVAL page reads on Jet4 and ACCDB; its CJK text
+    /// does not fit Jet3's code page, so Jet3 scans the plain table only.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [MemberData(nameof(PlainFileConcurrencyCases))]
+    public async Task Rows_ConcurrentScansOfPlainFile_ReturnEveryRow(DatabaseFormat format, PageReadOptimizationMode mode)
+    {
+        bool withLongValues = format != DatabaseFormat.Jet3Mdb;
+        string path = await this.CreateDatabaseAsync(format, withLongValues, encrypt: false);
+        ScanResult plain = await ReadBaselineAsync(path, PlainTable, password: null);
+        ScanResult longValues = withLongValues ? await ReadBaselineAsync(path, LongValueTable, password: null) : plain;
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { PageCacheSize = 2, PageReadOptimizationMode = mode, UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        for (int round = 0; round < 4; round++)
+        {
+            Task<List<string>>[] scans = [.. Enumerable.Range(0, 8).Select(i =>
+                Task.Run(() => ReadRowSignaturesAsync(reader, ConcurrentScanTable(i, withLongValues))))];
+            List<string>[] results = await Task.WhenAll(scans);
+            for (int i = 0; i < results.Length; i++)
+            {
+                Assert.Equal(ConcurrentScanTable(i, withLongValues) == LongValueTable ? longValues.Rows : plain.Rows, results[i]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every page of an unencrypted file read at once from pool threads on one
+    /// path-opened reader with no page cache matches the file's bytes.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [MemberData(nameof(PlainFileConcurrencyCases))]
+    public async Task ReadPageAsync_ConcurrentReadsOfPlainFile_ReturnEveryPage(DatabaseFormat format, PageReadOptimizationMode mode)
+    {
+        string path = await this.CreateDatabaseAsync(format, withLongValues: format != DatabaseFormat.Jet3Mdb, encrypt: false);
+        byte[] file = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { PageCacheSize = 0, PageReadOptimizationMode = mode, UseLockFile = false },
+            TestContext.Current.CancellationToken);
+        DatabaseFile db = FacadeInternals.Database(reader);
+        int pageSize = db.PageSizeBytes;
+        int pageCount = checked((int)db.PageCount);
+        Assert.Equal(file.Length, pageCount * pageSize);
+
+        for (int round = 0; round < 4; round++)
+        {
+            Task<byte[]>[] reads = [.. Enumerable.Range(1, pageCount - 1).Select(page =>
+                Task.Run(async () => await db.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
+            byte[][] actual = await Task.WhenAll(reads);
+            for (int page = 1; page < pageCount; page++)
+            {
+                Assert.True(file.AsSpan(page * pageSize, pageSize).SequenceEqual(actual[page - 1]), $"Page {page} read differently in round {round}.");
+            }
+        }
+    }
+
     public void Dispose()
     {
         foreach (string path in this.paths)
@@ -249,6 +330,9 @@ public sealed class TableScanReadAheadTests : IDisposable
             }
         }
     }
+
+    private static string ConcurrentScanTable(int scan, bool withLongValues) =>
+        withLongValues && scan % 2 == 1 ? LongValueTable : PlainTable;
 
     private static async Task<bool> ReadsAheadAsync(AccessReader reader, string tableName)
     {

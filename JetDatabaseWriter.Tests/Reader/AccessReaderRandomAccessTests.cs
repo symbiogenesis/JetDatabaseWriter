@@ -145,6 +145,86 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         Assert.Equal(handleReadsBeforeScan, stream.HandleReads);
     }
 
+    /// <summary>
+    /// A path-opened reader opens the file without <see cref="FileOptions.Asynchronous"/>
+    /// and without an access-pattern hint, in every mode. On Windows an overlapped
+    /// read completes through the I/O completion port even when the OS cache
+    /// already holds the page, which cost several times a synchronous read of a
+    /// cached page, and the <see cref="FileOptions.RandomAccess"/> and
+    /// <see cref="FileOptions.SequentialScan"/> hints defeated OS read-ahead on
+    /// files that were not cached yet.
+    /// </summary>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [InlineData(PageReadOptimizationMode.Auto)]
+    [InlineData(PageReadOptimizationMode.Disabled)]
+    [InlineData(PageReadOptimizationMode.Enabled)]
+    public async Task OpenAsync_Path_OpensSynchronousFileHandleWithoutAccessHint(PageReadOptimizationMode mode)
+    {
+        string path = await this.CreateReadableDatabaseAsync();
+
+        using FileStreamFactory.OpenTracker opens = FileStreamFactory.TrackOpens();
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageReadOptimizationMode = mode,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        FileStream stream = Assert.IsType<FileStream>(FacadeInternals.Database(reader).DatabaseStream);
+        Assert.False(stream.IsAsync);
+        FileStreamFactory.OpenedFile open = Assert.Single(opens.Opens);
+        Assert.Equal(path, open.Path);
+        Assert.Equal(FileOptions.None, open.Options);
+        await AssertReadableItemsTableAsync(reader);
+    }
+
+    /// <summary>
+    /// A scan cancelled mid-table stops with <see cref="OperationCanceledException"/>
+    /// at the next page, and the reader keeps reading afterwards. Every page
+    /// read goes to the file.
+    /// </summary>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [InlineData(PageReadOptimizationMode.Auto)]
+    [InlineData(PageReadOptimizationMode.Disabled)]
+    public async Task Rows_CancelledMidScan_ThrowsOperationCanceled(PageReadOptimizationMode mode)
+    {
+        const int rowCount = 2_000;
+        const int rowsBeforeCancel = 10;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageCacheSize = 0,
+                PageReadOptimizationMode = mode,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        int count = 0;
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (object[] row in reader.Rows("Items", cancellationToken: cancellation.Token))
+            {
+                Assert.Equal(++count, Assert.IsType<int>(row[0]));
+                if (count == rowsBeforeCancel)
+                {
+                    await cancellation.CancelAsync();
+                }
+            }
+        });
+
+        // Table scans check the token once per data page.
+        Assert.InRange(count, rowsBeforeCancel, rowCount - 1);
+        Assert.Equal(rowCount, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
+    }
+
     public void Dispose()
     {
         foreach (string path in this.paths)

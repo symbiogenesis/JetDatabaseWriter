@@ -275,8 +275,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Opens a database file with the given access / share / option combination.
-    /// Used by both <see cref="AccessReader"/> (read-only sequential) and
-    /// <see cref="AccessWriter"/> (read-write random-access).
+    /// Used by both <see cref="AccessReader"/> (a synchronous handle with no
+    /// access hint) and <see cref="AccessWriter"/> (an overlapped read-write
+    /// handle with the random-access hint).
     /// </summary>
     /// <param name="path">Path to the file.</param>
     /// <param name="access">The access.</param>
