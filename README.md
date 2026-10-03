@@ -702,7 +702,7 @@ await tx.CommitAsync(); // Replays all buffered pages and flushes the stream
 
 If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Only one transaction may be active per `AccessWriter` instance.
 
-`CommitAsync` is not a durable write-ahead log. Once commit replay starts, pages are written directly to the target stream in page-number order, then the page-0 commit-lock byte is bumped and the stream is flushed. If the process, stream, device, or cancellation token fails after replay begins, pages already written are left in place and no recovery pass is attempted; the transaction object is marked rolled back and the exception is surfaced. WAL-style crash recovery is out of scope for the current file-format writer.
+`CommitAsync` is not a durable write-ahead log. Once commit replay starts, pages are written directly to the target stream in page-number order, then the stream is flushed. If the process, stream, device, or cancellation token fails after replay begins, pages already written are left in place and no recovery pass is attempted; the transaction object is marked rolled back and the exception is surfaced. WAL-style crash recovery is out of scope for the current file-format writer.
 
 ---
 

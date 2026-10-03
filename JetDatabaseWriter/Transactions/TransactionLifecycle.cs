@@ -197,7 +197,6 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
                 await db.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
             }
 
-            await this.BumpCommitLockByteAsync(cancellationToken).ConfigureAwait(false);
             await this.FlushDurableAsync(cancellationToken).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
@@ -268,24 +267,6 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
         {
             db.ActiveJournal = null;
             this.ActiveTransaction = null;
-        }
-    }
-
-    /// <summary>
-    /// Increments the page-0 "commit lock byte" at header offset <c>0x14</c>.
-    /// </summary>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask BumpCommitLockByteAsync(CancellationToken cancellationToken)
-    {
-        byte[] page0 = await db.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            page0[0x14] = unchecked((byte)(page0[0x14] + 1));
-            await db.WritePageAsync(0, page0, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            DatabaseFile.ReturnPage(page0);
         }
     }
 
