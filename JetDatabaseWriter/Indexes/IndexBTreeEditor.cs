@@ -61,7 +61,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         IndexBTreeBuildResult build;
         try
         {
-            long provisionalFirstPage = db.PhysicalPageCount;
+            long provisionalFirstPage = db.PageCount;
             build = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, spliced, provisionalFirstPage);
             long firstNewPage = await pageAllocator.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
             if (firstNewPage != provisionalFirstPage)
@@ -141,7 +141,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> TryAppendContiguousAsync(IReadOnlyList<byte[]> pages, CancellationToken cancellationToken)
     {
-        long expected = db.PhysicalPageCount;
+        long expected = db.PageCount;
         for (int i = 0; i < pages.Count; i++)
         {
             long appended = await db.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
@@ -712,7 +712,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         // First page reuses the original leaf page; remaining pages are
         // freshly appended at end-of-file.
         int splitCount = splitPages.Count;
-        long firstFreshPage = db.PhysicalPageCount;
+        long firstFreshPage = db.PageCount;
         long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
         byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
@@ -1126,7 +1126,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         // boundary pass can re-link survivors across contiguous dead runs.
         var emptyingLeafSiblings = new Dictionary<long, (long Prev, long Next)>();
 
-        long nextAllocatedPageNumber = db.PhysicalPageCount;
+        long nextAllocatedPageNumber = db.PageCount;
 
         // Single I/O pass: read each target leaf once, splice its change-set,
         // and capture everything the processing pass needs (sibling pointers,

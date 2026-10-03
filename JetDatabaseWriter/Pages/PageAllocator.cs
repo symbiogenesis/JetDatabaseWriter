@@ -79,7 +79,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
     internal async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken)
     {
         var freePages = new SortedSet<long>(await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false));
-        long totalPages = db.LogicalPageCount;
+        long totalPages = db.PageCount;
         for (long pageNumber = 2; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -122,7 +122,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         }
 
         bool secure = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-        long totalPages = db.LogicalPageCount;
+        long totalPages = db.PageCount;
         long newTotalPages = totalPages;
         while (newTotalPages > 3)
         {
@@ -154,7 +154,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
     internal async ValueTask<bool> IsPageFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= db.LogicalPageCount)
+        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= db.PageCount)
         {
             return false;
         }
@@ -233,7 +233,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
                 globalPage,
                 rowBound,
                 db.PageSizeBytes,
-                db.LogicalPageCount,
+                db.PageCount,
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
                 db.ReadPageAsync,
@@ -352,7 +352,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
             globalPage,
             rowBound,
             db.PageSizeBytes,
-            db.LogicalPageCount,
+            db.PageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
             existingFreePages);
@@ -377,7 +377,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
-        if (mapPageNumber <= 0 || mapPageNumber >= db.LogicalPageCount)
+        if (mapPageNumber <= 0 || mapPageNumber >= db.PageCount)
         {
             return false;
         }

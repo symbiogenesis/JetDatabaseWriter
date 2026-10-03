@@ -639,7 +639,7 @@ internal sealed class TableSchemaEditor(
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = db.PhysicalPageCount;
+        long totalPages = db.PageCount;
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -842,7 +842,7 @@ internal sealed class TableSchemaEditor(
         var longValueRoots = new List<LongValueDescriptor>();
 
         TableDef? tableDef = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        long totalPages = db.PhysicalPageCount;
+        long totalPages = db.PageCount;
         if (tableDef is not null)
         {
             await db.ForEachOwnedDataPageAsync(
@@ -914,7 +914,7 @@ internal sealed class TableSchemaEditor(
 
     private async ValueTask CollectIndexPagesFromUsageMapAsync(long usageMapPageNumber, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
     {
-        long totalPages = db.PhysicalPageCount;
+        long totalPages = db.PageCount;
         if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
         {
             return;

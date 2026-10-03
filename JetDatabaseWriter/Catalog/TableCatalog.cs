@@ -80,7 +80,7 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
 
     private async ValueTask<CatalogScanSummary> ScanAsync(CancellationToken cancellationToken)
     {
-        long totalPages = db.PhysicalPageCount;
+        long totalPages = db.PageCount;
         TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {

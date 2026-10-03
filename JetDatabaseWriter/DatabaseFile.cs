@@ -191,13 +191,30 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     internal bool UsesRandomAccessPageReads { get; private set; }
 
+    /// <summary>
+    /// Gets the length of the backing stream. Inside a transaction this is
+    /// the length when the transaction began, because appended pages stay in
+    /// the journal until commit; use <see cref="PageCount"/> for page bounds.
+    /// </summary>
     internal long DatabaseLengthBytes => this.DatabaseStream.Length;
 
-    internal long PhysicalPageCount => this.DatabaseStream.Length / this.PageSizeBytes;
-
-    internal long LogicalPageCount => this.ActiveJournal?.NextAppendPageNumber ?? this.PhysicalPageCount;
+    /// <summary>
+    /// Gets the end of file in pages: one past the highest page number that
+    /// can be read. Inside a transaction this includes the pages the journal
+    /// has appended past the physical end of file, so it is the next page
+    /// number <see cref="AppendPageAsync"/> assigns. Every page-number bounds
+    /// check and every caller that numbers pages before appending them uses
+    /// this count.
+    /// </summary>
+    internal long PageCount => this.ActiveJournal?.NextAppendPageNumber ?? this.PhysicalPageCount;
 
     internal int RowColumnCountFieldSize => this.RowFields.NumCols;
+
+    /// <summary>
+    /// Gets the page count of the backing stream alone, ignoring any pages an
+    /// active transaction has appended. Only the non-journaled append uses it.
+    /// </summary>
+    private long PhysicalPageCount => this.DatabaseStream.Length / this.PageSizeBytes;
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
     /// <param name="format">The format.</param>
@@ -773,7 +790,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
                 return journal.Append(page.AsSpan(0, this.PageSizeBytes));
             }
 
-            long pageNumber = this.DatabaseStream.Length / this.PageSizeBytes;
+            long pageNumber = this.PhysicalPageCount;
             byte[] toWrite = this.PrepareEncryptedPageForWrite(pageNumber, page);
             IDisposable pageLock = await this.ByteRangeLock.AcquirePageLockAsync(pageNumber, this.PageSizeBytes, cancellationToken).ConfigureAwait(false);
             try
@@ -1276,7 +1293,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     {
         // Journal-aware: a table created or grown inside a transaction owns
         // pages appended past the physical end of the file.
-        long totalPages = this.LogicalPageCount;
+        long totalPages = this.PageCount;
         if (tdefPage <= 0 || tdefPage >= totalPages)
         {
             return null;
@@ -1397,7 +1414,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
     {
         var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = this.LogicalPageCount;
+        long totalPages = this.PageCount;
 
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {

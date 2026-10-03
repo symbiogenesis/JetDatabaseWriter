@@ -262,7 +262,7 @@ internal sealed class IndexMaintainer(
             return false;
         }
 
-        long totalPages = db.PhysicalPageCount;
+        long totalPages = db.PageCount;
         for (int ri = 0; ri < numRealIdx; ri++)
         {
             if (!db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
@@ -509,7 +509,7 @@ internal sealed class IndexMaintainer(
                 }
             }
 
-            long firstPageNumber = db.PhysicalPageCount;
+            long firstPageNumber = db.PageCount;
             IndexBTreeBuildResult build = IndexBTreeBuilder.Build(leafLayout, db.PageSizeBytes, tdefPage, entries, firstPageNumber);
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
@@ -617,7 +617,7 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= db.PhysicalPageCount)
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= db.PageCount)
         {
             return null;
         }
@@ -649,7 +649,7 @@ internal sealed class IndexMaintainer(
                     page,
                     rowBound,
                     db.PageSizeBytes,
-                    db.PhysicalPageCount,
+                    db.PageCount,
                     minimumPageNumber: 0,
                     strict: false,
                     db.ReadPageAsync,
@@ -710,7 +710,7 @@ internal sealed class IndexMaintainer(
 
     private async ValueTask<bool> IsReplacedIndexPageAsync(long pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= db.PhysicalPageCount)
+        if (pageNumber <= 0 || pageNumber >= db.PageCount)
         {
             return false;
         }
@@ -729,7 +729,7 @@ internal sealed class IndexMaintainer(
 
     private async ValueTask<bool> CanReuseSingleLeafPageAsync(int pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= db.PhysicalPageCount)
+        if (pageNumber <= 0 || pageNumber >= db.PageCount)
         {
             return false;
         }
@@ -759,7 +759,7 @@ internal sealed class IndexMaintainer(
         }
 
         long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
-        if (usageMapPage <= 0 || usageMapPage >= db.PhysicalPageCount)
+        if (usageMapPage <= 0 || usageMapPage >= db.PageCount)
         {
             return false;
         }
@@ -810,7 +810,7 @@ internal sealed class IndexMaintainer(
         long rootPage,
         CancellationToken cancellationToken)
     {
-        long pageCount = db.PhysicalPageCount;
+        long pageCount = db.PageCount;
         var pages = new List<long>();
         var seen = new HashSet<long>();
         var stack = new Stack<long>();
@@ -1204,11 +1204,20 @@ internal sealed class IndexMaintainer(
                     return false;
                 }
 
-                long firstNewPage = db.PhysicalPageCount;
+                // Build at the provisional end of file, reserve that many
+                // pages, and rebuild when the allocator hands back a reused
+                // free run or a different end of file: the child and sibling
+                // pointers inside the new tree must name the pages it lands on.
+                long provisionalFirstPage = db.PageCount;
                 IndexBTreeBuildResult mlBuild;
                 try
                 {
-                    mlBuild = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, splicedAll, firstNewPage);
+                    mlBuild = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, splicedAll, provisionalFirstPage);
+                    long reservedFirstPage = await pageAllocator.ReserveContiguousPagesAsync(mlBuild.Pages.Count, cancellationToken).ConfigureAwait(false);
+                    if (reservedFirstPage != provisionalFirstPage)
+                    {
+                        mlBuild = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, splicedAll, reservedFirstPage);
+                    }
                 }
                 catch (ArgumentOutOfRangeException ex)
                 {
@@ -1216,9 +1225,9 @@ internal sealed class IndexMaintainer(
                     return false;
                 }
 
-                foreach (byte[] page in mlBuild.Pages)
+                for (int i = 0; i < mlBuild.Pages.Count; i++)
                 {
-                    await db.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                    await db.WritePageAsync(mlBuild.FirstPageNumber + i, mlBuild.Pages[i], cancellationToken).ConfigureAwait(false);
                 }
 
                 Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)mlBuild.RootPageNumber));
