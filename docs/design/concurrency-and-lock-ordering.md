@@ -229,6 +229,31 @@ lockFileCoordinator.DisposeAfterAsync(
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
 | `aesGate` | No | Plain `lock`; leaf only |
 
+## Writer-owned caches and the exclusive-writer assumption
+
+The writer keeps some of what it reads from the file in memory for the rest of
+the session, on the assumption that nothing else changes the file while it is
+open:
+
+| Cache | Owner | Dropped when |
+|-------|-------|--------------|
+| User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
+| Insert-page hint and the set of owned maps it may extend | `DataPageInserter` | Restored to its state at `BeginTransactionAsync` on a rollback; the hint is forgotten after a commit that fails during replay. |
+| Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. A commit that fails during replay keeps them, so counters never move back over values that may be on disk. |
+| Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
+
+All of these are memory-only, so restoring or dropping them takes no lock
+beyond the leaf `insertPageHintLock`; the generation counters use `Interlocked`.
+
+A writer opened by path holds the file with `FileShare.Read`, so no other
+process can open it for writing while the writer is open. A writer opened on a
+caller-supplied stream leaves that to the caller: if another process writes the
+file underneath it, the writer keeps using the tables, counters and
+relationships it already read and does not see the change. Every
+`MSysRelationships` write in this library must go through
+`RelationshipCatalogStore`, which drops the relationship cache; a new path that
+writes those rows some other way must call `RelationshipCatalogStore.Invalidate`.
+
 ## Rules for new code
 
 1. Acquire primitives in the documented order. If you need two, the one higher

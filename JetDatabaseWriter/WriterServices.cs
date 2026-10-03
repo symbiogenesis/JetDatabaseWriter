@@ -89,7 +89,7 @@ internal sealed class WriterServices
         this.CatalogArtifacts = new CatalogArtifactWriter(db, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
         this.ComplexColumns = new ComplexColumnManager(db, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
 
-        var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots);
+        var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
         this.Relationships = new RelationshipManager(db, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
