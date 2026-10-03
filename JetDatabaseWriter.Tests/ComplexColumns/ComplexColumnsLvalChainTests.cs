@@ -23,8 +23,8 @@ public sealed class ComplexColumnsLvalChainTests
     {
         // 1 KB binary payload — well above the 256-byte inline-OLE cap, but
         // small enough that the wrapper header + payload fit in a single LVAL
-        // row (bitmask 0x40). Use a .jpg extension so AttachmentWrapper.Encode
-        // skips deflate (typeFlag = 0x00) and the bytes round-trip verbatim.
+        // row (bitmask 0x40). Use a .jpg extension, which Access stores raw, so
+        // AttachmentWrapper.Encode skips deflate (typeFlag = 0x00).
         byte[] payload = BuildDeterministicPayload(1024);
 
         await RoundTripAttachmentAsync("photo.jpg", payload);
@@ -43,8 +43,8 @@ public sealed class ComplexColumnsLvalChainTests
     [Fact]
     public async Task AddAttachmentAsync_LargeDeflatedTextPayload_RoundTrips()
     {
-        // 2 KB highly-compressible text payload — covers the deflate path
-        // (typeFlag = 0x01) over LVAL pages.
+        // 2 KB highly-compressible text payload — covers the zlib path
+        // (typeFlag = 0x01); it compresses to well under the inline cap.
         byte[] bytes = new byte[2048];
         for (int i = 0; i < bytes.Length; i++)
         {

@@ -5,7 +5,9 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -239,6 +241,51 @@ internal static class ComplexColumnTestSupport
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Builds the attachment content stream Access writes (and Jackcess
+    /// <c>encodeData</c>): <c>headerLen</c>, the flag 1, the extension length in
+    /// characters including its NUL, the UTF-16LE extension and NUL, then the file.
+    /// </summary>
+    /// <param name="extension">The extension, as stored.</param>
+    /// <param name="payload">The file bytes.</param>
+    public static byte[] AccessContent(string extension, byte[] payload)
+    {
+        byte[] ext = Encoding.Unicode.GetBytes(extension + "\0");
+        byte[] content = new byte[12 + ext.Length + payload.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(content, 12 + ext.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(8), extension.Length + 1);
+        ext.CopyTo(content, 12);
+        payload.CopyTo(content, 12 + ext.Length);
+        return content;
+    }
+
+    /// <summary>Computes the zlib Adler-32 checksum of <paramref name="data"/> (RFC 1950).</summary>
+    /// <param name="data">The data.</param>
+    public static uint Adler32(byte[] data)
+    {
+        long a = 1;
+        long b = 0;
+        foreach (byte value in data)
+        {
+            a = (a + value) % 65521;
+            b = (b + a) % 65521;
+        }
+
+        return (uint)((b << 16) | a);
+    }
+
+    /// <summary>Inflates a zlib stream (header, deflate blocks and Adler-32 trailer).</summary>
+    /// <param name="zlib">The zlib stream bytes.</param>
+    public static byte[] InflateZlib(byte[] zlib)
+    {
+        using var input = new MemoryStream(zlib);
+        using var inflater = new ZLibStream(input, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        inflater.CopyTo(output);
+        return output.ToArray();
     }
 
     /// <summary>Reads a little-endian int32 from a TDEF page copy.</summary>
