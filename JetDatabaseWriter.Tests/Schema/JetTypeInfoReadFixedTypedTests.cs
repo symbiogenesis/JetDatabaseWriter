@@ -7,18 +7,17 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>: the typed
-/// fixed-width decode that powers the typed-row read path. Each test verifies
-/// parity with the legacy <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/> +
-/// <see cref="TypedValueParser.ParseValue"/> round-trip the typed reader is
-/// replacing — except where the round-trip is documented as lossy (sub-second
-/// DateTime precision), in which case the typed path is asserted to keep
-/// the un-truncated value while the round-trip drops it.
+/// fixed-width decode that powers the typed-row read path. Each test checks parity with
+/// the string path: <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>
+/// followed by an invariant-culture parse into the column's CLR type (<c>ParseInvariant</c>),
+/// except where that round-trip is documented as lossy (sub-second DateTime precision), in
+/// which case the typed path is asserted to keep the un-truncated value while the
+/// round-trip drops it.
 /// </summary>
 public sealed class JetTypeInfoReadFixedTypedTests
 {
@@ -59,7 +58,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(1)]
     [InlineData(127)]
     [InlineData(255)]
-    public void Byte_RoundTripsThroughParseValue(byte value)
+    public void Byte_MatchesStringRoundTrip(byte value)
     {
         byte[] row = [value];
         AssertParity(row, start: 0, ByteType, size: 1, expected: value);
@@ -69,7 +68,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData((short)0)]
     [InlineData((short)1)]
     [InlineData(short.MaxValue)]
-    public void Int_NonNegative_RoundTripsThroughParseValue(short value)
+    public void Int_NonNegative_MatchesStringRoundTrip(short value)
     {
         byte[] row = new byte[2];
         BinaryPrimitives.WriteInt16LittleEndian(row, value);
@@ -85,7 +84,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Theory]
     [InlineData((short)-1)]
     [InlineData(short.MinValue)]
-    public void Int_Negative_RoundTripsThroughParseValue(short value)
+    public void Int_Negative_MatchesStringRoundTrip(short value)
     {
         byte[] row = new byte[2];
         BinaryPrimitives.WriteInt16LittleEndian(row, value);
@@ -99,7 +98,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(-1)]
     [InlineData(int.MinValue)]
     [InlineData(int.MaxValue)]
-    public void Long_RoundTripsThroughParseValue(int value)
+    public void Long_MatchesStringRoundTrip(int value)
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(row, value);
@@ -112,7 +111,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(-1L)]
     [InlineData(long.MinValue)]
     [InlineData(long.MaxValue)]
-    public void BigInt_RoundTripsThroughParseValue(long value)
+    public void BigInt_MatchesStringRoundTrip(long value)
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(row, value);
@@ -124,7 +123,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(1f)]
     [InlineData(-1.5f)]
     [InlineData(3.14159f)]
-    public void Float_RoundTripsThroughParseValue(float value)
+    public void Float_MatchesStringRoundTrip(float value)
     {
         byte[] row = new byte[4];
         BinaryPrimitives.WriteSingleLittleEndian(row, value);
@@ -136,7 +135,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(1d)]
     [InlineData(-1.5d)]
     [InlineData(3.141592653589793d)]
-    public void Double_RoundTripsThroughParseValue(double value)
+    public void Double_MatchesStringRoundTrip(double value)
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(row, value);
@@ -155,7 +154,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData("1970-01-01 00:00:00")]
     [InlineData("2026-05-02 12:34:56")]
     [InlineData("9999-12-31 23:59:59")] // upper edge that round-trips losslessly
-    public void DateTime_SecondPrecision_RoundTripsThroughParseValue(string isoText)
+    public void DateTime_SecondPrecision_MatchesStringRoundTrip(string isoText)
     {
         var dt = DateTime.ParseExact(isoText, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         byte[] row = new byte[8];
@@ -184,7 +183,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         Assert.NotEqual(0, typedDt.Millisecond);
 
         string formatted = JetTypeInfo.ReadFixedString(row, start: 0, DateTimeType, size: 8);
-        var roundTripped = (DateTime)TypedValueParser.ParseValue(formatted, typeof(DateTime));
+        var roundTripped = (DateTime)ParseInvariant(formatted, typeof(DateTime));
         Assert.Equal(0, roundTripped.Millisecond);
     }
 
@@ -193,7 +192,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// directly to .NET DateTime ticks.
     /// </summary>
     [Fact]
-    public void DateTimeExtended_TickPrecision_RoundTripsThroughParseValue()
+    public void DateTimeExtended_TickPrecision_MatchesStringRoundTrip()
     {
         DateTime expected = new DateTime(2021, 6, 14, 22, 45, 12, 345, DateTimeKind.Unspecified).AddTicks(6789);
         byte[] row = new byte[42];
@@ -221,7 +220,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(long.MaxValue, "922337203685477.5807")]
     [InlineData(long.MinValue + 1, "-922337203685477.5807")]
     [InlineData(long.MinValue, "-922337203685477.5808")]
-    public void Money_Scale4_RoundTripsThroughParseValue(long oaCurrency, string expectedDecimal)
+    public void Money_Scale4_MatchesStringRoundTrip(long oaCurrency, string expectedDecimal)
     {
         byte[] row = new byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(row, oaCurrency);
@@ -231,7 +230,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     [Fact]
-    public void Guid_RoundTripsThroughParseValue()
+    public void Guid_MatchesStringRoundTrip()
     {
         var expected = Guid.Parse("12345678-9abc-def0-1234-56789abcdef0");
         byte[] row = expected.ToByteArray();
@@ -254,7 +253,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(12345u, 0u, 0u, false, (byte)0, "12345")]
     [InlineData(12345u, 0u, 0u, true, (byte)0, "-12345")]
     [InlineData(12345u, 0u, 0u, false, (byte)4, "1.2345")]
-    public void Numeric_InRange_RoundTripsThroughParseValue(uint lo, uint mid, uint hi, bool negative, byte scale, string expectedDecimal)
+    public void Numeric_InRange_MatchesStringRoundTrip(uint lo, uint mid, uint hi, bool negative, byte scale, string expectedDecimal)
     {
         byte[] row = BuildNumericRow(lo, mid, hi, negative);
         decimal expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
@@ -268,7 +267,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
     /// raw 96-bit bit pattern through both the typed and string decode paths.
     /// </summary>
     [Fact]
-    public void Numeric_DecimalMaxValue_RoundTripsThroughParseValue()
+    public void Numeric_DecimalMaxValue_MatchesStringRoundTrip()
     {
         byte[] row = BuildNumericRow(lo: 0xFFFFFFFFu, mid: 0xFFFFFFFFu, hi: 0xFFFFFFFFu, negative: false);
 
@@ -386,8 +385,60 @@ public sealed class JetTypeInfoReadFixedTypedTests
         Assert.Equal(expected, typed);
 
         string formatted = JetTypeInfo.ReadFixedString(row, start: 0, column, size: 17, strictNumeric);
-        object viaRoundTrip = TypedValueParser.ParseValue(formatted, typeof(decimal));
+        object viaRoundTrip = ParseInvariant(formatted, typeof(decimal));
         Assert.Equal(expected, viaRoundTrip);
+    }
+
+    /// <summary>
+    /// Parses text from <see cref="JetTypeInfo.ReadFixedString(ReadOnlySpan{byte}, int, ColumnType, int, bool)"/>
+    /// into <paramref name="targetType"/> with the invariant culture, and throws when it does not parse.
+    /// </summary>
+    /// <param name="value">The formatted value.</param>
+    /// <param name="targetType">A CLR type <see cref="JetTypeInfo.GetClrType(ColumnType)"/> returns.</param>
+    /// <returns>The parsed, boxed value; the text itself for any other type.</returns>
+    private static object ParseInvariant(string value, Type targetType)
+    {
+        if (targetType == typeof(byte))
+        {
+            return byte.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(short))
+        {
+            return short.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(int))
+        {
+            return int.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(long))
+        {
+            return long.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(float))
+        {
+            return float.Parse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(double))
+        {
+            return double.Parse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(decimal))
+        {
+            return decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
+        }
+
+        if (targetType == typeof(DateTime))
+        {
+            return DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.None);
+        }
+
+        return targetType == typeof(Guid) ? Guid.Parse(value, CultureInfo.InvariantCulture) : value;
     }
 
     private static void AssertParity(byte[] row, int start, ColumnType type, int size, object expected, bool strictNumeric = false)
@@ -400,7 +451,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         // (unless documented otherwise — see DateTime sub-second test).
         string formatted = JetTypeInfo.ReadFixedString(row, start, type, size, strictNumeric);
         Type targetType = JetTypeInfo.GetClrType(type) ?? typeof(string);
-        object viaRoundTrip = TypedValueParser.ParseValue(formatted, targetType);
+        object viaRoundTrip = ParseInvariant(formatted, targetType);
         Assert.Equal(expected, viaRoundTrip);
     }
 }

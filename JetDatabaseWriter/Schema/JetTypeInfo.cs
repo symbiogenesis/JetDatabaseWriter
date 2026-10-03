@@ -500,8 +500,7 @@ internal static class JetTypeInfo
 
     /// <summary>
     /// Decodes a fixed-width JET column value directly to its boxed CLR primitive,
-    /// bypassing the lossy <c>ReadFixedString</c> +
-    /// <c>TypedValueParser.ParseValue</c> round-trip used by the diagnostics path.
+    /// bypassing the lossy <c>ReadFixedString</c> string round-trip.
     /// The typed-reader hot path uses this to avoid per-column culture-invariant
     /// string formatting and re-parsing.
     /// <para>

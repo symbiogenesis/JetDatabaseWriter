@@ -93,8 +93,8 @@ internal sealed class TableReader(
     /// <see cref="Hyperlink"/> instances, mirroring the projection
     /// <see cref="ResolveClrType"/> exposes via the public API.
     /// Non-string slots (e.g. <see cref="DBNull.Value"/>) are left untouched;
-    /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
-    /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
+    /// strings that <see cref="Hyperlink.Parse"/> rejects collapse to
+    /// <see cref="DBNull.Value"/>.
     /// </summary>
     /// <param name="typedRow">The decoded row.</param>
     /// <param name="clrTypes">The table's per-column CLR types.</param>

@@ -125,7 +125,6 @@ JetDatabaseWriter/
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
 │   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection, via EntityMap)
 │   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
-│   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
 │   ├── OleObjectDecoder.cs                (unwraps OLE envelopes, detects file signatures and data-URI formatting)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues, through the reader's page cache)
@@ -350,7 +349,7 @@ JetDatabaseWriter/
     ├── LruCache.cs                        (256-page least-recently-used eviction cache)
     ├── ByteArrayEqualityComparer.cs       (byte[] equality for dictionary keys)
     ├── BinaryBuffer.cs                    (byte-slice copy helpers)
-    ├── BinaryStringParser.cs              (hex/base64 parsing helpers)
+    ├── BinaryStringParser.cs              (base64 and data-URI decoding helpers)
     ├── BoxCache.cs                        (interned boxes for low-cardinality fixed-width cell values)
     ├── FileStreamFactory.cs               (central FileStream construction helpers)
     ├── StreamReadExtensions.cs            (cross-target stream read helpers)
@@ -589,7 +588,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | Principle | How applied |
 |-----------|-------------|
 | **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
-| **Open/Closed (OCP)** | Adding a new column type means extending `TypedValueParser`, `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
+| **Open/Closed (OCP)** | Adding a new column type means extending `JetTypeInfo` (`GetClrType`, `ReadFixedTyped`), `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
 | **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
 | **Dependency Inversion (DIP)** | Reader and writer collaborators receive their dependencies through constructors from `ReaderServices` / `WriterServices`; they depend on the `DatabaseFile` page I/O and format context, not on the facade that owns them |
 
@@ -672,7 +671,7 @@ The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes
 
 ### 6. Catalog row parsing stays with catalog ownership
 
-`CatalogValueReader` lives in `Catalog/` because it handles tolerant scalar reads from system-table rows (`MSysObjects`, `MSysRelationships`, `MSysComplexColumns`, etc.): safe `string[]` cell access, missing-column defaults, and invariant integer parsing of catalog metadata. It is not a general user-value parser. User table column values continue to flow through `ValueDecoding/TypedValueParser`, and write-path values through `ValueEncoding/`.
+`CatalogValueReader` lives in `Catalog/` because it handles tolerant scalar reads from system-table rows (`MSysObjects`, `MSysRelationships`, `MSysComplexColumns`, etc.): safe `string[]` cell access, missing-column defaults, and invariant integer parsing of catalog metadata. It is not a general user-value parser. User table column values flow through `ValueDecoding/` (`RowDecoder` and `RowDecodePlan`), and write-path values through `ValueEncoding/`.
 
 ### 7. Facade-owned services stay in their domain
 

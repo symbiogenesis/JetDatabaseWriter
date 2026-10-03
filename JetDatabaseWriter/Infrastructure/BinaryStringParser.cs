@@ -16,9 +16,6 @@ internal static class BinaryStringParser
         return TryDecodeBase64(payload, out bytes);
     }
 
-    public static bool TryGetBase64DataUriPayload(ReadOnlySpan<char> value, out ReadOnlySpan<char> payload) =>
-        TryGetBase64DataUriPayload(value, requiredMediaType: null, out payload);
-
     public static bool TryGetBase64DataUriPayload(
         ReadOnlySpan<char> value,
         string? requiredMediaType,
@@ -79,112 +76,6 @@ internal static class BinaryStringParser
 
         bytes = buffer;
         return true;
-    }
-
-    public static bool TryParseHexString(ReadOnlySpan<char> value, out byte[] bytes)
-    {
-        bytes = [];
-
-        if (value.IsEmpty)
-        {
-            return true;
-        }
-
-        if (value.IndexOf('-') >= 0)
-        {
-            return TryParseDashSeparatedHex(value, out bytes);
-        }
-
-        if ((value.Length & 1) != 0)
-        {
-            return false;
-        }
-
-#if NET5_0_OR_GREATER
-        try
-        {
-            bytes = Convert.FromHexString(value);
-            return true;
-        }
-        catch (FormatException)
-        {
-            bytes = [];
-            return false;
-        }
-#else
-        return TryParseHexPairs(value, value.Length / 2, separator: '\0', out bytes);
-#endif
-    }
-
-    private static bool TryParseDashSeparatedHex(ReadOnlySpan<char> value, out byte[] bytes)
-    {
-        bytes = [];
-
-        if (value.IsEmpty)
-        {
-            return true;
-        }
-
-        if (value.Length % 3 != 2)
-        {
-            return false;
-        }
-
-        return TryParseHexPairs(value, (value.Length + 1) / 3, separator: '-', out bytes);
-    }
-
-    private static bool TryParseHexPairs(ReadOnlySpan<char> value, int byteCount, char separator, out byte[] bytes)
-    {
-        bytes = [];
-
-        byte[] buffer = new byte[byteCount];
-        int sourceIndex = 0;
-        for (int i = 0; i < buffer.Length; i++)
-        {
-            int high = HexToNibble(value[sourceIndex]);
-            int low = HexToNibble(value[sourceIndex + 1]);
-            if (high < 0 || low < 0)
-            {
-                return false;
-            }
-
-            buffer[i] = (byte)((high << 4) | low);
-            sourceIndex += 2;
-            if (separator == '\0' || sourceIndex == value.Length)
-            {
-                continue;
-            }
-
-            if (value[sourceIndex] != '-')
-            {
-                return false;
-            }
-
-            sourceIndex++;
-        }
-
-        bytes = buffer;
-        return true;
-    }
-
-    private static int HexToNibble(char value)
-    {
-        if (value is >= '0' and <= '9')
-        {
-            return value - '0';
-        }
-
-        if (value is >= 'A' and <= 'F')
-        {
-            return value - 'A' + 10;
-        }
-
-        if (value is >= 'a' and <= 'f')
-        {
-            return value - 'a' + 10;
-        }
-
-        return -1;
     }
 
     private static bool TryGetBase64DecodedLength(ReadOnlySpan<char> value, out int decodedLength)
