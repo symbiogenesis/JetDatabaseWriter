@@ -46,12 +46,24 @@ internal static class AgileEncryptionFixtureBuilder
     /// for self-testing the key-derivation primitive without rebuilding
     /// the full CFB.
     /// </summary>
-    public static Parameters DeterministicParameters() => new()
+    public static Parameters DeterministicParameters() =>
+        DeterministicParameters(Constants.AgileEncryption.SpinCount, Constants.AgileEncryption.KeyBytes * 8);
+
+    /// <summary>
+    /// Returns deterministic <see cref="Parameters"/> with the given PBKDF
+    /// iteration count and key size, which the descriptor then declares
+    /// for both the key data and the password key encryptor.
+    /// </summary>
+    /// <param name="spinCount">The PBKDF iteration count.</param>
+    /// <param name="keyBits">The AES key size in bits: 128, 192 or 256.</param>
+    public static Parameters DeterministicParameters(int spinCount, int keyBits) => new()
     {
         KeyDataSalt = Repeated(0x11, Constants.AgileEncryption.SaltSize),
         PasswordSalt = Repeated(0x22, Constants.AgileEncryption.SaltSize),
         VerifierHashInput = Repeated(0x33, Constants.AgileEncryption.SaltSize),
-        IntermediateKey = Repeated(0x44, Constants.AgileEncryption.KeyBytes),
+        IntermediateKey = Repeated(0x44, keyBits / 8),
+        SpinCount = spinCount,
+        KeyBits = keyBits,
     };
 
     /// <summary>
@@ -63,7 +75,7 @@ internal static class AgileEncryptionFixtureBuilder
     public static byte[] DecryptVerifierHashInput(Parameters p, string password)
     {
         byte[] encrypted = EncryptVerifierHashInput(p, password);
-        byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashInput);
+        byte[] derived = DeriveKey(p, password, BlockKeyVerifierHashInput);
         byte[] decrypted = AesCbc(encrypted, derived, p.PasswordSalt, encrypt: false);
         return Truncate(decrypted, Constants.AgileEncryption.SaltSize);
     }
@@ -77,7 +89,7 @@ internal static class AgileEncryptionFixtureBuilder
     public static byte[] DecryptVerifierHashValue(Parameters p, string password)
     {
         byte[] encrypted = EncryptVerifierHashValue(p, password);
-        byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashValue);
+        byte[] derived = DeriveKey(p, password, BlockKeyVerifierHashValue);
         byte[] decrypted = AesCbc(encrypted, derived, p.PasswordSalt, encrypt: false);
         return Truncate(decrypted, Constants.AgileEncryption.HashBytes);
     }
@@ -97,10 +109,25 @@ internal static class AgileEncryptionFixtureBuilder
             IntermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes),
         };
 
+        (byte[] encryptionInfo, byte[] encryptedPackage) = BuildStreams(p, innerAccdb, password);
+        return BuildCompoundFile(encryptionInfo, encryptedPackage);
+    }
+
+    /// <summary>
+    /// Builds the <c>EncryptionInfo</c> and <c>EncryptedPackage</c> streams
+    /// of an Agile package wrapping <paramref name="innerAccdb"/>, with the
+    /// key material, iteration count and key size of <paramref name="p"/>.
+    /// Each password key is derived with its own PBKDF chain, as ECMA-376
+    /// §2.3.4.11 states it.
+    /// </summary>
+    /// <param name="p">The key material and descriptor parameters.</param>
+    /// <param name="innerAccdb">The bytes to encrypt.</param>
+    /// <param name="password">The password.</param>
+    public static (byte[] EncryptionInfo, byte[] EncryptedPackage) BuildStreams(Parameters p, byte[] innerAccdb, string password)
+    {
         byte[] encryptedPackage = BuildEncryptedPackage(p, innerAccdb);
         byte[] encryptionInfo = BuildEncryptionInfo(p, password, encryptedPackage);
-
-        return BuildCompoundFile(encryptionInfo, encryptedPackage);
+        return (encryptionInfo, encryptedPackage);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -157,14 +184,14 @@ internal static class AgileEncryptionFixtureBuilder
             "<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" " +
             "xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\" " +
             "xmlns:c=\"http://schemas.microsoft.com/office/2006/keyEncryptor/certificate\">" +
-            $"<keyData saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" " +
+            $"<keyData saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" keyBits=\"{p.KeyBits}\" " +
             $"hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" " +
             $"hashAlgorithm=\"SHA512\" saltValue=\"{keyDataSalt}\"/>" +
             $"<dataIntegrity encryptedHmacKey=\"{hmacKey}\" encryptedHmacValue=\"{hmacVal}\"/>" +
             "<keyEncryptors>" +
             "<keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\">" +
-            $"<p:encryptedKey spinCount=\"{Constants.AgileEncryption.SpinCount}\" saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" " +
-            $"keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" " +
+            $"<p:encryptedKey spinCount=\"{p.SpinCount}\" saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" " +
+            $"keyBits=\"{p.KeyBits}\" hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" " +
             "cipherChaining=\"ChainingModeCBC\" hashAlgorithm=\"SHA512\" " +
             $"saltValue=\"{passwordSalt}\" encryptedVerifierHashInput=\"{verifierIn}\" " +
             $"encryptedVerifierHashValue=\"{verifierVal}\" encryptedKeyValue=\"{keyVal}\"/>" +
@@ -259,14 +286,14 @@ internal static class AgileEncryptionFixtureBuilder
 
     private static byte[] EncryptVerifierHashInput(Parameters p, string password)
     {
-        byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashInput);
+        byte[] derived = DeriveKey(p, password, BlockKeyVerifierHashInput);
         byte[] padded = PadToBlock(p.VerifierHashInput);
         return AesCbc(padded, derived, p.PasswordSalt, encrypt: true);
     }
 
     private static byte[] EncryptVerifierHashValue(Parameters p, string password)
     {
-        byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashValue);
+        byte[] derived = DeriveKey(p, password, BlockKeyVerifierHashValue);
         byte[] hash = SHA512.HashData(p.VerifierHashInput);
         byte[] padded = PadToBlock(hash);
         return AesCbc(padded, derived, p.PasswordSalt, encrypt: true);
@@ -274,7 +301,7 @@ internal static class AgileEncryptionFixtureBuilder
 
     private static byte[] EncryptIntermediateKey(Parameters p, string password)
     {
-        byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyEncryptedKeyValue);
+        byte[] derived = DeriveKey(p, password, BlockKeyEncryptedKeyValue);
         byte[] padded = PadToBlock(p.IntermediateKey);
         return AesCbc(padded, derived, p.PasswordSalt, encrypt: true);
     }
@@ -307,13 +334,16 @@ internal static class AgileEncryptionFixtureBuilder
     /// <summary>
     /// Agile PBKDF (ECMA-376 §2.3.4.11): H0 = H(salt || pwdUTF16LE);
     /// Hi+1 = H(uint32_le(i) || Hi); Hfinal = H(HspinCount || blockKey);
-    /// truncate or pad-with-0x36 to keyBits/8.
+    /// truncate or pad-with-0x36 to keyBits/8. One whole chain per key, as
+    /// the spec states it, independent of the library's shared chain.
     /// </summary>
+    /// <param name="p">The parameters: the password salt, <see cref="Parameters.SpinCount"/> and <see cref="Parameters.KeyBits"/>.</param>
     /// <param name="password">The password.</param>
-    /// <param name="salt">The salt bytes.</param>
     /// <param name="blockKey">The block key.</param>
-    private static byte[] DeriveKey(string password, byte[] salt, byte[] blockKey)
+    private static byte[] DeriveKey(Parameters p, string password, byte[] blockKey)
     {
+        byte[] salt = p.PasswordSalt;
+
         // Initial hash: H(salt || pwdUTF16LE). Password is short in tests, so
         // a stack buffer (capped) is safe; fall back to heap for paranoia.
         int pwdByteCount = Encoding.Unicode.GetByteCount(password);
@@ -328,7 +358,7 @@ internal static class AgileEncryptionFixtureBuilder
         // Iteration: H_{i+1} = H(uint32_le(i) || H_i). Fixed-size buffer, no allocations in loop.
         Span<byte> iter = stackalloc byte[4 + Constants.AgileEncryption.HashBytes];
         h.CopyTo(iter[4..]);
-        for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
+        for (int i = 0; i < p.SpinCount; i++)
         {
             BitConverter.TryWriteBytes(iter[..4], i);
             SHA512.HashData(iter, h);
@@ -344,10 +374,10 @@ internal static class AgileEncryptionFixtureBuilder
         Span<byte> hf = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(finalBuf, hf);
 
-        byte[] result = new byte[Constants.AgileEncryption.KeyBytes];
-        if (hf.Length >= Constants.AgileEncryption.KeyBytes)
+        byte[] result = new byte[p.KeyBits / 8];
+        if (hf.Length >= result.Length)
         {
-            hf[..Constants.AgileEncryption.KeyBytes].CopyTo(result);
+            hf[..result.Length].CopyTo(result);
         }
         else
         {
@@ -626,5 +656,11 @@ internal static class AgileEncryptionFixtureBuilder
         public byte[] VerifierHashInput { get; init; } = new byte[Constants.AgileEncryption.SaltSize];
 
         public byte[] IntermediateKey { get; init; } = new byte[Constants.AgileEncryption.KeyBytes];
+
+        /// <summary>Gets the PBKDF iteration count the descriptor declares.</summary>
+        public int SpinCount { get; init; } = Constants.AgileEncryption.SpinCount;
+
+        /// <summary>Gets the AES key size in bits the descriptor declares for the key data and the password key encryptor; <see cref="IntermediateKey"/> must be this long.</summary>
+        public int KeyBits { get; init; } = Constants.AgileEncryption.KeyBytes * 8;
     }
 }
