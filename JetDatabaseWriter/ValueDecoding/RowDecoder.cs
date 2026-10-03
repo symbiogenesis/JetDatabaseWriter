@@ -1,14 +1,17 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
@@ -23,6 +26,8 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
 {
     /// <summary>Gets a value indicating whether malformed values throw instead of decoding to a fallback.</summary>
     internal bool StrictParsing => strictParsing;
+
+    private static bool IsRawOleColumn(ColumnInfo column) => column.Type == ColumnType.OleType && !column.IsCalculated;
 
     /// <summary>
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
@@ -46,6 +51,70 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
 
             await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
             {
+                yield return row;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Yields every row of the table at <paramref name="tdefPage"/> as typed
+    /// values, except that OLE columns hold their stored bytes unchanged: no
+    /// OLE-package unwrap and no file-signature slicing. Complex-column flat
+    /// tables use this, because their <c>FileData</c> column holds an
+    /// attachment wrapper that must be decoded byte for byte.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async IAsyncEnumerable<object?[]> EnumerateRawOleTypedRowsForTdefAsync(
+        long tdefPage,
+        TableDef td,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        bool[] wantedColumns = new bool[td.Columns.Count];
+        bool hasRawColumns = false;
+        for (int i = 0; i < wantedColumns.Length; i++)
+        {
+            bool raw = IsRawOleColumn(td.Columns[i]);
+            wantedColumns[i] = !raw;
+            hasRawColumns |= raw;
+        }
+
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing);
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            foreach (RowBound rb in pages.GetLiveRowBounds(pageNumber, page))
+            {
+                if (rb.RowSize < db.RowFields.NumCols)
+                {
+                    continue;
+                }
+
+                object?[]? row = await this.CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (hasRawColumns && decodePlan.TryParseLayoutForDirectDecode(db, page, rb.RowStart, rb.RowSize, out RowLayout layout))
+                {
+                    for (int i = 0; i < row.Length; i++)
+                    {
+                        ColumnInfo column = td.Columns[i];
+                        if (IsRawOleColumn(column))
+                        {
+                            ColumnSlice slice = RowDecodePlan.ResolveColumnSliceForDirectDecode(db, page, rb.RowStart, rb.RowSize, layout, column);
+                            row[i] = slice.Kind == ColumnSliceKind.Var
+                                ? await longValues.ReadLongValueRawBytesAsync(page, rb.RowStart + slice.DataStart, slice.DataLen, cancellationToken).ConfigureAwait(false)
+                                : DBNull.Value;
+                        }
+                    }
+                }
+
                 yield return row;
             }
         }

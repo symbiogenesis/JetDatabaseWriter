@@ -65,10 +65,17 @@ internal static class AttachmentWrapper
     }
 
     /// <summary>
-    /// Reverses <see cref="Encode"/>. Returns the decoded extension and raw payload.
-    /// Returns the input bytes unchanged when the wrapper signature is not
-    /// recognised (legacy / heuristic path).
+    /// Reverses <see cref="Encode"/> and decodes Access-authored wrappers.
+    /// Returns the decoded extension and raw payload, or the input bytes
+    /// unchanged when the wrapper signature is not recognised.
     /// </summary>
+    /// <remarks>
+    /// A compressed body (typeFlag <c>1</c>) is either zlib-wrapped deflate
+    /// (Access and Jackcess; <c>dataLen</c> is then the uncompressed content
+    /// length) or raw deflate (this library's <see cref="Encode"/>;
+    /// <c>dataLen</c> is the compressed length). Both are accepted, and the
+    /// compressed body is taken to run to the end of the value.
+    /// </remarks>
     /// <param name="wrapped">The wrapped.</param>
     /// <param name="fileExtension">The file extension.</param>
     /// <param name="payload">The payload.</param>
@@ -83,49 +90,26 @@ internal static class AttachmentWrapper
 
         uint typeFlag = Ru32(wrapped, 0);
         uint dataLen = Ru32(wrapped, 4);
-        if (typeFlag > 1)
+        if (typeFlag > 1 || dataLen == 0)
         {
             return false;
         }
 
-        if (dataLen == 0 || dataLen > (uint)(wrapped.Length - 8))
+        if (typeFlag == 0)
         {
-            return false;
+            return dataLen <= (uint)(wrapped.Length - 8)
+                && TryParseContent(wrapped.AsSpan(8, (int)dataLen).ToArray(), ref fileExtension, ref payload);
         }
 
-        byte[] content;
-        if (typeFlag == 1)
-        {
-            try
-            {
-                content = RawInflate(wrapped, 8, (int)dataLen);
-            }
-            catch (InvalidDataException)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            content = wrapped.AsSpan(8, (int)dataLen).ToArray();
-        }
-
-        if (content.Length < 12)
-        {
-            return false;
-        }
-
-        uint headerLen = Ru32(content, 0);
-        uint extLen = Ru32(content, 8);
-        if (headerLen < 12 || headerLen > content.Length || 12 + extLen > headerLen)
-        {
-            return false;
-        }
-
-        fileExtension = DecodeExtension(content, 12, (int)extLen);
-        payload = content.AsSpan((int)headerLen).ToArray();
-
-        return true;
+        // A zlib stream starts with CMF = 0x?8 (deflate) and a CMF/FLG pair
+        // divisible by 31. Try that reading first, then raw deflate.
+        int bodyLength = wrapped.Length - 8;
+        bool zlibHeader = (wrapped[8] & 0x0F) == 8 && ((wrapped[8] << 8) | wrapped[9]) % 31 == 0;
+        return (zlibHeader
+                && TryRawInflate(wrapped, 10, bodyLength - 2, out byte[] zlibContent)
+                && TryParseContent(zlibContent, ref fileExtension, ref payload))
+            || (TryRawInflate(wrapped, 8, bodyLength, out byte[] rawContent)
+                && TryParseContent(rawContent, ref fileExtension, ref payload));
     }
 
     /// <summary>
@@ -179,6 +163,39 @@ internal static class AttachmentWrapper
         }
 
         return ms.ToArray();
+    }
+
+    private static bool TryParseContent(byte[] content, ref string fileExtension, ref byte[] payload)
+    {
+        if (content.Length < 12)
+        {
+            return false;
+        }
+
+        uint headerLen = Ru32(content, 0);
+        uint extLen = Ru32(content, 8);
+        if (headerLen < 12 || headerLen > (uint)content.Length || extLen > headerLen - 12)
+        {
+            return false;
+        }
+
+        fileExtension = DecodeExtension(content, 12, (int)extLen);
+        payload = content.AsSpan((int)headerLen).ToArray();
+        return true;
+    }
+
+    private static bool TryRawInflate(byte[] data, int offset, int length, out byte[] content)
+    {
+        try
+        {
+            content = RawInflate(data, offset, length);
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            content = [];
+            return false;
+        }
     }
 
     private static byte[] RawInflate(byte[] data, int offset, int length)

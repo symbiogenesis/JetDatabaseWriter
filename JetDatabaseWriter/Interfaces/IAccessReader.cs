@@ -247,6 +247,10 @@ public interface IAccessReader : IAccessBase
     /// <see href="docs/design/complex-columns-format-notes.md" /> §3 — wrapper stripped
     /// and (when present) deflate decompression applied to <c>FileData</c>.
     /// </summary>
+    /// <remarks>
+    /// Row reads return the same records per parent row: the column's cell holds them as a
+    /// <see cref="ComplexCellValue"/> cell, decoded by <see cref="ComplexCellValue.ReadAttachments(byte[])"/>.
+    /// </remarks>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Attachment column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
@@ -259,6 +263,10 @@ public interface IAccessReader : IAccessBase
     /// <paramref name="tableName"/>, paired with the parent row's per-row
     /// complex reference value so callers can group items by parent.
     /// </summary>
+    /// <remarks>
+    /// Row reads return the same items per parent row: the column's cell holds them as a
+    /// <see cref="ComplexCellValue"/> cell, decoded by <see cref="ComplexCellValue.ReadMultiValueItems(byte[])"/>.
+    /// </remarks>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Multi-Value column name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
