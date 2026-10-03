@@ -11,9 +11,6 @@ using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Scaffold;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Emit;
 using Xunit;
 
 /// <summary>
@@ -85,7 +82,7 @@ public sealed class ScaffoldedEntityColumnMappingTests
 
         string className = NameCleaner.ToClassName(TableName);
         string source = EntityEmitter.Emit(className, TableName, columns, [], "Generated", useRecords: false, nullable: true);
-        Type entityType = Compile(source).GetType("Generated." + className, throwOnError: true)!;
+        Type entityType = ScaffoldCompilation.CompileCleanly(source).GetType("Generated." + className, throwOnError: true)!;
         PropertyInfo personId = entityType.GetProperty("PersonID")!;
         PropertyInfo lastName = entityType.GetProperty("LastName")!;
 
@@ -124,25 +121,4 @@ public sealed class ScaffoldedEntityColumnMappingTests
         new() { Name = "Last Name", ClrType = typeof(string), IsNullable = true, TypeName = "Text", Size = ColumnSize.FromBytes(50) },
         new() { Name = "Note", ClrType = typeof(string), IsNullable = true, TypeName = "Text", Size = ColumnSize.FromBytes(50) },
     ];
-
-    private static Assembly Compile(string source)
-    {
-        string trustedAssemblies = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
-        IEnumerable<MetadataReference> references = trustedAssemblies
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Append(typeof(AccessReader).Assembly.Location)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
-
-        var compilation = CSharpCompilation.Create(
-            "ScaffoldedEntities_" + Guid.NewGuid().ToString("N"),
-            [CSharpSyntaxTree.ParseText(source)],
-            references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-        using var image = new MemoryStream();
-        EmitResult result = compilation.Emit(image);
-        Assert.True(result.Success, string.Join(Environment.NewLine, result.Diagnostics) + Environment.NewLine + source);
-        return Assembly.Load(image.ToArray());
-    }
 }

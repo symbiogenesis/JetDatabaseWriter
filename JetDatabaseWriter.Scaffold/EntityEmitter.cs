@@ -4,6 +4,8 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
+using System.Xml;
 using JetDatabaseWriter.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -15,6 +17,26 @@ using static Microsoft.CodeAnalysis.CSharp.SyntaxFactory;
 /// </summary>
 internal static class EntityEmitter
 {
+    /// <summary>
+    /// Member names a generated property or navigation cannot take: the members every
+    /// class inherits from <see cref="object"/>, which a property would hide (CS0108),
+    /// and the members the compiler synthesizes for a record, which a property would
+    /// clash with. They are reserved in both modes, so switching to records never
+    /// renames a property.
+    /// </summary>
+    internal static readonly FrozenSet<string> ReservedMemberNames = new[]
+    {
+        "Clone",
+        "EqualityContract",
+        "Equals",
+        "GetHashCode",
+        "GetType",
+        "MemberwiseClone",
+        "PrintMembers",
+        "ReferenceEquals",
+        "ToString",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
     private static readonly FrozenDictionary<Type, string> FriendlyTypeNames = new Dictionary<Type, string>
     {
         [typeof(bool)] = "bool",
@@ -67,7 +89,11 @@ internal static class EntityEmitter
     /// a <c>[Column("...")]</c> attribute on every property whose name differs from its column
     /// (for example <c>LastName</c> for a <c>Last Name</c> column), so the reader and writer
     /// bind the generated type to the original names. Names that differ only in case need no
-    /// attribute, because the library matches names case-insensitively.
+    /// attribute, because the library matches names case-insensitively. A property or
+    /// navigation named like the class or a <see cref="ReservedMemberNames">reserved member</see>
+    /// gets a <c>Value</c> or <c>Navigation</c> suffix, and a numeric suffix when that name is
+    /// taken too. The using directives precede the namespace declaration, so a namespace segment
+    /// such as <c>System</c> cannot capture them.
     /// </summary>
     /// <param name="className">The generated class name.</param>
     /// <param name="tableName">The Access table name the class maps.</param>
@@ -103,17 +129,11 @@ internal static class EntityEmitter
             anyMappingAttribute = true;
         }
 
-        var usedNames = new HashSet<string>(StringComparer.Ordinal);
+        var usedNames = new HashSet<string>(ReservedMemberNames, StringComparer.Ordinal) { className };
 
         foreach (ColumnMetadata col in columns)
         {
-            string propName = DeduplicateName(NameCleaner.ToPropertyName(col.Name), usedNames);
-
-            if (propName == className)
-            {
-                propName += "Value";
-                usedNames.Add(propName);
-            }
+            string propName = DeduplicateName(MemberName(NameCleaner.ToPropertyName(col.Name), className, "Value"), usedNames);
 
             PropertyDeclarationSyntax property = BuildProperty(propName, col, nullable);
             if (!NamesMatch(propName, col.Name))
@@ -123,18 +143,14 @@ internal static class EntityEmitter
             }
 
             typeDecl = typeDecl.AddMembers(property.WithLeadingTrivia(
-                Trivia(XmlDocSummary($"Column: {col}.")),
+                Trivia(XmlDocSummary(DocCommentText($"Column: {col}."))),
                 ElasticLineFeed));
         }
 
         bool anyCollection = false;
         foreach (ScaffoldNavigation nav in navigations)
         {
-            string navName = DeduplicateName(nav.PreferredName, usedNames);
-            if (navName == className)
-            {
-                navName = DeduplicateName(navName + "Navigation", usedNames);
-            }
+            string navName = DeduplicateName(MemberName(nav.PreferredName, className, "Navigation"), usedNames);
 
             typeDecl = typeDecl.AddMembers(nav.IsCollection
                 ? BuildCollectionNav(navName, nav.TargetClassName)
@@ -142,32 +158,66 @@ internal static class EntityEmitter
             anyCollection = anyCollection || nav.IsCollection;
         }
 
-        FileScopedNamespaceDeclarationSyntax nsDecl = FileScopedNamespaceDeclaration(ParseName(ns))
-            .AddUsings(UsingDirective(ParseName("System")));
-
+        List<UsingDirectiveSyntax> usings = [UsingDirective(ParseName("System"))];
         if (anyCollection)
         {
-            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.Collections.Generic")));
+            usings.Add(UsingDirective(ParseName("System.Collections.Generic")));
         }
 
         if (anyMappingAttribute)
         {
-            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.ComponentModel.DataAnnotations.Schema")));
+            usings.Add(UsingDirective(ParseName("System.ComponentModel.DataAnnotations.Schema")));
         }
 
         foreach (string extraNamespace in CollectColumnNamespaces(columns))
         {
-            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName(extraNamespace)));
+            usings.Add(UsingDirective(ParseName(extraNamespace)));
         }
 
-        nsDecl = nsDecl.AddMembers(typeDecl);
-
         CompilationUnitSyntax compilationUnit = CompilationUnit()
-            .AddMembers(nsDecl)
+            .AddUsings([.. usings])
+            .AddMembers(FileScopedNamespaceDeclaration(ParseName(ns)).AddMembers(typeDecl))
             .WithLeadingTrivia(nullable ? FileTriviaWithNullable : FileTriviaPlain);
 
         return FormatOutput(compilationUnit.NormalizeWhitespace().ToFullString());
     }
+
+    /// <summary>
+    /// Returns the C# type names the properties for <paramref name="columns"/> spell out
+    /// (such as <c>DateTime</c>, <c>Guid</c> or <c>Hyperlink</c>), leaving out keywords such
+    /// as <c>int</c>. A generated class with one of these names would capture the
+    /// property types of every entity in its namespace, so the class allocation reserves them.
+    /// </summary>
+    /// <param name="columns">The columns of the scaffolded tables.</param>
+    /// <returns>The referenced type names.</returns>
+    internal static IEnumerable<string> ReferencedTypeNames(IEnumerable<ColumnMetadata> columns)
+    {
+        foreach (ColumnMetadata col in columns)
+        {
+            Type type = Nullable.GetUnderlyingType(col.ClrType) ?? col.ClrType;
+            if (type.IsArray)
+            {
+                type = type.GetElementType() ?? type;
+            }
+
+            string name = GetFriendlyTypeName(type);
+            if (SyntaxFacts.GetKeywordKind(name) == SyntaxKind.None)
+            {
+                yield return name;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Appends <paramref name="suffix"/> to a property or navigation name that would equal the
+    /// class name (CS0542) or a <see cref="ReservedMemberNames">reserved member</see>.
+    /// </summary>
+    /// <param name="name">The preferred name.</param>
+    /// <param name="className">The generated class name.</param>
+    /// <param name="suffix"><c>Value</c> for a column property, <c>Navigation</c> for a navigation.</param>
+    /// <returns>The name to de-duplicate.</returns>
+    private static string MemberName(string name, string className, string suffix) =>
+        name == className || ReservedMemberNames.Contains(name) ? name + suffix : name;
 
     private static string DeduplicateName(string name, HashSet<string> usedNames)
     {
@@ -269,23 +319,59 @@ internal static class EntityEmitter
                 Trivia(XmlDocSummary($"Navigation: related {targetType} children.")),
                 ElasticLineFeed);
 
+    /// <summary>
+    /// Lays the normalized source out as the header comment and <c>#nullable</c> line, the
+    /// using directives, the file-scoped namespace declaration and the type, each group
+    /// separated by one blank line, with one blank line between members and a single final
+    /// line break.
+    /// </summary>
+    /// <param name="source">The normalized source.</param>
+    /// <returns>The laid-out source.</returns>
     private static string FormatOutput(string source)
     {
         const string eol = "\r\n";
 
         source = source
-            .Replace(eol + "namespace ", eol + eol + "namespace ", StringComparison.Ordinal)
             .Replace(eol + "    /// <summary>", eol + eol + "    /// <summary>", StringComparison.Ordinal)
             .Replace("{" + eol + eol + "    /// <summary>", "{" + eol + "    /// <summary>", StringComparison.Ordinal)
             .Replace(eol + eol + eol + "    /// <summary>", eol + eol + "    /// <summary>", StringComparison.Ordinal);
 
-        int usingIdx = source.IndexOf(";" + eol + "using ", StringComparison.Ordinal);
-        if (usingIdx >= 0)
+        string[] lines = source.Split(eol);
+        var output = new StringBuilder(source.Length + 16);
+        int i = 0;
+        for (; i < lines.Length && !IsUsing(lines[i]) && !IsNamespace(lines[i]); i++)
         {
-            source = source.Insert(usingIdx + 1 + eol.Length, eol);
+            if (lines[i].Length > 0)
+            {
+                output.Append(lines[i]).Append(eol);
+            }
         }
 
-        return source.TrimEnd('\r', '\n') + eol;
+        output.Append(eol);
+        for (; i < lines.Length && !IsNamespace(lines[i]); i++)
+        {
+            if (lines[i].Length > 0)
+            {
+                output.Append(lines[i]).Append(eol);
+            }
+        }
+
+        output.Append(eol);
+        if (i < lines.Length)
+        {
+            output.Append(lines[i++]).Append(eol).Append(eol);
+        }
+
+        for (; i < lines.Length && lines[i].Length == 0; i++)
+        {
+        }
+
+        output.AppendJoin(eol, lines[i..]);
+        return output.ToString().TrimEnd('\r', '\n') + eol;
+
+        static bool IsUsing(string line) => line.StartsWith("using ", StringComparison.Ordinal);
+
+        static bool IsNamespace(string line) => line.StartsWith("namespace ", StringComparison.Ordinal);
     }
 
     private static string MapClrType(Type clrType, bool isNullable, bool nullableEnabled)
@@ -328,22 +414,40 @@ internal static class EntityEmitter
                 IdentifierName("Empty"));
         }
 
+        // Fully qualified, because a property named Array would capture a bare Array.
         if (clrType == typeof(byte[]))
         {
-            return InvocationExpression(
-                MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    IdentifierName("Array"),
-                    GenericName(Identifier("Empty"))
-                        .WithTypeArgumentList(
-                            TypeArgumentList(
-                                SingletonSeparatedList<TypeSyntax>(
-                                    PredefinedType(Token(SyntaxKind.ByteKeyword)))))));
+            return ParseExpression("global::System.Array.Empty<byte>()");
         }
 
         return PostfixUnaryExpression(
             SyntaxKind.SuppressNullableWarningExpression,
             LiteralExpression(SyntaxKind.DefaultLiteralExpression));
+    }
+
+    /// <summary>
+    /// Replaces each control character, such as a line break in a column name, and each
+    /// character XML cannot hold with a space, so the doc comment stays on one line and
+    /// <see cref="XmlText(string)"/> accepts it.
+    /// </summary>
+    /// <param name="text">The text.</param>
+    /// <returns>The text to put in the doc comment.</returns>
+    private static string DocCommentText(string text)
+    {
+        char[] chars = text.ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+        {
+            if (char.IsHighSurrogate(chars[i]) && i + 1 < chars.Length && char.IsLowSurrogate(chars[i + 1]))
+            {
+                i++;
+            }
+            else if (char.IsControl(chars[i]) || !XmlConvert.IsXmlChar(chars[i]))
+            {
+                chars[i] = ' ';
+            }
+        }
+
+        return new string(chars);
     }
 
     private static DocumentationCommentTriviaSyntax XmlDocSummary(string text) => DocumentationCommentTrivia(
@@ -361,6 +465,6 @@ internal static class EntityEmitter
                     SingletonList<XmlNodeSyntax>(XmlText(text)),
                     XmlElementEndTag(XmlName("summary"))),
                 XmlText().WithTextTokens(TokenList(
-                    XmlTextNewLine(TriviaList(), "\n", "\n", TriviaList()))),
+                    XmlTextNewLine(TriviaList(), "\r\n", "\r\n", TriviaList()))),
             }));
 }

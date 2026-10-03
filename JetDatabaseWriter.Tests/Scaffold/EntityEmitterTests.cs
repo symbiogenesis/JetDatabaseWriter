@@ -178,7 +178,7 @@ public class EntityEmitterTests
         string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: true);
 
         Assert.Contains("byte[]", result, StringComparison.Ordinal);
-        Assert.Contains("Array.Empty<byte>()", result, StringComparison.Ordinal);
+        Assert.Contains("= global::System.Array.Empty<byte>();", result, StringComparison.Ordinal);
     }
 
     [Fact]
