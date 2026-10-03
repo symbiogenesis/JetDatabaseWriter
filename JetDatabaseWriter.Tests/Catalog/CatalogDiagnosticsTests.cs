@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -139,6 +141,51 @@ public sealed partial class CatalogDiagnosticsTests
 
         using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
 
+        Assert.Equal(msys.Rows.Count, rowsScanned);
+    }
+
+    /// <summary>
+    /// "Total rows scanned" matches the <c>MSysObjects</c> row count on databases the
+    /// writer creates, where no catalog row names <c>MSysObjects</c> except in the
+    /// full-catalog ACCDB schema; the table read used to find no <c>MSysObjects</c>
+    /// there and return no rows.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="fullCatalog">Whether the database has the full catalog schema.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    public async Task ListTables_Diagnostics_RowsScannedMatchesMSysObjectsRowCount_OnCreatedDatabase(DatabaseFormat format, bool fullCatalog)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            format,
+            new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = fullCatalog },
+            leaveOpen: true,
+            ct))
+        {
+            await writer.CreateTableAsync("T1", [new ColumnDefinition("Id", typeof(int))], ct);
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { DiagnosticsEnabled = true, UseLockFile = false },
+            leaveOpen: true,
+            ct);
+
+        _ = await reader.ListTablesAsync(ct);
+        int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
+
+        using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+
+        Assert.True(rowsScanned > 0, "The catalog scan found no rows.");
         Assert.Equal(msys.Rows.Count, rowsScanned);
     }
 

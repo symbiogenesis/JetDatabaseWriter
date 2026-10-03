@@ -20,9 +20,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="tables">The cached user-table catalog.</param>
+/// <param name="catalogRows">The system-table lookup by name, shared with the writer.</param>
 /// <param name="rows">Decodes <c>MSysObjects</c> rows as strings.</param>
 /// <param name="properties">Reads persisted column properties and hydrates calculated result types.</param>
-internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDecoder rows, ColumnPropertyReader properties)
+internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows, ColumnPropertyReader properties)
 {
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
@@ -62,9 +63,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
         // Fall back to a system-table lookup (MSysObjects, MSysRelationships, etc.).
         // The user-table catalog filters out rows whose Flags carry SYSTABLE_MASK,
         // so a name match against the catalog scan is needed for those.
-        long sysPage = await this.FindSystemTablePageAsync(
-            n => string.Equals(n, tableName, StringComparison.OrdinalIgnoreCase),
-            cancellationToken).ConfigureAwait(false);
+        long sysPage = await this.FindSystemTablePageAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (sysPage > 0)
         {
             TableDef? sysTd = await this.ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
@@ -122,63 +121,24 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
 
     /// <summary>
     /// Finds the TDEF page number for a system table by name (case-insensitive).
-    /// Unlike the user-table catalog, this includes system tables (SYSTABLE_MASK set).
+    /// Unlike the user-table catalog, this includes system tables (SYSTABLE_MASK set)
+    /// and the local definitions of linked ODBC tables, and resolves <c>MSysObjects</c>
+    /// to page 2 when no catalog row names it (see
+    /// <see cref="CatalogRowReader.FindSystemTableTdefPageAsync(string, bool, CancellationToken)"/>).
     /// </summary>
     /// <param name="name">The name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
-        this.FindSystemTablePageAsync(
-            n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase),
-            cancellationToken);
+        catalogRows.FindSystemTableTdefPageAsync(name, includeLinkedOdbc: true, cancellationToken);
 
     /// <summary>
-    /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>.
-    /// Shared by exact-name and suffix lookups against MSysObjects.
+    /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>,
+    /// such as a complex-column flat table found by its name suffix. Linked ODBC tables match too.
     /// </summary>
     /// <param name="nameMatches">The name matches.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
-    {
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return 0;
-        }
-
-        int idxId = msys.FindColumnIndex("Id");
-        int idxName = msys.FindColumnIndex("Name");
-        int idxType = msys.FindColumnIndex("Type");
-
-        if (idxId < 0 || idxName < 0 || idxType < 0)
-        {
-            return 0;
-        }
-
-        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
-        {
-            string nameStr = CatalogValueReader.GetStringOrEmpty(row, idxName);
-            if (!nameMatches(nameStr))
-            {
-                continue;
-            }
-
-            if (!CatalogValueReader.TryParseInt32(row, idxType, out int objType) || (objType != Constants.SystemObjects.UserTableType && objType != Constants.SystemObjects.LinkedOdbcType))
-            {
-                continue;
-            }
-
-            if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
-            {
-                long tdefPage = CatalogValueReader.TdefPageFromId(id);
-                if (tdefPage > 0)
-                {
-                    return tdefPage;
-                }
-            }
-        }
-
-        return 0;
-    }
+    internal ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken) =>
+        catalogRows.FindTableTdefPageAsync(nameMatches, includeLinkedOdbc: true, cancellationToken);
 
     /// <summary>
     /// Renders the most recent user-table scan. Scan failures are always

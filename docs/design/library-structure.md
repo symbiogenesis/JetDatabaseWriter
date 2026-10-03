@@ -387,7 +387,7 @@ Each facade owns one **`DatabaseFile`**: the backing stream, the detected format
 - the `DatabaseFile` it reads and writes pages through; and
 - the specific sibling services it calls, such as `TableCatalog`, `ReaderPageCache`, `RowDecoder`, `TableRowStore`, `IndexMaintainer`, or `ConstraintRegistry`.
 
-`TableCatalog`, the cached user-table catalog, is shared in shape by both graphs: both facades resolve table names through the same `MSysObjects` scan (`CatalogRowReader`). The reader's operation gate (`AsyncReentrantOperationGate`) is created by `ReaderServices` and entered by each reader service's public operations, so the LINQ provider and index-query handles, which call services directly, are drained on disposal the same way facade calls are.
+`TableCatalog`, the cached user-table catalog, is shared in shape by both graphs: both facades resolve table names through the same `MSysObjects` scan (`CatalogRowReader`), and system tables by name through its one lookup, `FindSystemTableTdefPageAsync`, which resolves `MSysObjects` itself to TDEF page 2 when no catalog row names it. The reader's operation gate (`AsyncReentrantOperationGate`) is created by `ReaderServices` and entered by each reader service's public operations, so the LINQ provider and index-query handles, which call services directly, are drained on disposal the same way facade calls are.
 
 No collaborator receives a facade, `AccessBase`, or a composition root, and none finds a sibling through another object. `ServiceGraphTests` enforces this:
 
@@ -417,7 +417,7 @@ AccessReader → ReaderServices
   ComplexItemReader   → ComplexColumnReader
   LinkedTableReader   → CatalogReader, LinkedSourcePolicy
   ComplexColumnReader → CatalogReader, RowDecoder
-  CatalogReader       → TableCatalog, RowDecoder, ColumnPropertyReader
+  CatalogReader       → TableCatalog, CatalogRowReader, RowDecoder, ColumnPropertyReader
   ColumnPropertyReader → RowDecoder
   TableCatalog        → CatalogRowReader
   RowDecoder          → ReaderPageCache, LongValueDecoder
@@ -444,7 +444,7 @@ AccessWriter → WriterServices
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
   TableSnapshotReader → RowDecoder, CatalogReader
-  CatalogReader       → TableCatalog, RowDecoder, ColumnPropertyReader
+  CatalogReader       → TableCatalog, CatalogRowReader, RowDecoder, ColumnPropertyReader
   ColumnPropertyReader → RowDecoder
   RowDecoder          → ReaderPageCache (capacity 0), LongValueDecoder
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder

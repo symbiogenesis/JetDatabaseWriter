@@ -119,6 +119,7 @@ public sealed class ServiceGraphTests
             typeof(LongValueDecoder),
             typeof(RowDecoder),
             typeof(TableCatalog),
+            typeof(CatalogRowReader),
             typeof(CatalogReader),
             typeof(ColumnPropertyReader),
             typeof(ComplexColumnReader),

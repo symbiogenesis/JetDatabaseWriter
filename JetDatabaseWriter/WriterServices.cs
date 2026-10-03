@@ -46,7 +46,7 @@ internal sealed class WriterServices
 
         TableCatalog catalog = this.Catalog;
 
-        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, snapshotRows, columnProperties));
+        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, this.CatalogRows, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db);
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator, options);

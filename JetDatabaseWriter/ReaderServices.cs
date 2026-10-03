@@ -35,8 +35,9 @@ internal sealed class ReaderServices : IDisposable
         this.PageCache = new ReaderPageCache(db, options.PageCacheSize);
 
         var rows = new RowDecoder(db, this.PageCache, new LongValueDecoder(db, this.PageCache), options.StrictParsing);
-        this.TableCatalog = new TableCatalog(db, new CatalogRowReader(db));
-        this.Catalog = new CatalogReader(db, this.TableCatalog, rows, new ColumnPropertyReader(db, rows));
+        var catalogRows = new CatalogRowReader(db);
+        this.TableCatalog = new TableCatalog(db, catalogRows);
+        this.Catalog = new CatalogReader(db, this.TableCatalog, catalogRows, rows, new ColumnPropertyReader(db, rows));
 
         var complexColumns = new ComplexColumnReader(db, this.Catalog, rows, options.DiagnosticsEnabled);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
