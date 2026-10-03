@@ -45,6 +45,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -52,7 +53,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
         int totalColumnsChecked = 0;
         foreach (string tableName in tables)
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry.TDefPage, reader.PageSize);
@@ -102,8 +103,9 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
         (int Primary, int Redundant)[] pairs = ReadColumnNumberPairs(fileBytes, (int)entry.TDefPage, reader.PageSize);

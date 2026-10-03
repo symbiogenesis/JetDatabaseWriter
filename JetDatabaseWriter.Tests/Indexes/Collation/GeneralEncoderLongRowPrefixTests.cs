@@ -99,6 +99,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(TestDatabases.TestIndexCodesV2010, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
 
@@ -110,7 +111,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
 
         List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
-            reader,
+            pages,
             layout,
             reader.PageSize,
             dataIndex.FirstDp,
@@ -158,6 +159,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -186,7 +188,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             }
 
             List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
-                reader, layout, pageSize, index.FirstDp, ct);
+                pages, layout, pageSize, index.FirstDp, ct);
 
             DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
             var values = new List<string?>(dt.Rows.Count);
@@ -332,7 +334,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -341,7 +343,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             byte pageType = page[0];
             if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -373,7 +375,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
                 throw new InvalidOperationException("Leaf chain exceeds visit guard — possible cycle.");
             }
 
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 throw new InvalidOperationException(

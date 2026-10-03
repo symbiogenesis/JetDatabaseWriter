@@ -9,9 +9,9 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tables;
 
 /// <summary>
 /// Eagerly loads navigation properties for a set of already-materialized root
@@ -71,7 +71,9 @@ internal static class IncludeLoader
     private const double NumericKeyDecimalMin = -7.9e28;
 
     public static async ValueTask ApplyAsync(
-        AccessReader reader,
+        TableReader tables,
+        IndexRowReader indexes,
+        SchemaReader schema,
         string parentTable,
         IReadOnlyList<object> roots,
         IReadOnlyList<IReadOnlyList<IncludeStep>> includePaths,
@@ -83,8 +85,8 @@ internal static class IncludeLoader
         }
 
         IReadOnlyList<IncludeNode> forest = BuildForest(includePaths);
-        IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        var metadata = new IncludeMetadataCache(reader);
+        IReadOnlyList<RelationshipMetadata> relationships = await schema.ListRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        var metadata = new IncludeMetadataCache(tables, indexes, schema);
         await LoadNodesAsync(metadata, parentTable, roots, forest, relationships, cancellationToken).ConfigureAwait(false);
     }
 
@@ -265,7 +267,7 @@ internal static class IncludeLoader
         foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
         {
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in metadata.Reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
                 map[entry.Key] = RuntimeRowMapper.Map(type, seek.Headers, row);
                 break;
@@ -298,7 +300,7 @@ internal static class IncludeLoader
         {
             var list = new List<object>();
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in metadata.Reader.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
                 list.Add(RuntimeRowMapper.Map(type, seek.Headers, row));
             }
@@ -320,7 +322,7 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         // Index seeks are Jet4/ACE only; everything else falls back to a scan.
-        if (metadata.Reader.Format == DatabaseFormat.Jet3Mdb)
+        if (!metadata.Indexes.CanSeek)
         {
             return null;
         }
@@ -434,7 +436,7 @@ internal static class IncludeLoader
     {
         (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
-        await foreach (object[] row in metadata.Reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
             if (key is null)
@@ -457,7 +459,7 @@ internal static class IncludeLoader
     {
         (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        await foreach (object[] row in metadata.Reader.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
             if (key is null)
@@ -752,13 +754,15 @@ internal static class IncludeLoader
         public List<IncludeNode> Children { get; } = [];
     }
 
-    private sealed class IncludeMetadataCache(AccessReader reader)
+    private sealed class IncludeMetadataCache(TableReader tables, IndexRowReader indexes, SchemaReader schema)
     {
         private readonly Dictionary<string, IReadOnlyList<IndexMetadata>> indexes = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string[]> headers = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, long> rowCounts = new(StringComparer.OrdinalIgnoreCase);
 
-        public AccessReader Reader { get; } = reader;
+        public TableReader Tables { get; } = tables;
+
+        public IndexRowReader Indexes { get; } = indexes;
 
         public async ValueTask<IReadOnlyList<IndexMetadata>> GetIndexesAsync(string table, CancellationToken cancellationToken)
         {
@@ -767,7 +771,7 @@ internal static class IncludeLoader
                 return cached;
             }
 
-            IReadOnlyList<IndexMetadata> value = await this.Reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<IndexMetadata> value = await this.Indexes.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
             this.indexes[table] = value;
             return value;
         }
@@ -779,7 +783,7 @@ internal static class IncludeLoader
                 return cached;
             }
 
-            long value = await this.Reader.GetDeclaredRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+            long value = await schema.GetDeclaredRowCountAsync(table, cancellationToken).ConfigureAwait(false);
             this.rowCounts[table] = value;
             return value;
         }
@@ -791,7 +795,7 @@ internal static class IncludeLoader
                 return cached;
             }
 
-            IReadOnlyList<ColumnMetadata> meta = await this.Reader.GetColumnMetadataAsync(table, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<ColumnMetadata> meta = await schema.GetColumnMetadataAsync(table, cancellationToken).ConfigureAwait(false);
             string[] value = new string[meta.Count];
             for (int i = 0; i < meta.Count; i++)
             {

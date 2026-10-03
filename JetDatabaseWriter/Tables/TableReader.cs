@@ -1,0 +1,1138 @@
+namespace JetDatabaseWriter.Tables;
+
+using System;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
+using static JetDatabaseWriter.Enums.ColumnType;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
+
+/// <summary>
+/// Table-data reads behind <see cref="Interfaces.IAccessReader"/>: streams rows
+/// as typed arrays, strings, or mapped objects, materializes
+/// <see cref="DataTable"/>s, and counts live rows. Scans walk a table's owned
+/// data pages through the page cache (with read-ahead when it pays off),
+/// resolve complex columns and Hyperlink values, and fall back to
+/// <see cref="LinkedTableReader"/> for names that are linked tables. Each
+/// operation enters the reader's operation gate so disposal waits for it.
+/// </summary>
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="pages">The reader's page cache.</param>
+/// <param name="rows">Decodes rows from cached pages.</param>
+/// <param name="catalog">Resolves user and system tables by name.</param>
+/// <param name="complexColumns">Loads attachment payloads for complex columns.</param>
+/// <param name="linked">Reads names that resolve to linked tables.</param>
+/// <param name="operations">The reader's operation gate.</param>
+/// <param name="options">The reader options; supply the page-cache size and read-ahead mode.</param>
+internal sealed class TableReader(
+    DatabaseFile db,
+    ReaderPageCache pages,
+    RowDecoder rows,
+    CatalogReader catalog,
+    ComplexColumnReader complexColumns,
+    LinkedTableReader linked,
+    AsyncReentrantOperationGate operations,
+    AccessReaderOptions options)
+{
+    private const int MinimumAutoTableScanReadAheadPages = 3;
+    private const int MinimumTableScanReadAheadCacheSlots = 3;
+
+    /// <summary>
+    /// Returns <see langword="true"/> when any column flagged in
+    /// <paramref name="wantedColumns"/> has type <paramref name="type1"/> or
+    /// <paramref name="type2"/>.
+    /// </summary>
+    /// <param name="columns">The columns.</param>
+    /// <param name="wantedColumns">Optional bitmap selecting columns to decode.</param>
+    /// <param name="type1">The type1.</param>
+    /// <param name="type2">The type2.</param>
+    internal static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, ColumnType type1, ColumnType type2)
+    {
+        int limit = Math.Min(columns.Count, wantedColumns.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (wantedColumns[i] && (columns[i].Type == type1 || columns[i].Type == type2))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool HasWantedHyperlinkColumn(Type[] clrTypes, bool[] wantedColumns)
+    {
+        int limit = Math.Min(clrTypes.Length, wantedColumns.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (wantedColumns[i] && clrTypes[i] == typeof(Hyperlink))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Wraps text payloads of Hyperlink-flagged columns in a typed row into
+    /// <see cref="Hyperlink"/> instances, mirroring the projection
+    /// <see cref="ResolveClrType"/> exposes via the public API.
+    /// Non-string slots (e.g. <see cref="DBNull.Value"/>) are left untouched;
+    /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
+    /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
+    /// </summary>
+    /// <param name="typedRow">The decoded row.</param>
+    /// <param name="clrTypes">The table's per-column CLR types.</param>
+    internal static void WrapHyperlinkColumns(object?[] typedRow, Type[] clrTypes)
+    {
+        int limit = Math.Min(clrTypes.Length, typedRow.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (clrTypes[i] != typeof(Hyperlink))
+            {
+                continue;
+            }
+
+            if (typedRow[i] is string s)
+            {
+                typedRow[i] = (object?)Hyperlink.Parse(s) ?? DBNull.Value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
+    /// from the first user table.
+    /// </summary>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        List<CatalogEntry> tables = await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        if (tables.Count == 0)
+        {
+            return new DataTable();
+        }
+
+        CatalogEntry entry = tables[0];
+        TableDef? td = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null || td.Columns.Count == 0)
+        {
+            return new DataTable(entry.Name);
+        }
+
+        DataTable? dt = null;
+        try
+        {
+            dt = new DataTable(entry.Name);
+            foreach (ColumnInfo col in td.Columns)
+            {
+                _ = dt.Columns.Add(col.Name, typeof(string));
+            }
+
+            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
+
+            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
+                {
+                    _ = dt.Rows.Add(row);
+                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
+                    {
+                        DataTable result = dt;
+                        dt = null;
+                        return result;
+                    }
+                }
+            }
+
+            DataTable final = dt;
+            dt = null;
+            return final;
+        }
+        finally
+        {
+            dt?.Dispose();
+        }
+    }
+
+    /// <summary>Counts the live (non-deleted, non-overflow) rows of a table by scanning its data pages.</summary>
+    /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            long? linkedCount = await linked.TryGetRowCountAsync(tableName, cancellationToken).ConfigureAwait(false);
+            return linkedCount ?? 0;
+        }
+
+        long count = 0;
+        long tdefPage = resolved.Entry.TDefPage;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+            int numRows = Ru16(page, db.DataPage.NumRows);
+            for (int r = 0; r < numRows; r++)
+            {
+                int raw = Ru16(page, db.DataPage.RowsStart + (r * 2));
+                if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
+                {
+                    continue;
+                }
+
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Streams a table's rows as typed object arrays.</summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    internal async IAsyncEnumerable<object[]> Rows(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            await foreach (object[] row in linked.EnumerateRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns: null, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return (object[])row;
+        }
+    }
+
+    /// <summary>Streams a table's rows mapped to <typeparamref name="T"/>.</summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    internal async IAsyncEnumerable<T> Rows<T>(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            await foreach (T? row in linked.EnumerateRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+
+        // Bind the compiled mapper directly against the per-table column
+        // headers + ClrTypes; avoids the GetColumnMetadataAsync round-trip
+        // and the second async-iterator state machine that the previous
+        // implementation built by re-entering Rows().
+        string[] headers = new string[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            headers[i] = td.Columns[i].Name;
+        }
+
+        // Try to compile a direct page → T decoder that skips the per-row
+        // object?[] buffer and primitive boxing entirely. The builder returns
+        // null when any bound column requires the slow path (Memo/Ole
+        // LVAL chain, Complex/Attachment, Hyperlink prop).
+        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
+            ? null
+            : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
+
+        if (directDecoder != null)
+        {
+            await foreach (T? item in this.EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
+
+        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+
+        // Skip per-row decode of columns the mapper never reads. For wide
+        // tables and narrow DTOs this can eliminate the bulk of the per-row
+        // decode + boxing cost. We suppress the projection when the table has
+        // complex/attachment columns, because complex resolution needs the
+        // parent-id LongInteger which may not be in the projection set.
+        bool[]? wantedColumns = td.HasComplexColumns
+            ? null
+            : RowMapper<T>.GetBoundColumnMask(headers);
+
+        await foreach (T? mapped in this.EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return mapped;
+        }
+    }
+
+    /// <summary>Streams a table's rows as strings.</summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    internal async IAsyncEnumerable<string[]> RowsAsStrings(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            await foreach (string[] row in linked.EnumerateRowsAsStringsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+        long rowCount = 0;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
+
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+                rowCount++;
+            }
+
+            progress?.Report(rowCount);
+        }
+    }
+
+    /// <summary>
+    /// Reads the entire table into a DataTable with properly typed columns.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    internal ValueTask<DataTable> ReadTableAsync(string? tableName, uint? maxRows, IProgress<long>? progress, CancellationToken cancellationToken)
+        => this.ReadDataTableCoreAsync(tableName, maxRows, progress, preserveComplexReferences: false, cancellationToken);
+
+    /// <summary>
+    /// Reads every row of <paramref name="tableName"/> with complex columns left as
+    /// their raw references, for the writer's schema-rewrite snapshots.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    internal ValueTask<DataTable> ReadDataTableForSchemaRewriteAsync(string tableName, CancellationToken cancellationToken)
+        => this.ReadDataTableCoreAsync(tableName, maxRows: null, progress: null, preserveComplexReferences: true, cancellationToken);
+
+    /// <summary>Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/>.</summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="maxRows">The max rows.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows, CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved != null)
+        {
+            List<string> resolvedHeaders = resolved.Definition.Columns.ConvertAll(column => column.Name);
+            var projectedColumns = new List<ColumnInfo>(resolvedHeaders.Count);
+            RowMapper<T>.Accessor?[] fullIndex = RowMapper<T>.BuildIndex(resolvedHeaders);
+
+            for (int i = 0; i < resolvedHeaders.Count; i++)
+            {
+                if (fullIndex[i] != null)
+                {
+                    projectedColumns.Add(resolved.Definition.Columns[i]);
+                }
+            }
+
+            bool canUseDirectMap = projectedColumns.TrueForAll(static column => column.Type is not ComplexType and not AttachmentType);
+
+            if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
+            {
+                Func<object?[], T> fullFactory = RowMapper<T>.Build(resolved.Definition);
+                return await this.ReadMappedTableAsync(
+                    resolved.Entry.TDefPage,
+                    resolved.Definition,
+                    fullFactory,
+                    maxRows,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            bool canProject = canUseDirectMap && projectedColumns.Count < resolvedHeaders.Count;
+
+            if (canProject)
+            {
+                return await this.ReadProjectedTableAsync<T>(
+                    resolved.Entry.TDefPage,
+                    resolved.Definition,
+                    projectedColumns,
+                    maxRows,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        IReadOnlyList<T>? linkedRows = await linked.TryReadTableAsync<T>(tableName, maxRows, cancellationToken).ConfigureAwait(false);
+        return linkedRows ?? [];
+    }
+
+    /// <summary>
+    /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/>.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <c>null</c> for unlimited.</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    internal async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows, IProgress<long>? progress, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            DataTable? linkedTable = await linked.TryReadTableAsStringsAsync(tableName, maxRows, progress, cancellationToken).ConfigureAwait(false);
+
+#pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+            return linkedTable ?? new DataTable(tableName);
+#pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+        }
+
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+        DataTable? dt = null;
+        try
+        {
+            dt = new DataTable(tableName);
+            foreach (ColumnInfo col in td.Columns)
+            {
+                _ = dt.Columns.Add(col.Name, typeof(string));
+            }
+
+            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
+
+            foreach (long pageNumber in pageNumbers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+                await foreach (string[] row in rows.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
+                {
+                    _ = dt.Rows.Add(row);
+                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
+                    {
+                        DataTable result = dt;
+                        dt = null;
+                        return result;
+                    }
+                }
+
+                progress?.Report(dt.Rows.Count);
+            }
+
+            DataTable final = dt;
+            dt = null;
+            return final;
+        }
+        finally
+        {
+            dt?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Reads all user tables into a dictionary of DataTables with properly typed columns.
+    /// </summary>
+    /// <param name="progress">Optional progress reporter for table read operations.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    internal async ValueTask<IReadOnlyDictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
+        List<CatalogEntry> tables = await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+
+        for (int i = 0; i < tables.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CatalogEntry table = tables[i];
+            progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
+            result[table.Name] = await this.ReadTableAsync(table.Name, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)
+    {
+        if (!dataLoadStarted)
+        {
+            return;
+        }
+
+        dataLoadStarted = false;
+        table.EndLoadData();
+    }
+
+    private static int ResolveDataTableMinimumCapacity(long rowCount, uint? maxRows)
+    {
+        long capacity = rowCount;
+        if (maxRows.HasValue)
+        {
+            long limit = maxRows.Value;
+            capacity = capacity > 0 ? Math.Min(capacity, limit) : limit;
+        }
+
+        return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
+    }
+
+    private static bool HasCacheReentrantScanColumns(TableDef tableDef)
+    {
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.Type is MemoType or OleType or ComplexType or AttachmentType)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
+    {
+        if (task.IsCompleted)
+        {
+            _ = task.Exception;
+            return;
+        }
+
+        await task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default).ConfigureAwait(false);
+    }
+
+    private async ValueTask<DataTable> ReadDataTableCoreAsync(
+        string? tableName,
+        uint? maxRows,
+        IProgress<long>? progress,
+        bool preserveComplexReferences,
+        CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrEmpty(tableName))
+        {
+            List<CatalogEntry> tables = await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            if (tables.Count == 0)
+            {
+                return new DataTable();
+            }
+
+            tableName = tables[0].Name;
+        }
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            DataTable? linkedTable = await linked.TryReadDataTableAsync(tableName, maxRows, progress, preserveComplexReferences, cancellationToken).ConfigureAwait(false);
+
+#pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+            return linkedTable ?? new DataTable(tableName);
+#pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
+        }
+
+        CatalogEntry entry = resolved.Entry;
+        TableDef td = resolved.Definition;
+        DataTable? dt = null;
+        bool dataLoadStarted = false;
+        try
+        {
+            dt = new DataTable(tableName);
+            foreach (ColumnInfo col in td.Columns)
+            {
+                Type clrType = preserveComplexReferences && (col.Type == ComplexType || col.Type == AttachmentType)
+                    ? typeof(object)
+                    : ResolveClrType(col);
+                _ = dt.Columns.Add(col.Name, clrType);
+            }
+
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !preserveComplexReferences
+                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                : null;
+            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+            int minimumCapacity = ResolveDataTableMinimumCapacity(td.RowCount, maxRows);
+            if (minimumCapacity > 0)
+            {
+                dt.MinimumCapacity = minimumCapacity;
+            }
+
+            dt.BeginLoadData();
+            dataLoadStarted = true;
+
+            // Rent a single object?[] from the shared pool and
+            // reuse it across every row. The DataRow ingestion below
+            // copies values out via the per-cell setter, so the buffer is
+            // never retained by the table.
+            int colCount = td.Columns.Count;
+            long loadedRows = 0;
+            var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
+            object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
+            try
+            {
+                await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+                    {
+                        if (rb.RowSize < db.RowFields.NumCols)
+                        {
+                            continue;
+                        }
+
+                        bool ok = await rows.CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
+                        if (!ok)
+                        {
+                            continue;
+                        }
+
+                        if (td.HasComplexColumns && !preserveComplexReferences)
+                        {
+                            ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
+                        }
+
+                        if (td.HasHyperlinkColumns)
+                        {
+                            WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
+                        }
+
+                        DataRow newRow = dt.NewRow();
+                        for (int i = 0; i < colCount; i++)
+                        {
+                            newRow[i] = rowBuffer[i] ?? DBNull.Value;
+                        }
+
+                        dt.Rows.Add(newRow);
+                        loadedRows++;
+                        if (maxRows.HasValue && loadedRows >= maxRows.Value)
+                        {
+                            progress?.Report(loadedRows);
+                            EndDataTableLoad(dt, ref dataLoadStarted);
+                            DataTable result = dt;
+                            dt = null;
+                            return result;
+                        }
+                    }
+
+                    progress?.Report(loadedRows);
+                }
+            }
+            finally
+            {
+                ArrayPool<object?>.Shared.Return(rowBuffer, clearArray: true);
+            }
+
+            EndDataTableLoad(dt, ref dataLoadStarted);
+            DataTable final = dt;
+            dt = null;
+            return final;
+        }
+        finally
+        {
+            if (dt != null && dataLoadStarted)
+            {
+                EndDataTableLoad(dt, ref dataLoadStarted);
+            }
+
+            dt?.Dispose();
+        }
+    }
+
+    private async ValueTask<List<T>> ReadMappedTableAsync<T>(
+        long tdefPage,
+        TableDef td,
+        Func<object?[], T> factory,
+        uint? maxRows,
+        CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        var items = new List<T>();
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns;
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (needsHyperlinkPass)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
+                }
+
+                items.Add(factory(row));
+                if (maxRows.HasValue && items.Count >= maxRows.Value)
+                {
+                    return items;
+                }
+            }
+        }
+
+        return items;
+    }
+
+    private async ValueTask<List<T>> ReadProjectedTableAsync<T>(
+        long tdefPage,
+        TableDef td,
+        List<ColumnInfo> projectedColumns,
+        uint? maxRows,
+        CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        string[] headers = new string[projectedColumns.Count];
+        var projectedSourceTypes = new Type[projectedColumns.Count];
+        for (int i = 0; i < projectedColumns.Count; i++)
+        {
+            ColumnInfo column = projectedColumns[i];
+            headers[i] = column.Name;
+            projectedSourceTypes[i] = ResolveClrType(column);
+        }
+
+        Func<object?[], T> factory = RowMapper<T>.Build(headers, projectedSourceTypes);
+        var items = new List<T>();
+        bool[] wantedColumns = new bool[td.Columns.Count];
+        int[] projectedOrdinals = new int[projectedColumns.Count];
+        for (int i = 0; i < projectedColumns.Count; i++)
+        {
+            int ordinal = td.Columns.IndexOf(projectedColumns[i]);
+            if (ordinal < 0)
+            {
+                return items;
+            }
+
+            projectedOrdinals[i] = ordinal;
+            wantedColumns[ordinal] = true;
+        }
+
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns && HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns);
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (needsHyperlinkPass)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
+                }
+
+                object?[] projectedRow = new object?[projectedOrdinals.Length];
+                for (int i = 0; i < projectedOrdinals.Length; i++)
+                {
+                    projectedRow[i] = row[projectedOrdinals[i]];
+                }
+
+                items.Add(factory(projectedRow));
+                if (maxRows.HasValue && items.Count >= maxRows.Value)
+                {
+                    return items;
+                }
+            }
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// Fallback path for <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>:
+    /// walks every owned data page for <paramref name="entry"/>, decodes each
+    /// row into a single <see cref="ArrayPool{T}.Shared"/>-rented buffer,
+    /// applies the mapper, and yields the produced <typeparamref name="T"/>.
+    /// The buffer is reused across every row and returned to the pool on
+    /// completion (or exception); the mapper consumes values out of the
+    /// buffer before the next iteration overwrites it, so no caller ever
+    /// observes the pooled array.
+    /// </summary>
+    /// <typeparam name="T">The mapped row type yielded by the enumerator.</typeparam>
+    /// <param name="tableName">The table to stream.</param>
+    /// <param name="entry">Catalog entry for the table.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="wantedColumns">Optional bitmap selecting columns to decode.</param>
+    /// <param name="factory">Delegate that maps decoded row values to <typeparamref name="T"/>.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async IAsyncEnumerable<T> EnumerateMappedRowsPooledAsync<T>(
+        string tableName,
+        CatalogEntry entry,
+        TableDef td,
+        bool[]? wantedColumns,
+        Func<object?[], T> factory,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        long rowCount = 0;
+
+        bool needsComplexPass = td.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
+
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
+
+        int colCount = td.Columns.Count;
+        object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
+        try
+        {
+            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+                {
+                    if (rb.RowSize < db.RowFields.NumCols)
+                    {
+                        continue;
+                    }
+
+                    bool ok = await rows.CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
+                    if (!ok)
+                    {
+                        continue;
+                    }
+
+                    if (needsComplexPass)
+                    {
+                        ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
+                    }
+
+                    if (needsHyperlinkPass)
+                    {
+                        WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
+                    }
+
+                    yield return factory(rowBuffer);
+                    rowCount++;
+                }
+
+                progress?.Report(rowCount);
+            }
+        }
+        finally
+        {
+            ArrayPool<object?>.Shared.Return(rowBuffer, clearArray: true);
+        }
+    }
+
+    /// <summary>
+    /// Shared typed-row enumerator used by <see cref="Rows(string, IProgress{long}?, CancellationToken)"/>.
+    /// Walks every owned data page for <paramref name="entry"/>, emitting per-row
+    /// <c>object?[]</c> buffers with complex-attachment and Hyperlink
+    /// post-processing applied (gated by the per-table flags). Centralising
+    /// the page scan here keeps the entry point on a single iterator
+    /// (one C# async state machine instead of two).
+    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
+    /// flagged column indices are decoded and the complex-attachment / Hyperlink
+    /// post-processing passes are skipped when no wanted column is affected by them.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="entry">Catalog entry for the table.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="wantedColumns">Optional bitmap selecting columns to decode.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
+        string tableName,
+        CatalogEntry entry,
+        TableDef td,
+        bool[]? wantedColumns,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        long rowCount = 0;
+
+        // Decide which post-processing passes are needed up front. When a
+        // projection mask is supplied, skip a pass entirely if no wanted
+        // column requires it; otherwise run with the table-wide flag.
+        bool needsComplexPass = td.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
+
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
+
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            {
+                if (rb.RowSize < db.RowFields.NumCols)
+                {
+                    continue;
+                }
+
+                object?[]? row = await rows.CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (needsComplexPass)
+                {
+                    ComplexColumnReader.ResolveColumns(row, td.Columns, complexData);
+                }
+
+                if (needsHyperlinkPass)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
+                }
+
+                yield return row;
+                rowCount++;
+            }
+
+            progress?.Report(rowCount);
+        }
+    }
+
+    /// <summary>
+    /// Direct-decoder fast-path enumerator: walks every owned data page for
+    /// <paramref name="entry"/> and invokes the compiled
+    /// <paramref name="directDecoder"/> against each live row, allocating a
+    /// fresh <typeparamref name="T"/> per row but no <c>object?[]</c> buffer.
+    /// Used by <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
+    /// when every bound column is directly decodable; otherwise the
+    /// projection-aware fallback path runs.
+    /// </summary>
+    /// <typeparam name="T">The row type decoded directly from page bytes.</typeparam>
+    /// <param name="entry">Catalog entry for the table.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="directDecoder">Compiled direct-row decoder.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<T>(
+        CatalogEntry entry,
+        TableDef td,
+        DirectRowDecoder<T> directDecoder,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        long rowCount = 0;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
+
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
+            {
+                if (rb.RowSize < db.RowFields.NumCols)
+                {
+                    continue;
+                }
+
+                T target = new();
+                if (!decodePlan.TryDecodeDirect(db, scanPage.Page, rb.RowStart, rb.RowSize, directDecoder, target))
+                {
+                    continue;
+                }
+
+                yield return target;
+                rowCount++;
+            }
+
+            progress?.Report(rowCount);
+        }
+    }
+
+    private async IAsyncEnumerable<TableScanPage> EnumerateTableScanPagesAsync(
+        TableDef tableDef,
+        IReadOnlyList<long> pageNumbers,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (!this.ShouldReadAheadTablePages(tableDef, pageNumbers))
+        {
+            foreach (long pageNumber in pageNumbers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return await this.ReadTableScanPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+
+            yield break;
+        }
+
+        Task<TableScanPage>? nextPageTask = null;
+        try
+        {
+            int pageIndex = 0;
+            if (options.PageReadOptimizationMode == PageReadOptimizationMode.Auto)
+            {
+                yield return await this.ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+                pageIndex++;
+            }
+
+            for (; pageIndex < pageNumbers.Count; pageIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                Task<TableScanPage> currentPageTask = nextPageTask
+                    ?? this.ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).AsTask();
+                nextPageTask = pageIndex + 1 < pageNumbers.Count
+                    ? this.ReadTableScanPageAsync(pageNumbers[pageIndex + 1], cancellationToken).AsTask()
+                    : null;
+
+                yield return await currentPageTask.ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (nextPageTask is not null)
+            {
+                await ObserveAbandonedTableScanReadAsync(nextPageTask).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Determines whether table pages should be read ahead.
+    /// The cache returns page buffers to the shared pool on eviction, so read-ahead
+    /// needs room for the previous, current, and prefetched data pages.
+    /// Auto mode stays conservative: only file-backed, non-transactional scans
+    /// with enough table pages use read-ahead, and the first page is yielded
+    /// before prefetch begins to preserve first-row latency.
+    /// </summary>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="pageNumbers">The list of page numbers for the table.</param>
+    /// <returns><c>true</c> if table pages should be read ahead; otherwise, <c>false</c>.</returns>
+    private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
+        pages.IsEnabled
+            && options.PageCacheSize >= MinimumTableScanReadAheadCacheSlots
+            && db.ActiveJournal is null
+            && !HasCacheReentrantScanColumns(tableDef)
+            && this.HasEligibleTableScanReadAheadPageCount(pageNumbers);
+
+    private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>
+        options.PageReadOptimizationMode switch
+        {
+            PageReadOptimizationMode.Auto => db.DatabaseStream is FileStream && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
+            PageReadOptimizationMode.Disabled => false,
+            PageReadOptimizationMode.Enabled => pageNumbers.Count > 1,
+            _ => false,
+        };
+
+    private async ValueTask<TableScanPage> ReadTableScanPageAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        return new TableScanPage(pageNumber, page);
+    }
+
+    private readonly record struct TableScanPage(long PageNumber, byte[] Page);
+}

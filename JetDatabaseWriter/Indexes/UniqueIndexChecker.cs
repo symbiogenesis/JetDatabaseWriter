@@ -19,7 +19,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="snapshots">Reads decoded table rows when index pages cannot answer a uniqueness probe.</param>
-internal sealed class UniqueIndexChecker(AccessBase db, TableSnapshotReader snapshots)
+internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader snapshots)
 {
     /// <summary>
     /// Loads all unique / primary-key index descriptors for the given TDEF page.
@@ -42,7 +42,7 @@ internal sealed class UniqueIndexChecker(AccessBase db, TableSnapshotReader snap
         }
         finally
         {
-            AccessBase.ReturnPage(tdefPageBytes);
+            DatabaseFile.ReturnPage(tdefPageBytes);
         }
 
         int numCols = Ru16(tdefBuffer, db.TDef.NumCols);
@@ -242,7 +242,7 @@ internal sealed class UniqueIndexChecker(AccessBase db, TableSnapshotReader snap
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 

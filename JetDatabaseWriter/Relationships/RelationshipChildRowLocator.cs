@@ -10,7 +10,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipChildRowLocator(AccessBase db)
+internal sealed class RelationshipChildRowLocator(DatabaseFile db)
 {
     public async ValueTask<List<(RowLocation Loc, TPayload Payload)>?> TrySeekChildLocationsAsync<TPayload>(
         CatalogEntry childEntry,
@@ -91,7 +91,7 @@ internal sealed class RelationshipChildRowLocator(AccessBase db)
             }
             finally
             {
-                AccessBase.ReturnPage(page);
+                DatabaseFile.ReturnPage(page);
             }
         }
 

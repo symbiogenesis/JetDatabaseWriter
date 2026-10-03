@@ -34,7 +34,7 @@ internal static class DirectRowDecoderBuilder
         GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ResolveColumnSliceForDirectDecode), StaticNonPublic);
 
     private static readonly MethodInfo DecodeTextMethod =
-        GetRequiredMethod(typeof(AccessReader), nameof(AccessReader.DecodeTextSliceForDirectDecode), InstanceNonPublic);
+        GetRequiredMethod(typeof(DatabaseFile), nameof(DatabaseFile.DecodeTextForFormat), InstanceNonPublic);
 
     private static readonly MethodInfo ReadBinarySliceMethod =
         GetRequiredMethod(typeof(BinaryBuffer), nameof(BinaryBuffer.CopySlice), StaticNonPublic);
@@ -123,7 +123,7 @@ internal static class DirectRowDecoderBuilder
         List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound)
         where T : class, new()
     {
-        ParameterExpression readerParam = Expression.Parameter(typeof(AccessReader), "reader");
+        ParameterExpression dbParam = Expression.Parameter(typeof(DatabaseFile), "db");
         ParameterExpression decodePlanParam = Expression.Parameter(typeof(RowDecodePlan), "decodePlan");
         ParameterExpression pageParam = Expression.Parameter(typeof(byte[]), "page");
         ParameterExpression rowStartParam = Expression.Parameter(typeof(int), "rowStart");
@@ -142,7 +142,7 @@ internal static class DirectRowDecoderBuilder
             Expression.Not(Expression.Call(
                 decodePlanParam,
                 TryParseRowLayoutMethod,
-                readerParam,
+                dbParam,
                 pageParam,
                 rowStartParam,
                 rowSizeParam,
@@ -161,7 +161,7 @@ internal static class DirectRowDecoderBuilder
                 sliceLocal,
                 Expression.Call(
                     ResolveColumnSliceMethod,
-                    readerParam,
+                    dbParam,
                     pageParam,
                     rowStartParam,
                     rowSizeParam,
@@ -182,7 +182,7 @@ internal static class DirectRowDecoderBuilder
                 offsetExpr,
                 dataLenExpr,
                 boolValueExpr,
-                readerParam);
+                dbParam);
 
             // target.Prop = (PropType)readExpr;
             // Compose the raw read — which yields the column's natural CLR type —
@@ -232,7 +232,7 @@ internal static class DirectRowDecoderBuilder
 
         return Expression.Lambda<DirectRowDecoder<T>>(
             body,
-            readerParam,
+            dbParam,
             decodePlanParam,
             pageParam,
             rowStartParam,
@@ -271,7 +271,7 @@ internal static class DirectRowDecoderBuilder
         Expression offsetExpr,
         Expression dataLenExpr,
         Expression boolValueExpr,
-        ParameterExpression readerParam) => column.Type switch
+        ParameterExpression dbParam) => column.Type switch
         {
             BooleanType => boolValueExpr,
             ByteType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadByteAt), StaticNonPublic), pageParam, offsetExpr),
@@ -284,7 +284,7 @@ internal static class DirectRowDecoderBuilder
             DateTimeType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeLE), StaticNonPublic), pageParam, offsetExpr),
             GuidType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadGuidAt), StaticNonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDecimalLE), StaticNonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
-            TextType => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
+            TextType => Expression.Call(dbParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
             BinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
             DateTimeExtendedType => Expression.Call(ReadDateTimeExtendedMethod, pageParam, offsetExpr),
             OleType or
@@ -376,7 +376,7 @@ internal static class DirectRowDecoderBuilder
 /// that the projection-aware path still pays.
 /// </summary>
 /// <typeparam name="T">The target row type decoded into by the delegate.</typeparam>
-/// <param name="reader">The reader.</param>
+/// <param name="db">The database file whose format decodes text slices.</param>
 /// <param name="decodePlan">The decode plan.</param>
 /// <param name="page">The page bytes.</param>
 /// <param name="rowStart">The row start.</param>
@@ -387,7 +387,7 @@ internal static class DirectRowDecoderBuilder
 /// when the row should be skipped (empty / malformed trailer).
 /// </returns>
 internal delegate bool DirectRowDecoder<T>(
-    AccessReader reader,
+    DatabaseFile db,
     RowDecodePlan decodePlan,
     byte[] page,
     int rowStart,

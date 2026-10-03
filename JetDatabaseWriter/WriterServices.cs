@@ -13,9 +13,9 @@ using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
 /// Composition root for one <see cref="AccessWriter"/>. Builds every writer
-/// collaborator once and passes each one the <see cref="AccessBase"/> page I/O
-/// and format context plus the specific sibling services it uses. No
-/// collaborator receives the facade or this object, so the service graph is
+/// collaborator once and passes each one the <see cref="DatabaseFile"/> it
+/// reads and writes pages through plus the specific sibling services it uses.
+/// No collaborator receives the facade or this object, so the service graph is
 /// acyclic and each dependency is visible in a constructor signature.
 /// </summary>
 internal sealed class WriterServices
@@ -23,15 +23,17 @@ internal sealed class WriterServices
     /// <summary>
     /// Initializes a new instance of the <see cref="WriterServices"/> class.
     /// </summary>
-    /// <param name="db">The writer's page I/O and format context.</param>
+    /// <param name="db">The open database file.</param>
     /// <param name="options">The writer options.</param>
-    /// <param name="byteRangeLock">The cooperative JET byte-range lock bound to the writer's stream.</param>
-    /// <param name="snapshots">Reads decoded snapshots of the writer's own database.</param>
-    internal WriterServices(AccessBase db, AccessWriterOptions options, JetByteRangeLock byteRangeLock, TableSnapshotReader snapshots)
+    /// <param name="byteRangeLock">The cooperative JET byte-range lock bound to the database stream.</param>
+    /// <param name="snapshots">Reads decoded snapshots of the same database.</param>
+    internal WriterServices(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock, TableSnapshotReader snapshots)
     {
         this.CatalogRows = new CatalogRowReader(db);
+        this.Catalog = new TableCatalog(db, this.CatalogRows);
         this.PageAllocator = new PageAllocator(db, options);
 
+        TableCatalog catalog = this.Catalog;
         var tdefPageBuilder = new TDefPageBuilder(db);
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator);
         var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
@@ -40,7 +42,7 @@ internal sealed class WriterServices
             snapshots.ReadTableSnapshotAsync,
             async (tableName, ct) =>
             {
-                CatalogEntry? entry = await db.GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
+                CatalogEntry? entry = await catalog.GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
                 if (entry is null)
                 {
                     return null;
@@ -50,17 +52,18 @@ internal sealed class WriterServices
             });
 
         this.Indexes = new IndexMaintainer(db, this.PageAllocator, tableRows, dataPages, snapshots);
-        var catalogWriter = new CatalogWriter(db, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
-        this.CatalogArtifacts = new CatalogArtifactWriter(db, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
-        this.ComplexColumns = new ComplexColumnManager(db, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints);
+        var catalogWriter = new CatalogWriter(db, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
+        this.CatalogArtifacts = new CatalogArtifactWriter(db, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
+        this.ComplexColumns = new ComplexColumnManager(db, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints);
 
         var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots);
-        var enforcer = new RelationshipEnforcer(db, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
-        this.Relationships = new RelationshipManager(db, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
+        var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
+        this.Relationships = new RelationshipManager(db, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
         this.Transactions = new TransactionLifecycle(db, options, byteRangeLock);
         this.Data = new TableDataWriter(
             db,
+            catalog,
             tableRows,
             this.Indexes,
             new UniqueIndexChecker(db, snapshots),
@@ -71,6 +74,7 @@ internal sealed class WriterServices
             snapshots);
         this.Schema = new TableSchemaEditor(
             db,
+            catalog,
             tableRows,
             this.Indexes,
             this.PageAllocator,
@@ -99,6 +103,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the catalog-plan executor and fresh-catalog bootstrap.</summary>
     internal CatalogArtifactWriter CatalogArtifacts { get; }
+
+    /// <summary>Gets the cached user-table catalog.</summary>
+    internal TableCatalog Catalog { get; }
 
     /// <summary>Gets the read-only <c>MSysObjects</c> scanner.</summary>
     internal CatalogRowReader CatalogRows { get; }

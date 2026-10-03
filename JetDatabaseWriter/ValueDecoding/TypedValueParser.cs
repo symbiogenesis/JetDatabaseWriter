@@ -178,7 +178,7 @@ internal static class TypedValueParser
         failure = null;
 
         // OLE Object payloads are surfaced as RFC-2397 base64 data URLs by
-        // AccessReader.DecodeLongValue (any MIME type, e.g. image/jpeg,
+        // LongValueDecoder.DecodeLongValue (any MIME type, e.g. image/jpeg,
         // image/png, application/octet-stream); round-trip them back to raw bytes.
         if (value.StartsWith("data:", StringComparison.Ordinal))
         {

@@ -36,13 +36,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see href="docs/design/complex-columns-format-notes.md" />.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">Resolves parent tables by name.</param>
 /// <param name="tableRows">Writes and tombstones flat-table and <c>MSysComplexColumns</c> rows.</param>
 /// <param name="indexes">Keeps system-table indexes current.</param>
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
 internal sealed class ComplexColumnManager(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
     CatalogArtifactWriter catalogArtifacts,
@@ -51,7 +53,8 @@ internal sealed class ComplexColumnManager(
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
-    private readonly AccessBase db = db;
+    private readonly DatabaseFile db = db;
+    private readonly TableCatalog catalog = catalog;
 
     /// <summary>
     /// scaffold mandatory full-catalog ACCDB system tables: the core
@@ -195,7 +198,7 @@ internal sealed class ComplexColumnManager(
         }
         finally
         {
-            AccessBase.ReturnPage(header);
+            DatabaseFile.ReturnPage(header);
         }
     }
 
@@ -354,7 +357,7 @@ internal sealed class ComplexColumnManager(
     /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
     /// <c>Text(510)</c> variable column. The catalog row carries flag
     /// <c>0x80000000</c> (system / hidden) so the table is excluded from
-    /// <c>GetUserTablesAsync</c>.
+    /// <see cref="TableCatalog.GetUserTablesAsync"/>.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
@@ -750,7 +753,7 @@ internal sealed class ComplexColumnManager(
         }
 
         // Resolve parent table + complex column.
-        ResolvedTable parentTable = await this.db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable parentTable = await this.catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry parentEntry = parentTable.Entry;
         TableDef parentDef = parentTable.Definition;
 
@@ -1028,7 +1031,7 @@ internal sealed class ComplexColumnManager(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
 
         // Allocate a fresh ConceptualTableID by scanning the flat table for max(FK)+1.
@@ -1066,7 +1069,7 @@ internal sealed class ComplexColumnManager(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 
@@ -1268,7 +1271,7 @@ internal sealed class ComplexColumnManager(
             }
             finally
             {
-                AccessBase.ReturnPage(page);
+                DatabaseFile.ReturnPage(page);
             }
         }
 

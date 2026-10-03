@@ -24,13 +24,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// of a freshly created database.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">The cached user-table catalog, invalidated after every catalog mutation.</param>
 /// <param name="pageAllocator">Reserves TDEF and index leaf pages.</param>
 /// <param name="tdefPageBuilder">Builds and patches table-definition pages.</param>
 /// <param name="dataPages">Allocates usage-map pages and records writer-owned usage maps.</param>
 /// <param name="catalogWriter">Writes <c>MSysObjects</c> and <c>MSysACEs</c> rows.</param>
 /// <param name="constraints">Registers client-side column constraints for created tables.</param>
 internal sealed class CatalogArtifactWriter(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog catalog,
     PageAllocator pageAllocator,
     TDefPageBuilder tdefPageBuilder,
     DataPageInserter dataPages,
@@ -142,7 +144,7 @@ internal sealed class CatalogArtifactWriter(
         DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
         await db.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
         dataPages.RegisterOwnedMapWritableTdef(2);
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
     }
 
     /// <summary>
@@ -219,7 +221,7 @@ internal sealed class CatalogArtifactWriter(
 
         if (plan.CatalogObjects.Count > 0 || plan.CatalogReplacements.Count > 0 || plan.CatalogDeletions.Count > 0)
         {
-            db.InvalidateCatalogCache();
+            catalog.Invalidate();
         }
 
         return tablePages;
@@ -361,7 +363,7 @@ internal sealed class CatalogArtifactWriter(
             constraints.Register(tableArtifact.TableName, tableArtifact.Columns);
         }
 
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
         return tdefPageNumber;
     }
 }

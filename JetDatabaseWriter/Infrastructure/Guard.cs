@@ -123,6 +123,30 @@ internal static class Guard
     }
 
     /// <summary>
+    /// Throws an <see cref="ObjectDisposedException"/> when <paramref name="disposed"/> is
+    /// <see langword="true"/>, naming <paramref name="ownerType"/>. Used by internal objects
+    /// that share their owner's lifetime, so the exception names the public type the
+    /// caller disposed rather than the internal one that noticed.
+    /// </summary>
+    /// <param name="disposed">The disposed flag.</param>
+    /// <param name="ownerType">The public type whose disposal is being reported.</param>
+    /// <exception cref="ObjectDisposedException">Thrown when <paramref name="disposed"/> is <see langword="true"/>.</exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ThrowIfDisposed(bool disposed, Type ownerType)
+    {
+#if NETSTANDARD2_1
+        if (disposed)
+        {
+            throw new ObjectDisposedException(ownerType?.FullName);
+        }
+#else
+        ObjectDisposedException.ThrowIf(disposed, ownerType);
+
+        _ = ownerType;
+#endif
+    }
+
+    /// <summary>
     /// Validates that <paramref name="path"/> is non-empty and refers to an existing file,
     /// throwing <see cref="FileNotFoundException"/> with a consistent "Database file not found"
     /// message when it does not exist.

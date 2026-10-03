@@ -11,7 +11,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueEncoding;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -28,7 +28,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="dataPages">Finds or allocates the data page that receives a row.</param>
 /// <param name="tdefPageBuilder">Owns the TDEF row-count byte layout.</param>
 internal sealed class TableRowStore(
-    AccessBase db,
+    DatabaseFile db,
     AccessWriterOptions options,
     LongValueEncoder longValueEncoder,
     RowEncoder rowEncoder,

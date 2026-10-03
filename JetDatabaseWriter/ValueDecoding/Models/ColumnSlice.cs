@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.ValueDecoding.Models;
 
-/// <summary>Per-column slice produced by <see cref="AccessBase.ResolveColumnSlice"/>.</summary>
+/// <summary>Per-column slice produced by <see cref="DatabaseFile.ResolveColumnSlice"/>.</summary>
 /// <param name="Kind">The table name kind.</param>
 /// <param name="DataStart">The data start.</param>
 /// <param name="DataLen">The data len.</param>

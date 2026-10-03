@@ -15,7 +15,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class IndexBTreeEditor(AccessBase db, PageAllocator pageAllocator)
+internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAllocator)
 {
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
         IndexPageLayout layout,
@@ -129,7 +129,7 @@ internal sealed class IndexBTreeEditor(AccessBase db, PageAllocator pageAllocato
         }
         finally
         {
-            AccessBase.ReturnPage(pageBytes);
+            DatabaseFile.ReturnPage(pageBytes);
         }
     }
 
@@ -1562,7 +1562,7 @@ internal sealed class IndexBTreeEditor(AccessBase db, PageAllocator pageAllocato
         }
         finally
         {
-            AccessBase.ReturnPage(raw);
+            DatabaseFile.ReturnPage(raw);
         }
     }
 

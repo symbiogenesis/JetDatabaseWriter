@@ -14,7 +14,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// State-free index-related helpers extracted from <see cref="AccessWriter"/>.
 /// Holds schema-validation, encoded seek-key, and B-tree split / descent
-/// helpers that depend only on their inputs (no <see cref="AccessBase"/>
+/// helpers that depend only on their inputs (no <see cref="DatabaseFile"/>
 /// instance state).
 /// </summary>
 internal static class IndexHelpers

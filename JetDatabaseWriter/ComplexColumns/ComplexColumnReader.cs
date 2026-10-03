@@ -3,25 +3,33 @@ namespace JetDatabaseWriter.ComplexColumns;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class ComplexColumnReader(AccessReader reader)
+/// <summary>
+/// Reads Access 2007+ complex-column (Attachment / Multi-value) metadata:
+/// joins a table's complex column descriptors with <c>MSysComplexColumns</c>,
+/// resolves column subtypes, and loads the attachment payloads that table
+/// scans substitute for each row's complex reference.
+/// </summary>
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">Resolves tables and locates <c>MSysComplexColumns</c> and the flat child tables.</param>
+/// <param name="rows">Decodes system-table and flat-table rows as strings.</param>
+/// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
+internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled)
 {
     internal static void ResolveColumns(object?[] typedRow, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
     {
@@ -63,54 +71,54 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
-        if (reader.Format == DatabaseFormat.Jet3Mdb)
+        if (db.Format == DatabaseFormat.Jet3Mdb)
         {
             return [];
         }
 
-        ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             return [];
         }
 
-        byte[]? td = await reader.GetRawTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null)
         {
             return [];
         }
 
-        int numCols = Ru16(td, reader.TDef.NumCols);
-        int numRealIdx = Ri32(td, reader.TDef.NumRealIdx);
+        int numCols = Ru16(td, db.TDef.NumCols);
+        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
         if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
 
-        int colStart = reader.TDef.BlockEnd + (numRealIdx * reader.TDef.RealIdxEntrySz);
+        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
 
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
         for (int i = 0; i < numCols; i++)
         {
-            int offset = colStart + (i * reader.ColumnDescriptor.Size);
-            if (offset + reader.ColumnDescriptor.Size > td.Length)
+            int offset = colStart + (i * db.ColumnDescriptor.Size);
+            if (offset + db.ColumnDescriptor.Size > td.Length)
             {
                 break;
             }
 
-            var type = (ColumnType)td[offset + reader.ColumnDescriptor.TypeOff];
+            var type = (ColumnType)td[offset + db.ColumnDescriptor.TypeOff];
             if (type is not ComplexType and not AttachmentType)
             {
                 continue;
             }
 
-            int complexId = Ri32(td, offset + reader.ColumnDescriptor.MiscOff);
+            int complexId = Ri32(td, offset + db.ColumnDescriptor.MiscOff);
             if (complexId <= 0)
             {
                 continue;
             }
 
-            int colNum = Ru16(td, offset + reader.ColumnDescriptor.NumOff);
+            int colNum = Ru16(td, offset + db.ColumnDescriptor.NumOff);
 
             ColumnInfo? info = resolved.Definition.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
@@ -122,100 +130,6 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             : await this.JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken)
-    {
-        ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxFileUrl = flat.Columns.IndexOf("FileURL");
-        int idxFileName = flat.Columns.IndexOf("FileName");
-        int idxFileType = flat.Columns.IndexOf("FileType");
-        int idxFileTime = flat.Columns.IndexOf("FileTimeStamp");
-        int idxFileData = flat.Columns.IndexOf("FileData");
-
-        var result = new List<AttachmentRecord>(flat.Rows.Count);
-        foreach (DataRow row in flat.Rows)
-        {
-            int fk = idxFk >= 0 && row[idxFk] is not DBNull ? Convert.ToInt32(row[idxFk], CultureInfo.InvariantCulture) : 0;
-            byte[] rawData = ExtractOleBytesBestEffort(idxFileData >= 0 ? row[idxFileData] : null);
-            byte[] decoded = rawData;
-            string ext = idxFileType >= 0 && row[idxFileType] is not DBNull ? Convert.ToString(row[idxFileType], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
-            if (rawData.Length > 0 && AttachmentWrapper.TryDecode(rawData, out string decodedExt, out byte[] payload))
-            {
-                decoded = payload;
-                if (string.IsNullOrEmpty(ext))
-                {
-                    ext = decodedExt;
-                }
-            }
-
-            result.Add(new AttachmentRecord
-            {
-                ConceptualTableId = fk,
-                FileName = idxFileName >= 0 && row[idxFileName] is not DBNull ? Convert.ToString(row[idxFileName], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty,
-                FileType = ext,
-                FileURL = idxFileUrl >= 0 && row[idxFileUrl] is not DBNull ? Convert.ToString(row[idxFileUrl], CultureInfo.InvariantCulture) : null,
-                FileTimeStamp = idxFileTime >= 0 && row[idxFileTime] is DateTime dt ? dt : null,
-                FileData = decoded,
-            });
-        }
-
-        return result;
-    }
-
-    internal async ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken)
-    {
-        ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
-        {
-            return [];
-        }
-
-        DataTable flat = await reader.ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (flat.Rows.Count == 0)
-        {
-            return [];
-        }
-
-        int idxFk = FindFlatLongFkIndex(flat);
-        int idxValue = flat.Columns.IndexOf("value");
-        if (idxValue < 0)
-        {
-            for (int i = 0; i < flat.Columns.Count; i++)
-            {
-                if (i != idxFk)
-                {
-                    idxValue = i;
-                    break;
-                }
-            }
-        }
-
-        var result = new List<MultiValueItem>(flat.Rows.Count);
-        foreach (DataRow row in flat.Rows)
-        {
-            int fk = idxFk >= 0 && row[idxFk] is not DBNull ? Convert.ToInt32(row[idxFk], CultureInfo.InvariantCulture) : 0;
-            object? value = idxValue >= 0 && row[idxValue] is not DBNull ? row[idxValue] : null;
-            result.Add(new MultiValueItem
-            {
-                ConceptualTableId = fk,
-                Value = value,
-            });
-        }
-
-        return result;
-    }
-
     internal async ValueTask<Dictionary<string, string>> ReadColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -223,13 +137,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
         try
         {
-            long tdefPage = await reader.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            long tdefPage = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
             if (tdefPage <= 0)
             {
                 return result;
             }
 
-            TableDef? td = await reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            TableDef? td = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
             if (td == null)
             {
                 return result;
@@ -245,10 +159,10 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return result;
             }
 
-            ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
 
-            await foreach (string[] row in reader.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
                 if (idxConceptualTable >= 0 &&
                     !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName))
@@ -354,48 +268,6 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         return 0;
     }
 
-    private static byte[] ExtractOleBytesBestEffort(object? cell)
-    {
-        if (cell is null or DBNull)
-        {
-            return [];
-        }
-
-        if (cell is byte[] b)
-        {
-            return b;
-        }
-
-        if (cell is string s)
-        {
-            return BinaryStringParser.TryDecodeBase64DataUri(s, out byte[] bytes) ? bytes : [];
-        }
-
-        return [];
-    }
-
-    private static int FindFlatLongFkIndex(DataTable flat)
-    {
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            DataColumn c = flat.Columns[i];
-            if (c.DataType == typeof(int) && c.ColumnName.StartsWith('_'))
-            {
-                return i;
-            }
-        }
-
-        for (int i = 0; i < flat.Columns.Count; i++)
-        {
-            if (flat.Columns[i].DataType == typeof(int))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
     private static byte[] DecodeAttachmentFileData(byte[] raw) => raw.Length <= 1 ? raw : raw[0] switch
     {
         0x01 => DecompressAttachmentData(raw, 1),
@@ -475,31 +347,17 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         return Encoding.UTF8.GetBytes(value);
     }
 
-    private async ValueTask<ComplexColumnInfo?> FindComplexColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
-    {
-        IReadOnlyList<ComplexColumnInfo> complex = await this.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-        foreach (ComplexColumnInfo column in complex)
-        {
-            if (string.Equals(column.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
-            {
-                return column;
-            }
-        }
-
-        return null;
-    }
-
     private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
         Dictionary<int, (string Name, ColumnType Type)> byComplexId,
         CancellationToken cancellationToken)
     {
-        long msysTdef = await reader.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        long msysTdef = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysTdef <= 0)
         {
             return [];
         }
 
-        TableDef? msys = await reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await db.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return [];
@@ -519,7 +377,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
         Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
-        await foreach (string[] row in reader.EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
         {
             if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
             {
@@ -559,7 +417,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     {
         var map = new Dictionary<long, string>();
 
-        TableDef? msys = await reader.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return map;
@@ -572,7 +430,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return map;
         }
 
-        await foreach (string[] row in reader.EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
             if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
@@ -587,13 +445,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     {
         try
         {
-            long msysTdef = await reader.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            long msysTdef = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
             if (msysTdef <= 0)
             {
                 return 0;
             }
 
-            TableDef? td = await reader.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+            TableDef? td = await db.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
             if (td == null)
             {
                 return 0;
@@ -608,10 +466,10 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 return 0;
             }
 
-            ResolvedTable? resolved = await reader.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
 
-            await foreach (string[] row in reader.EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
             {
                 string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
                 if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
@@ -653,7 +511,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 tdefPage = await this.FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
             }
 
-            TableDef? td = tdefPage > 0 ? await reader.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
+            TableDef? td = tdefPage > 0 ? await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
             if (td == null)
             {
                 return null;
@@ -676,7 +534,7 @@ internal sealed class ComplexColumnReader(AccessReader reader)
 
             var result = new Dictionary<int, byte[]>(capacity: 32);
 
-            await foreach (string[] row in reader.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
                 if (!CatalogValueReader.TryParseInt32(row, idxFk, out int parentId))
                 {
@@ -729,13 +587,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
     }
 
     private ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken)
-        => reader.FindSystemTablePageAsync(
+        => catalog.FindSystemTablePageAsync(
             name => name.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase),
             cancellationToken);
 
     private void TraceBestEffortFallback(string operation, Exception exception)
     {
-        if (reader.DiagnosticsEnabled)
+        if (diagnosticsEnabled)
         {
             Trace.WriteLine($"[AccessReader] Best-effort fallback in ComplexColumnReader.{operation}: suppressed {exception.GetType().Name} while reading MSysComplexColumns.");
         }

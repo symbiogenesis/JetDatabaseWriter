@@ -20,7 +20,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// data page.  Extracted from <see cref="AccessWriter"/>.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class RowEncoder(AccessBase db)
+internal sealed class RowEncoder(DatabaseFile db)
 {
     internal static byte[]? EncodeOleValue(object value)
     {

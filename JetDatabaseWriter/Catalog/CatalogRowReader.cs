@@ -14,7 +14,7 @@ using JetDatabaseWriter.Schema.Models;
 /// feature managers can share it without depending on each other.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class CatalogRowReader(AccessBase db)
+internal sealed class CatalogRowReader(DatabaseFile db)
 {
     /// <summary>
     /// Scans all data pages belonging to <c>MSysObjects</c> (TDEF page 2) and

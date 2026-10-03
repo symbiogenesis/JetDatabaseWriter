@@ -24,7 +24,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
 /// <param name="snapshots">Reads decoded <c>MSysRelationships</c> rows for enforcement.</param>
 internal sealed class RelationshipCatalogStore(
-    AccessBase db,
+    DatabaseFile db,
     IndexMaintainer indexes,
     CatalogRowReader catalogRows,
     TableSnapshotReader snapshots)

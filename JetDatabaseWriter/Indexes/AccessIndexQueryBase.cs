@@ -6,27 +6,28 @@ using System.Threading;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tables;
 
 internal abstract class AccessIndexQueryBase<TRow> : IAccessIndexQuery<TRow>
 {
     protected AccessIndexQueryBase(
-        AccessReader reader,
+        IndexRowReader indexes,
         string tableName,
         string indexName,
         IndexQueryCriteria criteria)
     {
-        Guard.NotNull(reader, nameof(reader));
+        Guard.NotNull(indexes, nameof(indexes));
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(indexName, nameof(indexName));
         Guard.NotNull(criteria, nameof(criteria));
 
-        this.Reader = reader;
+        this.Indexes = indexes;
         this.TableName = tableName;
         this.IndexName = indexName;
         this.Criteria = criteria;
     }
 
-    protected AccessReader Reader { get; }
+    protected IndexRowReader Indexes { get; }
 
     protected string TableName { get; }
 

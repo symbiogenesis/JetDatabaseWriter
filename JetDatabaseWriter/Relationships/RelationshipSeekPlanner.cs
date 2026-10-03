@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Relationships;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
@@ -10,7 +11,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipSeekPlanner(AccessBase db)
+internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tableCatalog)
 {
     private readonly record struct SeekIndexCore(
         long FirstDp,
@@ -41,7 +42,7 @@ internal sealed class RelationshipSeekPlanner(AccessBase db)
                 return null;
             }
 
-            CatalogEntry? foreignEntry = await db.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? foreignEntry = await tableCatalog.GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry == null)
             {
                 return null;
@@ -129,7 +130,7 @@ internal sealed class RelationshipSeekPlanner(AccessBase db)
             return null;
         }
 
-        CatalogEntry? entry = await db.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry? entry = await tableCatalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
         {
             return null;

@@ -58,6 +58,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -65,7 +66,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
         var allTextColumns = new List<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)>();
         foreach (string tableName in tables)
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             allTextColumns.AddRange(ReadTextColumnSortInfo(fileBytes, (int)entry.TDefPage, reader.PageSize, tableName));
@@ -150,8 +151,9 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
         (string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)[] rows = ReadTextColumnSortInfo(fileBytes, (int)entry.TDefPage, reader.PageSize, "Customers").ToArray();
@@ -169,12 +171,13 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness daoPages = await ReaderHarness.OpenAsync(daoMs, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> daoTables = await daoReader.ListTablesAsync(TestContext.Current.CancellationToken);
         var daoTextCols = new List<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)>();
         foreach (string tableName in daoTables)
         {
-            CatalogEntry? daoEntry = await daoReader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? daoEntry = await daoPages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             if (daoEntry is null)
             {
                 continue;

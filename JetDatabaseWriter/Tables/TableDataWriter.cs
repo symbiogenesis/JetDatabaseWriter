@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Indexes;
@@ -24,6 +25,7 @@ using JetDatabaseWriter.ValueDecoding;
 /// auto-commit scope around each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">Resolves the target table by name.</param>
 /// <param name="tableRows">Writes and tombstones the affected rows.</param>
 /// <param name="indexes">Maintains index B-trees after each batch.</param>
 /// <param name="uniqueIndexes">Runs pre-write unique-index checks.</param>
@@ -33,7 +35,8 @@ using JetDatabaseWriter.ValueDecoding;
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads the decoded rows that update and delete predicates are evaluated against.</param>
 internal sealed class TableDataWriter(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
     UniqueIndexChecker uniqueIndexes,
@@ -203,7 +206,7 @@ internal sealed class TableDataWriter(
             return 0;
         }
 
-        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
@@ -344,7 +347,7 @@ internal sealed class TableDataWriter(
         Guard.NotNull(criteria, nameof(criteria));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
@@ -445,7 +448,7 @@ internal sealed class TableDataWriter(
         CancellationToken cancellationToken)
         where TItem : class
     {
-        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
         IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);

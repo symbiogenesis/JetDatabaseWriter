@@ -93,7 +93,7 @@ internal sealed class JetByteRangeLock
 
     /// <summary>
     /// Gets a shared inert instance whose acquire methods always return the no-op
-    /// disposable. Used as the default for <see cref="AccessBase"/> before a derived
+    /// disposable. Used as the default for <see cref="DatabaseFile"/> before its owning
     /// reader/writer constructor has had a chance to bind real options, so callers can
     /// dispatch through a non-nullable field without per-call null checks.
     /// </summary>

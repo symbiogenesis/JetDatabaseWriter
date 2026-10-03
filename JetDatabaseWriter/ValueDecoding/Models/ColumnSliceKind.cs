@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.ValueDecoding.Models;
 
-/// <summary>Classification returned by <see cref="AccessBase.ResolveColumnSlice"/>.</summary>
+/// <summary>Classification returned by <see cref="DatabaseFile.ResolveColumnSlice"/>.</summary>
 internal enum ColumnSliceKind
 {
     /// <summary>Column is missing/empty/out-of-bounds - caller should emit empty/default.</summary>

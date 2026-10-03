@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -167,6 +168,7 @@ public sealed class IndexSurgicalRootSplitTests
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
 
         var visited = new HashSet<long>();
         int reachableLeafEntries = 0;
@@ -191,7 +193,7 @@ public sealed class IndexSurgicalRootSplitTests
                     continue;
                 }
 
-                byte[] page = await reader.GetRawPageBytesAsync(pageNum, ct);
+                byte[] page = await pages.ReadPageCopyAsync(pageNum, ct);
                 byte pageType = page[0];
                 if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
                 {

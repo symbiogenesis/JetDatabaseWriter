@@ -341,7 +341,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? parentEntry = await reader.GetCatalogEntryAsync(parent, TestContext.Current.CancellationToken);
         CatalogEntry? childEntry = await reader.GetCatalogEntryAsync(child, TestContext.Current.CancellationToken);
         Assert.NotNull(parentEntry);

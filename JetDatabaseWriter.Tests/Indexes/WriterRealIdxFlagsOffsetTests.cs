@@ -56,6 +56,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -67,7 +68,7 @@ public sealed class WriterRealIdxFlagsOffsetTests
 
         foreach (string tableName in tables)
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry.TDefPage, pageSize);
@@ -166,9 +167,10 @@ public sealed class WriterRealIdxFlagsOffsetTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
 
         List<int> physOffsets = LocateRealIdxPhysOffsets(fileBytes, (int)entry.TDefPage, pageSize);

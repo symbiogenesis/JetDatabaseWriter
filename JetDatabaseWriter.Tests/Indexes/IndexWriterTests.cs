@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -283,11 +284,7 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        long tdefPage;
-        await using (AccessReader reader = await OpenReaderAsync(stream))
-        {
-            tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Single");
-        }
+        long tdefPage = await GetTDefPageNumberAsync(stream, "Idx_Leaf_Single");
 
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);
@@ -338,11 +335,7 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        long tdefPage;
-        await using (AccessReader reader = await OpenReaderAsync(stream))
-        {
-            tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Multi");
-        }
+        long tdefPage = await GetTDefPageNumberAsync(stream, "Idx_Leaf_Multi");
 
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);
@@ -514,7 +507,6 @@ public sealed class IndexWriterTests
         // located via the catalog; subsequent pages are linked via the
         // 4-byte next-page pointer at offset 4. A single-page TDEF stores
         // 0 there.
-        long firstTdefPage;
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -528,10 +520,10 @@ public sealed class IndexWriterTests
 
             IReadOnlyList<IndexMetadata> idxList = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(indexCount, idxList.Count);
-
-            // Pull the catalog row to recover the TDEF page number.
-            firstTdefPage = await GetTDefPageNumberAsync(reader, tableName);
         }
+
+        // Pull the catalog row to recover the TDEF page number.
+        long firstTdefPage = await GetTDefPageNumberAsync(stream, tableName);
 
         // Walk the on-disk page chain manually to assert it has > 1 page.
         stream.Position = 0;
@@ -555,8 +547,9 @@ public sealed class IndexWriterTests
             $"Expected a multi-page TDEF chain on {format} (page size {pgSz}); got {chainLen} page(s).");
     }
 
-    private static async ValueTask<long> GetTDefPageNumberAsync(AccessReader reader, string tableName)
+    private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
                 ?? throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
 

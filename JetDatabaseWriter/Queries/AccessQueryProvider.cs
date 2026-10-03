@@ -9,24 +9,26 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tables;
 
 /// <summary>
 /// <see cref="IQueryProvider"/> for <see cref="AccessQueryable{T}"/>. Translates the
 /// supported LINQ operators into an ordered <see cref="QueryStage"/> pipeline and runs
-/// the stages in written order: a leading run of filters is pushed into the reader's
-/// index inference, later stages (filter / order / page) run over the stream, and
+/// the stages in written order: a leading run of filters is pushed into the index
+/// reader's predicate inference, later stages (filter / order / page) run over the stream, and
 /// includes eager-load inferred relationships onto the final set. The provider is
 /// generic on the entity type so it can map rows; <see cref="AccessQueryable{T}"/>
 /// reaches it through <see cref="IAccessQueryEngine"/>.
 /// </summary>
 /// <typeparam name="T">The entity type mapped from the table's rows.</typeparam>
-/// <param name="reader">The reader the query executes against.</param>
+/// <param name="tables">Streams and counts the table's rows.</param>
+/// <param name="indexes">Serves pushed-down filters and index-ordered reads.</param>
+/// <param name="schema">Supplies the relationship and column metadata that includes need.</param>
 /// <param name="table">The table being queried.</param>
-internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) : IQueryProvider, IAccessQueryEngine
+internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader indexes, SchemaReader schema, string table) : IQueryProvider, IAccessQueryEngine
     where T : class, new()
 {
     public IQueryable CreateQuery(Expression expression) =>
@@ -129,7 +131,7 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         // overcounts; GetRealRowCountAsync scans the row-offset slots and is exact.
         if (ReferenceEquals(boundary, expression) && plan.Stages.Count == 0 && plan.IncludePaths.Count == 0)
         {
-            return await reader.GetRealRowCountAsync(table, cancellationToken).ConfigureAwait(false);
+            return await tables.GetRealRowCountAsync(table, cancellationToken).ConfigureAwait(false);
         }
 
         // Every other shape (a filter, paging, a projection, or includes) streams the rows
@@ -221,7 +223,7 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
             result.Add(item);
         }
 
-        await IncludeLoader.ApplyAsync(reader, table, result, plan.IncludePaths, cancellationToken).ConfigureAwait(false);
+        await IncludeLoader.ApplyAsync(tables, indexes, schema, table, result, plan.IncludePaths, cancellationToken).ConfigureAwait(false);
         foreach (T item in result)
         {
             yield return item;
@@ -264,8 +266,8 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
         else
         {
             sequence = pushed is null
-                ? reader.Rows<T>(table, progress: null, cancellationToken)
-                : reader.Rows(table, pushed, progress: null, cancellationToken);
+                ? tables.Rows<T>(table, progress: null, cancellationToken)
+                : indexes.Rows(table, pushed, progress: null, cancellationToken);
         }
 
         for (; next < stages.Count; next++)
@@ -279,14 +281,14 @@ internal sealed class AccessQueryProvider<T>(AccessReader reader, string table) 
     private async ValueTask<IAsyncEnumerable<T>?> TryBuildOrderedSourceAsync(OrderStage order, CancellationToken cancellationToken)
     {
         // Index seeks are Jet4/ACE-only.
-        if (reader.Format == DatabaseFormat.Jet3Mdb)
+        if (!indexes.CanSeek)
         {
             return null;
         }
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
-        return order.FindCoveringIndex(indexes) is { } index
-            ? reader.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
+        IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+        return order.FindCoveringIndex(tableIndexes) is { } index
+            ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
             : null;
     }
 

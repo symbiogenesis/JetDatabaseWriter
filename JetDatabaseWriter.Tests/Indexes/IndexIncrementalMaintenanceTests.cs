@@ -11,6 +11,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -315,9 +316,10 @@ public sealed class IndexIncrementalMaintenanceTests
 
         long tdefPage = await GetTDefPageNumberAsync(stream, "T");
 
-        await using AccessWriter reopened = await OpenWriterAsync(stream);
-        TableDef tableDef = await reopened.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
-        await ClearRealIdxColMapsAsync(reopened, tdefPage, this.ct);
+        stream.Position = 0;
+        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        TableDef tableDef = await reopened.Database.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
+        await ClearRealIdxColMapsAsync(reopened.Database, tdefPage, this.ct);
 
         var insertedRows = new List<(RowLocation Loc, object[] Row)>
         {
@@ -398,7 +400,7 @@ public sealed class IndexIncrementalMaintenanceTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
             ?? throw new System.InvalidOperationException($"Table '{tableName}' not found in catalog.");
 
@@ -406,27 +408,27 @@ public sealed class IndexIncrementalMaintenanceTests
     }
 
     private static async ValueTask ClearRealIdxColMapsAsync(
-        AccessWriter writer,
+        DatabaseFile db,
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
+        byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, writer.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected the test fixture to declare at least one real index.");
 
-            int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk TDEF column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = writer.IndexLayoutInfo;
+            IndexLayout layout = db.IndexLayoutInfo;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
                 bool decoded = layout.TryReadRealIdxSlotWithKeyColumns(
@@ -446,11 +448,11 @@ public sealed class IndexIncrementalMaintenanceTests
                 }
             }
 
-            await writer.WritePageAsync(tdefPage, tdef, cancellationToken);
+            await db.WritePageAsync(tdefPage, tdef, cancellationToken);
         }
         finally
         {
-            AccessBase.ReturnPage(tdef);
+            DatabaseFile.ReturnPage(tdef);
         }
     }
 

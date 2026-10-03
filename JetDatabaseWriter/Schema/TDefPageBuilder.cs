@@ -20,7 +20,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// empty database file.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class TDefPageBuilder(AccessBase db)
+internal sealed class TDefPageBuilder(DatabaseFile db)
 {
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
@@ -516,7 +516,7 @@ internal sealed class TDefPageBuilder(AccessBase db)
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 
@@ -540,7 +540,7 @@ internal sealed class TDefPageBuilder(AccessBase db)
     /// <exception cref="NotImplementedException">Thrown when an unsupported database format is specified.</exception>
     internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
-        int pgSz = AccessBase.GetPageSize(format);
+        int pgSz = DatabaseFile.GetPageSize(format);
         byte[] db = new byte[pgSz * 3];
 
         db[0] = 0x00;
@@ -767,7 +767,7 @@ internal sealed class TDefPageBuilder(AccessBase db)
         {
             Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
             int tdefLen = Math.Max(0, namePos - offset - 8);
-            int pgSz = AccessBase.GetPageSize(format);
+            int pgSz = DatabaseFile.GetPageSize(format);
             Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
         }
     }

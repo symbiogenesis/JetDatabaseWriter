@@ -16,7 +16,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -27,7 +27,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class LongValueEncoder(AccessBase db, PageAllocator pageAllocator)
+internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAllocator)
 {
     /// <summary>
     /// Pre-encode pass for row insert: any MEMO / OLE value whose payload

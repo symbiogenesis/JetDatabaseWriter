@@ -19,14 +19,12 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
-/// Centralises all linked-table (MSysObjects type 4 / 6) logic: the reader-side
-/// discovery, resolution, and opening of links referenced by an
-/// <see cref="AccessReader"/>, and the writer-side creation of Access-file, ODBC,
-/// and text/CSV link catalog entries for an <see cref="AccessWriter"/>. Pure
-/// path-handling helpers and the MSysObjects scan that produces
-/// <see cref="LinkedTableInfo"/> entries live here so <see cref="AccessReader"/>
-/// and <see cref="AccessWriter"/> keep only thin forwarders that delegate to this
-/// manager.
+/// Centralises the linked-table (MSysObjects type 4 / 6) format and path
+/// policy: the MSysObjects scan that produces <see cref="LinkedTableInfo"/>
+/// entries, source-path resolution under a <see cref="LinkedSourcePolicy"/>,
+/// the delimited-text read-through used by <see cref="LinkedTableReader"/>, and
+/// the writer-side creation of Access-file, ODBC, and text/CSV link catalog
+/// entries.
 /// </summary>
 internal static class LinkedTableManager
 {
@@ -100,16 +98,16 @@ internal static class LinkedTableManager
 
     /// <summary>
     /// Enumerates every linked table (Access-file, ODBC, or text) defined in
-    /// MSysObjects on the given <paramref name="reader"/>.
+    /// MSysObjects.
     /// </summary>
-    /// <param name="reader">The reader.</param>
+    /// <param name="catalog">Reads the <c>MSysObjects</c> rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
-    internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(AccessReader reader, CancellationToken cancellationToken)
+    internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await catalog.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return [];
@@ -129,7 +127,7 @@ internal static class LinkedTableManager
 
         var result = new List<LinkedTableInfo>();
 
-        await foreach (string[] row in reader.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in catalog.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
         {
             if (!CatalogValueReader.TryParseInt32(row, idxType, out int objType))
             {
@@ -184,38 +182,23 @@ internal static class LinkedTableManager
     }
 
     /// <summary>
-    /// Locates the linked-table entry matching <paramref name="tableName"/>
-    /// (case-insensitive) or returns <see langword="null"/> when the name does
-    /// not refer to a linked table.
-    /// </summary>
-    /// <param name="reader">The reader.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal static async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
-    {
-        List<LinkedTableInfo> links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
-        LinkedTableInfo? link = links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
-        return link is null ? null : link with { };
-    }
-
-    /// <summary>
-    /// Opens the source database referenced by <paramref name="link"/>, applying
-    /// the host reader's allowlist and validator and reusing its cached
+    /// Opens the source database referenced by <paramref name="link"/> as a
+    /// separate reader, applying the host's allowlist and validator and its
     /// linked-source open options.
     /// </summary>
-    /// <param name="reader">The reader.</param>
+    /// <param name="policy">The host's linked-source policy.</param>
     /// <param name="link">The linked-table metadata.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="FileNotFoundException">Thrown when the linked source database cannot be found.</exception>
     internal static async ValueTask<AccessReader> OpenLinkedSourceAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
         ThrowIfUnsupportedLinkedRead(link);
 
-        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
-        string resolvedPath = ResolveLinkedSourcePath(reader, link);
+        AccessReaderOptions linkedOptions = policy.OpenOptions;
+        string resolvedPath = ResolveLinkedSourcePath(policy, link);
 
         if (!File.Exists(resolvedPath))
         {
@@ -228,22 +211,22 @@ internal static class LinkedTableManager
     }
 
     internal static async ValueTask<long> CountLinkedTextRowsAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
+        LinkedTextDataSource source = GetLinkedTextDataSource(policy, link);
         using var records = new LinkedTextRecordReader(source);
         return await records.DelimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async IAsyncEnumerable<string[]> RowsLinkedTextAsStringsAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(policy, link, cancellationToken).ConfigureAwait(false);
         long rowCount = 0;
 
         while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
@@ -256,13 +239,13 @@ internal static class LinkedTableManager
     }
 
     internal static async IAsyncEnumerable<T> RowsLinkedTextMappedAsync<T>(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         IProgress<long>? progress,
         Func<IReadOnlyList<ColumnMetadata>, Func<object?[], T>> mapperFactory,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(policy, link, cancellationToken).ConfigureAwait(false);
         Func<object?[], T> map = mapperFactory(CreateLinkedTextColumnMetadata(rows.ColumnNames));
         long rowCount = 0;
 
@@ -276,22 +259,22 @@ internal static class LinkedTableManager
     }
 
     internal static async ValueTask<IReadOnlyList<ColumnMetadata>> GetLinkedTextColumnMetadataAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(policy, link, cancellationToken).ConfigureAwait(false);
         return CreateLinkedTextColumnMetadata(rows.ColumnNames);
     }
 
     internal static async ValueTask<DataTable> ReadLinkedTextDataTableAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         uint? maxRows,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
     {
-        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(policy, link, cancellationToken).ConfigureAwait(false);
         DataTable? table = null;
         try
         {
@@ -327,13 +310,13 @@ internal static class LinkedTableManager
     }
 
     internal static async ValueTask<IReadOnlyList<T>> ReadLinkedTextMappedRowsAsync<T>(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         uint? maxRows,
         Func<IReadOnlyList<ColumnMetadata>, Func<object?[], T>> mapperFactory,
         CancellationToken cancellationToken)
     {
-        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        using LinkedTextRowReader rows = await OpenLinkedTextRowsAsync(policy, link, cancellationToken).ConfigureAwait(false);
         Func<object?[], T> map = mapperFactory(CreateLinkedTextColumnMetadata(rows.ColumnNames));
         var items = new List<T>();
 
@@ -381,7 +364,7 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedTableAsync(
-        AccessBase db,
+        DatabaseFile db,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDatabasePath,
@@ -421,7 +404,7 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedOdbcTableAsync(
-        AccessBase db,
+        DatabaseFile db,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string connectionString,
@@ -472,7 +455,7 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedTextTableAsync(
-        AccessBase db,
+        DatabaseFile db,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDirectoryPath,
@@ -668,14 +651,14 @@ internal static class LinkedTableManager
         return resolvedPath;
     }
 
-    private static string ResolveLinkedTextSourceFilePath(AccessReader reader, LinkedTableInfo link)
+    private static string ResolveLinkedTextSourceFilePath(LinkedSourcePolicy policy, LinkedTableInfo link)
     {
         if (link.Kind != LinkedTableKind.Text)
         {
             ThrowIfUnsupportedLinkedRead(link);
         }
 
-        string resolvedDirectory = ResolveLinkedSourcePath(reader, link);
+        string resolvedDirectory = ResolveLinkedSourcePath(policy, link);
 
         if (string.IsNullOrWhiteSpace(link.SourceObjectName))
         {
@@ -703,29 +686,29 @@ internal static class LinkedTableManager
         return resolvedFilePath;
     }
 
-    private static string ResolveLinkedSourcePath(AccessReader reader, LinkedTableInfo link)
+    private static string ResolveLinkedSourcePath(LinkedSourcePolicy policy, LinkedTableInfo link)
     {
-        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
+        AccessReaderOptions linkedOptions = policy.OpenOptions;
         return ResolveLinkedSourcePath(
             link,
-            reader.HostDatabasePath,
+            policy.HostDatabasePath,
             linkedOptions.LinkedSourcePathAllowlist,
             linkedOptions.LinkedSourcePathValidator);
     }
 
     private static async ValueTask<LinkedTextRowReader> OpenLinkedTextRowsAsync(
-        AccessReader reader,
+        LinkedSourcePolicy policy,
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
+        LinkedTextDataSource source = GetLinkedTextDataSource(policy, link);
         return await LinkedTextRowReader.OpenAsync(source, cancellationToken).ConfigureAwait(false);
     }
 
-    private static LinkedTextDataSource GetLinkedTextDataSource(AccessReader reader, LinkedTableInfo link)
+    private static LinkedTextDataSource GetLinkedTextDataSource(LinkedSourcePolicy policy, LinkedTableInfo link)
     {
-        LinkedTextLimits limits = CreateLinkedTextLimits(reader.LinkedSourceOpenOptions);
-        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
+        LinkedTextLimits limits = CreateLinkedTextLimits(policy.OpenOptions);
+        string resolvedPath = ResolveLinkedTextSourceFilePath(policy, link);
         if (!File.Exists(resolvedPath))
         {
             throw new FileNotFoundException(

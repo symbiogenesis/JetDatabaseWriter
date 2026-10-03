@@ -77,6 +77,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -157,7 +158,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 List<IndexEntry> onDisk;
                 try
                 {
-                    onDisk = await CollectAllLeafEntriesAsync(reader, layout, pageSize, index.FirstDp, ct);
+                    onDisk = await CollectAllLeafEntriesAsync(pages, layout, pageSize, index.FirstDp, ct);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
@@ -342,7 +343,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
         => s.Length <= max ? s : s[..max] + "...(+" + (s.Length - max).ToString(CultureInfo.InvariantCulture) + ")";
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -351,7 +352,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             byte pageType = page[0];
             if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -383,7 +384,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 throw new InvalidOperationException("Leaf chain exceeds visit guard — possible cycle.");
             }
 
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 throw new InvalidOperationException(

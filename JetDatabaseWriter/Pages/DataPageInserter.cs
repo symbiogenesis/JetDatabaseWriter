@@ -9,7 +9,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -22,7 +22,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="catalogRows">Reads <c>MSysObjects</c> rows to decide whether an existing table's owned-page map is writable.</param>
-internal sealed class DataPageInserter(AccessBase db, PageAllocator pageAllocator, CatalogRowReader catalogRows)
+internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAllocator, CatalogRowReader catalogRows)
 {
 #if NET9_0_OR_GREATER
     private readonly Lock insertPageHintLock = new();
