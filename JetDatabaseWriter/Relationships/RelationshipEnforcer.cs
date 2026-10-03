@@ -170,125 +170,47 @@ internal sealed class RelationshipEnforcer(
 
     /// <summary>
     /// Cascades or refuses the delete of <paramref name="deletedParentRows"/>
-    /// from <paramref name="primaryTable"/> for every relationship whose
-    /// primary table it is: dependent rows are deleted when the relationship
-    /// cascades deletes, and the delete is refused otherwise.
+    /// from <paramref name="primaryTable"/>, for every relationship whose
+    /// primary table it is and, in turn, for every relationship of each table
+    /// the delete cascades into: dependent rows are deleted when the
+    /// relationship cascades deletes, and the delete is refused otherwise.
+    /// Every dependent row is found and every relationship checked before
+    /// any row is deleted, so a refused delete changes nothing.
     /// </summary>
     /// <param name="primaryTable">The table rows are deleted from.</param>
     /// <param name="primaryDef">The table's definition.</param>
     /// <param name="deletedParentRows">The deleted rows, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
-    /// <param name="depth">The cascade depth.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
-    /// deletes, or a relationship with a non-null deleted key names a table or
-    /// column that cannot be found.
+    /// deletes, a relationship with a non-null deleted key names a table or
+    /// column that cannot be found, or the cascades nest deeper than
+    /// <see cref="RelationshipCascadePolicy.MaxDepth"/>.
     /// </exception>
     public async ValueTask EnforceFkOnPrimaryDeleteAsync(
         string primaryTable,
         TableDef primaryDef,
         List<object?[]> deletedParentRows,
         FkContext ctx,
-        int depth,
         CancellationToken cancellationToken)
     {
-        RelationshipCascadePolicy.ThrowIfDepthExceeded(depth);
+        var cascades = new List<CascadeDelete>();
+        HashSet<(long PageNumber, int RowIndex)> cascaded = [];
+        await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, cancellationToken).ConfigureAwait(false);
 
-        foreach (FkRelationship rel in ctx.All)
+        foreach ((string tableName, ResolvedTable table, List<RowLocation> locations) in cascades)
         {
-            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+            await complexColumns.CascadeDeleteComplexChildrenAsync(table.Definition, locations, cancellationToken).ConfigureAwait(false);
 
-            int[] primaryPkIdx = RequireColumns(rel, primaryTable, rel.PrimaryColumns, primaryDef);
-            List<object?[]> parentPkRows = RelationshipKeyBuilder.ProjectNonNullKeys(deletedParentRows, primaryPkIdx);
-            if (parentPkRows.Count == 0)
-            {
-                continue;
-            }
-
-            ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            CatalogEntry childEntry = childTable.Entry;
-            TableDef childDef = childTable.Definition;
-            int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childDef);
-
-            ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
-            if (childSeek != null)
-            {
-                bool seekOk = await this.TryProcessCascadeDeleteWithSeekAsync(
-                    rel,
-                    childEntry,
-                    childDef,
-                    childSeek,
-                    parentPkRows,
-                    ctx,
-                    depth,
-                    cancellationToken).ConfigureAwait(false);
-                if (seekOk)
-                {
-                    continue;
-                }
-            }
-
-            List<LocatedRow> childRows = await snapshots.ReadRowsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
-            HashSet<string> deletedSet = RelationshipKeyBuilder.BuildSetFromProjectedKeys(parentPkRows);
-
-            var matchingRows = new List<LocatedRow>();
-            foreach (LocatedRow childRow in childRows)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                string? childKey = RelationshipKeyBuilder.Build(childRow.Values, fkIdx);
-                if (childKey != null && deletedSet.Contains(childKey))
-                {
-                    matchingRows.Add(childRow);
-                }
-            }
-
-            if (matchingRows.Count == 0)
-            {
-                continue;
-            }
-
-            if (!rel.CascadeDeletes)
-            {
-                throw new InvalidOperationException(
-                    $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                    $"{matchingRows.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
-            }
-
-            var childDeletedRows = new List<object?[]>(matchingRows.Count);
-            var cascadeLocations = new List<RowLocation>(matchingRows.Count);
-            foreach ((RowLocation location, object[] values) in matchingRows)
-            {
-                childDeletedRows.Add(values);
-                cascadeLocations.Add(location);
-            }
-
-            await this.EnforceFkOnPrimaryDeleteAsync(
-                rel.ForeignTable,
-                childDef,
-                childDeletedRows,
-                ctx,
-                depth + 1,
-                cancellationToken).ConfigureAwait(false);
-
-            await complexColumns.CascadeDeleteComplexChildrenAsync(childDef, cascadeLocations, cancellationToken).ConfigureAwait(false);
-
-            int deleted = 0;
-            foreach (RowLocation location in cascadeLocations)
+            foreach (RowLocation location in locations)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
-                deleted++;
             }
 
-            if (deleted > 0)
-            {
-                await tableRows.AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-                await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            }
+            await tableRows.AdjustTDefRowCountAsync(table.Entry.TDefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -298,14 +220,15 @@ internal sealed class RelationshipEnforcer(
     /// against its own primary columns: one none of whose primary columns the
     /// update assigns is skipped, and only the rows whose key in those columns
     /// changes from a non-null value to another non-null value move their
-    /// dependent rows.
+    /// dependent rows. Every relationship whose key changes is resolved
+    /// before any dependent row is rewritten, so one that names a missing
+    /// table or column refuses the update before another one cascades.
     /// </summary>
     /// <param name="primaryTable">The table being updated.</param>
     /// <param name="primaryDef">The table's definition.</param>
     /// <param name="assignedColumns">The ordinals of the columns the update assigns.</param>
     /// <param name="rows">Each matching row before and after the update, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
-    /// <param name="depth">The cascade depth.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">
     /// A changed key has dependent rows and the relationship does not cascade
@@ -318,11 +241,9 @@ internal sealed class RelationshipEnforcer(
         ICollection<int> assignedColumns,
         IReadOnlyList<(object[] OldRow, object[] NewRow)> rows,
         FkContext ctx,
-        int depth,
         CancellationToken cancellationToken)
     {
-        RelationshipCascadePolicy.ThrowIfDepthExceeded(depth);
-
+        var keyChanges = new List<ReferencedKeyChange>();
         foreach (FkRelationship rel in ctx.All)
         {
             // An update cannot assign a primary column the table does not
@@ -361,10 +282,17 @@ internal sealed class RelationshipEnforcer(
             }
 
             ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            CatalogEntry childEntry = childTable.Entry;
-            TableDef childDef = childTable.Definition;
-            int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childDef);
+            int[] foreignColumnIndexes = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childTable.Definition);
+            keyChanges.Add(new ReferencedKeyChange(rel, childTable, foreignColumnIndexes, movingChanges));
+        }
 
+        foreach (ReferencedKeyChange change in keyChanges)
+        {
+            FkRelationship rel = change.Relationship;
+            CatalogEntry childEntry = change.ChildTable.Entry;
+            TableDef childDef = change.ChildTable.Definition;
+            int[] fkIdx = change.ForeignColumnIndexes;
+            Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)> movingChanges = change.Changes;
             ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
             {
@@ -621,7 +549,177 @@ internal sealed class RelationshipEnforcer(
         return resolved ?? throw RelationshipCannotBeEnforced(rel, $"its {role} '{tableName}' was not found");
     }
 
-    private async ValueTask<List<object?[]>?> TryReadAllRowsTypedAsync(
+    /// <summary>
+    /// Finds, without writing anything, the rows a delete of
+    /// <paramref name="deletedRows"/> from <paramref name="primaryTable"/>
+    /// cascades to, and in turn the rows their deletes cascade to. Each
+    /// relationship's dependent rows are appended to
+    /// <paramref name="cascades"/> after the cascades they cause, which is the
+    /// order they are deleted in. A row an earlier cascade of the call
+    /// deletes, which <paramref name="cascaded"/> holds, is no longer a
+    /// dependent row, so it neither refuses the delete nor is deleted twice.
+    /// </summary>
+    /// <param name="primaryTable">The table rows are deleted from.</param>
+    /// <param name="primaryDef">The table's definition.</param>
+    /// <param name="deletedRows">The deleted rows, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="depth">How many cascades lead to this delete.</param>
+    /// <param name="cascades">The cascading deletes found so far, in delete order.</param>
+    /// <param name="cascaded">The rows <paramref name="cascades"/> deletes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">
+    /// A deleted key has dependent rows and the relationship does not cascade
+    /// deletes, a relationship with a non-null deleted key names a table or
+    /// column that cannot be found, or <paramref name="depth"/> exceeds
+    /// <see cref="RelationshipCascadePolicy.MaxDepth"/>.
+    /// </exception>
+    private async ValueTask PlanCascadeDeletesAsync(
+        string primaryTable,
+        TableDef primaryDef,
+        List<object?[]> deletedRows,
+        FkContext ctx,
+        int depth,
+        List<CascadeDelete> cascades,
+        HashSet<(long PageNumber, int RowIndex)> cascaded,
+        CancellationToken cancellationToken)
+    {
+        RelationshipCascadePolicy.ThrowIfDepthExceeded(depth);
+
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            int[] primaryPkIdx = RequireColumns(rel, primaryTable, rel.PrimaryColumns, primaryDef);
+            List<object?[]> parentPkRows = RelationshipKeyBuilder.ProjectNonNullKeys(deletedRows, primaryPkIdx);
+            if (parentPkRows.Count == 0)
+            {
+                continue;
+            }
+
+            ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childTable.Definition);
+
+            List<LocatedRow> dependents = await this.FindDependentRowsAsync(rel, childTable, fkIdx, parentPkRows, ctx, cancellationToken).ConfigureAwait(false);
+            _ = dependents.RemoveAll(row => cascaded.Contains((row.Location.PageNumber, row.Location.RowIndex)));
+            if (dependents.Count == 0)
+            {
+                continue;
+            }
+
+            if (!rel.CascadeDeletes)
+            {
+                throw new InvalidOperationException(
+                    $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
+                    $"{dependents.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
+            }
+
+            var dependentValues = new List<object?[]>(dependents.Count);
+            foreach (LocatedRow row in dependents)
+            {
+                dependentValues.Add(row.Values);
+            }
+
+            await this.PlanCascadeDeletesAsync(rel.ForeignTable, childTable.Definition, dependentValues, ctx, depth + 1, cascades, cascaded, cancellationToken).ConfigureAwait(false);
+
+            // A dependent row that a cascade nested in this one already
+            // deletes, such as the child of another dependent row through a
+            // self-relationship, is not deleted or counted again.
+            var locations = new List<RowLocation>(dependents.Count);
+            foreach (LocatedRow row in dependents)
+            {
+                if (cascaded.Add((row.Location.PageNumber, row.Location.RowIndex)))
+                {
+                    locations.Add(row.Location);
+                }
+            }
+
+            if (locations.Count > 0)
+            {
+                cascades.Add(new CascadeDelete(rel.ForeignTable, childTable, locations));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Finds the rows of the relationship's foreign table whose key is one of
+    /// <paramref name="parentKeys"/>: by a seek on the table's foreign-key
+    /// index when one covers the key and every row found can be read, and
+    /// otherwise by reading the table.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="childTable">The relationship's foreign table.</param>
+    /// <param name="fkIdx">The ordinals of the foreign-key columns in <paramref name="childTable"/>.</param>
+    /// <param name="parentKeys">The referenced keys, in the relationship's primary-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The dependent rows.</returns>
+    private async ValueTask<List<LocatedRow>> FindDependentRowsAsync(
+        FkRelationship rel,
+        ResolvedTable childTable,
+        int[] fkIdx,
+        List<object?[]> parentKeys,
+        FkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+        if (childSeek != null)
+        {
+            var requests = new List<(object?[] OldPk, byte Payload)>(parentKeys.Count);
+            foreach (object?[] parentKey in parentKeys)
+            {
+                requests.Add((parentKey, 0));
+            }
+
+            List<(RowLocation Loc, byte Payload)>? hits = await this.childRowLocator.TrySeekChildLocationsAsync(
+                childTable.Entry,
+                childSeek,
+                requests,
+                cancellationToken).ConfigureAwait(false);
+            if (hits != null)
+            {
+                var locations = new List<RowLocation>(hits.Count);
+                foreach ((RowLocation location, _) in hits)
+                {
+                    locations.Add(location);
+                }
+
+                List<LocatedRow>? found = await this.TryReadAllRowsTypedAsync(childTable.Definition, locations, cancellationToken).ConfigureAwait(false);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+        }
+
+        HashSet<string> keySet = RelationshipKeyBuilder.BuildSetFromProjectedKeys(parentKeys);
+        var dependents = new List<LocatedRow>();
+        foreach (LocatedRow childRow in await snapshots.ReadRowsAsync(childTable.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string? childKey = RelationshipKeyBuilder.Build(childRow.Values, fkIdx);
+            if (childKey != null && keySet.Contains(childKey))
+            {
+                dependents.Add(childRow);
+            }
+        }
+
+        return dependents;
+    }
+
+    /// <summary>
+    /// Reads every column of the rows at <paramref name="locations"/>, or
+    /// returns <see langword="null"/> when a row holds a value the single-row
+    /// reader cannot decode (a MEMO, OLE or complex column), so the caller
+    /// reads the table instead.
+    /// </summary>
+    /// <param name="def">The table's definition.</param>
+    /// <param name="locations">The rows.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The rows, with <see cref="DBNull.Value"/> for nulls, or <see langword="null"/>.</returns>
+    private async ValueTask<List<LocatedRow>?> TryReadAllRowsTypedAsync(
         TableDef def,
         List<RowLocation> locations,
         CancellationToken cancellationToken)
@@ -632,7 +730,7 @@ internal sealed class RelationshipEnforcer(
             allColumnOrdinals[index] = index;
         }
 
-        var rows = new List<object?[]>(locations.Count);
+        var rows = new List<LocatedRow>(locations.Count);
         foreach (RowLocation location in locations)
         {
             object?[]? values = await db.TryReadColumnValuesTypedAsync(location, def, allColumnOrdinals, cancellationToken).ConfigureAwait(false);
@@ -641,95 +739,16 @@ internal sealed class RelationshipEnforcer(
                 return null;
             }
 
+            object[] row = new object[values.Length];
             for (int index = 0; index < values.Length; index++)
             {
-                if (values[index] == null)
-                {
-                    values[index] = DBNull.Value;
-                }
+                row[index] = values[index] ?? DBNull.Value;
             }
 
-            rows.Add(values);
+            rows.Add(new LocatedRow(location, row));
         }
 
         return rows;
-    }
-
-    private async ValueTask<bool> TryProcessCascadeDeleteWithSeekAsync(
-        FkRelationship rel,
-        CatalogEntry childEntry,
-        TableDef childDef,
-        ChildSeekIndex childSeek,
-        List<object?[]> parentPkRows,
-        FkContext ctx,
-        int depth,
-        CancellationToken cancellationToken)
-    {
-        var requests = new List<(object?[] OldPk, byte Payload)>(parentPkRows.Count);
-        foreach (object?[] primaryKey in parentPkRows)
-        {
-            requests.Add((primaryKey, 0));
-        }
-
-        List<(RowLocation Loc, byte Payload)>? hits = await this.childRowLocator.TrySeekChildLocationsAsync(
-            childEntry,
-            childSeek,
-            requests,
-            cancellationToken).ConfigureAwait(false);
-        if (hits == null)
-        {
-            return false;
-        }
-
-        if (hits.Count == 0)
-        {
-            return true;
-        }
-
-        if (!rel.CascadeDeletes)
-        {
-            throw new InvalidOperationException(
-                $"DELETE on '{rel.PrimaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                $"{hits.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
-        }
-
-        var fullLocations = new List<RowLocation>(hits.Count);
-        foreach ((RowLocation location, _) in hits)
-        {
-            fullLocations.Add(location);
-        }
-
-        List<object?[]>? childDeletedRows = await this.TryReadAllRowsTypedAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
-        if (childDeletedRows == null)
-        {
-            return false;
-        }
-
-        await this.EnforceFkOnPrimaryDeleteAsync(
-            rel.ForeignTable,
-            childDef,
-            childDeletedRows,
-            ctx,
-            depth + 1,
-            cancellationToken).ConfigureAwait(false);
-
-        await complexColumns.CascadeDeleteComplexChildrenAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
-
-        int deleted = 0;
-        foreach (RowLocation location in fullLocations)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
-            deleted++;
-        }
-
-        if (deleted > 0)
-        {
-            await tableRows.AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-        }
-
-        return true;
     }
 
     private async ValueTask<bool> TryProcessCascadeUpdateWithSeekAsync(
@@ -775,7 +794,7 @@ internal sealed class RelationshipEnforcer(
             locations.Add(location);
         }
 
-        List<object?[]>? rows = await this.TryReadAllRowsTypedAsync(childDef, locations, cancellationToken).ConfigureAwait(false);
+        List<LocatedRow>? rows = await this.TryReadAllRowsTypedAsync(childDef, locations, cancellationToken).ConfigureAwait(false);
         if (rows == null)
         {
             return false;
@@ -786,14 +805,7 @@ internal sealed class RelationshipEnforcer(
             cancellationToken.ThrowIfCancellationRequested();
 
             (RowLocation location, object[] newPkSubset) = rowMeta[rowIndex];
-            object?[] values = rows[rowIndex];
-
-            object[] rowValues = new object[values.Length];
-            for (int column = 0; column < values.Length; column++)
-            {
-                rowValues[column] = values[column] ?? DBNull.Value;
-            }
-
+            object[] rowValues = rows[rowIndex].Values;
             for (int column = 0; column < fkIdx.Length; column++)
             {
                 rowValues[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
