@@ -18,6 +18,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
@@ -519,9 +520,9 @@ public sealed class Jet3LongValueTests
             (row, _) =>
             {
                 RowLocation location = row.Location;
-                if (db.TryParseRowLayout(row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
+                if (RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
                 {
-                    ColumnSlice slice = db.ResolveColumnSlice(row.Page, location.RowStart, location.RowSize, layout, column);
+                    ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
                     if (slice.Kind is ColumnSliceKind.Fixed or ColumnSliceKind.Var
                         && LongValueDescriptor.TryRead(row.Page.AsSpan(location.RowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor))
                     {

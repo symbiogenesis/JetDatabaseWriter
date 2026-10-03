@@ -41,7 +41,6 @@ so each is a single, monolithic, hard-to-navigate file.
 | [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,933 | B-tree mutation |
 | [JetDatabaseWriter/Indexes/IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,728 | index orchestration |
 | [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,695 | attachments/multivalue |
-| [JetDatabaseWriter/DatabaseFile.cs](../JetDatabaseWriter/DatabaseFile.cs) | 1,467 | shared page I/O and format core |
 | [JetDatabaseWriter/Tables/TableReader.cs](../JetDatabaseWriter/Tables/TableReader.cs) | 1,030 | table scans and reads |
 
 `AccessWriter` (3,148 lines), `AccessReader` (2,885), and `AccessBase` (1,470) were the clearest
@@ -51,15 +50,18 @@ context. Writer collaborators took `AccessWriter` and found each other through i
 and some called its public methods back; and page I/O lived in the `AccessBase` base class, so any
 service that read pages held the facade object. `ReaderServices` and `WriterServices` now build each
 facade's collaborators and inject their dependencies; the collaborators depend on `DatabaseFile` (the
-page I/O extracted from `AccessBase`), not on a facade; and the read and write workflows live in
+composite of the format profile, the page I/O, the TDEF parser and the owned-page enumeration), not on
+a facade; and the read and write workflows live in
 services (`TableReader`, `IndexRowReader`, `SchemaReader`, `TableDataWriter`, `TableSchemaEditor`,
 `CatalogArtifactWriter`). The facades are now [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs)
 (460 lines, mostly XML docs and one-line forwarders), [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs)
 (843), and [AccessBase.cs](../JetDatabaseWriter/AccessBase.cs) (35). `ServiceGraphTests` guards against
 regressions, including a check that neither facade is reachable from its services at runtime.
 
-`DatabaseFile` and `TableReader` remain large but are each cohesive around one concern (the bytes of
-one open file; reading a table's rows). They are listed so they are watched, not because they mix roles.
+`TableReader` remains large but is cohesive around one concern (reading a table's rows); it is listed so
+it is watched, not because it mixes roles. `DatabaseFile` is now a composite of `JetFormat`,
+`PageFile`/`Pager`, `TableDefReader` and `OwnedDataPages`/`DataPageRows` that forwards to them;
+core-split-b removes the forwarders.
 
 **Why it matters:** these files exceed what a reviewer can hold in working memory, force wide-ranging
 merge conflicts, and make it impossible to unit-test slices in isolation.

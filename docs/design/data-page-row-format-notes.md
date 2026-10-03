@@ -34,7 +34,7 @@ deleted slots pointing at the same offset as a live row (indexTestV1997.mdb
 page 18 has row 21 live at offset 756 and rows 22-26 deleted at 756, probably
 left by page compaction). Taking the neighbour of whichever equal entry a binary
 search lands on gave such a row zero bytes, so every read skipped it.
-`DatabaseFile.FindNextRowStart` is an upper-bound search over the sorted
+`DataPageRows.FindNextRowStart` is an upper-bound search over the sorted
 offsets, and `TryGetSlotBound` / `UsageMap.TryGetRowBound` use a strict
 "greater than" scan.
 
@@ -175,9 +175,9 @@ testIndexProperties* and queryTestV2007 (catalog rows).
 
 ### How the library reads them
 
-`DatabaseFile.ComputeRowDirectory` returns, in slot order, every live row plus
+`DataPageRows.ComputeRowDirectory` returns, in slot order, every live row plus
 every header (a slot with `0x4000` and without `0x8000`) flagged
-`RowBound.IsOverflowPointer`. `DatabaseFile.TryResolveOverflowRowAsync` follows a
+`RowBound.IsOverflowPointer`. `OwnedDataPages.TryResolveOverflowRowAsync` follows a
 header to the row data, up to `Constants.DataPage.MaxOverflowHops` (8) hops, and
 requires the target to be a data page of the same table and a slot the page
 has. A pointer that cannot be resolved (shorter than four bytes, past the end of
@@ -186,7 +186,7 @@ undecodable row is skipped. `StrictParsing` governs value parsing only.
 
 Every read path uses the directory: the `TableReader` scans,
 `RowDecoder` (catalog and flat-table scans), the index seek in `IndexRowReader`,
-and the writer's `DatabaseFile.ForEachLiveTableRowAsync`, which visits an
+and the writer's `OwnedDataPages.ForEachLiveTableRowAsync`, which visits an
 overflow row at its header with `RowLocation.PageNumber` / `RowIndex` naming the
 header and `DataPageNumber` / `DataRowIndex` naming the moved bytes.
 `EnumerateLiveRowBounds` stays live-only, for usage-map and LVAL pages, which

@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Pages.Models;
 
 /// <summary>
 /// The row data an overflow header points at, as resolved by
-/// <see cref="DatabaseFile.TryResolveOverflowRowAsync"/>.
+/// <see cref="OwnedDataPages.TryResolveOverflowRowAsync"/>.
 /// </summary>
 /// <param name="PageNumber">The page holding the row data.</param>
 /// <param name="RowIndex">The row data's slot on <paramref name="PageNumber"/>.</param>

@@ -8,6 +8,6 @@ namespace JetDatabaseWriter.Pages.Models;
 /// Whether the slot is an overflow row's header (flagged
 /// <see cref="Constants.DataPage.OverflowRowFlag"/>), whose bytes are a pointer to
 /// the row data rather than the row itself; see
-/// <see cref="DatabaseFile.TryResolveOverflowRowAsync"/>.
+/// <see cref="OwnedDataPages.TryResolveOverflowRowAsync"/>.
 /// </param>
 internal readonly record struct RowBound(int RowIndex, int RowStart, int RowSize, bool IsOverflowPointer = false);

@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Pages.Models;
 
-/// <summary>Parsed row-trailer metadata - see <see cref="DatabaseFile.TryParseRowLayout"/>.</summary>
+/// <summary>Parsed row-trailer metadata - see <see cref="ValueDecoding.RowDecodePlan.TryParseRowLayout"/>.</summary>
 /// <param name="NumCols">The number of cols.</param>
 /// <param name="NullMaskPos">The null mask pos.</param>
 /// <param name="VarLen">The var len.</param>

@@ -215,7 +215,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader), OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader).OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
@@ -247,7 +247,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader), OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader).OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));

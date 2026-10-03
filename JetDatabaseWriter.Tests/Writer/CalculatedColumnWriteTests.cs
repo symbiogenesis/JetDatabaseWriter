@@ -1231,15 +1231,15 @@ public sealed class CalculatedColumnWriteTests
                 byte[] page = row.Page;
                 int rowStart = row.Location.RowStart;
                 int rowSize = row.Location.RowSize;
-                Assert.True(db.TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
-                ColumnSlice nameSlice = db.ResolveColumnSlice(page, rowStart, rowSize, layout, firstName);
+                Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice nameSlice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowStart, rowSize, layout, firstName);
                 if (db.DecodeTextForFormat(page, rowStart + nameSlice.DataStart, nameSlice.DataLen) == "Ann")
                 {
                     slots = calculated.ToDictionary(
                         c => c.Name,
                         c =>
                         {
-                            ColumnSlice slice = db.ResolveColumnSlice(page, rowStart, rowSize, layout, c);
+                            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowStart, rowSize, layout, c);
                             return page.AsSpan(rowStart + slice.DataStart, slice.DataLen).ToArray();
                         });
                 }
@@ -1728,8 +1728,8 @@ public sealed class CalculatedColumnWriteTests
             {
                 int rowStart = row.Location.RowStart;
                 int rowSize = row.Location.RowSize;
-                Assert.True(db.TryParseRowLayout(row.Page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
-                ColumnSlice slice = db.ResolveColumnSlice(row.Page, rowStart, rowSize, layout, column);
+                Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, row.Page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, rowStart, rowSize, layout, column);
                 if (slice.DataLen >= Constants.LongValue.HeaderSize
                     && LongValueDescriptor.TryRead(row.Page.AsSpan(rowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor)
                     && descriptor.IsExternal

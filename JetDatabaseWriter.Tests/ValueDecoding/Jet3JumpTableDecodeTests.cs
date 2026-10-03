@@ -109,11 +109,11 @@ public sealed class Jet3JumpTableDecodeTests
 
                     int[] offsets = Jet3RowTrailerReference.DecodeVarOffsets(rowBytes, nullMaskSize);
                     Assert.Equal(255, offsets[^1]);
-                    Assert.True(db.TryParseRowLayout(row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
+                    Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
                     Assert.Equal(255, layout.Eod);
                     foreach (ColumnInfo column in tableDef.Columns.Where(c => !c.IsFixed))
                     {
-                        ColumnSlice slice = db.ResolveColumnSlice(row.Page, location.RowStart, location.RowSize, layout, column);
+                        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
                         if (slice.Kind == ColumnSliceKind.Var)
                         {
                             Assert.Equal(offsets[column.VarIdx], slice.DataStart);

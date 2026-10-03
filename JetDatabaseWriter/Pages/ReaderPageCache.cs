@@ -105,7 +105,7 @@ internal sealed class ReaderPageCache : IDisposable
 
     /// <summary>
     /// Returns the row directory for <paramref name="page"/> (see
-    /// <see cref="DatabaseFile.ComputeRowDirectory"/>: live rows plus overflow headers
+    /// <see cref="DataPageRows.ComputeRowDirectory"/>: live rows plus overflow headers
     /// flagged <see cref="RowBound.IsOverflowPointer"/>), computing it on first request
     /// and caching the result keyed by <paramref name="pageNumber"/> when a page cache
     /// is configured. The returned array is owned by the cache — callers must not

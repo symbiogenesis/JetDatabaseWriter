@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter;
 
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -13,7 +12,6 @@ using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -21,33 +19,20 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
-using JetDatabaseWriter.ValueDecoding.Models;
-using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// One open JET database file: the backing stream, its format profile
-/// (<see cref="JetFormat"/>, whose members it forwards), page I/O
-/// (decryption, the transaction journal, cooperative byte-range locks), TDEF
-/// parsing, and owned data-page and live-row enumeration. Shared by the
-/// reader and writer service graphs; it knows nothing about either facade.
+/// One open JET database file, composed of its parts: the format profile
+/// (<see cref="JetFormat"/>), the page I/O (a read-only <see cref="PageFile"/>
+/// or the writer's <see cref="Pager"/>), the TDEF parser
+/// (<see cref="TableDefReader"/>) and the owned-page and row enumeration
+/// (<see cref="OwnedDataPages"/>, <see cref="DataPageRows"/>). It forwards to
+/// them and keeps only the in-place TDEF write-backs, which move to the
+/// writer's TDEF writer in core-split-b. Shared by the reader and writer
+/// service graphs; it knows nothing about either facade.
 /// </summary>
 internal sealed class DatabaseFile : IAsyncDisposable
 {
-    /// <summary>
-    /// <see langword="true"/> for the writer's file, whose pages change; a
-    /// read-only file memoizes each table's owned data pages instead.
-    /// </summary>
-    private readonly bool writable;
-
-    private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
-#if NET9_0_OR_GREATER
-    private readonly Lock ownedDataPagesCacheLock = new();
-#else
-    private readonly object ownedDataPagesCacheLock = new();
-#endif
-    private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
-
     /// <summary>
     /// Initializes a new instance of the <see cref="DatabaseFile"/> class
     /// from a pre-read database file header.
@@ -74,9 +59,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         Type ownerType,
         bool writable)
     {
-        this.writable = writable;
         this.DatabasePath = path ?? string.Empty;
-        this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
 
         // The profile detects the format and decodes the code page; neither
         // step can throw, so a password error below is still the first error
@@ -92,11 +75,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
             ? new Pager(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType)
             : new PageFile(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType);
         this.TableDefs = new TableDefReader(this.Pages, this.Profile);
+        this.OwnedPages = new OwnedDataPages(this.Pages, this.Profile, cacheResults: !writable);
     }
-
-    internal delegate ValueTask<bool> TableRowVisitor(TableRow row, CancellationToken cancellationToken);
-
-    internal delegate ValueTask<bool> DataPageVisitor(long pageNumber, byte[] page, CancellationToken cancellationToken);
 
     /// <summary>
     /// Gets the file's immutable format profile: format, page size, code page,
@@ -118,6 +98,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// TDEF writer.
     /// </summary>
     internal TableDefReader TableDefs { get; }
+
+    /// <summary>
+    /// Gets the file's owned-page discovery and row enumeration, which reads
+    /// through <see cref="Pages"/> and memoizes only on a read-only file. The
+    /// owned-page and row members below forward to it.
+    /// </summary>
+    internal OwnedDataPages OwnedPages { get; }
 
     // ── Format-specific layouts (forwarders to Profile) ──────────────
 
@@ -265,7 +252,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Disposes the page file (marking it disposed, then the stream unless the
-    /// caller kept it, then the I/O gate and the page cipher) and drops the
+    /// caller kept it, then the I/O gate and the page cipher), then the
     /// owned-page caches.
     /// </summary>
     /// <returns>A task that completes when the file is disposed.</returns>
@@ -282,7 +269,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
         finally
         {
-            this.DisposeOwnedPageCaches();
+            this.OwnedPages.Dispose();
         }
     }
 
@@ -294,7 +281,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal void DisposeManagedResources()
     {
         this.Pages.DisposeManagedResources();
-        this.DisposeOwnedPageCaches();
+        this.OwnedPages.Dispose();
     }
 
     /// <summary>Throws when the file has been disposed — see <see cref="PageFile.ThrowIfDisposed"/>.</summary>
@@ -455,833 +442,93 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
         => this.WritablePages.AppendPageAsync(page, cancellationToken);
 
-    // ── Table page enumeration ───────────────────────────────────────
+    // ── Owned pages and rows (forwarders to OwnedPages, DataPageRows and the column readers) ──
 
-    internal async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        if (tdefPage <= 0)
-        {
-            return [];
-        }
+    /// <summary>Returns the data pages a table owns — see <see cref="OwnedDataPages.GetOwnedDataPagesAsync"/>.</summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The owned data pages.</returns>
+    internal ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
+        => this.OwnedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken);
 
-        bool canUseCache = !this.writable;
-        if (canUseCache && this.TryGetCachedOwnedDataPages(tdefPage, out long[] cachedPages))
-        {
-            return cachedPages;
-        }
-
-        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (mappedPages is not null)
-        {
-            if (canUseCache)
-            {
-                this.CacheOwnedDataPages(tdefPage, mappedPages);
-            }
-
-            return mappedPages;
-        }
-
-        Dictionary<long, long[]> pageIndex = canUseCache
-            ? await this.ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false)
-            : await this.BuildOwnedDataPageIndexAsync(cancellationToken).ConfigureAwait(false);
-        return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
-            ? pageNumbers
-            : [];
-    }
-
-    /// <summary>
-    /// Visits every live row of the table rooted at <paramref name="tdefPage"/>, in
-    /// page and slot order, including overflow rows (see <see cref="ForEachRowOnPageAsync"/>).
-    /// </summary>
+    /// <summary>Visits every live row of a table — see <see cref="OwnedDataPages.ForEachLiveTableRowAsync"/>.</summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="visitRowAsync">Called for each row; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask ForEachLiveTableRowAsync(
-        long tdefPage,
-        TableRowVisitor visitRowAsync,
-        CancellationToken cancellationToken)
-    {
-        Guard.NotNull(visitRowAsync, nameof(visitRowAsync));
+    /// <returns>A task that completes when the walk ends.</returns>
+    internal ValueTask ForEachLiveTableRowAsync(long tdefPage, OwnedDataPages.TableRowVisitor visitRowAsync, CancellationToken cancellationToken)
+        => this.OwnedPages.ForEachLiveTableRowAsync(tdefPage, visitRowAsync, cancellationToken);
 
-        await this.ForEachOwnedDataPageAsync(
-            tdefPage,
-            (pageNumber, page, token) => this.ForEachRowOnPageAsync(pageNumber, page, visitRowAsync, token),
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Visits every live row of the data page <paramref name="pageNumber"/> in slot
-    /// order. An overflow row is visited at its header slot: its location keeps the
-    /// header as <see cref="RowLocation.PageNumber"/> / <see cref="RowLocation.RowIndex"/>
-    /// and names the moved bytes through <see cref="RowLocation.DataPageNumber"/> /
-    /// <see cref="RowLocation.DataRowIndex"/>, and <see cref="TableRow.Page"/> holds the
-    /// page with those bytes. An overflow pointer that cannot be resolved skips the
-    /// row, as an undecodable row is skipped. Visitors must not keep
-    /// <see cref="TableRow.Page"/> after they return.
-    /// </summary>
+    /// <summary>Visits every live row of one data page — see <see cref="OwnedDataPages.ForEachRowOnPageAsync"/>.</summary>
     /// <param name="pageNumber">The data page's number.</param>
     /// <param name="page">The data page's bytes.</param>
     /// <param name="visitRowAsync">Called for each row; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="false"/> when the visitor stopped the walk.</returns>
-    internal async ValueTask<bool> ForEachRowOnPageAsync(
-        long pageNumber,
-        byte[] page,
-        TableRowVisitor visitRowAsync,
-        CancellationToken cancellationToken)
-    {
-        foreach (RowBound entry in this.ComputeRowDirectory(page))
-        {
-            if (!entry.IsOverflowPointer)
-            {
-                var location = new RowLocation(pageNumber, entry.RowIndex, entry.RowStart, entry.RowSize);
-                if (!await visitRowAsync(new TableRow(page, location), cancellationToken).ConfigureAwait(false))
-                {
-                    return false;
-                }
+    internal ValueTask<bool> ForEachRowOnPageAsync(long pageNumber, byte[] page, OwnedDataPages.TableRowVisitor visitRowAsync, CancellationToken cancellationToken)
+        => this.OwnedPages.ForEachRowOnPageAsync(pageNumber, page, visitRowAsync, cancellationToken);
 
-                continue;
-            }
-
-            OverflowRowTarget? resolved = await this.TryResolveOverflowRowAsync(
-                page,
-                entry,
-                this.ReadPageAsync,
-                ReturnPage,
-                cancellationToken).ConfigureAwait(false);
-            if (resolved is not { } target)
-            {
-                continue;
-            }
-
-            try
-            {
-                var location = new RowLocation(pageNumber, entry.RowIndex, target.Bound.RowStart, target.Bound.RowSize)
-                {
-                    DataPageNumber = target.PageNumber,
-                    DataRowIndex = target.RowIndex,
-                };
-                if (!await visitRowAsync(new TableRow(target.Page, location), cancellationToken).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-            finally
-            {
-                ReturnPage(target.Page);
-            }
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Follows the overflow pointer held in <paramref name="header"/> (a row-directory
-    /// entry with <see cref="RowBound.IsOverflowPointer"/> set) to the row data. The
-    /// pointer is the target row index (1 byte) followed by the target page number
-    /// (3 bytes, little-endian); when the target slot is itself flagged overflow, the
-    /// walk continues from it, up to <see cref="Constants.DataPage.MaxOverflowHops"/>
-    /// hops (Jackcess <c>TableImpl.positionAtRowData</c>). The target slot's deleted
-    /// flag is ignored, because Access always flags the moved bytes deleted. Returns
-    /// <see langword="null"/>, without throwing, when the pointer is shorter than four
-    /// bytes, names a page outside the file, a page that is not a data page of the
-    /// same table, or a slot the page does not have, or when the walk runs out of hops.
-    /// </summary>
+    /// <summary>Follows an overflow row's pointer to its bytes — see <see cref="OwnedDataPages.TryResolveOverflowRowAsync"/>.</summary>
     /// <param name="headerPage">The data page holding the header slot.</param>
     /// <param name="header">The header slot's directory entry.</param>
-    /// <param name="readPage">Reads a page; the walk reads each target page through it.</param>
-    /// <param name="returnPage">
-    /// Releases a page <paramref name="readPage"/> returned that the walk no longer needs,
-    /// or <see langword="null"/> when its pages are not pooled (a page cache). The page of
-    /// the returned target is not released: the caller owns it.
-    /// </param>
+    /// <param name="readPage">Reads a page.</param>
+    /// <param name="returnPage">Releases a page <paramref name="readPage"/> returned, or <see langword="null"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<OverflowRowTarget?> TryResolveOverflowRowAsync(
+    /// <returns>The target slot and its page, or <see langword="null"/>.</returns>
+    internal ValueTask<OverflowRowTarget?> TryResolveOverflowRowAsync(
         byte[] headerPage,
         RowBound header,
         Func<long, CancellationToken, ValueTask<byte[]>> readPage,
         Action<byte[]>? returnPage,
         CancellationToken cancellationToken)
-    {
-        int owner = Ri32(headerPage, this.DataPage.TDefOff);
-        long totalPages = this.PageCount;
-        byte[] page = headerPage;
-        RowBound pointer = header;
-        try
-        {
-            for (int hop = 0; hop < Constants.DataPage.MaxOverflowHops; hop++)
-            {
-                if (pointer.RowSize < Constants.DataPage.OverflowPointerSize)
-                {
-                    return null;
-                }
+        => this.OwnedPages.TryResolveOverflowRowAsync(headerPage, header, readPage, returnPage, cancellationToken);
 
-                int targetRow = page[pointer.RowStart];
-                long targetPageNumber = page[pointer.RowStart + 1]
-                    | (page[pointer.RowStart + 2] << 8)
-                    | (page[pointer.RowStart + 3] << 16);
-                if (targetPageNumber <= 0 || targetPageNumber >= totalPages)
-                {
-                    return null;
-                }
+    /// <summary>Visits each data page a table owns — see <see cref="OwnedDataPages.ForEachOwnedDataPageAsync"/>.</summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="visitPageAsync">Called for each data page; returns <see langword="false"/> to stop.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the walk ends.</returns>
+    internal ValueTask ForEachOwnedDataPageAsync(long tdefPage, OwnedDataPages.DataPageVisitor visitPageAsync, CancellationToken cancellationToken)
+        => this.OwnedPages.ForEachOwnedDataPageAsync(tdefPage, visitPageAsync, cancellationToken);
 
-                byte[] target = await readPage(targetPageNumber, cancellationToken).ConfigureAwait(false);
-                ReleaseIntermediate(page);
-                page = target;
-
-                if (target[0] != Constants.PageTypes.Data
-                    || Ri32(target, this.DataPage.TDefOff) != owner
-                    || !this.TryGetSlotBound(target, targetRow, out RowBound bound))
-                {
-                    return null;
-                }
-
-                int raw = Ru16(target, this.DataPage.RowsStart + (targetRow * 2));
-                if ((raw & Constants.DataPage.OverflowRowFlag) == 0)
-                {
-                    page = headerPage;
-                    return new OverflowRowTarget(targetPageNumber, targetRow, target, bound);
-                }
-
-                pointer = bound;
-            }
-
-            return null;
-        }
-        finally
-        {
-            ReleaseIntermediate(page);
-        }
-
-        void ReleaseIntermediate(byte[] buffer)
-        {
-            if (!ReferenceEquals(buffer, headerPage))
-            {
-                returnPage?.Invoke(buffer);
-            }
-        }
-    }
-
-    internal async ValueTask ForEachOwnedDataPageAsync(
-        long tdefPage,
-        DataPageVisitor visitPageAsync,
-        CancellationToken cancellationToken)
-    {
-        Guard.NotNull(visitPageAsync, nameof(visitPageAsync));
-
-        IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        foreach (long pageNumber in pageNumbers)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != tdefPage)
-                {
-                    continue;
-                }
-
-                if (!await visitPageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false))
-                {
-                    return;
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Yields the bounds (row index, start offset, size) of every live (non-deleted, non-overflow)
-    /// row on the given data <paramref name="page"/>. Overflow headers are left out, so
-    /// this suits pages that never hold overflow rows (usage-map and LVAL pages) and
-    /// callers that look for a slot by index; table scans use
-    /// <see cref="ComputeRowDirectory"/> or <see cref="ForEachRowOnPageAsync"/>.
-    /// </summary>
+    /// <summary>Yields a data page's live, non-overflow rows — see <see cref="DataPageRows.EnumerateLiveRowBounds"/>.</summary>
     /// <param name="page">The page bytes.</param>
-    internal IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page)
-    {
-        int numRows = Ru16(page, this.DataPage.NumRows);
-        if (numRows == 0)
-        {
-            yield break;
-        }
+    /// <returns>The live rows' bounds.</returns>
+    internal IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page) => DataPageRows.EnumerateLiveRowBounds(this.Profile, page);
 
-        // Clamp numRows to the maximum that can physically fit in the page's
-        // row-offset table region (each entry is 2 bytes, starting at RowsStart).
-        int maxPossibleRows = (page.Length - this.DataPage.RowsStart) / 2;
-        if (numRows > maxPossibleRows)
-        {
-            numRows = maxPossibleRows;
-        }
-
-        if (numRows <= 0)
-        {
-            yield break;
-        }
-
-        int[] rawOffsets = new int[numRows];
-        for (int r = 0; r < numRows; r++)
-        {
-            rawOffsets[r] = Ru16(page, this.DataPage.RowsStart + (r * 2));
-        }
-
-        int[] positions = new int[numRows];
-        int posCount = 0;
-        for (int r = 0; r < numRows; r++)
-        {
-            int pos = rawOffsets[r] & Constants.DataPage.RowOffsetMask;
-            if (pos > 0 && pos < this.PageSizeBytes)
-            {
-                positions[posCount++] = pos;
-            }
-        }
-
-        Array.Sort(positions, 0, posCount);
-
-        for (int r = 0; r < numRows; r++)
-        {
-            int raw = rawOffsets[r];
-            if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
-            {
-                continue;
-            }
-
-            int rowStart = raw & Constants.DataPage.RowOffsetMask;
-            int rowEnd = FindNextRowStart(positions, posCount, rowStart, this.PageSizeBytes);
-            yield return new RowBound(r, rowStart, rowEnd - rowStart);
-        }
-    }
-
-    /// <summary>
-    /// Returns the row directory of the data <paramref name="page"/>, in slot order:
-    /// every live row, plus every overflow row's header (a slot flagged
-    /// <see cref="Constants.DataPage.OverflowRowFlag"/> but not deleted) with
-    /// <see cref="RowBound.IsOverflowPointer"/> set and its pointer bytes as the bound.
-    /// Deleted slots, including the moved bytes of overflow rows, are left out.
-    /// Allocates a single <see cref="RowBound"/>[] (or <see cref="Array.Empty{T}"/>
-    /// when the page has no such slot) instead of returning an iterator. Suitable as
-    /// a memoization target for <see cref="ReaderPageCache"/>, where the same page may
-    /// be visited by multiple streaming consumers.
-    /// </summary>
+    /// <summary>Returns a data page's row directory — see <see cref="DataPageRows.ComputeRowDirectory"/>.</summary>
     /// <param name="page">The page bytes.</param>
-    internal RowBound[] ComputeRowDirectory(byte[] page)
-    {
-        int numRows = Ru16(page, this.DataPage.NumRows);
-        if (numRows == 0)
-        {
-            return [];
-        }
+    /// <returns>The row directory.</returns>
+    internal RowBound[] ComputeRowDirectory(byte[] page) => DataPageRows.ComputeRowDirectory(this.Profile, page);
 
-        // Clamp numRows to the maximum that can physically fit in the page's
-        // row-offset table region (each entry is 2 bytes, starting at RowsStart).
-        int maxPossibleRows = (page.Length - this.DataPage.RowsStart) / 2;
-        if (numRows > maxPossibleRows)
-        {
-            numRows = maxPossibleRows;
-        }
-
-        if (numRows <= 0)
-        {
-            return [];
-        }
-
-        // Cold (cache-miss) scan only: warm rescans are served from the
-        // row-bounds cache. Rent the two scratch buffers from the shared pool
-        // instead of allocating int[numRows] per page; numRows is bounded by the
-        // page's row-offset table size. Array.Sort is used because Span<int>.Sort
-        // is unavailable on netstandard2.1.
-        int[] rawOffsets = ArrayPool<int>.Shared.Rent(numRows);
-        int[] positions = ArrayPool<int>.Shared.Rent(numRows);
-        try
-        {
-            int posCount = 0;
-            int entryCount = 0;
-            for (int r = 0; r < numRows; r++)
-            {
-                int raw = Ru16(page, this.DataPage.RowsStart + (r * 2));
-                rawOffsets[r] = raw;
-
-                int pos = raw & Constants.DataPage.RowOffsetMask;
-                if (pos > 0 && pos < this.PageSizeBytes)
-                {
-                    positions[posCount++] = pos;
-                }
-
-                if ((raw & Constants.DataPage.DeletedRowFlag) == 0)
-                {
-                    entryCount++;
-                }
-            }
-
-            if (entryCount == 0)
-            {
-                return [];
-            }
-
-            Array.Sort(positions, 0, posCount);
-
-            var result = new RowBound[entryCount];
-            int idx = 0;
-            for (int r = 0; r < numRows; r++)
-            {
-                int raw = rawOffsets[r];
-                if ((raw & Constants.DataPage.DeletedRowFlag) != 0)
-                {
-                    continue;
-                }
-
-                int rowStart = raw & Constants.DataPage.RowOffsetMask;
-                int rowEnd = FindNextRowStart(positions, posCount, rowStart, this.PageSizeBytes);
-                bool isOverflowPointer = (raw & Constants.DataPage.OverflowRowFlag) != 0;
-                result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart, isOverflowPointer);
-            }
-
-            return result;
-        }
-        finally
-        {
-            ArrayPool<int>.Shared.Return(rawOffsets);
-            ArrayPool<int>.Shared.Return(positions);
-        }
-    }
-
-    /// <summary>
-    /// Returns the end (exclusive) of the row that starts at <paramref name="rowStart"/>:
-    /// the first offset in <paramref name="sortedPositions"/> strictly greater than
-    /// <paramref name="rowStart"/>, or <paramref name="pageSize"/> when there is none.
-    /// The offsets include deleted slots, and Access leaves deleted slots pointing
-    /// at the same offset as a live row, so the search skips every entry equal to
-    /// <paramref name="rowStart"/> rather than taking the neighbour of whichever
-    /// equal entry a binary search lands on.
-    /// </summary>
-    /// <param name="sortedPositions">Every slot's masked row offset, sorted ascending.</param>
-    /// <param name="count">The number of valid entries in <paramref name="sortedPositions"/>.</param>
-    /// <param name="rowStart">The row's start offset.</param>
-    /// <param name="pageSize">The page size, which ends the highest row.</param>
-    private static int FindNextRowStart(int[] sortedPositions, int count, int rowStart, int pageSize)
-    {
-        int lo = 0;
-        int hi = count;
-        while (lo < hi)
-        {
-            int mid = lo + ((hi - lo) >> 1);
-            if (sortedPositions[mid] <= rowStart)
-            {
-                lo = mid + 1;
-            }
-            else
-            {
-                hi = mid;
-            }
-        }
-
-        return lo < count ? sortedPositions[lo] : pageSize;
-    }
-
-    /// <summary>
-    /// Returns the bounds of slot <paramref name="rowIndex"/> on the data
-    /// <paramref name="page"/> whatever its flags, for following an overflow pointer
-    /// to a slot Access flagged deleted. The slot must exist within the page's
-    /// (clamped) row count and start past the row-offset table and inside the page;
-    /// it ends at the next greater offset of any slot, as in
-    /// <see cref="ComputeRowDirectory"/>.
-    /// </summary>
+    /// <summary>Returns one slot's bounds whatever its flags — see <see cref="DataPageRows.TryGetSlotBound"/>.</summary>
     /// <param name="page">The data page bytes.</param>
     /// <param name="rowIndex">The slot's row index.</param>
     /// <param name="bound">Receives the slot's bounds on success.</param>
-    internal bool TryGetSlotBound(byte[] page, int rowIndex, out RowBound bound)
-    {
-        bound = default;
-        int numRows = Math.Min(Ru16(page, this.DataPage.NumRows), (page.Length - this.DataPage.RowsStart) / 2);
-        if (rowIndex < 0 || rowIndex >= numRows)
-        {
-            return false;
-        }
+    /// <returns><see langword="true"/> when the slot exists.</returns>
+    internal bool TryGetSlotBound(byte[] page, int rowIndex, out RowBound bound) => DataPageRows.TryGetSlotBound(this.Profile, page, rowIndex, out bound);
 
-        int rowStart = Ru16(page, this.DataPage.RowsStart + (rowIndex * 2)) & Constants.DataPage.RowOffsetMask;
-        if (rowStart < this.DataPage.RowsStart + (numRows * 2) || rowStart >= this.PageSizeBytes)
-        {
-            return false;
-        }
-
-        int rowEnd = this.PageSizeBytes;
-        for (int r = 0; r < numRows; r++)
-        {
-            int candidate = Ru16(page, this.DataPage.RowsStart + (r * 2)) & Constants.DataPage.RowOffsetMask;
-            if (candidate > rowStart && candidate < rowEnd)
-            {
-                rowEnd = candidate;
-            }
-        }
-
-        bound = new RowBound(rowIndex, rowStart, rowEnd - rowStart);
-        return true;
-    }
-
-    // ── Row layout decoding (forwards to RowDecodePlan; used by writer column reads) ────
-
-    /// <summary>
-    /// Parses the row-trailer metadata (numCols, null-mask position, var-table
-    /// position and EOD pointer) for a row at <paramref name="rowStart"/>.
-    /// Returns <see langword="false"/> when the row is too small or otherwise
-    /// malformed; on success <paramref name="layout"/> is populated and can be
-    /// passed to <see cref="ResolveColumnSlice"/> for any column. Jet3 offsets
-    /// past 255 are resolved through the row's jump table
-    /// (<see cref="Pages.Jet3JumpTable"/>).
-    /// </summary>
-    /// <param name="page">Data page containing the row.</param>
-    /// <param name="rowStart">Offset of the row within <paramref name="page"/>.</param>
-    /// <param name="rowSize">Total size of the row in bytes.</param>
-    /// <param name="hasVarColumns">When <see langword="false"/>, the var-length
-    /// metadata is not read (no varLen byte, no jump table, no var-offset
-    /// table, no EOD marker): Access omits it for tables with zero
-    /// variable-length columns, and the writer's unused trailer is skipped.</param>
-    /// <param name="layout">Receives the parsed layout on success.</param>
-    internal bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
-        => RowDecodePlan.TryParseRowLayout(this.Format, this.RowFields, page, rowStart, rowSize, hasVarColumns, out layout);
-
-    /// <summary>
-    /// Resolves the per-column data slice (or null/bool/empty marker) for
-    /// <paramref name="col"/> within a row whose layout has been parsed by
-    /// <see cref="TryParseRowLayout"/>.
-    /// </summary>
-    /// <param name="page">The page bytes.</param>
-    /// <param name="rowStart">The row start.</param>
-    /// <param name="rowSize">The row size.</param>
-    /// <param name="layout">The layout.</param>
-    /// <param name="col">The column descriptor.</param>
-    internal ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
-        => RowDecodePlan.ResolveColumnSlice(this.RowFields, page, rowStart, rowSize, layout, col);
-
-    /// <summary>
-    /// Yields <see cref="RowLocation"/>s (row index + start/size) for every live, non-overflow
-    /// row on <paramref name="page"/>, paired with <paramref name="pageNumber"/>. A thin wrapper
-    /// over <see cref="EnumerateLiveRowBounds(byte[])"/> for callers that need to round-trip
-    /// the originating page number (update / delete paths).
-    /// </summary>
+    /// <summary>Yields a data page's live rows as locations — see <see cref="DataPageRows.EnumerateLiveRowLocations"/>.</summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="page">The page bytes.</param>
-    internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
-    {
-        foreach (RowBound rb in this.EnumerateLiveRowBounds(page))
-        {
-            yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
-        }
-    }
+    /// <returns>The live rows' locations.</returns>
+    internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page) => DataPageRows.EnumerateLiveRowLocations(this.Profile, pageNumber, page);
 
-    /// <summary>
-    /// Reads a single column value as a string, supporting bool, fixed-width and inline-var
-    /// (Text / Binary) columns. Variable-width MEMO / OLE / Complex columns are NOT
-    /// followed (they require LVAL chain traversal); those return <see cref="string.Empty"/>
-    /// here. Used by catalog walks that only need scalar metadata columns.
-    /// </summary>
+    /// <summary>Reads one scalar column as a string — see <see cref="ScalarColumnReader.DecodeSimpleColumnValue"/>.</summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="rowStart">The row start.</param>
     /// <param name="rowSize">The row size.</param>
     /// <param name="column">The column.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the column type is unknown.</exception>
+    /// <returns>The value as a string, or <see cref="string.Empty"/>.</returns>
     internal string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
-    {
-        if (column == null || rowSize < this.RowFields.NumCols)
-        {
-            return string.Empty;
-        }
+        => ScalarColumnReader.DecodeSimpleColumnValue(this.Profile, page, rowStart, rowSize, column);
 
-        if (!this.TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
-        {
-            return string.Empty;
-        }
-
-        ColumnSlice slice = this.ResolveColumnSlice(page, rowStart, rowSize, layout, column);
-        switch (slice.Kind)
-        {
-            case ColumnSliceKind.Bool:
-                return slice.BoolValue ? "True" : "False";
-
-            case ColumnSliceKind.Null:
-            case ColumnSliceKind.Empty:
-                return string.Empty;
-
-            case ColumnSliceKind.Fixed:
-                return ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen);
-
-            case ColumnSliceKind.Var:
-                if (slice.DataLen <= 0)
-                {
-                    return string.Empty;
-                }
-
-                if (TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
-                {
-                    return slice.DataLen >= required
-                        ? ReadFixedString(page, rowStart + slice.DataStart, column, required)
-                        : string.Empty;
-                }
-
-                if (column.Type == TextType)
-                {
-                    return this.DecodeTextForFormat(page, rowStart + slice.DataStart, slice.DataLen);
-                }
-
-                if (column.Type == BinaryType)
-                {
-                    return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
-                }
-
-                if (column.Type is BooleanType or OleType or MemoType)
-                {
-                    return string.Empty;
-                }
-
-                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(column.Type)}");
-
-            default:
-                return string.Empty;
-        }
-    }
-
-    /// <summary>
-    /// Reads <paramref name="columnOrdinals"/>'s typed values out of a single
-    /// row at <paramref name="loc"/> on a data page belonging to
-    /// <paramref name="tableDef"/>. Returns <see langword="null"/> when the
-    /// row layout cannot be parsed OR when any requested column needs
-    /// long-value (Memo, Ole) or complex (Complex, Attachment)
-    /// traversal outside this inline reader; the cascade-seek caller falls back to the snapshot
-    /// path in that case. Index-key column types (the focus of this helper)
-    /// usually include scalar fixed and var-inline kinds. Memo is indexable
-    /// but routes through the snapshot path when pre-write uniqueness checks
-    /// need existing-row values; OLE / Attachment / Complex columns are
-    /// rejected by <see cref="Indexes.Helpers.IndexHelpers.ResolveIndexes"/>.
-    /// </summary>
+    /// <summary>Reads a few columns of one row as typed values — see <see cref="PartialColumnReader.TryReadColumnValuesTypedAsync"/>.</summary>
     /// <param name="loc">The row location.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="columnOrdinals">The column ordinals.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
-        RowLocation loc,
-        TableDef tableDef,
-        int[] columnOrdinals,
-        CancellationToken cancellationToken)
-    {
-        byte[] pageBytes = await this.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (pageBytes[0] != Constants.PageTypes.Data)
-            {
-                return null;
-            }
-
-            var decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
-            object?[] result = new object?[columnOrdinals.Length];
-            return decodePlan.TryDecodePartialColumns(this, pageBytes, loc.RowStart, loc.RowSize, result)
-                ? result
-                : null;
-        }
-        finally
-        {
-            ReturnPage(pageBytes);
-        }
-    }
-
-    /// <summary>Drops the memoized owned data pages and the whole-file owner index.</summary>
-    private void DisposeOwnedPageCaches()
-    {
-        this.ownedDataPagesByTdef.Clear();
-        this.ownedDataPageIndex.Dispose();
-    }
-
-    private bool TryGetCachedOwnedDataPages(long tdefPage, out long[] pageNumbers)
-    {
-        lock (this.ownedDataPagesCacheLock)
-        {
-            bool found = this.ownedDataPagesByTdef.TryGetValue(tdefPage, out long[]? cachedPages);
-            pageNumbers = cachedPages ?? [];
-            return found;
-        }
-    }
-
-    private void CacheOwnedDataPages(long tdefPage, long[] pageNumbers)
-    {
-        lock (this.ownedDataPagesCacheLock)
-        {
-            this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
-        }
-    }
-
-    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        // Journal-aware: a table created or grown inside a transaction owns
-        // pages appended past the physical end of the file.
-        long totalPages = this.PageCount;
-        if (tdefPage <= 0 || tdefPage >= totalPages)
-        {
-            return null;
-        }
-
-        byte[] tdef = await this.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (tdef[0] != Constants.PageTypes.TableDefinition
-                || !UsageMap.TryReadPointer(tdef, this.TDef.UsedPages, out UsageMapPointer pointer)
-                || pointer.PageNumber <= 0)
-            {
-                return null;
-            }
-
-            uint declaredRows = Ru32(tdef, this.TDef.NumRows);
-            return await this.TryReadMappedOwnedDataPagesAsync(
-                tdefPage,
-                pointer.PageNumber,
-                pointer.RowIndex,
-                declaredRows,
-                totalPages,
-                cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(tdef);
-        }
-    }
-
-    private async ValueTask<long[]?> TryReadMappedOwnedDataPagesAsync(
-        long tdefPage,
-        int usageMapPageNumber,
-        int usageMapRow,
-        uint declaredRows,
-        long totalPages,
-        CancellationToken cancellationToken)
-    {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
-        {
-            return null;
-        }
-
-        byte[] usageMapPage = await this.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (usageMapPage[0] != Constants.PageTypes.Data
-                || !UsageMap.TryGetRowBound(usageMapPage, this.DataPage, this.PageSizeBytes, usageMapRow, out RowBound rowBound))
-            {
-                return null;
-            }
-
-            var mappedPages = new List<long>();
-            bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
-                usageMapPage,
-                rowBound,
-                this.PageSizeBytes,
-                totalPages,
-                minimumPageNumber: 1,
-                strict: true,
-                this.ReadPageAsync,
-                ReturnPage,
-                mappedPages,
-                cancellationToken).ConfigureAwait(false);
-            if (!recognizedMap)
-            {
-                return null;
-            }
-
-            if (mappedPages.Count == 0)
-            {
-                return declaredRows == 0 ? [] : null;
-            }
-
-            return await this.ValidateOwnedDataPagesAsync(tdefPage, mappedPages, declaredRows, cancellationToken).ConfigureAwait(false)
-                ? [.. mappedPages]
-                : null;
-        }
-        finally
-        {
-            ReturnPage(usageMapPage);
-        }
-    }
-
-    private async ValueTask<bool> ValidateOwnedDataPagesAsync(
-        long tdefPage,
-        List<long> pageNumbers,
-        uint declaredRows,
-        CancellationToken cancellationToken)
-    {
-        long liveRows = 0;
-        foreach (long pageNumber in pageNumbers)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, this.DataPage.TDefOff) != tdefPage)
-                {
-                    return false;
-                }
-
-                if (declaredRows > 0)
-                {
-                    // Each overflow header counts once, as Access counts the row in num_rows.
-                    liveRows += this.ComputeRowDirectory(page).Length;
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return declaredRows == 0 || liveRows >= declaredRows;
-    }
-
-    private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
-    {
-        var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = this.PageCount;
-
-        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, this.DataPage.TDefOff);
-                if (owner <= 0)
-                {
-                    continue;
-                }
-
-                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
-                {
-                    ownedPages = [];
-                    pagesByOwner.Add(owner, ownedPages);
-                }
-
-                ownedPages.Add(pageNumber);
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        var result = new Dictionary<long, long[]>(pagesByOwner.Count);
-        foreach ((long owner, List<long>? ownedPages) in pagesByOwner)
-        {
-            result.Add(owner, [.. ownedPages]);
-        }
-
-        return result;
-    }
-
-    // ── Inner types ──────────────────────────────────────────────────
-
-    internal readonly record struct TableRow(byte[] Page, RowLocation Location);
+    /// <returns>The values, or <see langword="null"/>.</returns>
+    internal ValueTask<object?[]?> TryReadColumnValuesTypedAsync(RowLocation loc, TableDef tableDef, int[] columnOrdinals, CancellationToken cancellationToken)
+        => PartialColumnReader.TryReadColumnValuesTypedAsync(this, loc, tableDef, columnOrdinals, cancellationToken);
 }

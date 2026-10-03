@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Read-only <c>MSysObjects</c> scans, and the one system-table lookup by name
@@ -140,5 +141,5 @@ internal sealed class CatalogRowReader(DatabaseFile db)
     private bool CanDecodeRow(byte[] page, RowLocation location)
         => location.RowSize >= db.RowColumnCountFieldSize
             && db.ReadRowColumnCount(page, location.RowStart) != 0
-            && db.TryParseRowLayout(page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
+            && RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
 }

@@ -32,11 +32,11 @@ closing section).
 | 2 | `IoGate` | `SemaphoreSlim(1,1)` | [PageFile.cs](../../JetDatabaseWriter/Pages/Paging/PageFile.cs) (`PageFile.IoGate`) | One open database file (reader or writer) | Serializes seek-based stream I/O; in the writer, also journal attach/detach through a `Pager.JournalGate` lease |
 | 3 | `ByteRangeLock` | `JetByteRangeLock` | [Pager.cs](../../JetDatabaseWriter/Pages/Paging/Pager.cs) (`Pager.ByteRangeLock`) | The writer's open database file | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
 | 4 | `insertPageHintLock` | `Lock` / `object` | [DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs) | Writer instance (`DataPageInserter`) | The two-field insert-page hint cache only |
-| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [DatabaseFile.cs](../../JetDatabaseWriter/DatabaseFile.cs) | One open database file (reader only) | The `ownedDataPagesByTdef` dictionary only |
+| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [OwnedDataPages.cs](../../JetDatabaseWriter/Pages/OwnedDataPages.cs) | One open database file (reader only) | The `ownedDataPagesByTdef` dictionary only |
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs) | Internal to #1 | The gate's own drain bookkeeping |
 | 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
-| 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [DatabaseFile.cs](../../JetDatabaseWriter/DatabaseFile.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
+| 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [OwnedDataPages.cs](../../JetDatabaseWriter/Pages/OwnedDataPages.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
 
 > Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
 > state (the writer's insert-page hint and the reader gate's drain bookkeeping).
@@ -210,7 +210,7 @@ operationGate.TryBeginDispose(out waitForOperations)
         ├─ await waitForOperations   (in-flight reader operations drain)
         ├─ DisposeReaderResourcesAsync → services.Dispose (page and catalog caches)
         │                                 → DatabaseFile.DisposeAsync (PageFile: stream, IoGate,
-        │                                   page cipher; then the owned-page caches)
+        │                                   page cipher; then OwnedDataPages' caches)
         └─ release .ldb / .laccdb slot  (always last)
   └─ operationGate.CompleteDispose()
 ```

@@ -42,7 +42,7 @@ guidance below to produce new evidence before changing the core reader.
 - Opening and scanning a file the OS has not cached (Windows only): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
-- Page I/O: `JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
+- Page I/O: `JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); owned pages and row directories: `JetDatabaseWriter/Pages/OwnedDataPages.cs` and `DataPageRows.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
 
 ## Current architecture
@@ -244,8 +244,8 @@ before the actual table scan.
 
 Primary code path:
 
-- `DatabaseFile.GetOwnedDataPagesAsync`
-- `DatabaseFile.BuildOwnedDataPageIndexAsync`
+- `OwnedDataPages.GetOwnedDataPagesAsync`
+- `OwnedDataPages.BuildOwnedDataPageIndexAsync`
 - `ReaderPageCache.ReadPageAsync`
 
 ### 6. Table-scan read-ahead

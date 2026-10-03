@@ -53,7 +53,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     /// <summary>
     /// Decodes every live row of the table rooted at <paramref name="tdefPage"/>,
     /// each paired with the location it was decoded from, in the page and row
-    /// order of <see cref="DatabaseFile.ForEachLiveTableRowAsync"/>. Rows too
+    /// order of <see cref="Pages.OwnedDataPages.ForEachLiveTableRowAsync"/>. Rows too
     /// short or malformed to decode are left out, so a caller that mutates
     /// <see cref="LocatedRow.Location"/> changes exactly the row it read.
     /// Returns an empty list when the page holds no table definition.

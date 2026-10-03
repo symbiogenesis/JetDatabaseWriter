@@ -15,6 +15,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.DatabaseFile;
@@ -248,7 +249,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
             }
         }
 
-        if (!db.TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        if (!RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
         {
             return roots;
         }
@@ -260,7 +261,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
                 continue;
             }
 
-            ColumnSlice slice = db.ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, layout, column);
             if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
             {
                 continue;

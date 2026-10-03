@@ -93,6 +93,84 @@ public sealed class ServiceGraphTests
         Assert.Empty(violations);
     }
 
+    /// <summary>
+    /// A ratchet on the composite: only the types listed here may still take
+    /// the whole <see cref="DatabaseFile"/> through a constructor or a method
+    /// parameter, static helpers and delegates included, or hold it in a
+    /// field, and the list may only shrink. New code takes the part it needs
+    /// instead: the <see cref="JetFormat"/> profile, an <see cref="JetDatabaseWriter.Pages.Paging.IPageSource"/>,
+    /// the <see cref="JetDatabaseWriter.Schema.TableDefReader"/> or <see cref="OwnedDataPages"/>.
+    /// A type narrowed to its parts is removed from the list in the same
+    /// commit. The facades, the composition roots and the composite itself are
+    /// exempt.
+    /// </summary>
+    [Fact]
+    public void Collaborators_TakingDatabaseFile_OnlyShrink()
+    {
+        string[] allowed =
+        [
+            "JetDatabaseWriter.Catalog.CatalogArtifactWriter",
+            "JetDatabaseWriter.Catalog.CatalogReader",
+            "JetDatabaseWriter.Catalog.CatalogRowReader",
+            "JetDatabaseWriter.Catalog.CatalogWriter",
+            "JetDatabaseWriter.Catalog.ColumnPropertyReader",
+            "JetDatabaseWriter.Catalog.TableCatalog",
+            "JetDatabaseWriter.ComplexColumns.ComplexColumnManager",
+            "JetDatabaseWriter.ComplexColumns.ComplexColumnReader",
+            "JetDatabaseWriter.ComplexColumns.ComplexReferenceSeedReader",
+            "JetDatabaseWriter.Indexes.IndexBTreeEditor",
+            "JetDatabaseWriter.Indexes.IndexCatalogReader",
+            "JetDatabaseWriter.Indexes.IndexMaintainer",
+            "JetDatabaseWriter.Indexes.UniqueIndexChecker",
+            "JetDatabaseWriter.Pages.DataPageInserter",
+            "JetDatabaseWriter.Pages.PageAllocator",
+            "JetDatabaseWriter.Pages.ReaderPageCache",
+            "JetDatabaseWriter.Relationships.LinkedTableManager",
+            "JetDatabaseWriter.Relationships.RelationshipCatalogStore",
+            "JetDatabaseWriter.Relationships.RelationshipChildRowLocator",
+            "JetDatabaseWriter.Relationships.RelationshipEnforcer",
+            "JetDatabaseWriter.Relationships.RelationshipManager",
+            "JetDatabaseWriter.Relationships.RelationshipPageReader",
+            "JetDatabaseWriter.Relationships.RelationshipSeekPlanner",
+            "JetDatabaseWriter.Schema.AccessObjectName",
+            "JetDatabaseWriter.Schema.AutoNumberMaintainer",
+            "JetDatabaseWriter.Schema.TDefPageBuilder",
+            "JetDatabaseWriter.Tables.IndexRowReader",
+            "JetDatabaseWriter.Tables.SchemaReader",
+            "JetDatabaseWriter.Tables.TableDataWriter",
+            "JetDatabaseWriter.Tables.TableReader",
+            "JetDatabaseWriter.Tables.TableRowStore",
+            "JetDatabaseWriter.Tables.TableSchemaEditor",
+            "JetDatabaseWriter.Tables.TableSnapshotReader",
+            "JetDatabaseWriter.Transactions.TransactionLifecycle",
+            "JetDatabaseWriter.ValueDecoding.DirectRowDecoder`1",
+            "JetDatabaseWriter.ValueDecoding.LongValueDecoder",
+            "JetDatabaseWriter.ValueDecoding.PartialColumnReader",
+            "JetDatabaseWriter.ValueDecoding.RowDecodePlan",
+            "JetDatabaseWriter.ValueDecoding.RowDecoder",
+            "JetDatabaseWriter.ValueEncoding.LongValueEncoder",
+            "JetDatabaseWriter.ValueEncoding.RowEncoder",
+        ];
+
+        Type[] exempt = [.. Facades, typeof(ReaderServices), typeof(WriterServices), typeof(DatabaseFile)];
+        string[] actual =
+        [
+            .. Library.GetTypes()
+                .Where(type => !exempt.Contains(type) && !IsCompilerGenerated(type) && TakesOrHoldsDatabaseFile(type))
+                .Select(type => type.FullName!)
+                .Order(StringComparer.Ordinal),
+        ];
+
+        string[] added = [.. actual.Except(allowed, StringComparer.Ordinal)];
+        string[] narrowed = [.. allowed.Except(actual, StringComparer.Ordinal)];
+        Assert.True(
+            added.Length == 0,
+            $"These types newly take or hold DatabaseFile; take JetFormat, IPageSource, TableDefReader or OwnedDataPages instead: {string.Join(", ", added)}");
+        Assert.True(
+            narrowed.Length == 0,
+            $"These types no longer take DatabaseFile; remove them from the allow-list: {string.Join(", ", narrowed)}");
+    }
+
     [Theory]
     [MemberData(nameof(CompositionRoots))]
     public void CollaboratorGraph_IsAcyclic(Type compositionRoot)
@@ -321,6 +399,39 @@ public sealed class ServiceGraphTests
         }
 
         return visited;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="type"/> declares an instance constructor or a
+    /// method, instance or static, with a <see cref="DatabaseFile"/>
+    /// parameter, or an instance field of that type (a primary constructor's
+    /// captured parameter included). A delegate type counts through its
+    /// <c>Invoke</c> method. Compiler-generated methods, such as local
+    /// functions, are skipped.
+    /// </summary>
+    /// <param name="type">The library type.</param>
+    private static bool TakesOrHoldsDatabaseFile(Type type)
+    {
+        const BindingFlags instanceMembers = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        return type.GetConstructors(instanceMembers).SelectMany(constructor => constructor.GetParameters()).Any(parameter => Mentions(parameter.ParameterType, typeof(DatabaseFile)))
+            || type.GetMethods(DeclaredMembers)
+                .Where(method => !method.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false))
+                .SelectMany(method => method.GetParameters())
+                .Any(parameter => Mentions(parameter.ParameterType, typeof(DatabaseFile)))
+            || type.GetFields(instanceMembers).Any(field => Mentions(field.FieldType, typeof(DatabaseFile)));
+    }
+
+    private static bool IsCompilerGenerated(Type type)
+    {
+        for (Type? current = type; current is not null; current = current.DeclaringType)
+        {
+            if (current.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool Mentions(Type candidate, Type target)
