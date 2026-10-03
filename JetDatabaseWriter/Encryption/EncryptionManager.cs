@@ -20,6 +20,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class EncryptionManager
 {
+    /// <summary>Where a reader's password comes from, as a missing-password message names it.</summary>
+    internal const string ReaderPasswordOption = nameof(AccessReaderOptions) + "." + nameof(AccessReaderOptions.Password);
+
+    /// <summary>Where a writer's password comes from, as a missing-password message names it.</summary>
+    internal const string WriterPasswordOption = nameof(AccessWriterOptions) + "." + nameof(AccessWriterOptions.Password);
+
+    /// <summary>Where <c>ChangePasswordAsync</c> and <c>DecryptAsync</c> take the current password from, as a missing-password message names it.</summary>
+    internal const string OldPasswordArgument = "the oldPassword argument";
+
     /// <summary>
     /// Jet3 XOR mask (128 bytes, applied cyclically to pages 1+ when the
     /// Office97 password flag is set on a Jet3 .mdb). Sourced from mdbtools
@@ -128,12 +137,14 @@ internal static class EncryptionManager
     /// <param name="format">The format.</param>
     /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
     /// <param name="password">The password.</param>
+    /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
     internal static PageDecryptionKeys CreatePageDecryptionKeys(
         byte[] header,
         DatabaseFormat format,
         bool isLegacyAesCfb,
-        ReadOnlyMemory<char> password)
+        ReadOnlyMemory<char> password,
+        string passwordOptionName)
     {
         uint? rc4DbKey = null;
         byte[]? aesPageKey = null;
@@ -157,7 +168,7 @@ internal static class EncryptionManager
                 {
                     throw new UnauthorizedAccessException(
                         "This database is encrypted or password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password, or " +
+                        $"Provide a password via {passwordOptionName}, or " +
                         "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
                 }
 
@@ -186,7 +197,7 @@ internal static class EncryptionManager
                 {
                     throw new UnauthorizedAccessException(
                         "This database is password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password.");
+                        $"Provide a password via {passwordOptionName}.");
                 }
 
                 if (!HeaderPasswordMatches(header, AccdbLegacyPasswordMask, password.Span))
@@ -205,7 +216,7 @@ internal static class EncryptionManager
             {
                 throw new UnauthorizedAccessException(
                     "This .accdb file is encrypted with Access 2007+ AES encryption. " +
-                    "Provide the database password via AccessReaderOptions.Password to open it, " +
+                    $"Provide the database password via {passwordOptionName} to open it, " +
                     "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
             }
 
@@ -469,25 +480,32 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Returns true when <paramref name="stream"/> holds an Access-native flat
-    /// Agile ACCDB. Only page 0 is read: the flat Agile descriptor lives
-    /// there. The stream position is restored afterwards.
+    /// Reads page 0 for an open: the 4096-byte Jet4 / ACE header page from
+    /// the start of <paramref name="stream"/>, zero-filled past the end of a
+    /// shorter file. One read serves both the <see cref="Constants.DatabaseHeader.Length"/>-byte
+    /// header and the flat Agile probe, whose descriptor lives in page 0.
     /// </summary>
     /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> yielding whether page 0 carries a flat Agile descriptor.</returns>
-    internal static async ValueTask<bool> IsFlatAgileEncryptedAsync(Stream stream, CancellationToken cancellationToken)
+    /// <returns>A <see cref="ValueTask{TResult}"/> yielding the header page.</returns>
+    /// <exception cref="EndOfStreamException">Thrown when the stream holds fewer than <see cref="Constants.DatabaseHeader.Length"/> bytes.</exception>
+    internal static async ValueTask<byte[]> ReadOpenHeaderPageAsync(Stream stream, CancellationToken cancellationToken)
     {
-        long origin = stream.Position;
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = stream.Seek(0, SeekOrigin.Begin);
+        byte[] headerPage = new byte[Constants.PageSizes.Jet4];
+        int read = await stream.ReadAtLeastAsync(
+            headerPage.AsMemory(),
+            headerPage.Length,
+            throwOnEndOfStream: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (read < Constants.DatabaseHeader.Length)
         {
-            byte[] headerPage = await ReadHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-            return !CompoundFileReader.HasCompoundFileMagic(headerPage) && OfficeCryptoAgile.IsFlatAgileEncrypted(headerPage);
+            throw new EndOfStreamException(
+                $"The database is {read} bytes long, shorter than the {Constants.DatabaseHeader.Length}-byte JET header.");
         }
-        finally
-        {
-            _ = stream.Seek(origin, SeekOrigin.Begin);
-        }
+
+        return headerPage;
     }
 
     /// <summary>
@@ -689,12 +707,14 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
+    /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when a flat Agile encrypted database is detected and no password was supplied.</exception>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
+        string passwordOptionName,
         CancellationToken cancellationToken)
     {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
@@ -715,7 +735,7 @@ internal static class EncryptionManager
                 {
                     throw new UnauthorizedAccessException(
                         "This .accdb file is encrypted with Access Agile encryption. " +
-                        "Provide the database password via AccessReaderOptions.Password to open it.");
+                        $"Provide the database password via {passwordOptionName} to open it.");
                 }
 
                 _ = stream.Seek(0, SeekOrigin.Begin);
@@ -732,7 +752,7 @@ internal static class EncryptionManager
             }
         }
 
-        (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, cancellationToken)
+        (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, passwordOptionName, cancellationToken)
             .ConfigureAwait(false);
         return plaintext;
     }
@@ -745,12 +765,14 @@ internal static class EncryptionManager
     /// <param name="stream">The stream.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
+    /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted Standard or Agile package is detected and no password was supplied.</exception>
     internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
+        string passwordOptionName,
         CancellationToken cancellationToken)
     {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
@@ -785,7 +807,7 @@ internal static class EncryptionManager
             {
                 throw new UnauthorizedAccessException(
                     "This .accdb file is encrypted with Office 2007 Standard encryption (AES-128). " +
-                    "Provide the database password via AccessReaderOptions.Password to open it, " +
+                    $"Provide the database password via {passwordOptionName} to open it, " +
                     "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
             }
 
@@ -802,7 +824,7 @@ internal static class EncryptionManager
         {
             throw new UnauthorizedAccessException(
                 "This .accdb file is encrypted with Office Crypto API 'Agile' encryption. " +
-                "Provide the database password via AccessReaderOptions.Password to open it, " +
+                $"Provide the database password via {passwordOptionName} to open it, " +
                 "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
         }
 
