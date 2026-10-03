@@ -32,6 +32,8 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     private static readonly Dictionary<string, object?> Row3 = new() { ["Id"] = 3 };
 
+    private static readonly string[] DocsComplexColumns = ["Files", "Tags"];
+
     private static readonly ComplexDataColumn[] ComplexDataColumns =
     [
         new("VersionHistory_F5F8918F-0A3F-4DA9-AE71-184EE5012880", "VersionHistory_F5F8918F-0A3F-4D_6E54CCBB170741DD8FD837271ED8B90C"),
@@ -483,6 +485,45 @@ public sealed class ComplexColumnsReferenceAllocationTests
             ["1|7|7", "2|8|8", "3|20|20", "4|30|30", "5|31|31"],
             docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
         Assert.Equal(31, docs.ComplexAutoNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task UpdateRows_AssigningComplexColumn_IsRejected(ComplexWriteMode mode)
+    {
+        // Row 1 holds reference 1 (one.txt); row 3 holds 3 (three.txt and the tag 7).
+        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(ComplexWriteMode.Direct);
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                foreach (string column in DocsComplexColumns)
+                {
+                    foreach (object? value in new object?[] { null, DBNull.Value, 3 })
+                    {
+                        ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                            await writer.UpdateRowsAsync("Docs", "Id", 1, new Dictionary<string, object?> { [column] = value }, Ct));
+                        Assert.Equal("updatedValues", rejected.ParamName);
+                        Assert.Contains($"'{column}'", rejected.Message, StringComparison.Ordinal);
+                    }
+                }
+
+                // Refused before any row is read, even when no row matches.
+                _ = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                    await writer.UpdateRowsAsync("Docs", "Id", 99, new Dictionary<string, object?> { ["Files"] = null }, Ct));
+
+                // Updating another column keeps the row's reference.
+                Assert.Equal(1, await writer.UpdateRowsAsync("Docs", "Id", 3, new Dictionary<string, object?> { ["Id"] = 4 }, Ct));
+            });
+        }
+
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(["1|1|1", "4|3|3"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}").Order(StringComparer.Ordinal));
+
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["1:one.txt", "3:three.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => $"{a.ConceptualTableId}:{a.FileName}").Order(StringComparer.Ordinal));
+        Assert.Equal(["3:7"], (await reader.GetMultiValueItemsAsync("Docs", "Tags", Ct)).Select(i => FormattableString.Invariant($"{i.ConceptualTableId}:{i.Value}")));
     }
 
     [Fact]
