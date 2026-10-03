@@ -11,10 +11,13 @@ None of the bugs from my earlier report is fixed at `HEAD` (6eab703). The five c
 - **The concurrency doc now gives the correct `UseTransactionalWrites` default.**
 - **No new defects, apart from one small one.** A before/after comparison over all 92 test databases found identical results. The only change is that the "Total rows scanned" diagnostic now also counts catalog rows it can't decode (25 became 28 on one fixture). The cause is [TableCatalog.cs:119](JetDatabaseWriter/Catalog/TableCatalog.cs#L119), and it affects only the diagnostic text.
 
+## Fixed since 6eab703
+- **Bug 1: a large MEMO dropped the rows after it on the same data page.** One ~1.4 MB MEMO row plus 29 small rows made `Rows()` return 1 of 30 rows. `ReaderPageCache` gave evicted pages back to the shared pool while a scan still read them, so the next page read overwrote the scan's data page. It now leaves evicted pages to the GC, and `LruCache` no longer has an eviction callback. `AccessReaderCacheTests.Rows_WhenLongValueChainEvictsCurrentDataPage_ReturnsEveryRow` covers it.
+  - Follow-up: the read-ahead guards in `TableReader.ShouldReadAheadTablePages` (a cache of at least 3 pages, and no MEMO, OLE or complex columns) worked around this bug. They can probably be relaxed now, after benchmarking.
+
 ## Open: data loss and corruption, reproduced by me at `HEAD`
 | # | Scenario | Result | Where |
 |---|---|---|---|
-| 1 | One ~1.4 MB MEMO row plus 29 small rows, default `PageCacheSize` | `Rows()` returns **1 of 30** rows | [ReaderPageCache.cs:41](JetDatabaseWriter/Pages/ReaderPageCache.cs#L41) gives evicted pages back to the shared pool while a scan still reads them |
 | 2 | In a transaction: delete Id=1, then update Id=2 | Row 3 lost, row 2 duplicated | [TableDataWriter.cs:226-229](JetDatabaseWriter/Tables/TableDataWriter.cs#L226-L229) |
 | 3 | Any commit on a Jet4 `.mdb` | The file reopens as ACCDB | [TransactionLifecycle.cs:200](JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L200) → [:278-290](JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L278-L290) increments the format byte |
 | 4 | Update a NOT NULL column to null | Accepted | [TableDataWriter.cs:250](JetDatabaseWriter/Tables/TableDataWriter.cs#L250) runs only the calculated-column checks |
@@ -58,7 +61,7 @@ Bugs 2, 5, 6, 7 and 8 have the same cause. The writer still reads its own file t
 |---|---|---|
 | Facade is the engine / service locator | **Partly resolved** | Locator and cycles are gone. `DatabaseFile` (1,420 lines, used by about 33 types) is the new catch-all: pager, transaction journal, encryption and table-definition parsing in one class. |
 | Reader and writer are separate engines | Open, critical | Moved into `TableSnapshotReader`. The reusable decoder now exists but the writer doesn't use it. |
-| No pager or buffer manager | Open, critical | The cache moved into `ReaderPageCache` with the same eviction bug. There are still several end-of-file definitions, and the writer still has no cache. |
+| No pager or buffer manager | Open, critical | The cache moved into `ReaderPageCache`, and its eviction bug (bug 1) is now fixed. There are still several end-of-file definitions, and the writer still has no cache. |
 | Transactions not atomic; format byte | Open, critical | Changes were mechanical, and the docs still claim before-image journaling. Rollback is now shown to break the writer (bugs 10–11). |
 | Schema isn't a model | Open | Three duplicate parsers merged, the rest unchanged |
 | No write pipeline or real B-tree | Open | Moved into `TableDataWriter` with the same algorithms |
@@ -75,7 +78,6 @@ Bugs 2, 5, 6, 7 and 8 have the same cause. The writer still reads its own file t
 1. **Make the writer's reads see the transaction.** This is now small: build `TableSnapshotReader` from a `ReaderServices` over the writer's own `DatabaseFile`, with a capacity-0 `ReaderPageCache`. That should fix bugs 5–8, and likely bug 2 as well. Pairing rows to locations by position stays fragile until a cursor returns each row with its location. Remove the allow-list entry and the doc's "deliberate exception" at the same time.
 2. **Rollback should reset writer state.** Inject `TableCatalog`, `DataPageInserter` and `ConstraintRegistry` into `TransactionLifecycle`, and invalidate or restore them on rollback (fixes bugs 10–11 and the disabled-constraints problem).
 3. **One-line and small fixes:**
-   - remove the eviction callback (bug 1);
    - delete `BumpCommitLockByteAsync` and the test that asserts it (bug 3);
    - run the full constraint pass on update (bug 4);
    - run insert cleanup with `CancellationToken.None` (bug 9);

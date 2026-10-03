@@ -24,7 +24,6 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     private readonly int capacity;
     private readonly Dictionary<TKey, int> map;
     private readonly Node[] nodes;
-    private readonly Action<TValue>? onEvict;
     private readonly ReaderWriterLockSlim rwLock = new();
 
     /// <summary>
@@ -42,10 +41,9 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     /// </summary>
     private long misses;
 
-    public LruCache(int capacity, Action<TValue>? onEvict = null)
+    public LruCache(int capacity)
     {
         this.capacity = capacity;
-        this.onEvict = onEvict;
         this.map = new Dictionary<TKey, int>(capacity);
         this.nodes = new Node[capacity + 1]; // +1 for sentinel
         this.nodes[Sentinel].Next = Sentinel;
@@ -132,12 +130,10 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                 this.Detach(nodeIdx);
                 ref Node evicted = ref this.nodes[nodeIdx];
                 this.map.Remove(evicted.Key);
-                TValue? evictedValue = evicted.Value;
 
                 // Clear references so reused slot doesn't temporarily root the old key/value.
                 evicted.Key = default!;
                 evicted.Value = default!;
-                this.onEvict?.Invoke(evictedValue);
             }
             else
             {
@@ -163,14 +159,6 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         this.rwLock.EnterWriteLock();
         try
         {
-            if (this.onEvict != null)
-            {
-                foreach (KeyValuePair<TKey, int> kvp in this.map)
-                {
-                    this.onEvict(this.nodes[kvp.Value].Value);
-                }
-            }
-
             // Null out references so the backing array doesn't keep keys/values alive.
             if (RuntimeHelpers.IsReferenceOrContainsReferences<Node>())
             {
