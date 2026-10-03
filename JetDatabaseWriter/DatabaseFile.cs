@@ -45,6 +45,15 @@ internal sealed class DatabaseFile : IAsyncDisposable
 #endif
     private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
 
+#if NET6_0_OR_GREATER
+    /// <summary>
+    /// The backing <see cref="FileStream"/>'s handle, read once by
+    /// <see cref="EnableRandomAccessPageReadsIfSupported"/>; <see langword="null"/>
+    /// until then. The stream owns the handle and closes it on dispose.
+    /// </summary>
+    private Microsoft.Win32.SafeHandles.SafeFileHandle? randomAccessHandle;
+#endif
+
     static DatabaseFile() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
     /// <summary>
@@ -199,6 +208,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets the I/O gate that serialises stream access and transaction commit / rollback.</summary>
     internal SemaphoreSlim IoGate { get; } = new(1, 1);
 
+    /// <summary>
+    /// Gets a value indicating whether <see cref="EnableRandomAccessPageReadsIfSupported"/>
+    /// switched page reads outside a transaction to <c>RandomAccess</c> reads.
+    /// </summary>
     internal bool UsesRandomAccessPageReads { get; private set; }
 
     /// <summary>
@@ -271,14 +284,28 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="options">The options.</param>
     internal static FileStream OpenFileStream(string path, FileAccess access, FileShare share, FileOptions options) => FileStreamFactory.Open(path, FileMode.Open, access, share, options);
 
+    /// <summary>
+    /// Switches page reads outside a transaction to positional
+    /// <c>RandomAccess</c> reads on the backing <see cref="FileStream"/>'s handle,
+    /// which bypass <see cref="IoGate"/> and the shared stream position. Does
+    /// nothing for other streams and in the netstandard2.1 build, which has no
+    /// <c>RandomAccess</c>.
+    /// </summary>
     internal void EnableRandomAccessPageReadsIfSupported()
     {
 #if NET6_0_OR_GREATER
-        if (this.DatabaseStream is FileStream fileStream &&
-            !fileStream.SafeFileHandle.IsInvalid &&
-            !fileStream.SafeFileHandle.IsClosed)
+        // FileStream.SafeFileHandle is not a field read: every get flushes the
+        // stream's buffer and seeks the OS file pointer to the stream's
+        // position. Read once per page, it made RandomAccess page reads slower
+        // than seek-and-read through the stream, so the handle is kept here.
+        if (this.DatabaseStream is FileStream fileStream)
         {
-            this.UsesRandomAccessPageReads = true;
+            Microsoft.Win32.SafeHandles.SafeFileHandle handle = fileStream.SafeFileHandle;
+            if (!handle.IsInvalid && !handle.IsClosed)
+            {
+                this.randomAccessHandle = handle;
+                this.UsesRandomAccessPageReads = true;
+            }
         }
 #else
         this.UsesRandomAccessPageReads = false;
@@ -392,9 +419,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
         try
         {
 #if NET6_0_OR_GREATER
-            if (this.UsesRandomAccessPageReads && this.ActiveJournal is null && this.DatabaseStream is FileStream fileStream)
+            if (this.randomAccessHandle is { } handle && this.ActiveJournal is null)
             {
-                await this.ReadPageRandomAccessAsync(fileStream, n, buf, cancellationToken).ConfigureAwait(false);
+                await this.ReadPageRandomAccessAsync(handle, n, buf, cancellationToken).ConfigureAwait(false);
             }
             else
 #endif
@@ -448,14 +475,14 @@ internal sealed class DatabaseFile : IAsyncDisposable
     }
 
 #if NET6_0_OR_GREATER
-    private async ValueTask ReadPageRandomAccessAsync(FileStream fileStream, long pageNumber, byte[] page, CancellationToken cancellationToken)
+    private async ValueTask ReadPageRandomAccessAsync(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page, CancellationToken cancellationToken)
     {
         long fileOffset = pageNumber * this.PageSizeBytes;
         int totalRead = 0;
         while (totalRead < this.PageSizeBytes)
         {
             int bytesRead = await RandomAccess.ReadAsync(
-                fileStream.SafeFileHandle,
+                handle,
                 page.AsMemory(totalRead, this.PageSizeBytes - totalRead),
                 fileOffset + totalRead,
                 cancellationToken).ConfigureAwait(false);

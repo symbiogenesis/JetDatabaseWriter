@@ -272,10 +272,20 @@ Jet3 XOR and Jet4 RC4 decryption keep no state between pages; the cached
 AES-ECB transforms in `PageDecryptionKeys` are built and used under a private
 lock (see `concurrency-and-lock-ordering.md`).
 
-The same benchmark shows a separate cost: on the MEMO and OLE tables, `Auto`,
+The same benchmark showed a separate cost: on the MEMO and OLE tables, `Auto`,
 whose path-opened readers use positionless `RandomAccess` page reads, was about
 20-30% slower than `Disabled`, which reads through the buffered `FileStream`,
-with or without read-ahead. The numeric table did not show it.
+with or without read-ahead. `RandomAccess` itself was not slower.
+`DatabaseFile.ReadPageRandomAccessAsync` read `FileStream.SafeFileHandle` for
+every page, and that getter is not a field read: it flushes the stream's buffer
+and seeks the OS file pointer to the stream's position (a `SetFilePointerEx`
+call) before it returns the handle, which cost 1.7-2.0 µs per call on the
+Arm64 machine. A long-value scan reads about one page per row (2,021 reads for
+the 2,000 OLE rows), so the getter showed there and not on the numeric table's
+405 reads, which read-ahead overlaps with decode. The handle is now read once,
+by `EnableRandomAccessPageReadsIfSupported`, and every page read reuses it. In
+15-21 interleaved rounds of warm scans, `Auto` went from 111-138% of
+`Disabled` on the MEMO and OLE tables to 91-108%.
 
 Keep this as automatic with opt-out. Do not add tunable depth or LVAL-heavy
 read-ahead without a fresh profile that shows a gain.
