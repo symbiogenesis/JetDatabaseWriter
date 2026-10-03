@@ -39,12 +39,24 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
     /// </summary>
     private volatile List<CatalogEntry>? userTables;
 
+    /// <summary>The number of <see cref="Invalidate"/> calls so far; see <see cref="Generation"/>.</summary>
+    private int generation;
+
     /// <summary>
     /// Gets a summary of the most recent catalog scan, or <see langword="null"/>
     /// before the first scan. Survives <see cref="Invalidate"/> so diagnostics
     /// keep describing the last scan that ran.
     /// </summary>
     internal CatalogScanSummary? LastScan { get; private set; }
+
+    /// <summary>
+    /// Gets a number that changes on every <see cref="Invalidate"/>: after each
+    /// catalog write (creating, dropping or rewriting a table, adding a catalog
+    /// object) and after a rollback or a failed commit. A cache of anything
+    /// derived from the catalog records the generation it was built under and
+    /// is stale once the generation moves on.
+    /// </summary>
+    internal int Generation => Volatile.Read(ref this.generation);
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -118,7 +130,8 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
 
     /// <summary>
     /// Discards the cached user-table list and calculated result types so the
-    /// next lookup re-scans <c>MSysObjects</c>.
+    /// next lookup re-scans <c>MSysObjects</c>, and moves <see cref="Generation"/>
+    /// on so caches derived from the catalog reload too.
     /// </summary>
     internal void Invalidate()
     {
@@ -127,6 +140,8 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
         {
             this.calculatedResultTypes.Clear();
         }
+
+        _ = Interlocked.Increment(ref this.generation);
     }
 
     private async ValueTask ApplyCalculatedResultTypesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
