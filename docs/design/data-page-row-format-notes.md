@@ -1,9 +1,10 @@
 # Data-page rows — format notes
 
-How a data page (page type `0x01`) lays out its rows, and the two Access
-behaviours that the library got wrong until the catalog-lookup fix: deleted
-slots that share a live row's offset, and overflow rows. The layout is the
-same in Jet3, Jet4 and ACE apart from the header offsets. The reference is
+How a data page (page type `0x01`) lays out its rows, and the Access
+behaviours that the library got wrong until the catalog-lookup fix (deleted
+slots that share a live row's offset, and overflow rows) and the
+jet3-long-rows fix (the Jet3 jump table). The page layout is the same in
+Jet3, Jet4 and ACE apart from the header offsets. The reference is
 [Jackcess](https://github.com/jahlborn/jackcess) `TableImpl` (`findRowStart`,
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
 the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
@@ -36,6 +37,50 @@ search lands on gave such a row zero bytes, so every read skipped it.
 `DatabaseFile.FindNextRowStart` is an upper-bound search over the sorted
 offsets, and `TryGetSlotBound` / `UsageMap.TryGetRowBound` use a strict
 "greater than" scan.
+
+## Inside a row
+
+A row starts with `num_cols`, then the fixed area, then the variable-length
+values, and ends with a trailer (forward order):
+
+| Field | Jet3 | Jet4/ACE |
+|---|---|---|
+| EOD: the offset where the variable data ends, stored right after it | 1 byte | 2 bytes |
+| Variable-column offsets, last column first | 1 byte each | 2 bytes each |
+| Jump table (Jet3 only, below) | `(rowLength - 1) / 256` bytes | none |
+| `var_len`: the number of variable columns | 1 byte | 2 bytes |
+| Null mask, one bit per column | `ceil(num_cols / 8)` bytes | same |
+
+`RowFieldSizes` holds the per-format field sizes, and
+`RowDecodePlan.TryParseRowLayout` / `ResolveColumnSlice` read the trailer for
+every read path (typed, string and direct decoders, catalog scans, the
+writer's snapshots and long-value walks).
+
+### The Jet3 jump table
+
+A Jet3 offset is one byte, so a row longer than 256 bytes needs the high part
+of its offsets from a jump table between the offset table and `var_len`. The
+rule follows mdbtools `mdb_crack_row3` and Jackcess
+`TableImpl.readJumpTableVarColOffsets`:
+
+- The row has `J = (rowLength - 1) / 256` entries, jump table included, so a
+  row of exactly 256 bytes has none. Entry `k`, for the boundary
+  `256 * (k + 1)`, sits `k + 1` bytes before `var_len`: the entry for 256 is
+  next to `var_len`, the highest boundary's entry comes first in the row.
+- Each entry is the index of the first offset at or past its boundary,
+  counting the EOD as index `var_len`. Offset `i` is its low byte plus 256
+  times the number of entries that index `i` has reached (Jackcess consumes
+  them in order while `entry == i`).
+- When the EOD lies below the last entry's boundary (`eodPosition / 256 < J`),
+  that entry is a dummy and readers drop it. Access 97 writes `0xFF` there.
+
+Only one Access-authored row in the fixtures has a jump table: MSP_PROJECTS
+in test2V1997.mdb, 290 bytes with EOD 255 and a single `0xFF` dummy. No
+fixture row has a real entry, so real entries are checked against the
+mdbtools/Jackcess rule. `Jet3JumpTable` holds the rule; until the reader used
+it, rows whose variable data crossed offset 256 decoded truncated, empty or
+shifted, and a 256-byte row was misparsed, because the reader skipped
+`rowLength / 256` bytes and never read them.
 
 ## Overflow rows
 
