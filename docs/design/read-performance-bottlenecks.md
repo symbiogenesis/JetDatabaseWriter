@@ -243,8 +243,9 @@ Primary code path:
 - `DatabaseFile.EnableRandomAccessPageReadsIfSupported`
 - `DatabaseFile.ReadPageAsync`
 - `TableReader.EnumerateTableScanPagesAsync`
-- Table scan loops in `Rows()`, `Rows<T>()`, `RowsAsStrings`,
-  `ReadDataTableAsync`, `ReadFirstTableAsStringsAsync`, and list materialization paths
+- Every table scan in `TableReader`: `Rows()`, `Rows<T>()`, `RowsAsStrings`,
+  `ReadDataTableAsync`, `ReadTableAsync<T>`, `ReadTableAsStringsAsync`,
+  `ReadFirstTableAsStringsAsync`, and `GetRealRowCountAsync`
 
 ## When read performance still feels slow
 
@@ -286,7 +287,8 @@ for bulk processing.
 
 Use `GetRealRowCountAsync` for accurate row counts instead of
 `Rows(...).CountAsync()` when cell values are irrelevant. It still scans data
-pages, but it skips full row decode and long-value resolution.
+pages and checks each row's layout, so it counts the same rows the reads
+return, but it skips full row decode and long-value resolution.
 
 Use `SeekRowsAsync` for exact indexed lookups instead of `Rows(...).Where(...)`
 when the predicate matches an available Jet4/ACE index. LINQ filters run after

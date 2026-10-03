@@ -126,9 +126,10 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
 
         // Fast path: counting the whole table — no stages, no includes, no in-memory tail —
-        // tallies the live row slots without decoding rows or building POCOs. The declared
-        // TDEF row count is deliberately not used: it is not decremented on delete, so it
-        // overcounts; GetRealRowCountAsync scans the row-offset slots and is exact.
+        // tallies the live rows whose layout parses (the rows a scan would yield) without
+        // decoding cell values or building POCOs. The declared TDEF row count is deliberately
+        // not used: it is not decremented on delete, so it overcounts. GetRealRowCountAsync
+        // counts the live rows whose layout decodes, the same rows a scan yields.
         if (ReferenceEquals(boundary, expression) && plan.Stages.Count == 0 && plan.IncludePaths.Count == 0)
         {
             return await tables.GetRealRowCountAsync(table, cancellationToken).ConfigureAwait(false);

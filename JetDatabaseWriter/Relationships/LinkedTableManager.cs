@@ -284,19 +284,16 @@ internal static class LinkedTableManager
                 _ = table.Columns.Add(columnName, typeof(string));
             }
 
+            // The limit is checked before each read, so maxRows: 0 returns the
+            // header-only table without reading a record.
             long rowCount = 0;
-            while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
+            while ((!maxRows.HasValue || rowCount < maxRows.Value)
+                && await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
             {
                 ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, rowCount, rows.MaxMaterializedRows);
                 _ = table.Rows.Add(row);
                 rowCount++;
                 progress?.Report(rowCount);
-                if (maxRows.HasValue && rowCount >= maxRows.Value)
-                {
-                    DataTable result = table;
-                    table = null;
-                    return result;
-                }
             }
 
             DataTable final = table;
@@ -320,14 +317,11 @@ internal static class LinkedTableManager
         Func<object?[], T> map = mapperFactory(CreateLinkedTextColumnMetadata(rows.ColumnNames));
         var items = new List<T>();
 
-        while (await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
+        while ((!maxRows.HasValue || items.Count < maxRows.Value)
+            && await rows.ReadRowAsync(cancellationToken).ConfigureAwait(false) is { } row)
         {
             ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, items.Count, rows.MaxMaterializedRows);
             items.Add(map(row));
-            if (maxRows.HasValue && items.Count >= maxRows.Value)
-            {
-                break;
-            }
         }
 
         return items;
