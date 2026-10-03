@@ -469,7 +469,7 @@ For large databases, prefer streaming each table from `ListTablesAsync()` with `
 
 > Supports Jet3, Jet4, and ACE formats — `.mdb` (Access 97+) or `.accdb`.
 >
-> Jet3 stores text and object names in the database's code page. New Jet3 files use Windows-1252, as Access 97 does, so a character outside it is written as its closest match or `?` (`Łódź` becomes `Lódz`, `中文` becomes `??`). Jet4 and ACE store text as UTF-16.
+> Jet3 stores text and object names in the database's code page. New Jet3 files use Windows-1252, as Access 97 does. .NET would write a character outside the code page as its closest match or `?` (`Łódź` as `Lódz`, `中文` as `??`), so the writer refuses it before writing anything: a name throws `ArgumentException`, and a Text or Memo value in an insert or update throws `JetLimitationException`. Jet4 and ACE store text as UTF-16, which holds any character.
 
 ```csharp
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
@@ -491,7 +491,7 @@ await writer.DropTableAsync("Contacts");
 
 `DropTableAsync` refuses, with `InvalidOperationException` and before it writes anything, to drop a table that a relationship names, as Microsoft Access does; drop the relationships first (see [Foreign-key relationships](#foreign-key-relationships)).
 
-New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked. Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
+New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
 
 #### Decimal and Currency columns
 
@@ -947,7 +947,7 @@ catch (FileNotFoundException)   { /* file missing */ }
 catch (ArgumentException)       { /* write: an object name Access does not allow, or an invalid definition */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
-catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained, a row larger than one data page, or a Jet3 table over 255 columns */ }
+catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained, a row larger than one data page, a Jet3 table over 255 columns, or Jet3 text outside the database's code page */ }
 catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```

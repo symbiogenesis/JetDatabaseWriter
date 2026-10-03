@@ -368,6 +368,9 @@ internal static class LinkedTableManager
         AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
+        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(db, sourceDatabasePath, nameof(sourceDatabasePath));
+        ThrowIfNotStorable(db, foreignTableName, nameof(foreignTableName));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         await catalogArtifacts.ExecutePlanAsync(
@@ -410,6 +413,9 @@ internal static class LinkedTableManager
         AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
+        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(db, connectionString, nameof(connectionString));
+        ThrowIfNotStorable(db, foreignTableName, nameof(foreignTableName));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
@@ -461,6 +467,10 @@ internal static class LinkedTableManager
         Guard.NotNullOrEmpty(sourceDirectoryPath, nameof(sourceDirectoryPath));
         Guard.NotNullOrEmpty(foreignFileName, nameof(foreignFileName));
         Guard.NotNullOrEmpty(connectString, nameof(connectString));
+        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(db, sourceDirectoryPath, nameof(sourceDirectoryPath));
+        ThrowIfNotStorable(db, foreignFileName, nameof(foreignFileName));
+        ThrowIfNotStorable(db, connectString, nameof(connectString));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         await catalogArtifacts.ExecutePlanAsync(
@@ -510,6 +520,23 @@ internal static class LinkedTableManager
         }
 
         return copy;
+    }
+
+    /// <summary>
+    /// Refuses a link argument that the database would not store as given: a
+    /// Jet3 <c>MSysObjects</c> row holds the foreign name, path and connect
+    /// string in the database's code page (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>).
+    /// </summary>
+    /// <param name="db">The database the link is written to.</param>
+    /// <param name="value">The argument.</param>
+    /// <param name="paramName">The public parameter that carries it.</param>
+    /// <exception cref="ArgumentException"><paramref name="value"/> holds a character the database's code page does not have.</exception>
+    private static void ThrowIfNotStorable(DatabaseFile db, string value, string paramName)
+    {
+        if (db.DescribeUnstorableCharacter(value) is { } character)
+        {
+            throw new ArgumentException(db.UnstorableTextMessage($"The {paramName} '{value}'", character), paramName);
+        }
     }
 
     private static LinkedTextLimits CreateLinkedTextLimits(AccessReaderOptions options)

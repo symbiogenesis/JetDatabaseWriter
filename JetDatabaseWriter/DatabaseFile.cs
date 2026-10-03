@@ -37,6 +37,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
     private readonly bool canCacheOwnedDataPages;
     private readonly Type ownerType;
     private readonly PageDecryptionKeys pageKeys;
+
+    /// <summary>
+    /// <see cref="AnsiEncoding"/> with an encoder that throws for a character
+    /// the code page does not have; Jet3 text and names are encoded with it.
+    /// </summary>
+    private readonly Encoding ansiTextEncoder;
+
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
 #if NET9_0_OR_GREATER
     private readonly Lock ownedDataPagesCacheLock = new();
@@ -125,6 +132,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
             this.CodePage = 65001;
         }
 
+        this.ansiTextEncoder = CreateStrictEncoder(this.AnsiEncoding);
+
         // Format-specific TDEF / page / column / row layouts:
         //   Jet4 / ACE (Access 2000–2019): TDEF 8+55 = 63 bytes, column descriptor 25 bytes.
         //   Jet3        (Access 97):       TDEF 8+35 = 43 bytes, column descriptor 18 bytes.
@@ -173,7 +182,12 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets the detected database format.</summary>
     internal DatabaseFormat Format { get; }
 
-    /// <summary>Gets the ANSI code-page encoding used by Jet3 text and Jet4 catalog names.</summary>
+    /// <summary>
+    /// Gets the database's ANSI code-page encoding, which decodes Jet3 text and
+    /// names. Its encoder substitutes a best-fit character or <c>?</c> for one
+    /// the code page does not have, so Jet3 text and names are encoded with
+    /// <see cref="EncodeAnsiText"/> instead, which refuses such a character.
+    /// </summary>
     internal Encoding AnsiEncoding { get; }
 
     /// <summary>Gets the decoded database code page.</summary>
@@ -807,7 +821,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal byte[] EncodeTextForFormat(string value, bool compress = true)
-        => this.Format == DatabaseFormat.Jet3Mdb ? this.AnsiEncoding.GetBytes(value) : EncodeJet4Text(value, compress);
+        => this.Format == DatabaseFormat.Jet3Mdb ? this.EncodeAnsiText(value) : EncodeJet4Text(value, compress);
 
     /// <summary>
     /// Encodes a string for storage using the format-appropriate codec,
@@ -818,7 +832,68 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="compress">The compress.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal byte[] EncodeTextForFormat(string value, int maxBytes, bool compress = true)
-        => this.Format == DatabaseFormat.Jet3Mdb ? this.AnsiEncoding.GetBytes(value) : EncodeJet4Text(value, maxBytes, compress);
+        => this.Format == DatabaseFormat.Jet3Mdb ? this.EncodeAnsiText(value) : EncodeJet4Text(value, maxBytes, compress);
+
+    /// <summary>
+    /// Encodes Jet3 text or a Jet3 name in the database's code page. A
+    /// character the code page does not have throws instead of being stored as
+    /// .NET's best-fit match or <c>?</c>; the public write paths refuse such
+    /// text before anything is written (<see cref="DescribeUnstorableCharacter"/>),
+    /// so this throw is only a backstop.
+    /// </summary>
+    /// <param name="value">The text.</param>
+    /// <returns>The code-page bytes.</returns>
+    /// <exception cref="EncoderFallbackException"><paramref name="value"/> holds a character the code page does not have.</exception>
+    internal byte[] EncodeAnsiText(string value) => this.ansiTextEncoder.GetBytes(value);
+
+    /// <summary>
+    /// Describes the first character of <paramref name="text"/> this database
+    /// cannot store, for an error message, or returns <see langword="null"/>
+    /// when it can store all of them. Jet4 and ACE store text and names as
+    /// UTF-16, which holds any string. Jet3 stores them in the database's code
+    /// page, Windows-1252 for new files, where .NET would write a best-fit
+    /// match or <c>?</c> instead (Łódź as Lódz, 中文 as ??). The stored name
+    /// would then differ from the caller's, so the table could not be found by
+    /// it and a second such name passed the duplicate check, and an index key
+    /// built from the caller's text would not match its row.
+    /// </summary>
+    /// <param name="text">The name or value.</param>
+    /// <returns>The character and its code point, such as <c>'中' (U+4E2D)</c>, or <see langword="null"/>.</returns>
+    internal string? DescribeUnstorableCharacter(string text)
+    {
+        if (this.Format != DatabaseFormat.Jet3Mdb)
+        {
+            return null;
+        }
+
+        try
+        {
+            _ = this.ansiTextEncoder.GetByteCount(text);
+            return null;
+        }
+        catch (EncoderFallbackException ex)
+        {
+            if (ex.CharUnknownHigh != '\0')
+            {
+                return $"'{ex.CharUnknownHigh}{ex.CharUnknownLow}' (U+{char.ConvertToUtf32(ex.CharUnknownHigh, ex.CharUnknownLow):X4})";
+            }
+
+            // A lone surrogate is not printable on its own.
+            return char.IsSurrogate(ex.CharUnknown)
+                ? $"the unpaired surrogate U+{(int)ex.CharUnknown:X4}"
+                : $"'{ex.CharUnknown}' (U+{(int)ex.CharUnknown:X4})";
+        }
+    }
+
+    /// <summary>
+    /// Builds the message for text that <see cref="DescribeUnstorableCharacter"/>
+    /// found a character in.
+    /// </summary>
+    /// <param name="subject">What the text is, such as "The table name '中文'".</param>
+    /// <param name="character">The description <see cref="DescribeUnstorableCharacter"/> returned.</param>
+    /// <returns>The message.</returns>
+    internal string UnstorableTextMessage(string subject, string character)
+        => $"{subject} cannot be stored: it contains {character}, which is not in code page {this.CodePage}. A Jet3 (Access 97) database stores text and object names in its code page.";
 
     /// <summary>
     /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
@@ -877,10 +952,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="name">The column or index name.</param>
     /// <returns>The length-prefixed name record.</returns>
     /// <exception cref="ArgumentException">Thrown when the encoded name is longer than its length prefix can hold (255 bytes on Jet3).</exception>
+    /// <exception cref="EncoderFallbackException">Thrown on Jet3 when the name holds a character the code page does not have (<see cref="EncodeAnsiText"/>).</exception>
     internal byte[] EncodeTDefNameRecord(string name)
     {
         bool jet3 = this.Format == DatabaseFormat.Jet3Mdb;
-        byte[] nameBytes = jet3 ? this.AnsiEncoding.GetBytes(name) : Encoding.Unicode.GetBytes(name);
+        byte[] nameBytes = jet3 ? this.EncodeAnsiText(name) : Encoding.Unicode.GetBytes(name);
         int prefixSize = jet3 ? 1 : 2;
         int maxLength = jet3 ? byte.MaxValue : ushort.MaxValue;
         if (nameBytes.Length > maxLength)
@@ -1417,6 +1493,26 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
 
         return lo < count ? sortedPositions[lo] : pageSize;
+    }
+
+    /// <summary>
+    /// Returns an encoding that encodes as <paramref name="encoding"/> does but
+    /// throws <see cref="EncoderFallbackException"/> for a character it cannot
+    /// encode. .NET's code-page encodings substitute a best-fit match or
+    /// <c>?</c>, and UTF-8 substitutes U+FFFD for an unpaired surrogate.
+    /// </summary>
+    /// <param name="encoding">The database's code-page encoding.</param>
+    /// <returns>The strict encoding.</returns>
+    private static Encoding CreateStrictEncoder(Encoding encoding)
+    {
+        if (encoding is UTF8Encoding)
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        }
+
+        var strict = (Encoding)encoding.Clone();
+        strict.EncoderFallback = EncoderFallback.ExceptionFallback;
+        return strict;
     }
 
     /// <summary>

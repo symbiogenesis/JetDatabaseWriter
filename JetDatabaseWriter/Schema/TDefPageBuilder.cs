@@ -296,7 +296,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
                 }
             }
 
-            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : db.AnsiEncoding.GetBytes(col.Name);
+            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : db.EncodeAnsiText(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException(
@@ -411,7 +411,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
             int npos = anchors.LogIdxNamesStart;
             for (int i = 0; i < numIdx; i++)
             {
-                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : db.AnsiEncoding.GetBytes(indexes[i].Name);
+                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : db.EncodeAnsiText(indexes[i].Name);
                 if (npos + nameLenSize + nameBytes.Length > page.Length)
                 {
                     throw new NotSupportedException(
