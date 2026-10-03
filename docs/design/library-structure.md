@@ -26,7 +26,6 @@ JetDatabaseWriter/
 ├── Interfaces/
 │   ├── IAccessBase.cs
 │   ├── IAccessIndexQuery.cs               (fluent exact/prefix/range read queries over a named index)
-│   ├── IAccessOptions.cs
 │   ├── IAccessReader.cs
 │   ├── IAccessSchema.cs                   (DDL: CreateTable, AddColumn, linked tables, relationships)
 │   └── IAccessWriter.cs                   (DML: Insert, Update, Delete, complex-row APIs)

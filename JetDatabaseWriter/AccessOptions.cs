@@ -2,14 +2,13 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.IO;
-using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Base configuration options shared by Access database readers and writers.
 /// </summary>
 /// <param name="useByteRangeLocks">Default byte-range lock setting for the concrete option type.</param>
-public abstract class AccessOptions(bool useByteRangeLocks) : IAccessOptions
+public abstract class AccessOptions(bool useByteRangeLocks)
 {
     internal const int DefaultLockTimeoutMilliseconds = 5_000;
     private const int LockFileIdentityMaxLength = 31;
