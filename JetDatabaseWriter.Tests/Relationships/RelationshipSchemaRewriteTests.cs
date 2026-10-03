@@ -534,9 +534,9 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     /// <summary>
     /// Rewrites a table of an Access-authored database that has relationships
     /// on both sides and checks that every FK logical index in the file still
-    /// names a TDEF page whose partner entry points back at it. On Jet3, where
-    /// the writer cannot emit FK entries, the rewritten table's entries and
-    /// the partner entries that pointed at it are removed instead.
+    /// names a TDEF page whose partner entry points back at it, on every
+    /// format: the rewritten table's entries are re-emitted and its partners'
+    /// entries re-linked to it.
     /// </summary>
     /// <param name="fixture">The fixture file name.</param>
     /// <param name="table">The table to rewrite.</param>
@@ -570,10 +570,8 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         int relationshipsBefore;
         int rowsBefore;
-        DatabaseFormat format;
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            format = reader.DatabaseFormat;
             relationshipsBefore = (await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken)).Count;
             rowsBefore = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count;
         }
@@ -598,17 +596,9 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         int totalBefore = fksBefore.Sum(pair => pair.Value.Count);
         int totalAfter = fksAfter.Sum(pair => pair.Value.Count);
-        if (format == DatabaseFormat.Jet3Mdb)
-        {
-            Assert.Equal(totalBefore - touchingTable, totalAfter);
-            Assert.Empty(fksAfter.GetValueOrDefault(pageAfter) ?? []);
-            Assert.DoesNotContain(fksAfter.Values.SelectMany(fks => fks), i => i.RelatedTablePage == pageAfter || i.RelatedTablePage == pageBefore);
-        }
-        else
-        {
-            Assert.Equal(totalBefore, totalAfter);
-            Assert.Equal(touchingTable, fksAfter.Sum(pair => pair.Value.Count(i => pair.Key == pageAfter || i.RelatedTablePage == pageAfter)));
-        }
+        Assert.Equal(totalBefore, totalAfter);
+        Assert.Equal(touchingTable, fksAfter.Sum(pair => pair.Value.Count(i => pair.Key == pageAfter || i.RelatedTablePage == pageAfter)));
+        Assert.DoesNotContain(fksAfter.Values.SelectMany(fks => fks), i => pageBefore != pageAfter && i.RelatedTablePage == pageBefore);
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
