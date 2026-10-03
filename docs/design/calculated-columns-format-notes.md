@@ -117,7 +117,9 @@ name cannot hold `]`. `DropColumnAsync` uses the same scan to refuse, with
 that another column's `Expression`, `ValidationRule` or `DefaultValue` names; a
 mention in a string literal, or in the dropped column's own rule, does not
 block it. What Access itself does when a field that a calculated column uses
-is renamed or deleted is not verified.
+is renamed or deleted is not verified: `DaoCalculatedColumnRenameTests` checks
+both through DAO, and that DAO evaluates and compacts a table the writer
+renamed a field of, but it runs only on a host with Microsoft Access.
 
 Two result types have Access-specific payload encodings inside the wrapper:
 
