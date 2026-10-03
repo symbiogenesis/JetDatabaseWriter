@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;

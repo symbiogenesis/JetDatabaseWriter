@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Queries;

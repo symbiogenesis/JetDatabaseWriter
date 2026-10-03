@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Linq;
 
 using System.Linq;
 
@@ -15,4 +15,4 @@ using System.Linq;
 /// <see cref="System.Collections.Generic.List{T}"/>) binds to the collection
 /// <c>ThenInclude</c> overload through <see cref="System.Collections.Generic.IEnumerable{T}"/>.
 /// </typeparam>
-public interface IIncludableQueryable<out TEntity, out TProperty> : IQueryable<TEntity>;
+public interface IAccessIncludableQueryable<out TEntity, out TProperty> : IQueryable<TEntity>;

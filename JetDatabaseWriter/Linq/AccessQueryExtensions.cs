@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Linq;
 
 using System;
 using System.Collections.Generic;
@@ -37,7 +37,7 @@ public static class AccessQueryExtensions
     /// <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/<c>ThenByDescending</c>,
     /// <c>Skip</c>, and <c>Take</c> onto it; those operators run per parent and a following
     /// <c>ThenInclude</c> descends only into the kept rows. Chain
-    /// <see cref="ThenInclude{TEntity, TPreviousProperty, TProperty}(IIncludableQueryable{TEntity, TPreviousProperty}, Expression{Func{TPreviousProperty, TProperty}})"/>
+    /// <see cref="ThenInclude{TEntity, TPreviousProperty, TProperty}(IAccessIncludableQueryable{TEntity, TPreviousProperty}, Expression{Func{TPreviousProperty, TProperty}})"/>
     /// to load a nested navigation off the included entity.
     /// </summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -45,7 +45,7 @@ public static class AccessQueryExtensions
     /// <param name="source">The query to extend.</param>
     /// <param name="navigation">A property-access expression (<c>o =&gt; o.Customer</c> or <c>c =&gt; c.Orders</c>), optionally with an inline filter/order/page chain on a collection navigation (<c>c =&gt; c.Orders.Where(o =&gt; o.Open).OrderBy(o =&gt; o.Date).Take(5)</c>).</param>
     /// <returns>A new query that will populate the navigation on materialization.</returns>
-    public static IIncludableQueryable<T, TProperty> Include<T, TProperty>(this IQueryable<T> source, Expression<Func<T, TProperty>> navigation)
+    public static IAccessIncludableQueryable<T, TProperty> Include<T, TProperty>(this IQueryable<T> source, Expression<Func<T, TProperty>> navigation)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(navigation, nameof(navigation));
@@ -68,8 +68,8 @@ public static class AccessQueryExtensions
     /// <param name="source">The query whose most recent include targets a reference entity.</param>
     /// <param name="navigation">A property-access expression on the previously included entity, e.g. <c>c =&gt; c.Region</c>.</param>
     /// <returns>A new query that will also populate the nested navigation on materialization.</returns>
-    public static IIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
-        this IIncludableQueryable<TEntity, TPreviousProperty> source,
+    public static IAccessIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
+        this IAccessIncludableQueryable<TEntity, TPreviousProperty> source,
         Expression<Func<TPreviousProperty, TProperty>> navigation)
     {
         Guard.NotNull(source, nameof(source));
@@ -93,8 +93,8 @@ public static class AccessQueryExtensions
     /// <param name="source">The query whose most recent include targets a collection of entities.</param>
     /// <param name="navigation">A property-access expression on the previously included element (<c>i =&gt; i.Product</c>), optionally with an inline filter/order/page chain when it targets a nested collection.</param>
     /// <returns>A new query that will also populate the nested navigation on materialization.</returns>
-    public static IIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
-        this IIncludableQueryable<TEntity, IEnumerable<TPreviousProperty>> source,
+    public static IAccessIncludableQueryable<TEntity, TProperty> ThenInclude<TEntity, TPreviousProperty, TProperty>(
+        this IAccessIncludableQueryable<TEntity, IEnumerable<TPreviousProperty>> source,
         Expression<Func<TPreviousProperty, TProperty>> navigation)
     {
         Guard.NotNull(source, nameof(source));

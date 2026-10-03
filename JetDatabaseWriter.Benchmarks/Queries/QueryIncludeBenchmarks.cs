@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
 using JetDatabaseWriter.Benchmarks.Models;
+using JetDatabaseWriter.Linq;
 
 /// <summary>
 /// Eager loading through <c>Query&lt;T&gt;().Include(...)</c> over the synthetic

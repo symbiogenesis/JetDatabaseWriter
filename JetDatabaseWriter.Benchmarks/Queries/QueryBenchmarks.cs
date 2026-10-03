@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
+using JetDatabaseWriter.Linq;
 
 /// <summary>
 /// The per-call cost of typed reads and <c>Query&lt;T&gt;()</c> over the synthetic query
