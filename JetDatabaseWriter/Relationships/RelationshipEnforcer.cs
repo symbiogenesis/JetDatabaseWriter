@@ -135,6 +135,16 @@ internal sealed class RelationshipEnforcer(
         return set;
     }
 
+    /// <summary>
+    /// Checks that every non-null foreign key of a row about to be inserted
+    /// into <paramref name="foreignTable"/> names an existing parent row.
+    /// </summary>
+    /// <param name="foreignTable">The table the row is inserted into.</param>
+    /// <param name="foreignDef">The table's definition.</param>
+    /// <param name="values">The row, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">A foreign key has no matching parent row.</exception>
     public async ValueTask EnforceFkOnInsertAsync(
         string foreignTable,
         TableDef foreignDef,
@@ -144,24 +154,8 @@ internal sealed class RelationshipEnforcer(
     {
         foreach (FkRelationship rel in ctx.All)
         {
-            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            int[] foreignColumnIndexes = new int[rel.ForeignColumns.Count];
-            bool ok = true;
-            for (int index = 0; index < rel.ForeignColumns.Count; index++)
-            {
-                foreignColumnIndexes[index] = foreignDef.FindColumnIndex(rel.ForeignColumns[index]);
-                if (foreignColumnIndexes[index] < 0)
-                {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if (!ok)
+            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase)
+                || !TryMapColumns(rel.ForeignColumns, foreignDef, out int[] foreignColumnIndexes))
             {
                 continue;
             }
@@ -172,48 +166,53 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            ParentSeekIndex? seekIndex = await this.seekPlanner.ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
-            if (seekIndex != null)
-            {
-                if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? pendingSet))
-                {
-                    pendingSet = new HashSet<string>(StringComparer.Ordinal);
-                    ctx.ParentKeySets[rel.Name] = pendingSet;
-                }
+            await this.RequireParentKeyAsync(rel, foreignTable, values, key, ctx, FkCheckKind.Insert, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-                if (pendingSet.Contains(key))
+    /// <summary>
+    /// Checks the foreign keys an update of <paramref name="foreignTable"/>
+    /// changes. As in Access, a relationship is checked only on the rows whose
+    /// foreign key the update changes to a non-null value: a relationship none
+    /// of whose foreign-key columns the update assigns is skipped, and so is a
+    /// row whose key keeps its value, even when that key has no parent row.
+    /// </summary>
+    /// <param name="foreignTable">The table being updated.</param>
+    /// <param name="foreignDef">The table's definition.</param>
+    /// <param name="assignedColumns">The ordinals of the columns the update assigns.</param>
+    /// <param name="rows">Each matching row before and after the update, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">A changed foreign key has no matching parent row.</exception>
+    public async ValueTask EnforceFkOnForeignUpdateAsync(
+        string foreignTable,
+        TableDef foreignDef,
+        ICollection<int> assignedColumns,
+        IReadOnlyList<(object[] OldRow, object[] NewRow)> rows,
+        FkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase)
+                || !TryMapColumns(rel.ForeignColumns, foreignDef, out int[] foreignColumnIndexes)
+                || !Array.Exists(foreignColumnIndexes, assignedColumns.Contains))
+            {
+                continue;
+            }
+
+            foreach ((object[] oldRow, object[] newRow) in rows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string? newKey = RelationshipKeyBuilder.Build(newRow, foreignColumnIndexes);
+                if (newKey == null
+                    || string.Equals(newKey, RelationshipKeyBuilder.Build(oldRow, foreignColumnIndexes), StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIndex, values);
-                if (encodedKey != null)
-                {
-                    var cursor = new IndexCursor(
-                        (page, token) => RelationshipPageReader.ReadOwnedAsync(db, page, token),
-                        db.PageSizeBytes);
-                    bool found = await cursor.ContainsKeyAsync(
-                        seekIndex.RootPage,
-                        encodedKey,
-                        cancellationToken).ConfigureAwait(false);
-
-                    if (found)
-                    {
-                        continue;
-                    }
-
-                    throw new InvalidOperationException(
-                        $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
-                        $"no matching row in '{rel.PrimaryTable}' for the supplied {string.Join(", ", rel.ForeignColumns)} value(s).");
-                }
-            }
-
-            HashSet<string> parentKeys = await this.GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
-            if (!parentKeys.Contains(key))
-            {
-                throw new InvalidOperationException(
-                    $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
-                    $"no matching row in '{rel.PrimaryTable}' for the supplied {string.Join(", ", rel.ForeignColumns)} value(s).");
+                await this.RequireParentKeyAsync(rel, foreignTable, newRow, newKey, ctx, FkCheckKind.Update, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -474,6 +473,107 @@ internal sealed class RelationshipEnforcer(
         }
 
         return true;
+    }
+
+    /// <summary>Maps column names to their ordinals in <paramref name="definition"/>.</summary>
+    /// <param name="names">The column names.</param>
+    /// <param name="definition">The table definition.</param>
+    /// <param name="ordinals">The ordinals, in the order of <paramref name="names"/>.</param>
+    /// <returns><see langword="false"/> when a column is not in the table.</returns>
+    private static bool TryMapColumns(IReadOnlyList<string> names, TableDef definition, out int[] ordinals)
+    {
+        ordinals = new int[names.Count];
+        for (int index = 0; index < names.Count; index++)
+        {
+            ordinals[index] = definition.FindColumnIndex(names[index]);
+            if (ordinals[index] < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Builds the error for a foreign key with no matching parent row.</summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="foreignTable">The table being written.</param>
+    /// <param name="kind">Whether an insert or an update supplied the key.</param>
+    /// <returns>The exception to throw.</returns>
+    private static InvalidOperationException ForeignKeyViolation(FkRelationship rel, string foreignTable, FkCheckKind kind)
+    {
+        string columns = string.Join(", ", rel.ForeignColumns);
+        return kind == FkCheckKind.Update
+            ? new InvalidOperationException(
+                $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
+                $"no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).")
+            : new InvalidOperationException(
+                $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
+                $"no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).");
+    }
+
+    /// <summary>
+    /// Checks that the non-null foreign key <paramref name="key"/> of
+    /// <paramref name="values"/> names an existing row of the relationship's
+    /// primary table: by a seek on the parent's index when one covers the
+    /// key, otherwise against the parent's key set.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="foreignTable">The table being written.</param>
+    /// <param name="values">The row being written, in table-column order.</param>
+    /// <param name="key">The row's normalized foreign key.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="kind">Whether an insert or an update supplied the key.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">No parent row has the key.</exception>
+    private async ValueTask RequireParentKeyAsync(
+        FkRelationship rel,
+        string foreignTable,
+        object[] values,
+        string key,
+        FkContext ctx,
+        FkCheckKind kind,
+        CancellationToken cancellationToken)
+    {
+        ParentSeekIndex? seekIndex = await this.seekPlanner.ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+        if (seekIndex != null)
+        {
+            if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? pendingSet))
+            {
+                pendingSet = new HashSet<string>(StringComparer.Ordinal);
+                ctx.ParentKeySets[rel.Name] = pendingSet;
+            }
+
+            if (pendingSet.Contains(key))
+            {
+                return;
+            }
+
+            byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIndex, values);
+            if (encodedKey != null)
+            {
+                var cursor = new IndexCursor(
+                    (page, token) => RelationshipPageReader.ReadOwnedAsync(db, page, token),
+                    db.PageSizeBytes);
+                bool found = await cursor.ContainsKeyAsync(
+                    seekIndex.RootPage,
+                    encodedKey,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!found)
+                {
+                    throw ForeignKeyViolation(rel, foreignTable, kind);
+                }
+
+                return;
+            }
+        }
+
+        HashSet<string> parentKeys = await this.GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+        if (!parentKeys.Contains(key))
+        {
+            throw ForeignKeyViolation(rel, foreignTable, kind);
+        }
     }
 
     private async ValueTask<List<object?[]>?> TryReadAllRowsTypedAsync(
