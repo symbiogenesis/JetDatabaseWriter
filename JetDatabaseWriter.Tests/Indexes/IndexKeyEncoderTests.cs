@@ -17,6 +17,61 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 public sealed class IndexKeyEncoderTests
 {
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(short.MinValue)]
+    [InlineData(short.MaxValue)]
+    public void TryDecodeIntegralKey_RoundTripsInt16EncodeEntry(int value)
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(IntegerType, checked((short)value), ascending: true);
+
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(IntegerType, encoded, out long decoded));
+        Assert.Equal(value, decoded);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(int.MinValue)]
+    [InlineData(int.MaxValue)]
+    public void TryDecodeIntegralKey_RoundTripsInt32EncodeEntry(int value)
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(LongIntegerType, value, ascending: true);
+
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, encoded, out long decoded));
+        Assert.Equal(value, decoded);
+    }
+
+    [Fact]
+    public void TryDecodeIntegralKey_IgnoresLaterKeyColumns()
+    {
+        byte[] first = IndexKeyEncoder.EncodeEntry(LongIntegerType, 42, ascending: true);
+        byte[] second = IndexKeyEncoder.EncodeEntry(LongIntegerType, -7, ascending: true);
+        byte[] composite = [.. first, .. second];
+
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, composite, out long decoded));
+        Assert.Equal(42, decoded);
+    }
+
+    [Fact]
+    public void TryDecodeIntegralKey_RejectsDescendingNullShortAndUnsupportedKeys()
+    {
+        byte[] descending = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5, ascending: false);
+        byte[] ascendingNull = IndexKeyEncoder.EncodeEntry(LongIntegerType, null, ascending: true);
+        byte[] ascending = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5, ascending: true);
+        byte[] bigInt = IndexKeyEncoder.EncodeEntry(BigIntType, 5L, ascending: true);
+
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, descending, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, ascendingNull, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, ascending.AsSpan(0, 4), out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, [], out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(BigIntType, bigInt, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(TextType, ascending, out _));
+    }
+
     [Fact]
     public void Null_Ascending_EmitsSingleZeroFlagByte()
     {
