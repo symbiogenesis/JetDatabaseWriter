@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Indexes;
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
@@ -199,23 +198,14 @@ internal static class IndexPredicateTranslator
         return !finder.Found;
     }
 
-    private static object? EvaluateValue(Expression expression)
-    {
-        if (expression is ConstantExpression constant)
-        {
-            return constant.Value;
-        }
-
-        // Compile the operand to recover captured variables, field/property
-        // reads, and computed constants (for example a closed-over `start`
-        // variable or `DateTime.Today`). Box value types so the delegate
-        // returns object.
-        Expression body = expression.Type.IsValueType
-            ? Expression.Convert(expression, typeof(object))
-            : expression;
-        Func<object?> evaluator = Expression.Lambda<Func<object?>>(body).Compile();
-        return evaluator();
-    }
+    /// <summary>
+    /// Evaluates the value side of a comparison. Constants and captured variables, including
+    /// field and property chains such as <c>filter.Range.Low</c>, are read without compiling;
+    /// a computed operand such as <c>DateTime.Today</c> or <c>id + 1</c> is compiled once.
+    /// </summary>
+    /// <param name="expression">An operand that does not reference the predicate's parameter.</param>
+    /// <returns>The operand's value.</returns>
+    private static object? EvaluateValue(Expression expression) => ClosureValueReader.Evaluate(expression);
 
     private static Expression StripConvert(Expression expression)
     {

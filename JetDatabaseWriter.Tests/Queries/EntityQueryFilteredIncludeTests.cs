@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Queries;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -85,6 +86,51 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
 
         // Bob >= 120 ascending: just 300; Skip(1) drops it, so the collection is empty.
         Assert.Empty(bob.Orders);
+    }
+
+    [Fact]
+    public async Task FilteredOrderedPagedInclude_CapturedOperands_MatchTheLiteralForm()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        // Inside the navigation lambda the counts stay closure-field reads (the outer
+        // Queryable.Skip/Take turn theirs into constants), so this reads them per query.
+#pragma warning disable RCS1118 // Locals, not consts: the navigation lambda must capture them.
+        int minimum = 120;
+        int skip = 1;
+        int take = 2;
+#pragma warning restore RCS1118
+
+        List<FiCustomer> customers = await reader.Query<FiCustomer>("FiCustomer")
+            .Include(c => c.Orders
+                .Where(o => o.Amount >= minimum)
+                .OrderBy(o => o.Amount)
+                .Skip(skip)
+                .Take(take))
+            .ToListAsync(ct);
+
+        // The same rows as FilteredOrderedPagedInclude_AppliesWhereOrderSkipTakeInOrder.
+        Assert.Equal([13, 11], customers.Single(c => c.Id == 1).Orders.Select(o => o.Id));
+        Assert.Empty(customers.Single(c => c.Id == 2).Orders);
+    }
+
+    [Fact]
+    public async Task PagedInclude_CapturedCountGetterThrows_ThrowsTheGettersException()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+        var paging = new FailingPaging();
+
+        // The count is read while the query is translated; the getter's own exception
+        // must surface, not a TargetInvocationException around it.
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.Query<FiCustomer>("FiCustomer")
+                .Include(c => c.Orders.Take(paging.Count))
+                .ToListAsync(ct));
+        Assert.Equal("The PageSize setting is missing.", ex.Message);
     }
 
     [Fact]
@@ -269,5 +315,13 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         public int Amount { get; set; }
 
         public FiCustomer? Customer { get; set; }
+    }
+
+    /// <summary>A captured object whose paging count cannot be read.</summary>
+    private sealed class FailingPaging
+    {
+        private readonly string setting = "PageSize";
+
+        public int Count => throw new InvalidOperationException($"The {this.setting} setting is missing.");
     }
 }

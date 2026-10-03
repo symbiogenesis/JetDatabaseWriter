@@ -80,6 +80,29 @@ public sealed class IndexPredicateTranslatorTests
     }
 
     [Fact]
+    public void CapturedNullableValue_ProducesTheSameCriteriaAsALiteral()
+    {
+#pragma warning disable RCS1118 // Locals, not consts: the lambdas must capture closure fields.
+        int? threshold = 7;
+        int optional = 3;
+#pragma warning restore RCS1118
+
+        // int > int? lifts the column side; int? == int lifts the captured side.
+        AssertSameCriteria(r => r.Score > 7, r => r.Score > threshold);
+        AssertSameCriteria(r => r.Optional == 3, r => r.Optional == optional);
+    }
+
+    [Fact]
+    public void CapturedPropertyChain_ProducesTheSameCriteriaAsALiteral()
+    {
+        var filter = new Filter { Range = new ScoreRange { Low = 10, High = 20 }, Name = "x", Day = DayOfWeek.Friday };
+
+        AssertSameCriteria(r => r.Score >= 10 && r.Score < 20, r => r.Score >= filter.Range.Low && r.Score < filter.Range.High);
+        AssertSameCriteria(r => r.Name == "x", r => r.Name == filter.Name);
+        AssertSameCriteria(r => r.Day == DayOfWeek.Friday, r => r.Day == filter.Day);
+    }
+
+    [Fact]
     public void OrBranch_IsNotPushed()
     {
         RowCriteria criteria = Extract(r => r.Id == 1 || r.Name == "x");
@@ -136,6 +159,22 @@ public sealed class IndexPredicateTranslatorTests
         Assert.Equal(end, criteria.Predicates[1].Operand);
     }
 
+    private static void AssertSameCriteria(Expression<Func<Row, bool>> literal, Expression<Func<Row, bool>> captured)
+    {
+        RowCriteria expected = Extract(literal);
+        RowCriteria actual = Extract(captured);
+
+        Assert.NotEmpty(expected.Predicates);
+        Assert.Equal(expected.Count, actual.Count);
+        for (int i = 0; i < expected.Count; i++)
+        {
+            Assert.Equal(expected.Predicates[i].ColumnName, actual.Predicates[i].ColumnName);
+            Assert.Equal(expected.Predicates[i].Operator, actual.Predicates[i].Operator);
+            Assert.Equal(expected.Predicates[i].Operand, actual.Predicates[i].Operand);
+            Assert.Equal(expected.Predicates[i].Operand?.GetType(), actual.Predicates[i].Operand?.GetType());
+        }
+    }
+
 #pragma warning disable CA1812 // Only appears in expression trees, never instantiated.
     private sealed class Row
 #pragma warning restore CA1812
@@ -146,6 +185,28 @@ public sealed class IndexPredicateTranslatorTests
 
         public int Score { get; set; }
 
+        public int? Optional { get; set; }
+
+        public DayOfWeek Day { get; set; }
+
         public DateTime When { get; set; }
+    }
+
+    /// <summary>A captured object whose properties the predicates read through a chain.</summary>
+    private sealed class Filter
+    {
+        public ScoreRange Range { get; set; } = new();
+
+        public string Name { get; set; } = string.Empty;
+
+        public DayOfWeek Day { get; set; }
+    }
+
+    /// <summary>The second link of the captured chain.</summary>
+    private sealed class ScoreRange
+    {
+        public int Low { get; set; }
+
+        public int High { get; set; }
     }
 }

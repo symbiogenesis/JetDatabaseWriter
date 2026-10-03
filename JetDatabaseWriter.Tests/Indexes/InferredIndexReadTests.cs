@@ -85,6 +85,55 @@ public sealed class InferredIndexReadTests
         await AssertInferredMatchesScanAsync(reader, all, p => p.Name == "Bob");
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CapturedAndLiteralPredicates_ReturnSameRows(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildPeopleDatabaseAsync(format);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+
+#pragma warning disable RCS1118 // Locals, not consts: the lambdas must capture closure fields.
+        int low = 30;
+        int high = 70;
+        int? nullableLow = 30;
+        string name = "Bob";
+        short id = 3;
+#pragma warning restore RCS1118
+        var bounds = new ScoreBounds { Low = 30, High = 70 };
+
+        // Jet4 and ACCDB seek the Score, Name and primary-key indexes; Jet3 scans. The
+        // captured operands must find the same rows as the literals in both.
+        await AssertSameRowsAsync(reader, p => p.Score >= 30 && p.Score < 70, p => p.Score >= low && p.Score < high);
+        await AssertSameRowsAsync(reader, p => p.Score >= 30 && p.Score < 70, p => p.Score >= bounds.Low && p.Score < bounds.High);
+        await AssertSameRowsAsync(reader, p => p.Score >= 30, p => p.Score >= nullableLow);
+        await AssertSameRowsAsync(reader, p => p.Name == "Bob", p => p.Name == name);
+        await AssertSameRowsAsync(reader, p => p.Id == 3, p => p.Id == id);
+    }
+
+    private static async Task AssertSameRowsAsync(
+        AccessReader reader,
+        Expression<Func<Person, bool>> literal,
+        Expression<Func<Person, bool>> captured)
+    {
+        int[] expected = await ReadIdsAsync(reader, literal);
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, await ReadIdsAsync(reader, captured));
+    }
+
+    private static async Task<int[]> ReadIdsAsync(AccessReader reader, Expression<Func<Person, bool>> predicate)
+    {
+        var ids = new List<int>();
+        await foreach (Person person in reader.Rows<Person>("People", predicate, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            ids.Add(person.Id);
+        }
+
+        ids.Sort();
+        return [.. ids];
+    }
+
     private static async Task AssertInferredMatchesScanAsync(
         AccessReader reader,
         IReadOnlyList<Person> all,
@@ -164,5 +213,13 @@ public sealed class InferredIndexReadTests
         public string Name { get; set; } = string.Empty;
 
         public int Score { get; set; }
+    }
+
+    /// <summary>A captured object whose properties the predicates read.</summary>
+    private sealed class ScoreBounds
+    {
+        public int Low { get; set; }
+
+        public int High { get; set; }
     }
 }

@@ -364,6 +364,7 @@ JetDatabaseWriter/
     ├── AsyncLazyInitializer.cs            (thread-safe async lazy initialization)
     ├── AsyncReentrantOperationGate.cs     (reentrant async operation serializer)
     ├── Adler32.cs                         (zlib Adler-32 checksum for attachment zlib streams)
+    ├── ClosureValueReader.cs              (reads captured LINQ operands through reflection instead of compiling them)
     └── Guard.cs                           (argument validation helpers)
 ```
 
@@ -703,7 +704,7 @@ Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning,
 
 ### 12. The LINQ query layer is read-only and degrades gracefully
 
-`Queries/` adds an `IQueryable<T>` over a single table (`AccessReader.Query<T>`). The provider and `IncludeLoader` hold the reader's `TableReader`, `IndexRowReader`, and `SchemaReader`, not the facade. `AccessQueryProvider` translates only the operators it can run natively against the storage engine — a leading run of `Where` filters (AND-combined and pushed into index inference by `IndexPredicateTranslator`/`IndexPlanner`), `OrderBy`/`ThenBy`, `Skip`, and `Take` — into an ordered `QueryStage` pipeline that honors written order. `AccessQueryTranslator` marks the engine boundary at the first unsupported operator (notably `Select` projections): the prefix runs in the engine and the tail replays in memory through LINQ-to-Objects. Relationship-inferred eager loading (`Include`/`ThenInclude`, including filtered/ordered/paged collection includes) is a post-materialization step driven by the `MSysRelationships` catalog. Index selection is intentionally sound-but-not-exact — a seek can return a superset — so the compiled residual predicate is always reapplied to every row the seek yields.
+`Queries/` adds an `IQueryable<T>` over a single table (`AccessReader.Query<T>`). The provider and `IncludeLoader` hold the reader's `TableReader`, `IndexRowReader`, and `SchemaReader`, not the facade. `AccessQueryProvider` translates only the operators it can run natively against the storage engine — a leading run of `Where` filters (AND-combined and pushed into index inference by `IndexPredicateTranslator`/`IndexPlanner`), `OrderBy`/`ThenBy`, `Skip`, and `Take` — into an ordered `QueryStage` pipeline that honors written order. `AccessQueryTranslator` marks the engine boundary at the first unsupported operator (notably `Select` projections): the prefix runs in the engine and the tail replays in memory through LINQ-to-Objects. Relationship-inferred eager loading (`Include`/`ThenInclude`, including filtered/ordered/paged collection includes) is a post-materialization step driven by the `MSysRelationships` catalog. Index selection is intentionally sound-but-not-exact — a seek can return a superset — so the compiled residual predicate is always reapplied to every row the seek yields. The values the translators need while planning (the constant side of a pushed comparison, and the `Skip`/`Take` counts of an include) are read by `Infrastructure/ClosureValueReader`, which follows constants, static members and closure field and property chains through reflection and compiles only a computed operand such as `DateTime.Today` or `id + 1`. Typed results convert each value to its property through `Mapping/ValueCoercer`, for the root entities and the included ones alike.
 
 ---
 

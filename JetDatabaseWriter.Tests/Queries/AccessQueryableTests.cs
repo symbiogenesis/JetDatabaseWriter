@@ -123,6 +123,37 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
+    public async Task SkipTake_WithCapturedCounts_PagesCorrectly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+#pragma warning disable RCS1118 // Locals, not consts: the query must capture them.
+        int skip = 2;
+        int take = 3;
+        int minimumScore = 20;
+#pragma warning restore RCS1118
+        var page = new Paging { Skip = 1, Take = 2 };
+
+        List<JdwItem> byLocals = await reader.Query<JdwItem>("JdwItem")
+            .Where(i => i.Score >= minimumScore)
+            .OrderBy(i => i.Id)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(ct);
+        List<JdwItem> byProperties = await reader.Query<JdwItem>("JdwItem")
+            .OrderBy(i => i.Id)
+            .Skip(page.Skip)
+            .Take(page.Take)
+            .ToListAsync(ct);
+
+        // Scores >= 20 are ids 1, 3, 4, 5, 6; skip 2 and take 3 leaves 4, 5, 6.
+        Assert.Equal([4, 5, 6], byLocals.Select(i => i.Id).ToArray());
+        Assert.Equal([2, 3], byProperties.Select(i => i.Id).ToArray());
+    }
+
+    [Fact]
     public async Task CountAsync_CountsMatches()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -799,5 +830,13 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         public string Name { get; set; } = string.Empty;
 
         public int Score { get; set; }
+    }
+
+    /// <summary>A captured object the paging counts are read from.</summary>
+    private sealed class Paging
+    {
+        public int Skip { get; set; }
+
+        public int Take { get; set; }
     }
 }
