@@ -32,11 +32,7 @@ public sealed class IndexBTreeStructuralFixtureTests
     public static TheoryData<string> CompIndexFixtures =>
     [
         TestDatabases.CompIndexTestV2000,
-
-        // V2003 excluded: the on-disk MSysObjects catalog for this fixture
-        // contains only system tables (every Type=1 entry has the system
-        // bit set in Flags) — there is no user Table1 to scan. Not a
-        // reader bug; verified via catalog dump on 2026-05-04.
+        TestDatabases.CompIndexTestV2003,
         TestDatabases.CompIndexTestV2007,
         TestDatabases.CompIndexTestV2010,
     ];
@@ -53,10 +49,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 TestDatabases.IndexTestV2007,
                 TestDatabases.IndexTestV2010,
                 TestDatabases.CompIndexTestV2000,
-
-                // CompIndexTestV2003 excluded: on-disk MSysObjects has no
-                // user (Type=1) tables, only system tables. Verified via
-                // catalog dump on 2026-05-04 — not a catalog reader bug.
+                TestDatabases.CompIndexTestV2003,
                 TestDatabases.CompIndexTestV2007,
                 TestDatabases.CompIndexTestV2010,
 
