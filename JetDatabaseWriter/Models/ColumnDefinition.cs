@@ -186,6 +186,11 @@ public sealed record ColumnDefinition
     /// type through <see cref="ColumnMetadata.IsCurrency"/>, so copying a column's
     /// metadata into a definition creates the same type.
     /// </para>
+    /// <para>
+    /// On Jet3 (Access 97) databases, which have no Decimal type, a <see cref="decimal"/>
+    /// column is created as Currency even without this flag; see
+    /// <see cref="NumericPrecision"/>.
+    /// </para>
     /// </remarks>
     public bool IsCurrency { get; init; }
 
@@ -389,9 +394,20 @@ public sealed record ColumnDefinition
     /// <c>decimal</c> / <c>Numeric</c> column. Default <c>18</c> matches
     /// the Microsoft Access "Number → Decimal" UI default. Persisted to the
     /// JET TDEF column-descriptor <c>misc</c> slot at descriptor-relative
-    /// offset 11 (Jet4 / ACE only — Jet3 has no <c>Numeric</c>). Ignored
-    /// for non-decimal columns.
+    /// offset 11. Ignored for non-decimal and <see cref="IsCurrency"/> columns.
     /// </summary>
+    /// <remarks>
+    /// Jet3 (Access 97) databases have no Decimal type, so on a Jet3
+    /// <c>.mdb</c> a decimal column is created as Currency
+    /// (<see cref="IsCurrency"/>): neither the precision nor the scale is
+    /// stored, and values keep four decimal places, rounded half to even past
+    /// them, whatever <see cref="NumericScale"/> says. Currency holds 15 digits
+    /// before the decimal point, so <c>CreateTableAsync</c> and
+    /// <c>AddColumnAsync</c> throw <see cref="NotSupportedException"/>, before
+    /// anything is written, when <c>NumericPrecision - NumericScale</c> is
+    /// above 15 (the default Decimal(18,0) included) or
+    /// <see cref="NumericScale"/> is above 4.
+    /// </remarks>
     public byte NumericPrecision { get; init; } = 18;
 
     /// <summary>
@@ -402,7 +418,9 @@ public sealed record ColumnDefinition
     /// <see cref="MidpointRounding.ToEven"/> rounding so a single
     /// canonical scale governs the B-tree (mirroring Access, which stores
     /// every <c>Numeric</c> cell at the declared scale). Must satisfy
-    /// <c>NumericScale &lt;= NumericPrecision</c>.
+    /// <c>NumericScale &lt;= NumericPrecision</c>. Ignored for
+    /// <see cref="IsCurrency"/> columns, and not applied on Jet3, where a
+    /// decimal column is Currency (see <see cref="NumericPrecision"/>).
     /// </summary>
     public byte NumericScale { get; init; }
 
