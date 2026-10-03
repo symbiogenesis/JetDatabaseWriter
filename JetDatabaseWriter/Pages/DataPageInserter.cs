@@ -397,16 +397,17 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
         int rowStart = firstRowStart - rowBytes.Length;
         int rowOffsetPos = db.DataPage.RowsStart + (numRows * 2);
 
-        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
-        Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, db.DataPage.NumRows, numRows + 1);
-
+        // Check before touching the page, so a row too long for it never
+        // overwrites the row-offset table.
         int freeSpace = rowStart - (db.DataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
             throw new InvalidDataException("Insufficient free space remained on the target page.");
         }
 
+        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
+        Wu16(page, rowOffsetPos, rowStart);
+        Wu16(page, db.DataPage.NumRows, numRows + 1);
         Wu16(page, 2, freeSpace);
         await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
     }

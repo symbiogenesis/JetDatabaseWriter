@@ -56,6 +56,19 @@ values, and ends with a trailer (forward order):
 every read path (typed, string and direct decoders, catalog scans, the
 writer's snapshots and long-value walks).
 
+A row never spans pages, so it is at most the page size less the data-page
+header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
+(`DataPageLayout.MaxRowLength`). The writer moves MEMO values over 1,024
+bytes and OLE values over 256 bytes to LVAL pages first, and
+`RowEncoder.SerializeRow` throws `JetLimitationException` for a longer row
+before a data page is chosen. It used to append an empty page and then throw
+`ArgumentOutOfRangeException` from the copy, or `InvalidDataException` after
+copying a row one byte too long over the row-offset table;
+`DataPageInserter.WriteRowToPageAsync` now checks the free space before it
+touches the page. Jackcess's `MAX_ROW_SIZE` (recalled as 2,012 and 4,060) and
+Access's documented 2,000 / 4,000 characters per record are lower; whether
+Access rejects rows between those and the page capacity is unchecked.
+
 ### The Jet3 jump table
 
 A Jet3 offset is one byte, so a row longer than 256 bytes needs the high part
