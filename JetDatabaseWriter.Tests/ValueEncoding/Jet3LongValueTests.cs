@@ -267,6 +267,17 @@ public sealed class Jet3LongValueTests
         Assert.Equal(12, pages);
     }
 
+    /// <summary>
+    /// Reads long values that Access 97 wrote: test2V1997.mdb's 348-byte
+    /// PROJ_PROP_AUTHOR MEMO (page 49) and 22,970-byte RESERVED_BINARY_DATA
+    /// (pages 37 to 48), checked against SHA-256 hashes taken from an
+    /// independent parse of the Jet3 pages, and Jet3Test.mdb's Categories ID 3
+    /// Description (page 28). Each of those pages holds only that value.
+    /// test2V1997.mdb's page 20 holds three live rows, but none of them is read
+    /// here; <see cref="AccessAuthoredJet3LongValues_Nwind_ReadExactly"/> reads
+    /// a value from a shared page.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
     [Fact]
     public async Task AccessAuthoredJet3LongValues_ReadExactly()
     {
@@ -308,9 +319,11 @@ public sealed class Jet3LongValueTests
     /// mdbtools' nwind.mdb is an Access 97 Northwind that packs several long
     /// values onto many of its LVAL pages. Its Employees and Categories tables
     /// are listed only since the catalog scan follows overflow rows, so their
-    /// long values are checked here: a single-page MEMO and two chained OLE
-    /// pictures, against SHA-256 hashes taken from an independent parse of the
-    /// Jet3 pages.
+    /// long values are checked here against SHA-256 hashes taken from an
+    /// independent parse of the Jet3 pages. Employees ID 2's 448-byte Notes
+    /// MEMO is row 1 of page 107, one of six values on that page. Categories
+    /// ID 1's Picture (pages 25 to 30) and Employees ID 1's Photo (pages 96 to
+    /// 106) are chained, one value per page.
     /// </summary>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Fact]
