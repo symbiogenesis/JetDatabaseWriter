@@ -241,7 +241,9 @@ Delivered:
   for `AddColumnAsync`. The checks run in this order, all before any catalog
   I/O: the table name, then whether the format can hold each column (ACCDB
   only, a result type and no AutoNumber, Attachment, multi-value or Hyperlink
-  flag; `NotSupportedException`), then the expression syntax. The "already
+  flag; `NotSupportedException`), then the expression syntax, then that the
+  column declares no `DefaultValue` or `DefaultValueExpression`, which a
+  calculated column cannot have (`ArgumentException`). The "already
   exists" check comes last. Columns carried over by a table rewrite are not
   re-checked, so schema edits such as adding a plain column still work on a
   table that already stores such an expression. Its rows still read, and

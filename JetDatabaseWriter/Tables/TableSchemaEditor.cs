@@ -75,7 +75,7 @@ internal sealed class TableSchemaEditor(
     /// Public CreateTable entry point: checks the arguments before any catalog
     /// I/O, in this order: the table name and the argument lists, then that
     /// the format can hold each declared column, then each calculated
-    /// expression's syntax. Then it creates the table.
+    /// expression's syntax and each default. Then it creates the table.
     /// <see cref="RewriteTableAsync"/> calls <see cref="CreateTableAsync"/>
     /// directly, so a table holding an older expression can still be altered.
     /// </summary>
@@ -102,6 +102,7 @@ internal sealed class TableSchemaEditor(
         for (int i = 0; i < columns.Count; i++)
         {
             ValidateDeclaredCalculatedExpression(columns[i], nameof(columns));
+            ValidateDeclaredDefault(columns[i], nameof(columns));
         }
 
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
@@ -196,9 +197,11 @@ internal sealed class TableSchemaEditor(
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         // Argument checks before the table is read: the format first, so a
-        // calculated column on an .mdb reports that, then the expression.
+        // calculated column on an .mdb reports that, then the expression,
+        // then the default.
         _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
         ValidateDeclaredCalculatedExpression(column, nameof(column));
+        ValidateDeclaredDefault(column, nameof(column));
 
         return this.RewriteTableAsync(
             tableName,
@@ -330,6 +333,43 @@ internal sealed class TableSchemaEditor(
         {
             throw new ArgumentException($"Column '{column.Name}': {ex.Message}", paramName, ex);
         }
+    }
+
+    /// <summary>
+    /// Definition-time check for a default the caller is declaring now
+    /// (CreateTable / AddColumn). Access gives AutoNumber, calculated,
+    /// Attachment and multi-value columns no default, because it generates
+    /// their values, so a <see cref="ColumnDefinition.DefaultValue"/> or
+    /// <see cref="ColumnDefinition.DefaultValueExpression"/> on one is rejected
+    /// before anything is written. A property another tool stored on such a
+    /// column reaches <see cref="RewriteTableAsync"/> without this check; the
+    /// constraint registry ignores it.
+    /// </summary>
+    /// <param name="column">The column being declared.</param>
+    /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
+    /// <exception cref="ArgumentException">The column declares a default it cannot have.</exception>
+    private static void ValidateDeclaredDefault(ColumnDefinition? column, string paramName)
+    {
+        if (column?.DeclaresDefault != true || column.CanHaveDefault)
+        {
+            return;
+        }
+
+        string reason;
+        if (column.IsAutoIncrement)
+        {
+            reason = "an AutoNumber column cannot have a DefaultValue or DefaultValueExpression; its value is generated on insert";
+        }
+        else if (column.IsCalculated)
+        {
+            reason = "a calculated column cannot have a DefaultValue or DefaultValueExpression; its value comes from CalculationExpression";
+        }
+        else
+        {
+            reason = "an Attachment or multi-value column cannot have a DefaultValue or DefaultValueExpression; its items are stored in a hidden child table";
+        }
+
+        throw new ArgumentException($"Column '{column.Name}': {reason}.", paramName);
     }
 
     /// <summary>

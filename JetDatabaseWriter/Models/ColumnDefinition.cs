@@ -56,6 +56,7 @@ public sealed record ColumnDefinition
     /// stores null.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// When <see cref="DefaultValueExpression"/> is not set, the value is also written into
     /// <c>MSysObjects.LvProp</c> as a literal <c>DefaultValue</c> expression (for example
     /// <c>7</c>, <c>"text"</c>, <c>True</c> or <c>#2024-02-29 08:30:00#</c>), so a later
@@ -65,6 +66,15 @@ public sealed record ColumnDefinition
     /// <c>byte[]</c>, makes table creation throw <see cref="NotSupportedException"/>. The
     /// literal is persisted only when the catalog has an <c>LvProp</c> column
     /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/>, the default).
+    /// <see cref="DBNull.Value"/> means no default.
+    /// </para>
+    /// <para>
+    /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
+    /// <see cref="IsAttachment"/> or <see cref="IsMultiValue"/> columns, whose values Access
+    /// generates: <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
+    /// <see cref="ArgumentException"/>. A <c>DefaultValue</c> property another tool stored on
+    /// such a column is kept in the file but never applied.
+    /// </para>
     /// </remarks>
     public object? DefaultValue { get; init; }
 
@@ -180,6 +190,13 @@ public sealed record ColumnDefinition
     /// <c>GenGUID()</c> or <c>CurrentUser()</c>), evaluates to Null, or yields a value that
     /// cannot be converted to the column's type, no default is applied and the column stays
     /// null (so a NOT NULL column then rejects the row). Microsoft Access still applies it.
+    /// </para>
+    /// <para>
+    /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
+    /// <see cref="IsAttachment"/> or <see cref="IsMultiValue"/> columns, whose values Access
+    /// generates: <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
+    /// <see cref="ArgumentException"/>. A <c>DefaultValue</c> property another tool stored on
+    /// such a column is kept in the file but never applied.
     /// </para>
     /// </remarks>
     public string? DefaultValueExpression { get; init; }
@@ -312,6 +329,20 @@ public sealed record ColumnDefinition
     internal byte? DescriptorExtraFlagsOverride { get; init; }
 
     internal int? DescriptorMiscOverride { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column can have a default value. Access
+    /// gives AutoNumber, calculated, Attachment and multi-value columns none, because
+    /// it generates their values.
+    /// </summary>
+    internal bool CanHaveDefault => !this.IsAutoIncrement && !this.IsCalculated && !this.IsAttachment && !this.IsMultiValue;
+
+    /// <summary>
+    /// Gets a value indicating whether this definition declares a default value: a
+    /// <see cref="DefaultValue"/> other than <see langword="null"/> or
+    /// <see cref="DBNull.Value"/>, or a non-blank <see cref="DefaultValueExpression"/>.
+    /// </summary>
+    internal bool DeclaresDefault => this.DefaultValue is not (null or DBNull) || !string.IsNullOrWhiteSpace(this.DefaultValueExpression);
 
     /// <summary>
     /// Gets the declared precision (1..28, total significant digits) for a

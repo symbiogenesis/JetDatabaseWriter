@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -271,6 +272,24 @@ public sealed class ConstraintRegistryTests
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await registry.ApplyAsync("T", tableDef, [DBNull.Value], TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A default registered on an AutoNumber column is dropped, so a null value
+    /// still gets the next AutoNumber rather than the default.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Register_DefaultOnAutoNumberColumn_IsNotApplied()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        var registry = new ConstraintRegistry(static (_, _) => ValueTask.FromResult(new DataTable()));
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }]);
+        object[] values = [DBNull.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, values[0]);
     }
 
     [Fact]
