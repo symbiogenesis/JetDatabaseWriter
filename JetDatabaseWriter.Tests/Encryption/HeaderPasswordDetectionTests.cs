@@ -57,7 +57,10 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         ExplicitTransaction = 2,
     }
 
-    /// <summary>Gets every <c>.mdb</c> and <c>.accdb</c> fixture under <c>Databases/</c>, as a path relative to it.</summary>
+    /// <summary>
+    /// Gets every <c>.mdb</c> and <c>.accdb</c> fixture under <c>Databases/</c>, as a path relative to it,
+    /// except the library-encrypted ones under <c>Databases/Encrypted/</c>.
+    /// </summary>
     public static TheoryData<string> AccessAuthoredFixtures
     {
         get
@@ -70,7 +73,8 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
             }
 
             foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                .Where(static p => p.EndsWith(".mdb", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase))
+                .Where(static p => (p.EndsWith(".mdb", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase))
+                    && !p.StartsWith(TestDatabases.EncryptedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(static p => p, StringComparer.Ordinal))
             {
                 data.Add(Path.GetRelativePath(root, path));

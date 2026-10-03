@@ -23,6 +23,9 @@ internal static class TestDatabases
     /// </summary>
     public const string AesEncryptedPassword = "secret";
 
+    /// <summary>The password of every frozen fixture under <c>Databases/Encrypted/</c>.</summary>
+    public const string EncryptedFixturePassword = "Golden1!";
+
     // ── In-repo (project-owned) databases ────────────────────────────
 
     /// <summary>Access-authored Northwind fixture used as a trusted DAO/CompactDatabase host.</summary>
@@ -65,6 +68,32 @@ internal static class TestDatabases
     /// </summary>
     public static readonly string AesEncrypted =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "AesEncrypted.accdb");
+
+    // ── Frozen encrypted fixtures (Databases/Encrypted/) ──────────────
+    // Written once by the library and never regenerated; see
+    // Encryption.EncryptedGoldenFixtureTests. None is a file Access encrypted.
+
+    /// <summary>Gets the folder holding the frozen encrypted fixtures.</summary>
+    public static string EncryptedRoot =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Encrypted");
+
+    /// <summary>A writer-created Jet4 <c>.mdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.Jet4Rc4"/>.</summary>
+    public static readonly string EncryptedJet4Rc4 = Path.Combine(EncryptedRoot, "Jet4Rc4.mdb");
+
+    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbLegacyPassword"/>.</summary>
+    public static readonly string EncryptedAccdbLegacyPassword = Path.Combine(EncryptedRoot, "AccdbLegacyPassword.accdb");
+
+    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbAesCfbWrapped"/>.</summary>
+    public static readonly string EncryptedAccdbAesCfbWrapped = Path.Combine(EncryptedRoot, "AccdbAesCfbWrapped.accdb");
+
+    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as flat <see cref="Enums.AccessEncryptionFormat.AccdbAgile"/>.</summary>
+    public static readonly string EncryptedAccdbAgile = Path.Combine(EncryptedRoot, "AccdbAgile.accdb");
+
+    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbAgileCfb"/>.</summary>
+    public static readonly string EncryptedAccdbAgileCfb = Path.Combine(EncryptedRoot, "AccdbAgileCfb.accdb");
+
+    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbStandard"/>.</summary>
+    public static readonly string EncryptedAccdbStandard = Path.Combine(EncryptedRoot, "AccdbStandard.accdb");
 
     // ── Jackcess fixtures (Databases/Jackcess/) ──────────────────────
     // The full upstream Jackcess test/data tree, mirrored under Databases/Jackcess/.

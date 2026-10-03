@@ -418,7 +418,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
     /// <param name="data">The data bytes or values.</param>
     /// <param name="mask">The encryption mask or page bitmask.</param>
-    private static void ApplyXorMask(byte[] data, byte[] mask)
+    internal static void ApplyXorMask(byte[] data, byte[] mask)
     {
         // Apply mask starting from page 1 (offset 2048) through the data
         for (int offset = Constants.PageSizes.Jet3; offset < data.Length; offset++)
@@ -429,7 +429,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
     /// <summary>Sets the Office97 password flag (0x01) in a Jet3 database header.</summary>
     /// <param name="data">The data bytes or values.</param>
-    private static void SetJet3EncryptionFlag(byte[] data) => data[0x62] = 0x01; // Office97 password flag
+    internal static void SetJet3EncryptionFlag(byte[] data) => data[0x62] = 0x01; // Office97 password flag
 
     /// <summary>
     /// Sets the Office97 password flag (0x01) and encodes password <c>"test"</c>
