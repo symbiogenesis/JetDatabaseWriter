@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Reader;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -225,6 +226,160 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         Assert.Equal(rowCount, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
     }
 
+    /// <summary>
+    /// A path-opened reader reads pages synchronously when the caller is already
+    /// on a thread-pool thread, instead of handing each read to another pool
+    /// thread, so a scan with no page cache completes every row after the first
+    /// without waiting: read-ahead included, since its prefetch completes inline.
+    /// </summary>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [InlineData(PageReadOptimizationMode.Auto)]
+    [InlineData(PageReadOptimizationMode.Disabled)]
+    public async Task Rows_OnThreadPool_ReadPagesInline(PageReadOptimizationMode mode)
+    {
+        const int rowCount = 2_000;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageCacheSize = 0,
+                PageReadOptimizationMode = mode,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        ScanCompletion scan = await Task.Run(() => ScanCountingPendingMovesAsync(reader, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+
+        Assert.Equal(rowCount, scan.Rows);
+        Assert.Equal(0, scan.PendingMovesAfterFirst);
+    }
+
+    /// <summary>
+    /// A caller with a <see cref="SynchronizationContext"/>, such as a UI thread,
+    /// never waits on the disk: its page reads still run on the thread pool.
+    /// </summary>
+    [Fact]
+    public async Task Rows_OnThreadWithSynchronizationContext_DoNotReadInline()
+    {
+        const int rowCount = 2_000;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageCacheSize = 0,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        ScanCompletion scan = await SingleThreadSynchronizationContext.RunAsync(
+            () => ScanCountingPendingMovesAsync(reader, TestContext.Current.CancellationToken));
+
+        Assert.Equal(rowCount, scan.Rows);
+        Assert.True(scan.PendingMovesAfterFirst > 0, "Every row completed synchronously, so a page read blocked the context's thread.");
+    }
+
+    /// <summary>
+    /// A scan cancelled on a thread-pool thread, where page reads run inline,
+    /// stops at the next page, and the reader keeps reading afterwards.
+    /// </summary>
+    /// <param name="mode">The page-read optimization mode.</param>
+    [Theory]
+    [InlineData(PageReadOptimizationMode.Auto)]
+    [InlineData(PageReadOptimizationMode.Disabled)]
+    public async Task Rows_CancelledMidScanOnThreadPool_ThrowsOperationCanceled(PageReadOptimizationMode mode)
+    {
+        const int rowCount = 2_000;
+        const int rowsBeforeCancel = 10;
+        string path = await this.CreateReadableDatabaseAsync(rowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                PageCacheSize = 0,
+                PageReadOptimizationMode = mode,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        int count = await Task.Run(
+            async () =>
+            {
+                int seen = 0;
+                _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                {
+                    await foreach (object[] row in reader.Rows("Items", cancellationToken: cancellation.Token))
+                    {
+                        Assert.Equal(++seen, Assert.IsType<int>(row[0]));
+                        if (seen == rowsBeforeCancel)
+                        {
+                            await cancellation.CancelAsync();
+                        }
+                    }
+                });
+                return seen;
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.InRange(count, rowsBeforeCancel, rowCount - 1);
+        Assert.Equal(rowCount, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// Only a path-opened reader reads inline: its handle is synchronous. A
+    /// caller's stream may be overlapped, and the writer's handle is, so a
+    /// blocking read on either would be slower than the offloaded one.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReadsInlineOnThreadPool_IsSetOnlyForPathOpenedReaders(DatabaseFormat format)
+    {
+        string path = await this.CreateReadableDatabaseAsync(format: format);
+
+        foreach (PageReadOptimizationMode mode in (PageReadOptimizationMode[])[PageReadOptimizationMode.Auto, PageReadOptimizationMode.Disabled, PageReadOptimizationMode.Enabled])
+        {
+            await using AccessReader pathReader = await AccessReader.OpenAsync(
+                path,
+                new AccessReaderOptions { PageReadOptimizationMode = mode, UseLockFile = false },
+                TestContext.Current.CancellationToken);
+            Assert.True(FacadeInternals.Database(pathReader).ReadsInlineOnThreadPool, $"{mode} path reader");
+        }
+
+        await using (FileStream stream = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        await using (AccessReader streamReader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { PageReadOptimizationMode = PageReadOptimizationMode.Enabled, UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            Assert.False(FacadeInternals.Database(streamReader).ReadsInlineOnThreadPool);
+        }
+
+        foreach (bool transactional in (bool[])[false, true])
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(
+                path,
+                new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = transactional },
+                TestContext.Current.CancellationToken);
+            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
+            await writer.InsertRowAsync("Items", [transactional ? 3 : 2], TestContext.Current.CancellationToken);
+            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
+
+            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            Assert.False(FacadeInternals.Database(writer).ReadsInlineOnThreadPool);
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
     public void Dispose()
     {
         foreach (string path in this.paths)
@@ -238,6 +393,39 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Single(tables);
         Assert.Equal("Items", tables[0]);
+    }
+
+    /// <summary>
+    /// Scans the 'Items' table by hand and counts the <c>MoveNextAsync</c> calls,
+    /// after the first, that were not complete when they returned: those waited
+    /// for a page read on another thread.
+    /// </summary>
+    /// <param name="reader">The reader.</param>
+    /// <param name="cancellationToken">A token used to cancel the scan.</param>
+    private static async Task<ScanCompletion> ScanCountingPendingMovesAsync(AccessReader reader, CancellationToken cancellationToken)
+    {
+        int rows = 0;
+        int pendingMovesAfterFirst = 0;
+        await using IAsyncEnumerator<object[]> scan = reader.Rows("Items", cancellationToken: cancellationToken).GetAsyncEnumerator(cancellationToken);
+        while (true)
+        {
+            // No ConfigureAwait(false): on a synchronization context the next
+            // MoveNextAsync must start on the context's thread again.
+            ValueTask<bool> move = scan.MoveNextAsync();
+            if (rows > 0 && !move.IsCompleted)
+            {
+                pendingMovesAfterFirst++;
+            }
+
+            if (!await move)
+            {
+                break;
+            }
+
+            Assert.Equal(++rows, Assert.IsType<int>(scan.Current[0]));
+        }
+
+        return new ScanCompletion(rows, pendingMovesAfterFirst);
     }
 
     private static void TryDeleteFile(string path)
@@ -285,6 +473,58 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         }
 
         return path;
+    }
+
+    /// <summary>The rows a scan returned and how many of its row moves after the first had to wait.</summary>
+    /// <param name="Rows">The rows returned.</param>
+    /// <param name="PendingMovesAfterFirst">The <c>MoveNextAsync</c> calls after the first that were not complete when they returned.</param>
+    private readonly record struct ScanCompletion(int Rows, int PendingMovesAfterFirst);
+
+    /// <summary>
+    /// Runs work on a dedicated thread whose <see cref="SynchronizationContext"/>
+    /// queues every continuation back to that thread, as a UI thread does.
+    /// </summary>
+    private sealed class SingleThreadSynchronizationContext : SynchronizationContext, IDisposable
+    {
+        private readonly BlockingCollection<(SendOrPostCallback Callback, object? State)> queue = [];
+
+        /// <summary>Runs <paramref name="work"/> on a new thread with this context installed and returns its result.</summary>
+        /// <typeparam name="T">The result type.</typeparam>
+        /// <param name="work">The work to start on the thread.</param>
+        /// <returns>The work's result.</returns>
+        public static async Task<T> RunAsync<T>(Func<Task<T>> work)
+        {
+            var started = new TaskCompletionSource<Task<T>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                using var context = new SingleThreadSynchronizationContext();
+                SetSynchronizationContext(context);
+                Task<T> task = work();
+                _ = task.ContinueWith(_ => context.queue.CompleteAdding(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                started.SetResult(task);
+                foreach ((SendOrPostCallback callback, object? state) in context.queue.GetConsumingEnumerable())
+                {
+                    callback(state);
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            thread.Start();
+            return await (await started.Task.ConfigureAwait(false)).ConfigureAwait(false);
+        }
+
+        /// <inheritdoc/>
+        public override void Post(SendOrPostCallback d, object? state) => this.queue.Add((d, state));
+
+        /// <inheritdoc/>
+        public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException();
+
+        /// <inheritdoc/>
+        public override SynchronizationContext CreateCopy() => this;
+
+        /// <inheritdoc/>
+        public void Dispose() => this.queue.Dispose();
     }
 
     /// <summary>A read-only <see cref="FileStream"/> that counts the gets of <see cref="SafeFileHandle"/>.</summary>

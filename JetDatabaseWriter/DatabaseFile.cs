@@ -215,6 +215,23 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal bool UsesRandomAccessPageReads { get; private set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a page read that starts on a
+    /// thread-pool thread, with no <see cref="SynchronizationContext"/> and the
+    /// default <see cref="TaskScheduler"/>, reads the file synchronously on that
+    /// thread instead of handing the read to another pool thread. Only
+    /// <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, CancellationToken)"/>
+    /// sets it, because its file handle is synchronous: a blocking read on a
+    /// caller's stream, which may be overlapped, or on the writer's overlapped
+    /// handle would be slower than the offloaded one.
+    /// </summary>
+    /// <remarks>
+    /// An inline read cannot be cancelled once it has started; the token is
+    /// checked before it. Other callers, such as a UI thread or a thread with a
+    /// synchronization context, keep the offloaded read and never block on the disk.
+    /// </remarks>
+    internal bool ReadsInlineOnThreadPool { get; set; }
+
+    /// <summary>
     /// Gets the length of the backing stream. Inside a transaction this is
     /// the length when the transaction began, because appended pages stay in
     /// the journal until commit; use <see cref="PageCount"/> for page bounds.
@@ -422,7 +439,14 @@ internal sealed class DatabaseFile : IAsyncDisposable
 #if NET6_0_OR_GREATER
             if (this.randomAccessHandle is { } handle && this.ActiveJournal is null)
             {
-                await this.ReadPageRandomAccessAsync(handle, n, buf, cancellationToken).ConfigureAwait(false);
+                if (this.CanReadInline())
+                {
+                    this.ReadPageRandomAccess(handle, n, buf);
+                }
+                else
+                {
+                    await this.ReadPageRandomAccessAsync(handle, n, buf, cancellationToken).ConfigureAwait(false);
+                }
             }
             else
 #endif
@@ -441,7 +465,14 @@ internal sealed class DatabaseFile : IAsyncDisposable
                     }
 
                     _ = this.DatabaseStream.Seek(n * this.PageSizeBytes, SeekOrigin.Begin);
-                    await this.DatabaseStream.ReadExactlyAsync(buf.AsMemory(0, this.PageSizeBytes), cancellationToken).ConfigureAwait(false);
+                    if (this.CanReadInline())
+                    {
+                        this.ReadPageFromStream(buf);
+                    }
+                    else
+                    {
+                        await this.DatabaseStream.ReadExactlyAsync(buf.AsMemory(0, this.PageSizeBytes), cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
@@ -475,7 +506,61 @@ internal sealed class DatabaseFile : IAsyncDisposable
         return copy;
     }
 
+    /// <summary>
+    /// Determines whether this page read runs synchronously on the calling
+    /// thread: see <see cref="ReadsInlineOnThreadPool"/>. A pool thread with no
+    /// synchronization context and the default scheduler would otherwise hand
+    /// the read to another pool thread and wait for it.
+    /// </summary>
+    private bool CanReadInline() =>
+        this.ReadsInlineOnThreadPool
+        && Thread.CurrentThread.IsThreadPoolThread
+        && SynchronizationContext.Current is null
+        && TaskScheduler.Current == TaskScheduler.Default;
+
+    /// <summary>
+    /// Reads one page from the backing stream's current position, blocking the
+    /// calling thread. The caller holds <see cref="IoGate"/>.
+    /// </summary>
+    /// <param name="page">The buffer that receives the page.</param>
+    /// <exception cref="EndOfStreamException">The stream ends before the page does.</exception>
+    private void ReadPageFromStream(byte[] page)
+    {
+        int totalRead = 0;
+        while (totalRead < this.PageSizeBytes)
+        {
+            int bytesRead = this.DatabaseStream.Read(page.AsSpan(totalRead, this.PageSizeBytes - totalRead));
+            if (bytesRead == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
+            totalRead += bytesRead;
+        }
+    }
+
 #if NET6_0_OR_GREATER
+    /// <summary>Reads one page at its file offset through <paramref name="handle"/>, blocking the calling thread.</summary>
+    /// <param name="handle">The cached file handle.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="page">The buffer that receives the page.</param>
+    /// <exception cref="EndOfStreamException">The file ends before the page does.</exception>
+    private void ReadPageRandomAccess(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page)
+    {
+        long fileOffset = pageNumber * this.PageSizeBytes;
+        int totalRead = 0;
+        while (totalRead < this.PageSizeBytes)
+        {
+            int bytesRead = RandomAccess.Read(handle, page.AsSpan(totalRead, this.PageSizeBytes - totalRead), fileOffset + totalRead);
+            if (bytesRead == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
+            totalRead += bytesRead;
+        }
+    }
+
     private async ValueTask ReadPageRandomAccessAsync(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page, CancellationToken cancellationToken)
     {
         long fileOffset = pageNumber * this.PageSizeBytes;
