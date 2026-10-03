@@ -260,6 +260,10 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Equal(1, preview.Rows.Count);
         Assert.Equal("Ada, Inc.", preview.Rows[0]["Customer"]);
 
+        DataTable headerOnly = await reader.ReadTableAsStringsAsync("LinkedOrdersCsv", maxRows: 0, cancellationToken: ct);
+        Assert.Equal(3, headerOnly.Columns.Count);
+        Assert.Equal(0, headerOnly.Rows.Count);
+
         var stringRows = new List<string[]>();
         await foreach (string[] row in reader.RowsAsStrings("LinkedOrdersCsv", cancellationToken: ct))
         {
@@ -888,6 +892,7 @@ public sealed class LinkedTextTableTests : IDisposable
         IReadOnlyList<LinkedTextRow> preview = await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 1, ct);
         LinkedTextRow row = Assert.Single(preview);
         Assert.Equal("Ada", row.Name);
+        Assert.Empty(await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 0, ct));
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", cancellationToken: ct));

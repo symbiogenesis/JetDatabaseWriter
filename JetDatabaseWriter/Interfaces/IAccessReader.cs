@@ -68,6 +68,8 @@ public interface IAccessReader : IAccessBase
 
     /// <summary>
     /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table asynchronously.
+    /// Rows whose layout is too damaged to decode are not counted, so the result matches the number of rows
+    /// <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> and the other table reads return.
     /// This is slower than reading the TDEF RowCount (which may be stale), but always accurate.
     /// Use this after many deletes/imports when `Compact and Repair` hasn't been run.
     /// </summary>

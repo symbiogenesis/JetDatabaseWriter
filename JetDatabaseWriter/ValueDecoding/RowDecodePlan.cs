@@ -432,6 +432,19 @@ internal sealed class RowDecodePlan
         return true;
     }
 
+    /// <summary>
+    /// Returns whether the row's trailer parses under this plan. Every row
+    /// decoder (typed, string and direct) skips exactly the rows for which
+    /// this returns <see langword="false"/>, so a row count that uses it
+    /// agrees with what the table reads return.
+    /// </summary>
+    /// <param name="source">The database the page belongs to.</param>
+    /// <param name="page">The data page.</param>
+    /// <param name="rowStart">The row start.</param>
+    /// <param name="rowSize">The row size.</param>
+    internal bool CanDecodeRow(DatabaseFile source, byte[] page, int rowStart, int rowSize)
+        => this.TryParseLayout(source, page, rowStart, rowSize, out _);
+
     internal bool TryParseLayoutForDirectDecode(
         DatabaseFile source,
         byte[] page,

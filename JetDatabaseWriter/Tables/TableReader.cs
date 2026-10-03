@@ -133,52 +133,16 @@ internal sealed class TableReader(
             return new DataTable();
         }
 
-        CatalogEntry entry = tables[0];
-        TableDef? td = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return new DataTable(entry.Name);
-        }
-
-        DataTable? dt = null;
-        try
-        {
-            dt = new DataTable(entry.Name);
-            foreach (ColumnInfo col in td.Columns)
-            {
-                _ = dt.Columns.Add(col.Name, typeof(string));
-            }
-
-            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
-
-            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
-                {
-                    _ = dt.Rows.Add(row);
-                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
-                    {
-                        DataTable result = dt;
-                        dt = null;
-                        return result;
-                    }
-                }
-            }
-
-            DataTable final = dt;
-            dt = null;
-            return final;
-        }
-        finally
-        {
-            dt?.Dispose();
-        }
+        // Same read as naming the table, so calculated columns get their
+        // persisted result types from the catalog before decoding.
+        return await this.ReadTableAsStringsAsync(tables[0].Name, maxRows, progress: null, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Counts the live (non-deleted, non-overflow) rows of a table by scanning its data pages.</summary>
+    /// <summary>
+    /// Counts the rows of a table by scanning its data pages: the live
+    /// (non-deleted, non-overflow) rows whose layout decodes, which are exactly
+    /// the rows the table-read APIs return.
+    /// </summary>
     /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken)
@@ -195,25 +159,21 @@ internal sealed class TableReader(
         }
 
         long count = 0;
-        long tdefPage = resolved.Entry.TDefPage;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef td = resolved.Definition;
+        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
 
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-            int numRows = Ru16(page, db.DataPage.NumRows);
-            for (int r = 0; r < numRows; r++)
+            foreach (RowBound rb in pages.GetLiveRowBounds(scanPage.PageNumber, scanPage.Page))
             {
-                int raw = Ru16(page, db.DataPage.RowsStart + (r * 2));
-                if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
+                if (rb.RowSize >= db.RowFields.NumCols
+                    && decodePlan.CanDecodeRow(db, scanPage.Page, rb.RowStart, rb.RowSize))
                 {
-                    continue;
+                    count++;
                 }
-
-                count++;
             }
         }
 
@@ -369,10 +329,15 @@ internal sealed class TableReader(
         // Materialize through the same scan Rows<T> streams from, so both
         // APIs pick the same decoder, projection and complex-column pass.
         var items = new List<T>();
+        if (IsRowLimitReached(0, maxRows))
+        {
+            return items;
+        }
+
         await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, progress: null, cancellationToken).ConfigureAwait(false))
         {
             items.Add(item);
-            if (maxRows.HasValue && items.Count >= maxRows.Value)
+            if (IsRowLimitReached(items.Count, maxRows))
             {
                 break;
             }
@@ -415,20 +380,26 @@ internal sealed class TableReader(
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
+            if (IsRowLimitReached(0, maxRows))
+            {
+                DataTable empty = dt;
+                dt = null;
+                return empty;
+            }
+
             IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
 
-            foreach (long pageNumber in pageNumbers)
+            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-                await foreach (string[] row in rows.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row);
-                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
+                    if (IsRowLimitReached(dt.Rows.Count, maxRows))
                     {
+                        progress?.Report(dt.Rows.Count);
                         DataTable result = dt;
                         dt = null;
                         return result;
@@ -482,6 +453,16 @@ internal sealed class TableReader(
         dataLoadStarted = false;
         table.EndLoadData();
     }
+
+    /// <summary>
+    /// Returns whether <paramref name="rowCount"/> rows already satisfy the
+    /// caller's <paramref name="maxRows"/> limit. Every bounded read checks it
+    /// before scanning (so a limit of 0 returns no rows) and after each row.
+    /// </summary>
+    /// <param name="rowCount">The rows collected so far.</param>
+    /// <param name="maxRows">The caller's row limit, or <see langword="null"/> for unlimited.</param>
+    private static bool IsRowLimitReached(long rowCount, uint? maxRows)
+        => maxRows.HasValue && rowCount >= maxRows.Value;
 
     private static int ResolveDataTableMinimumCapacity(long rowCount, uint? maxRows)
     {
@@ -569,6 +550,13 @@ internal sealed class TableReader(
                 _ = dt.Columns.Add(col.Name, clrType);
             }
 
+            if (IsRowLimitReached(0, maxRows))
+            {
+                DataTable empty = dt;
+                dt = null;
+                return empty;
+            }
+
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !preserveComplexReferences
                 ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
                 : null;
@@ -628,7 +616,7 @@ internal sealed class TableReader(
 
                         dt.Rows.Add(newRow);
                         loadedRows++;
-                        if (maxRows.HasValue && loadedRows >= maxRows.Value)
+                        if (IsRowLimitReached(loadedRows, maxRows))
                         {
                             progress?.Report(loadedRows);
                             EndDataTableLoad(dt, ref dataLoadStarted);
