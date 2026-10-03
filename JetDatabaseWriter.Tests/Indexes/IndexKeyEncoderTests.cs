@@ -18,6 +18,20 @@ using static JetDatabaseWriter.Enums.ColumnType;
 public sealed class IndexKeyEncoderTests
 {
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(127)]
+    [InlineData(128)]
+    [InlineData(255)]
+    public void TryDecodeIntegralKey_RoundTripsByteEncodeEntry(int value)
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(ByteType, checked((byte)value), ascending: true);
+
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(ByteType, encoded, out long decoded));
+        Assert.Equal(value, decoded);
+    }
+
+    [Theory]
     [InlineData(-1)]
     [InlineData(0)]
     [InlineData(1)]
@@ -45,6 +59,20 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(value, decoded);
     }
 
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(0L)]
+    [InlineData(1L)]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void TryDecodeIntegralKey_RoundTripsInt64EncodeEntry(long value)
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(BigIntType, value, ascending: true);
+
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(BigIntType, encoded, out long decoded));
+        Assert.Equal(value, decoded);
+    }
+
     [Fact]
     public void TryDecodeIntegralKey_IgnoresLaterKeyColumns()
     {
@@ -62,13 +90,17 @@ public sealed class IndexKeyEncoderTests
         byte[] descending = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5, ascending: false);
         byte[] ascendingNull = IndexKeyEncoder.EncodeEntry(LongIntegerType, null, ascending: true);
         byte[] ascending = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5, ascending: true);
-        byte[] bigInt = IndexKeyEncoder.EncodeEntry(BigIntType, 5L, ascending: true);
+        byte[] money = IndexKeyEncoder.EncodeEntry(MoneyType, 5m, ascending: true);
+        byte[] descendingByte = IndexKeyEncoder.EncodeEntry(ByteType, (byte)5, ascending: false);
 
         Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, descending, out _));
         Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, ascendingNull, out _));
         Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, ascending.AsSpan(0, 4), out _));
         Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, [], out _));
-        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(BigIntType, bigInt, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(BigIntType, ascending, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(ByteType, descendingByte, out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(ByteType, ascending.AsSpan(0, 1), out _));
+        Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(MoneyType, money, out _));
         Assert.False(IndexKeyEncoder.TryDecodeIntegralKey(TextType, ascending, out _));
     }
 

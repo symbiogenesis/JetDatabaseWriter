@@ -326,9 +326,10 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
     /// rightmost key of the first ascending index the column leads, 0 when
     /// that index is empty and the TDEF declares no rows, or
     /// <see langword="null"/> when the column must be scanned instead: it is
-    /// not an <c>Integer</c> or <c>Long Integer</c>, no such index exists, the
-    /// index section does not parse, the key does not decode, or the index is
-    /// empty while the TDEF declares rows.
+    /// not a <c>Byte</c>, <c>Integer</c>, <c>Long Integer</c> or
+    /// <c>Large Number</c>, no such index exists, the index section does not
+    /// parse, the key does not decode, or the index is empty while the TDEF
+    /// declares rows.
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page number.</param>
     /// <param name="tableDef">The table definition.</param>
@@ -337,7 +338,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<long?> TryReadIndexedMaxAsync(long tdefPage, TableDef tableDef, ColumnInfo column, uint declaredRows, CancellationToken cancellationToken)
     {
-        if (column.Type is not (ColumnType.IntegerType or ColumnType.LongIntegerType))
+        if (column.Type is not (ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType or ColumnType.BigIntType))
         {
             return null;
         }
