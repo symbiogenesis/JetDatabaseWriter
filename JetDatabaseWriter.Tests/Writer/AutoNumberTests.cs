@@ -501,6 +501,85 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
                 TestContext.Current.CancellationToken));
     }
 
+    /// <summary>
+    /// Access gives an AutoNumber column no default, so a <c>DefaultValue</c>
+    /// property another tool stored on one stays in the file but is never
+    /// applied. A schema rewrite carries the property over to the rebuilt
+    /// column, and re-registering the rebuilt table used to turn it into the
+    /// column's default, so after an AddColumn every insert stored 0 instead of
+    /// the next AutoNumber. Runs with no transaction, with
+    /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> and in an
+    /// explicit committed transaction.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode"><c>plain</c>, <c>transactional</c> or <c>explicit</c>.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "plain")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "plain")]
+    [InlineData(DatabaseFormat.AceAccdb, "plain")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
+    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
+    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
+    public async Task AutoIncrement_StrayDefaultValueProperty_IsIgnoredAfterSchemaRewrite(DatabaseFormat format, string mode)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            // FLAG_FIXED | 0x02 | FLAG_AUTO_LONG: an AutoNumber descriptor that also
+            // carries a DefaultValue property, as another tool could write it.
+            await writer.CreateTableAsync(
+                "Items",
+                [
+                    new("Id", typeof(int)) { DefaultValueExpression = "0", DescriptorFlagsOverride = 0x07 },
+                    new("Label", typeof(string), maxLength: 50),
+                ],
+                ct);
+        }
+
+        ms.Position = 0;
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct))
+        {
+            JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
+            await writer.InsertRowAsync("Items", [DBNull.Value, "a"], ct);
+            await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), ct);
+            await writer.InsertRowAsync("Items", [DBNull.Value, "b", DBNull.Value], ct);
+            await writer.InsertRowAsync("Items", [DBNull.Value, "c", DBNull.Value], ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+                await tx.DisposeAsync();
+            }
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
+        {
+            await writer.InsertRowAsync("Items", [DBNull.Value, "d", DBNull.Value], ct);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        var ids = new Dictionary<string, object>(StringComparer.Ordinal);
+        await foreach (object[] row in reader.Rows("Items", cancellationToken: ct))
+        {
+            ids[(string)row[1]] = row[0];
+        }
+
+        Assert.Equal(1, ids["a"]);
+        Assert.Equal(2, ids["b"]);
+        Assert.Equal(3, ids["c"]);
+        Assert.Equal(4, ids["d"]);
+        Assert.Equal(4, ids.Count);
+
+        // The property itself is kept.
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Items", ct);
+        Assert.Equal("0", metadata[0].DefaultValueExpression);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)

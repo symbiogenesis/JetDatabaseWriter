@@ -693,6 +693,131 @@ public sealed class ColumnConstraintTests
         }
     }
 
+    /// <summary>Gets each generated column kind, with a default declared on it, in every format that has the kind.</summary>
+    public static TheoryData<DatabaseFormat, string> DefaultOnGeneratedColumnCases
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, string>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                data.Add(format, "AutoNumberValue");
+                data.Add(format, "AutoNumberExpression");
+            }
+
+            data.Add(DatabaseFormat.AceAccdb, "Calculated");
+            data.Add(DatabaseFormat.AceAccdb, "Attachment");
+            data.Add(DatabaseFormat.AceAccdb, "MultiValue");
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Access gives AutoNumber, calculated, Attachment and multi-value columns no
+    /// default, because their value is generated. Declaring one used to be accepted:
+    /// the declaring writer then stored the default instead of the next AutoNumber
+    /// (so every row got the same Id), and the property was persisted on the column.
+    /// Table creation now rejects it before anything is written.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="kind">The generated column kind; see <see cref="GeneratedColumnWithDefault"/>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(DefaultOnGeneratedColumnCases))]
+    public async Task CreateTable_DefaultOnGeneratedColumn_IsRejected(DatabaseFormat format, string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Generated";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync(table, [new("Id", typeof(int)), GeneratedColumnWithDefault(kind)], TestContext.Current.CancellationToken));
+            Assert.Contains("'Gen'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("columns", ex.ParamName);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain(table, await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Gets the generated column kinds AddColumn is checked with, in every format that has the kind.</summary>
+    public static TheoryData<DatabaseFormat, string> AddDefaultOnGeneratedColumnCases => new()
+    {
+        { DatabaseFormat.Jet3Mdb, "AutoNumberValue" },
+        { DatabaseFormat.Jet4Mdb, "AutoNumberExpression" },
+        { DatabaseFormat.AceAccdb, "AutoNumberValue" },
+        { DatabaseFormat.AceAccdb, "Calculated" },
+    };
+
+    /// <summary>
+    /// AddColumn rejects a default on a generated column the same way, before the
+    /// table is rebuilt, so the table and its row are unchanged.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="kind">The generated column kind; see <see cref="GeneratedColumnWithDefault"/>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(AddDefaultOnGeneratedColumnCases))]
+    public async Task AddColumn_DefaultOnGeneratedColumn_IsRejected(DatabaseFormat format, string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Existing";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(table, [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 20)], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, "a"], TestContext.Current.CancellationToken);
+
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.AddColumnAsync(table, GeneratedColumnWithDefault(kind), TestContext.Current.CancellationToken));
+            Assert.Contains("'Gen'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("column", ex.ParamName);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "Name"], metadata.Select(c => c.Name));
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal(1, row["Id"]);
+        Assert.Equal("a", row["Name"]);
+    }
+
+    /// <summary>
+    /// <c>DefaultValue = DBNull.Value</c> means no default. It used to count as a
+    /// default whose value is null, which switched off the NOT NULL check, so an
+    /// insert that left a NOT NULL column out stored NULL.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DefaultValueDbNull_IsNoDefault_NotNullStillRejects(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "DbNullDefault";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 20) { IsNullable = false, DefaultValue = DBNull.Value },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Empty(dt.AsEnumerable());
+    }
+
     /// <summary>
     /// On Jet3, four or five CLR <c>DateTime</c> defaults give an LvProp blob
     /// that is still stored inline (256 bytes or less) but makes the table's
@@ -1052,6 +1177,26 @@ public sealed class ColumnConstraintTests
             TestContext.Current.CancellationToken);
         return length;
     }
+
+    /// <summary>
+    /// Builds a column named <c>Gen</c> whose value Access generates, with a default
+    /// declared on it. The calculated column reads the table's <c>Id</c> column.
+    /// </summary>
+    /// <param name="kind">
+    /// <c>AutoNumberValue</c> (a CLR default), <c>AutoNumberExpression</c>,
+    /// <c>Calculated</c>, <c>Attachment</c> or <c>MultiValue</c>.
+    /// </param>
+    /// <returns>The column definition.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is none of these.</exception>
+    private static ColumnDefinition GeneratedColumnWithDefault(string kind) => kind switch
+    {
+        "AutoNumberValue" => new("Gen", typeof(int)) { IsAutoIncrement = true, DefaultValue = 5 },
+        "AutoNumberExpression" => new("Gen", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0" },
+        "Calculated" => new("Gen", typeof(int)) { IsCalculated = true, CalculationExpression = "[Id] * 2", DefaultValueExpression = "99" },
+        "Attachment" => new("Gen", typeof(byte[])) { IsAttachment = true, DefaultValue = 7 },
+        "MultiValue" => new("Gen", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int), DefaultValueExpression = "7" },
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
 
     private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)
     {

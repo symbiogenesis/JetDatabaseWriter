@@ -393,22 +393,31 @@ internal sealed class ConstraintRegistry(
         return await this.NextComplexReferenceAsync(tableName, tableDef, list, count, checkpoints: null, cancellationToken).ConfigureAwait(false);
     }
 
-    private static ColumnConstraint ToConstraint(ColumnDefinition def) => new()
+    private static ColumnConstraint ToConstraint(ColumnDefinition def)
     {
-        Name = def.Name,
-        ClrType = def.ClrType,
-        IsNullable = def.IsNullable,
-        DefaultValue = def.DefaultValue,
-        IsAutoIncrement = def.IsAutoIncrement,
-        ValidationRule = def.ValidationRule,
-        DefaultValueExpression = NullIfBlank(def.DefaultValueExpression),
-        ValidationRuleExpression = NullIfBlank(def.ValidationRuleExpression),
-        ValidationText = def.ValidationText,
-        IsCalculated = def.IsCalculated,
-        CalculationExpression = def.CalculationExpression,
-        CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
-        IsComplexReference = def.IsAttachment || def.IsMultiValue,
-    };
+        // Access gives AutoNumber, calculated and complex columns no default.
+        // CreateTable and AddColumn reject one declared on them, but a schema
+        // rewrite carries over a DefaultValue property another tool stored on
+        // one; as in HydrateFromTableDef, it must not stop the column generating
+        // its value. A DBNull CLR default is no default.
+        bool takesDefault = def.CanHaveDefault;
+        return new()
+        {
+            Name = def.Name,
+            ClrType = def.ClrType,
+            IsNullable = def.IsNullable,
+            DefaultValue = takesDefault && def.DefaultValue is not DBNull ? def.DefaultValue : null,
+            IsAutoIncrement = def.IsAutoIncrement,
+            ValidationRule = def.ValidationRule,
+            DefaultValueExpression = takesDefault ? NullIfBlank(def.DefaultValueExpression) : null,
+            ValidationRuleExpression = NullIfBlank(def.ValidationRuleExpression),
+            ValidationText = def.ValidationText,
+            IsCalculated = def.IsCalculated,
+            CalculationExpression = def.CalculationExpression,
+            CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
+            IsComplexReference = def.IsAttachment || def.IsMultiValue,
+        };
+    }
 
     private static bool TryGetComplexReference(object value, out long reference)
     {
