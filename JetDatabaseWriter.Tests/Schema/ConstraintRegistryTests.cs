@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
@@ -192,6 +193,100 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(expectedText, actualText);
     }
 
+    /// <summary>
+    /// A persisted Double default is parsed as a double, so it is exact. It used to be
+    /// parsed as a decimal first, which turned anything below about 1e-28 into 0 and
+    /// rounded the rest through <see cref="Convert.ToDouble(decimal)"/>, which is not
+    /// correctly rounded.
+    /// </summary>
+    /// <param name="expression">The persisted DefaultValue expression.</param>
+    /// <param name="expected">The double it denotes.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("1E-30", 1e-30)]
+    [InlineData("1.2345678901234567E-20", 1.2345678901234567E-20)]
+    [InlineData("0.30000000000000004", 0.30000000000000004)]
+    [InlineData("1E+300", 1e300)]
+    [InlineData("4.9406564584124654E-324", double.Epsilon)]
+    [InlineData("1.7976931348623157E+308", double.MaxValue)]
+    [InlineData("-2.5E-25", -2.5e-25)]
+    public async Task ApplyAsync_HydratedDoubleDefault_IsExact(string expression, double expected)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.DoubleType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
+        object[] values = [DBNull.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(BitConverter.DoubleToInt64Bits(expected), BitConverter.DoubleToInt64Bits(Assert.IsType<double>(values[0])));
+    }
+
+    /// <summary>
+    /// A persisted Single default is parsed as a float, so it is exact, including a
+    /// subnormal value that a decimal parse turned into 0.
+    /// </summary>
+    /// <param name="expression">The persisted DefaultValue expression.</param>
+    /// <param name="expected">The float it denotes.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("1E-45", float.Epsilon)]
+    [InlineData("3.4028235E+38", float.MaxValue)]
+    [InlineData("0.1", 0.1f)]
+    [InlineData("1.17549435E-38", 1.17549435E-38f)]
+    public async Task ApplyAsync_HydratedSingleDefault_IsExact(string expression, float expected)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.FloatType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
+        object[] values = [DBNull.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(BitConverter.SingleToInt32Bits(expected), BitConverter.SingleToInt32Bits(Assert.IsType<float>(values[0])));
+    }
+
+    /// <summary>
+    /// A Single default too large for a float produces no default. It used to store
+    /// positive infinity.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_SingleDefaultOutOfRange_LeavesNull()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.FloatType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "1E+39")));
+        object[] values = [DBNull.Value];
+
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+
+        Assert.Equal(DBNull.Value, values[0]);
+    }
+
+    /// <summary>
+    /// Every finite double and float survives the round trip through the literal a CLR
+    /// default is persisted as (its round-trip <c>"R"</c> text). Before, about one
+    /// mid-range double in ten and one float in six came back different.
+    /// </summary>
+    [Fact]
+    public void ColumnDefaultValue_FloatingLiteral_RoundTripsEveryRFormattedValue()
+    {
+        var random = new Random(20261003);
+
+#pragma warning disable CA5394 // Deterministic test values; nothing here needs a secure generator.
+        for (int i = 0; i < 5000; i++)
+        {
+            double d = BitConverter.Int64BitsToDouble(random.NextInt64() & 0x7FEFFFFFFFFFFFFF);
+            d = random.Next(2) == 0 ? d : -d;
+            object doubleValue = EvaluateLiteral(d.ToString("R", CultureInfo.InvariantCulture), typeof(double));
+            Assert.Equal(BitConverter.DoubleToInt64Bits(d), BitConverter.DoubleToInt64Bits((double)doubleValue));
+
+            float f = BitConverter.Int32BitsToSingle(random.Next() & 0x7F7FFFFF);
+            f = random.Next(2) == 0 ? f : -f;
+            object singleValue = EvaluateLiteral(f.ToString("R", CultureInfo.InvariantCulture), typeof(float));
+            Assert.Equal(BitConverter.SingleToInt32Bits(f), BitConverter.SingleToInt32Bits((float)singleValue));
+        }
+#pragma warning restore CA5394
+    }
+
     [Fact]
     public async Task ApplyAsync_HydratedDefaultValue_DateFunctionsUseTheClock()
     {
@@ -330,6 +425,22 @@ public sealed class ConstraintRegistryTests
                 await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
             Assert.Contains(rule, ex.Message, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// Evaluates a default that needs no row, such as a numeric literal, and asserts
+    /// that it produces a value.
+    /// </summary>
+    /// <param name="expression">The DefaultValue expression.</param>
+    /// <param name="clrType">The column's CLR type.</param>
+    /// <returns>The default value.</returns>
+    private static object EvaluateLiteral(string expression, Type clrType)
+    {
+        Assert.True(ColumnDefaultValue.Compile(expression).TryEvaluate(
+            clrType,
+            static () => throw new InvalidOperationException("A literal needs no evaluation context."),
+            out object value));
+        return value;
     }
 
     private static TableDef SingleColumnTable(ColumnType type) => new()

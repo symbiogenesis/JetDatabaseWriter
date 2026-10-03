@@ -343,15 +343,26 @@ internal sealed class TableSchemaEditor(
     /// <see cref="ColumnDefinition.DefaultValueExpression"/> on one is rejected
     /// before anything is written. A property another tool stored on such a
     /// column reaches <see cref="RewriteTableAsync"/> without this check; the
-    /// constraint registry ignores it.
+    /// constraint registry ignores it. A floating-point CLR default must be
+    /// finite, because Access has no literal to persist NaN or an infinity as.
     /// </summary>
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <exception cref="ArgumentException">The column declares a default it cannot have.</exception>
     private static void ValidateDeclaredDefault(ColumnDefinition? column, string paramName)
     {
-        if (column?.DeclaresDefault != true || column.CanHaveDefault)
+        if (column?.DeclaresDefault != true)
         {
+            return;
+        }
+
+        if (column.CanHaveDefault)
+        {
+            if (column.DefaultValue is double d ? !double.IsFinite(d) : column.DefaultValue is float f && !float.IsFinite(f))
+            {
+                throw new ArgumentException($"Column '{column.Name}': a floating-point DefaultValue must be finite; Access has no literal for NaN or an infinity.", paramName);
+            }
+
             return;
         }
 
