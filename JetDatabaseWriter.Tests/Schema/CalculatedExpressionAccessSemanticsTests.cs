@@ -349,6 +349,109 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.IsType<OverflowException>(exception.InnerException);
     }
 
+    /// <summary>
+    /// Date arithmetic follows the OLE Automation Variant rules VBA uses (measured with
+    /// oleaut32's VarAdd/VarSub/VarNeg): a date plus or minus a number, Boolean, numeric
+    /// text or another date is a date, and the result is the date serial sum.
+    /// </summary>
+    /// <param name="expression">The expression, over D = 2020-01-31 06:00, E = 2020-01-01 and D2 = 2020-01-31.</param>
+    /// <param name="expected">The expected date, as invariant text.</param>
+    [Theory]
+    [InlineData("#2020-01-31 06:00# + 1", "2020-02-01 06:00:00")]
+    [InlineData("[D] - 1", "2020-01-30 06:00:00")]
+    [InlineData("[D] + 0.5", "2020-01-31 18:00:00")]
+    [InlineData("1 + [D2]", "2020-02-01 00:00:00")]
+    [InlineData("1 - [D2]", "1779-11-29 00:00:00")]
+    [InlineData("[D] + [E]", "2140-02-02 06:00:00")]
+    [InlineData("[D] + True", "2020-01-30 06:00:00")]
+    [InlineData("[D] + \"1\"", "2020-02-01 06:00:00")]
+    [InlineData("-#2020-01-31#", "1779-11-28 00:00:00")]
+    [InlineData("+[D]", "2020-01-31 06:00:00")]
+    [InlineData("[D] + CDec(2.5)", "2020-02-02 18:00:00")]
+    public void DateArithmetic_FollowsVariantRules(string expression, string expected)
+    {
+        object result = EvaluateDates(expression, typeof(DateTime));
+
+        Assert.Equal(expected, Assert.IsType<DateTime>(result).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void DateDifference_IsDoubleDays()
+    {
+        object result = EvaluateDates("[D] - [E]", typeof(object));
+
+        Assert.Equal(30.25d, Assert.IsType<double>(result));
+    }
+
+    [Theory]
+    [InlineData("[D] * 2", 87722.5d)]
+    [InlineData("[D] / 2", 21930.625d)]
+    [InlineData("[E] ^ 1", 43831d)]
+    public void DateTimesNumber_IsDouble(string expression, double expected)
+    {
+        object result = EvaluateDates(expression, typeof(object));
+
+        Assert.Equal(expected, Assert.IsType<double>(result));
+    }
+
+    [Fact]
+    public void DateArithmetic_InvalidOperand_ThrowsNamingColumn()
+    {
+        InvalidCastException mismatch = Assert.Throws<InvalidCastException>(() => EvaluateDates("[D] + \"abc\"", typeof(DateTime)));
+        Assert.Contains("'Calc'", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("[D] + \"abc\"", mismatch.Message, StringComparison.Ordinal);
+
+        OverflowException overflow = Assert.Throws<OverflowException>(() => EvaluateDates("[D] + 3000000", typeof(DateTime)));
+        Assert.Contains("'Calc'", overflow.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>\</c> and <c>Mod</c> round both operands half to even before dividing, as
+    /// OLE Automation's VarIdiv and VarMod do, and truncate toward zero.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected result.</param>
+    [Theory]
+    [InlineData("7.6 \\ 2", 4)]
+    [InlineData("7 \\ 2.5", 3)]
+    [InlineData("2.5 \\ 3", 0)]
+    [InlineData("-7 \\ 2", -3)]
+    [InlineData("7 Mod 2.5", 1)]
+    [InlineData("3.5 Mod 7", 4)]
+    [InlineData("-7 Mod 3", -1)]
+    [InlineData("#2020-01-31# \\ 2", 21930)]
+    [InlineData("#2020-01-31# Mod 2", 1)]
+    [InlineData("True \\ 1", -1)]
+    [InlineData("\"12\" Mod 5", 2)]
+    public void IntegerDivisionAndMod_RoundOperandsFirst(string expression, int expected)
+    {
+        object result = Evaluate(expression, typeof(object));
+
+        Assert.Equal(expected, Assert.IsType<int>(result));
+    }
+
+    [Theory]
+    [InlineData("1 \\ 0")]
+    [InlineData("5 Mod 0.4")]
+    public void IntegerDivisionOrModByZero_ThrowsDivideByZero(string expression)
+    {
+        DivideByZeroException exception = Assert.Throws<DivideByZeroException>(() => Evaluate(expression, typeof(int)));
+
+        Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IntegerDivision_OperandBeyondLong_ThrowsOverflow()
+        => Assert.Throws<OverflowException>(() => Evaluate("10000000000 \\ 1", typeof(int)));
+
+    private static object EvaluateDates(string expression, Type resultType)
+        => EvaluateDeclared(
+            expression,
+            resultType,
+            ("D", typeof(DateTime), new DateTime(2020, 1, 31, 6, 0, 0)),
+            ("E", typeof(DateTime), new DateTime(2020, 1, 1)),
+            ("D2", typeof(DateTime), new DateTime(2020, 1, 31)));
+
     private static object Evaluate(string expression, Type resultType, params (string Name, object Value)[] inputs)
         => EvaluateDeclared(expression, resultType, [.. inputs.Select(input => (input.Name, input.Value.GetType(), input.Value))]);
 

@@ -230,6 +230,22 @@ Delivered:
   a Date result column, `CDate` and the date functions. `CByte(-1)` and
   `CByte(256)` overflow. `IsDate` is True only for a date or text that parses
   as one, so `IsDate(5)` is False as in VBA.
+- Arithmetic follows the OLE Automation Variant rules (`VarAdd`, `VarSub`,
+  `VarIdiv`, `VarMod`; `AccessVariantOperators`). A date plus or minus a
+  number, a Boolean, numeric text or another date is a date (`#2020-01-31# + 1`
+  is 2020-02-01, `[D] + 0.5` adds twelve hours, `-[D]` is a date); a date minus
+  a date is a `Double` number of days; `*`, `/` and `^` with a date give a
+  `Double`. A date plus or minus a Decimal is also a date, because the engine
+  holds Currency and Decimal fields alike as `decimal` and VBA gives a date for
+  Currency (OLE Automation gives Decimal for a true Decimal). A result outside
+  years 100-9999 throws `OverflowException`, and non-numeric text throws
+  `InvalidCastException` ("Type mismatch"). A date compared with a number or
+  date text compares as dates. `\` and `Mod` round both operands half to even
+  to a Long before dividing (`7.6 \ 2` is 4, `7 Mod 2.5` is 1), throw
+  `DivideByZeroException` for a zero divisor after rounding, and return a Long.
+  These rules apply to persisted `DefaultValue` and `ValidationRule`
+  expressions too, so `=Date()+7` and `>=Date()-30` are applied instead of
+  being skipped as unsupported.
 - An evaluation failure keeps its exception type (`OverflowException`,
   `InvalidCastException`, `DivideByZeroException` and so on) but its message
   names the table, the calculated column and its expression, plus the value
@@ -243,7 +259,7 @@ Delivered:
 
 Supported subset:
 
-- Operators: arithmetic (`+`, `-`, `*`, `/`, `\`, `^`, `Mod`), string
+- Operators: arithmetic (`+`, `-`, `*`, `/`, `\`, `^`, `Mod`, including date arithmetic), string
   concatenation (`&`), comparisons (`=`, `<>`, `>`, `>=`, `<`, `<=`), logical
   word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
   comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).

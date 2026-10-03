@@ -19,8 +19,8 @@ internal sealed class CalculatedExpressionUnaryNode(UnaryOperation operation, Ca
         // so the Percent arm only guards against a plan built some other way.
         return operation switch
         {
-            UnaryOperation.Plus => ToDecimal(value),
-            UnaryOperation.Minus => -ToDecimal(value),
+            UnaryOperation.Plus => AccessVariantOperators.Identity(value),
+            UnaryOperation.Minus => AccessVariantOperators.Negate(value),
             UnaryOperation.Percent => throw new NotSupportedException(
                 "Calculated-column expressions cannot use '%': it is a spreadsheet operator, not an Access operator."),
             UnaryOperation.ImplicitIntersection or UnaryOperation.SpillRange => throw new NotSupportedException(

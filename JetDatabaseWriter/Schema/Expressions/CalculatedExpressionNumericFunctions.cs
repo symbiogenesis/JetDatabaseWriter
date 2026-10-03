@@ -11,8 +11,8 @@ internal static class CalculatedExpressionNumericFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "MOD", 2, 2, static function => EvaluateNumeric(function.Arg(0), function.Arg(1), static (leftValue, rightValue) => leftValue % rightValue)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "INTDIV", 2, 2, EvaluateIntegerDivision));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "MOD", 2, 2, static function => AccessVariantOperators.Modulo(function.Arg(0), function.Arg(1))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "INTDIV", 2, 2, static function => AccessVariantOperators.IntegerDivide(function.Arg(0), function.Arg(1))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "ABS", 1, 1, static function => Math.Abs(ToDecimal(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "ATAN", 1, 1, static function => Math.Atan(ToDouble(function.Arg(0))), "ATN"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "COS", 1, 1, static function => Math.Cos(ToDouble(function.Arg(0)))));
@@ -33,11 +33,6 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CBYTE", 1, 1, static function => ToByte(function.Arg(0))));
     }
-
-    private static object EvaluateIntegerDivision(CalculatedFunctionInvocation function)
-        => IsNull(function.Arg(0)) || IsNull(function.Arg(1))
-            ? DBNull.Value
-            : Math.Truncate(ToDecimal(function.Arg(0)) / ToDecimal(function.Arg(1)));
 
     private static decimal EvaluateFix(CalculatedFunctionInvocation function)
     {
