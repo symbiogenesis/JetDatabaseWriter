@@ -294,15 +294,22 @@ public sealed class JetTransactionTests
 
         byte[] after = stream.ToArray();
 
-        Assert.True(tx.IsRolledBack);
+        // One page reached the file, so the commit must not claim the file
+        // was left as it was. The transaction has still ended.
+        Assert.False(tx.IsRolledBack);
         Assert.False(tx.IsCommitted);
         Assert.Equal(1, stream.PageWritesAfterArm);
         Assert.Equal(1, CountChangedPages(before, after));
         Assert.Equal(FormatVersionByte(before), FormatVersionByte(after));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await tx.RollbackAsync(TestContext.Current.CancellationToken));
+        await using JetTransaction next = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        Assert.False(next.IsRolledBack);
     }
 
     [Fact]
-    public async Task Commit_WhenDurableFlushFails_MarksRolledBackAfterReplay()
+    public async Task Commit_WhenDurableFlushFails_IsNeitherCommittedNorRolledBack()
     {
         await using var stream = new FaultInjectingStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -327,11 +334,109 @@ public sealed class JetTransactionTests
 
         byte[] after = stream.ToArray();
 
-        Assert.True(tx.IsRolledBack);
+        Assert.False(tx.IsRolledBack);
         Assert.False(tx.IsCommitted);
         Assert.Equal(tx.JournaledPageCount, stream.PageWritesAfterArm);
         Assert.Equal(durableFlushCall - 1, stream.FlushesAfterArm);
         Assert.Equal(FormatVersionByte(before), FormatVersionByte(after));
+    }
+
+    /// <summary>
+    /// Cancelling the commit's token after the first page has been written
+    /// must not stop the replay: the file would hold only part of the
+    /// transaction. The commit used to check the token before every page.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="encryption">The page encryption applied before the transaction.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.None)]
+    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.None)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped)]
+    public async Task Commit_WhenCancelledAfterReplayStarts_CompletesReplay(DatabaseFormat format, AccessEncryptionFormat encryption)
+    {
+        await using var stream = new FaultInjectingStream();
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            format,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await creator.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        }
+
+        string? password = null;
+        if (encryption != AccessEncryptionFormat.None)
+        {
+            password = "secret";
+            stream.Position = 0;
+            await AccessWriter.EncryptAsync(stream, password.AsMemory(), encryption, TestContext.Current.CancellationToken);
+        }
+
+        var options = new AccessWriterOptions(password) { UseLockFile = false, UseByteRangeLocks = false };
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+            Assert.True(tx.JournaledPageCount > 1);
+
+            using var cancellation = new CancellationTokenSource();
+            stream.CancelAfterPageWrite(1, cancellation);
+
+            await tx.CommitAsync(cancellation.Token);
+
+            Assert.True(cancellation.IsCancellationRequested);
+            Assert.True(tx.IsCommitted);
+            Assert.Equal(tx.JournaledPageCount, stream.PageWritesAfterArm);
+        }
+
+        stream.Position = 0;
+        var readerOptions = new AccessReaderOptions(password) { UseLockFile = false };
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(100, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A commit cancelled before it writes anything ends as a rollback: the
+    /// file is untouched, <see cref="JetTransaction.IsRolledBack"/> is set, and
+    /// the writer is usable. A token that was already cancelled used to throw
+    /// before the transaction was detached, leaving it active.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Commit_WithCancelledToken_RollsBackWithoutWritingPages()
+    {
+        await using var stream = new FaultInjectingStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+            byte[] before = stream.ToArray();
+
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+
+            using var cancellation = new CancellationTokenSource();
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await tx.CommitAsync(cancellation.Token));
+
+            Assert.True(tx.IsRolledBack);
+            Assert.False(tx.IsCommitted);
+            Assert.Equal(0, CountChangedPages(before, stream.ToArray()));
+
+            await writer.InsertRowAsync("Items", [500, "After"], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -462,6 +567,8 @@ public sealed class JetTransactionTests
         private readonly MemoryStream inner = new();
         private int? throwBeforePageWrite;
         private int? throwOnFlushCall;
+        private int? cancelAfterPageWrite;
+        private CancellationTokenSource? cancellation;
         private bool armed;
 
         public override bool CanRead => this.inner.CanRead;
@@ -492,6 +599,13 @@ public sealed class JetTransactionTests
         {
             this.armed = true;
             this.throwOnFlushCall = flushCallNumber;
+        }
+
+        public void CancelAfterPageWrite(int pageWriteNumber, CancellationTokenSource cancellation)
+        {
+            this.armed = true;
+            this.cancelAfterPageWrite = pageWriteNumber;
+            this.cancellation = cancellation;
         }
 
         public byte[] ToArray() => this.inner.ToArray();
@@ -570,6 +684,10 @@ public sealed class JetTransactionTests
             }
 
             this.PageWritesAfterArm++;
+            if (this.cancelAfterPageWrite == this.PageWritesAfterArm)
+            {
+                this.cancellation?.Cancel();
+            }
         }
     }
 }

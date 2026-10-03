@@ -58,11 +58,14 @@ public sealed class AccessWriterOptions : AccessOptions
     public bool RespectExistingLockFile { get; init; } = true;
 
     /// <summary>
-    /// Gets the maximum number of distinct pages a single explicit transaction
-    /// (started via <see cref="AccessWriter.BeginTransactionAsync(System.Threading.CancellationToken)"/>)
-    /// may journal in memory before the next page write throws a
-    /// <see cref="Exceptions.JetLimitationException"/> and the
-    /// transaction is automatically rolled back. Each journaled page costs
+    /// Gets the maximum number of distinct pages a single transaction (started
+    /// via <see cref="AccessWriter.BeginTransactionAsync(System.Threading.CancellationToken)"/>,
+    /// or implicitly by <see cref="UseTransactionalWrites"/>) may journal in
+    /// memory before the next page write throws a
+    /// <see cref="Exceptions.JetLimitationException"/>. An implicit transaction
+    /// is then rolled back automatically; an explicit one stays active, with the
+    /// failed operation possibly half-applied to its journal, and should be
+    /// rolled back. Each journaled page costs
     /// <see cref="AccessBase.PageSize"/> bytes of process memory.
     /// Default: <c>16384</c> (~64 MiB at the standard 4&#8239;KiB ACE page size).
     /// </summary>
@@ -91,11 +94,11 @@ public sealed class AccessWriterOptions : AccessOptions
     /// partially-flushed state the page-write pipeline had reached. Calls made
     /// inside an explicit transaction are unaffected.
     /// <para>
-    /// This is an in-memory page journal, not a durable write-ahead log. If the
-    /// process, stream, device, or cancellation token fails after
-    /// <see cref="JetTransaction.CommitAsync(System.Threading.CancellationToken)"/>
-    /// starts replaying buffered pages, pages already written remain on disk and
-    /// no recovery pass is attempted.
+    /// This is an in-memory page journal, not a durable write-ahead log. Commit
+    /// writes the buffered pages over the file in place; cancellation is ignored
+    /// once that has started, but if the process, stream, or device fails
+    /// partway through, pages already written remain on disk and no recovery
+    /// pass is attempted.
     /// </para>
     /// <para>
     /// Default: <see langword="false"/> (preserves the flush-per-page

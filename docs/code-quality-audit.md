@@ -122,7 +122,7 @@ correlate exactly with findings #1 and #2.
 ## 10. `Public`/`Core` Method-Pair Duplication — **Low**
 
 Every mutating public API on `AccessWriter` is a one-line forwarder that wraps a service method in
-[`RunAutoCommitAsync`](../JetDatabaseWriter/AccessWriter.cs#L732) — e.g. `InsertRowAsync` →
+[`RunAutoCommitAsync`](../JetDatabaseWriter/AccessWriter.cs#L776) — e.g. `InsertRowAsync` →
 `TableDataWriter.InsertRowAsync`, `DropTableAsync` → `TableSchemaEditor.DropTableAsync`. Since the facade
 split the pairs no longer share a class, so they no longer inflate the facade, but each service method
 still repeats the same `Guard.*` + `ThrowIfDisposedOrCancelled` preamble.

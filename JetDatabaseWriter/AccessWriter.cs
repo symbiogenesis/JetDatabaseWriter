@@ -674,10 +674,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Begins an explicit page-buffered transaction against this writer. While
     /// the returned <see cref="JetTransaction"/> is active, every page-write
     /// performed by this writer is journaled in memory instead of flushed to
-    /// the database file. <see cref="JetTransaction.CommitAsync"/> atomically
-    /// replays the journal; <see cref="JetTransaction.RollbackAsync"/> (and
+    /// the database file. <see cref="JetTransaction.CommitAsync"/> writes the
+    /// journaled pages over the file in place; this is not crash-atomic, so a
+    /// crash or I/O error partway through leaves part of the transaction in
+    /// the file. <see cref="JetTransaction.RollbackAsync"/> (and
     /// <see cref="JetTransaction.DisposeAsync"/> on an uncommitted transaction)
-    /// discards it, leaving the file in its pre-transaction state.
+    /// discards the journal, leaving the file in its pre-transaction state.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The newly-started transaction.</returns>
@@ -763,9 +765,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
     /// and no explicit transaction is currently active, wraps
-    /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so a
-    /// crash mid-call leaves the database in its pre-call state. Otherwise
-    /// invokes <paramref name="work"/> directly using the flush-per-page path.
+    /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so an
+    /// exception before commit leaves the database in its pre-call state (a
+    /// crash during the commit's page replay can still leave part of the call
+    /// in the file). Otherwise invokes <paramref name="work"/> directly using
+    /// the flush-per-page path.
     /// </summary>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

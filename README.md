@@ -730,9 +730,15 @@ await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, 
 await tx.CommitAsync(); // Replays all buffered pages and flushes the stream
 ```
 
-If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Only one transaction may be active per `AccessWriter` instance.
+If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Rolling back also returns the writer's cached table list and column constraints to their state when the transaction began, so tables, columns and AutoNumber values from the rolled-back work are gone. Only one transaction may be active per `AccessWriter` instance.
 
-`CommitAsync` is not a durable write-ahead log. Once commit replay starts, pages are written directly to the target stream in page-number order, then the stream is flushed. If the process, stream, device, or cancellation token fails after replay begins, pages already written are left in place and no recovery pass is attempted; the transaction object is marked rolled back and the exception is surfaced. WAL-style crash recovery is out of scope for the current file-format writer.
+`CommitAsync` is not atomic and is not a durable write-ahead log. The journal holds the new contents of each changed page; commit writes them directly over the target stream in page-number order, then flushes it. The transaction ends whether or not `CommitAsync` succeeds:
+
+- If it fails before writing the first page (cancellation, or a byte-range commit-lock timeout), the file is unchanged and `IsRolledBack` is `true`.
+- Once the first page write starts, cancellation is ignored and the commit runs to completion.
+- If the process, stream, or device fails after that, pages already written are left in place and no recovery pass is attempted. `CommitAsync` surfaces the exception with both `IsCommitted` and `IsRolledBack` `false`; treat the file as damaged and restore it from a copy.
+
+WAL-style crash recovery is out of scope for the current file-format writer.
 
 ---
 
@@ -904,7 +910,7 @@ The items below are either **not yet implemented** or are important behavioral c
 - **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. Page byte-range locks use `FileStream.Lock` where .NET supports it, such as Windows, Linux, and Android; on unsupported platforms such as iOS, macOS, and tvOS, the option is a no-op and lockfiles or external coordination are the authoritative protection.
 
 ### Transaction durability
-- **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
+- **No WAL or crash recovery; commit is not atomic.** Transactions provide in-memory rollback before commit replay begins. Commit writes the journaled pages in place, so process loss or a storage failure once `CommitAsync` has started writing pages leaves part of the transaction in the file, with no ESE-style redo/undo recovery. Cancellation cannot tear a commit: it is honoured only before the first page write.
 
 ### Encryption
 - **`AccessWriter` cannot open Access-native flat Agile (`AccessEncryptionFormat.AccdbAgile`) files.** `OpenAsync` throws `NotSupportedException` and leaves the file untouched. This is the format `EncryptAsync` picks by default for `.accdb`. Decrypt, edit, and re-encrypt, or use `AccessEncryptionFormat.AccdbAgileCfb` for files the writer must open. See [Encryption Support](#encryption-support).

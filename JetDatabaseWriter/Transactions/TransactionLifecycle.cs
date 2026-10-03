@@ -87,7 +87,7 @@ internal sealed class TransactionLifecycle(
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
     /// and no explicit transaction is currently active, wraps
-    /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so a
+    /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so an
     /// exception before commit replay leaves the database in its pre-call state.
     /// </summary>
     /// <param name="work">The work to execute.</param>
@@ -173,13 +173,27 @@ internal sealed class TransactionLifecycle(
     /// <summary>
     /// Commits the supplied <paramref name="transaction"/>: detaches the
     /// journal from the writer and replays each buffered page (in ascending
-    /// page-number order) through the normal page-write pipeline so that
-    /// per-page encryption and cooperative byte-range locks are honoured.
-    /// A failure, including a commit-lock timeout, marks the transaction
-    /// rolled back and restores the writer's state as for a rollback.
+    /// page-number order) in place through the normal page-write pipeline, so
+    /// that per-page encryption and cooperative byte-range locks are honoured,
+    /// then flushes. The replay is not crash-atomic: there is no before-image
+    /// or redo log, so a failure partway through leaves the pages written so
+    /// far on disk.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Once the detach succeeds the transaction always ends. A failure before
+    /// the first page write (cancellation, or a commit-lock timeout) leaves the
+    /// file untouched: the transaction is marked rolled back and the writer's
+    /// state is restored as for a rollback. Cancellation is honoured only up to
+    /// that point; the replay and flush then run to completion, because
+    /// stopping them would tear the file. A failure after replay starts (an
+    /// I/O error while writing or flushing) marks the transaction neither
+    /// committed nor rolled back, since the file may hold part of it, and
+    /// discards the writer's cached catalog and insert hint.
+    /// </para>
+    /// </remarks>
     /// <param name="transaction">The transaction.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation before replay starts.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
     internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
@@ -190,12 +204,17 @@ internal sealed class TransactionLifecycle(
 
         PageJournal journal;
         WriterState? state;
-        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // The detach is memory-only, and IoGate is held only briefly per page
+        // by other callers, so it ignores the token: a token that is already
+        // cancelled then ends the transaction
+        // as a rollback below instead of leaving it half-detached.
+        await db.IoGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             if (transaction.IsTerminated)
             {
-                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
+                throw new InvalidOperationException(JetTransaction.TerminatedMessage);
             }
 
             if (!ReferenceEquals(this.ActiveTransaction, transaction))
@@ -218,25 +237,42 @@ internal sealed class TransactionLifecycle(
         }
 
         long? commitLockOffset = null;
+        bool replayStarted = false;
         try
         {
             commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
                 isAccdb: db.Format == Enums.DatabaseFormat.AceAccdb,
                 cancellationToken).ConfigureAwait(false);
 
+            // Last point at which cancellation is honoured: nothing has
+            // reached the file yet. Stopping the replay partway would leave
+            // some of the transaction's pages on disk and the rest lost.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Set before the first write: a write that fails may already have
+            // changed part of its page.
+            replayStarted = true;
             foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await db.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
+                await db.WritePageAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
             }
 
-            await this.FlushDurableAsync(cancellationToken).ConfigureAwait(false);
+            await this.FlushDurableAsync(CancellationToken.None).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
         catch
         {
-            transaction.MarkRolledBack();
-            this.RestoreWriterState(state);
+            if (replayStarted)
+            {
+                transaction.MarkCommitFailed();
+                this.DiscardCachesAfterFailedReplay(state);
+            }
+            else
+            {
+                transaction.MarkRolledBack();
+                this.RestoreWriterState(state);
+            }
+
             throw;
         }
         finally
@@ -265,7 +301,7 @@ internal sealed class TransactionLifecycle(
         {
             if (transaction.IsTerminated)
             {
-                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
+                throw new InvalidOperationException(JetTransaction.TerminatedMessage);
             }
 
             if (!ReferenceEquals(this.ActiveTransaction, transaction))
@@ -333,6 +369,28 @@ internal sealed class TransactionLifecycle(
 
         dataPages.RestoreState(state.DataPages);
         constraints.Restore(state.Constraints);
+    }
+
+    /// <summary>
+    /// Drops the writer's cached state after commit replay failed partway. The
+    /// file then holds some of the transaction's pages and not others, so
+    /// neither the state from before the transaction nor the transaction's own
+    /// is known to match it: the catalog is re-scanned on next use, the insert
+    /// hint is forgotten, and the owned-map set goes back to the TDEFs known
+    /// before the transaction. The constraint registry keeps the transaction's
+    /// entries, so AutoNumber counters never move back over values that may
+    /// have reached the file.
+    /// </summary>
+    /// <param name="state">The state captured when the transaction began.</param>
+    private void DiscardCachesAfterFailedReplay(WriterState? state)
+    {
+        catalog.Invalidate();
+        if (state is null)
+        {
+            return;
+        }
+
+        dataPages.RestoreState(state.DataPages with { HintTDefPage = -1, HintPageNumber = -1 });
     }
 
     /// <summary>The writer's in-memory state that a transaction can change.</summary>

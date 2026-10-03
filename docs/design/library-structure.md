@@ -142,7 +142,7 @@ JetDatabaseWriter/
 │   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
 │   ├── ReaderPageCache.cs                 (the reader's page and live-row-bound LRU caches)
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
-│   ├── PageJournal.cs                     (before-image journaling for rollback)
+│   ├── PageJournal.cs                     (in-memory after-images of a transaction's pages, replayed in place on commit)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (insert hint + writable owned-map set, restored on rollback)
 │       ├── PageInsertTarget.cs
@@ -537,7 +537,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps read-only B-tree descent and in-place mutation planning separate from TDEF/catalog orchestration |
 | **Strategy via layout structs** | `DataPageLayout`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
-| **Pager** | `DatabaseFile` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O with the reader's 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
+| **Pager** | `DatabaseFile` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O with the reader's 256-page LRU eviction cache and an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
 | **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |
