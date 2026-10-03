@@ -162,6 +162,19 @@ decimal total = products.Where(p => !p.Discontinued).Sum(p => p.UnitPrice);
 
 Property names are matched to column headers **case-insensitively**. Unmatched properties keep their default value. The type `T` must be a class with a parameterless constructor.
 
+Use the standard `System.ComponentModel.DataAnnotations.Schema` attributes when a property name can't match its column. `[Column("Last Name")]` binds a property to a differently named column (for example one with a space), and `[NotMapped]` excludes a property. One mapping model applies these everywhere a `T` is used: typed inserts (`InsertRowAsync<T>` / `InsertRowsAsync<T>`), `Rows<T>`, `ReadTableAsync<T>`, `FromIndex<T>`, and `Query<T>` (`Where` index inference, index-ordered `OrderBy`, and `Include` join keys). `[Table("...")]` names the table an `Include` navigation's target type maps to. Two properties that name the same column with `[Column]` throw `InvalidOperationException`; an explicit `[Column("X")]` wins over a property that is merely named `X`.
+
+```csharp
+public class Person
+{
+    [Column("Person ID")] public int PersonId { get; set; }
+    [Column("Last Name")] public string? LastName { get; set; }
+    [NotMapped] public string? DisplayLabel { get; set; }
+}
+
+int smiths = await reader.Query<Person>("People").Where(p => p.LastName == "Smith").CountAsync(cancellationToken);
+```
+
 ### Typed DataTable
 
 ```csharp
@@ -797,7 +810,7 @@ public sealed class Orders
 }
 ```
 
-Table and column names are automatically converted to PascalCase C# identifiers — spaces, hyphens, and special characters are cleaned, and C# keywords are escaped.
+Table and column names are automatically converted to PascalCase C# identifiers — spaces, hyphens, and special characters are cleaned, and C# keywords are escaped. When the identifier differs from the Access name by more than case, the generated code carries `[Table("Order Details")]` on the class or `[Column("Unit Price")]` on the property, so the properties read, write and query the original columns, and `Include` navigations to the entity resolve the original table.
 
 When the database declares foreign-key relationships, each generated entity also gets **navigation properties** inferred from `MSysRelationships`: a reference to the parent (named after the foreign-key column, EF-style — `CustomerID` → `Customer`) and a collection of children (named after the child table). These pair directly with `reader.Query<T>(...).Include(...)`:
 

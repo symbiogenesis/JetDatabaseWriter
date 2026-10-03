@@ -213,7 +213,7 @@ internal sealed class TableReader(
     }
 
     /// <summary>Streams a table's rows mapped to <typeparamref name="T"/>.</summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
@@ -322,7 +322,7 @@ internal sealed class TableReader(
         => this.ReadDataTableCoreAsync(tableName, maxRows: null, progress: null, forWriteBack: true, cancellationToken);
 
     /// <summary>Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/>.</summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

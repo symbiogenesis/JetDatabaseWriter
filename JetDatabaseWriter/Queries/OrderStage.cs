@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -100,15 +101,17 @@ internal sealed class OrderStage : QueryStage
             body = convert.Operand;
         }
 
-        // Only a direct property access on the lambda parameter (e.g. i => i.Id) maps to a
-        // column; nested paths and computed keys are left to the in-memory sort. The CLR
+        // Only a direct access to a mapped property of the lambda parameter (e.g. i => i.Id)
+        // maps to a column, through the same EntityMap the row mapper uses; nested paths,
+        // computed keys and [NotMapped] properties are left to the in-memory sort. The CLR
         // type is restricted to signed integers/byte, whose JET index key bytes compare in
         // the same order as the values — unlike float/double (NaN) or date (pre-1899 OADate).
         if (body is MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
             && parameter == key.KeySelector.Parameters[0]
-            && IsOrderSafeIntegerType(property.PropertyType))
+            && IsOrderSafeIntegerType(property.PropertyType)
+            && EntityMap.For(parameter.Type).FindByMember(property) is EntityProperty mapped)
         {
-            column = property.Name;
+            column = mapped.ColumnName;
             return true;
         }
 
