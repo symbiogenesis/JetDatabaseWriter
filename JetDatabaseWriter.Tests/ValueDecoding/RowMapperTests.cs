@@ -47,6 +47,23 @@ public class RowMapperTests
         public double Price { get; set; }
     }
 
+    private enum CodeState
+    {
+        Open = 0,
+        Closed = 1,
+    }
+
+    private sealed class CodedPoco
+    {
+        public DayOfWeek Status { get; set; }
+
+        public CodeState? Name { get; set; }
+
+        public Guid Token { get; set; }
+
+        public Guid? Raw { get; set; }
+    }
+
     private sealed class EmptyPoco
     {
         /// <summary>
@@ -474,7 +491,25 @@ public class RowMapperTests
         // "not-a-number" cannot be converted to long
         object[] row = ["not-a-number", 1.0m];
 
-        Assert.ThrowsAny<Exception>(() => map(row));
+        InvalidCastException ex = Assert.Throws<InvalidCastException>(() => map(row));
+        Assert.Contains("Column 'Id'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{nameof(TypeMismatchPoco)}.{nameof(TypeMismatchPoco.Id)}'", ex.Message, StringComparison.Ordinal);
+        Assert.IsType<FormatException>(ex.InnerException);
+    }
+
+    [Fact]
+    public void Build_IntegralAndTextValues_MapToEnumAndGuidProperties()
+    {
+        var token = new Guid("6f9619ff-8b86-d011-b42d-00c04fc964ff");
+        var headers = new List<string> { "Status", "Name", "Token", "Raw" };
+        object[] row = [2, "closed", token.ToString("B"), token.ToByteArray()];
+
+        CodedPoco result = RowMapper<CodedPoco>.Build(headers, [typeof(int), typeof(string), typeof(string), typeof(byte[])])(row);
+
+        Assert.Equal(DayOfWeek.Tuesday, result.Status);
+        Assert.Equal(CodeState.Closed, result.Name);
+        Assert.Equal(token, result.Token);
+        Assert.Equal(token, result.Raw);
     }
 
     // ── Build — empty row ────────────────────────────────────────────

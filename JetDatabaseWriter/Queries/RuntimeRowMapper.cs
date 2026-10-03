@@ -4,17 +4,16 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Mapping;
-using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Maps an <c>object?[]</c> row (keyed by column headers) onto a new instance of a
-/// runtime-resolved POCO type. Binds columns to properties through <see cref="EntityMap"/>,
-/// the same rule the generic row mapper uses, but for a <see cref="Type"/> only known at runtime — as
-/// needed when eagerly loading a related entity discovered from a navigation property.
+/// runtime-resolved POCO type. Binds columns to properties through <see cref="EntityMap"/>
+/// and converts values through <see cref="ValueCoercer"/>, the same rules the generic row
+/// mapper uses, but for a <see cref="Type"/> only known at runtime — as needed when eagerly
+/// loading a related entity discovered from a navigation property.
 /// </summary>
 internal static class RuntimeRowMapper
 {
@@ -29,6 +28,7 @@ internal static class RuntimeRowMapper
     /// <param name="headers">Column headers aligned with <paramref name="row"/>.</param>
     /// <param name="row">The decoded row values.</param>
     /// <returns>The populated instance.</returns>
+    /// <exception cref="InvalidCastException">A value cannot be converted to the type of the property its column maps to.</exception>
     public static object Map(Type type, IReadOnlyList<string> headers, object?[] row)
     {
         object instance = CreateInstance(type);
@@ -48,7 +48,7 @@ internal static class RuntimeRowMapper
                 continue;
             }
 
-            object? coerced = Coerce(value, property.PropertyType);
+            object? coerced = ValueCoercer.Coerce(value, property.PropertyType, headers[i], property);
             if (coerced is not null)
             {
                 property.SetValue(instance, coerced);
@@ -77,33 +77,4 @@ internal static class RuntimeRowMapper
             Type listType = typeof(List<>).MakeGenericType(et);
             return Expression.Lambda<Func<IList>>(Expression.Convert(Expression.New(listType), typeof(IList))).Compile();
         })();
-
-    private static object? Coerce(object value, Type targetType)
-    {
-        Type underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
-
-        if (underlying.IsInstanceOfType(value))
-        {
-            return value;
-        }
-
-        if (underlying == typeof(Hyperlink) && value is string hyperlinkText)
-        {
-            return Hyperlink.Parse(hyperlinkText);
-        }
-
-        if (underlying == typeof(string) && value is Hyperlink hyperlink)
-        {
-            return hyperlink.ToString();
-        }
-
-        try
-        {
-            return Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
-        }
-        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
-        {
-            return null;
-        }
-    }
 }

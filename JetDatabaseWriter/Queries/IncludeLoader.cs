@@ -46,8 +46,12 @@ using JetDatabaseWriter.Tables;
 /// the distinct keys are only a small share of that table, the related rows are loaded
 /// with one index seek per distinct key; otherwise (no covering index, a Jet3 file, or
 /// too many distinct keys relative to the table) it scans the table once and groups in
-/// memory. A collection navigation may also carry inline EF-style filter / order / page
-/// operators (<c>Include(o =&gt; o.Items.Where(...).OrderBy(...).Take(n))</c>); those run
+/// memory. Either way only the related rows whose key a root holds are mapped to entities,
+/// so a row the query never returns cannot fail the strict value conversion, and a
+/// <c>ThenInclude</c> descends only into entities a root references. When no root has a key,
+/// the related table is not read. A collection navigation may also carry inline EF-style
+/// filter / order / page operators
+/// (<c>Include(o =&gt; o.Items.Where(...).OrderBy(...).Take(n))</c>); those run
 /// in memory per parent after the related rows load, so a <c>Take</c> bounds the children
 /// per parent and a following <c>ThenInclude</c> descends only into the kept rows.
 /// </remarks>
@@ -255,14 +259,18 @@ internal static class IncludeLoader
         Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
+        // No root has a key, so no parent can match: read nothing.
+        if (distinctKeys.Count == 0)
+        {
+            return new Dictionary<string, object>(StringComparer.Ordinal);
+        }
+
         // One parent per key: seek the parent key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
-            : null;
+        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false);
         if (plan is not SeekPlan seek)
         {
-            return await IndexRelatedAsync(metadata, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+            return await IndexRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
         }
 
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -287,14 +295,18 @@ internal static class IncludeLoader
         Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
+        // No root has a key, so no child can match: read nothing.
+        if (distinctKeys.Count == 0)
+        {
+            return new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        }
+
         // Many children per key: seek the foreign-key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = distinctKeys.Count > 0
-            ? await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false)
-            : null;
+        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false);
         if (plan is not SeekPlan seek)
         {
-            return await GroupRelatedAsync(metadata, table, type, keyColumns, cancellationToken).ConfigureAwait(false);
+            return await GroupRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
         }
 
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
@@ -429,11 +441,25 @@ internal static class IncludeLoader
         return (string.Join("|", parts), values);
     }
 
+    /// <summary>
+    /// Scans <paramref name="table"/> for the parent of each key in <paramref name="distinctKeys"/>,
+    /// keeping the first row per key. Only those rows are mapped, so a row no root references can
+    /// neither fail the conversion to <paramref name="type"/> nor reach a <c>ThenInclude</c>, and
+    /// the scan stops once every key has its parent.
+    /// </summary>
+    /// <param name="metadata">The per-call metadata cache.</param>
+    /// <param name="table">The parent table.</param>
+    /// <param name="type">The parent entity type.</param>
+    /// <param name="keyColumns">The parent's key columns.</param>
+    /// <param name="distinctKeys">The keys the roots reference, by normalized key.</param>
+    /// <param name="cancellationToken">A token used to cancel the scan.</param>
+    /// <returns>The parents by normalized key.</returns>
     private static async ValueTask<Dictionary<string, object>> IndexRelatedAsync(
         IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
+        Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
         (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
@@ -441,22 +467,39 @@ internal static class IncludeLoader
         await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
-            if (key is null)
+            if (key is null || !distinctKeys.ContainsKey(key) || map.ContainsKey(key))
             {
                 continue;
             }
 
-            map.TryAdd(key, RuntimeRowMapper.Map(type, headers, row));
+            map.Add(key, RuntimeRowMapper.Map(type, headers, row));
+            if (map.Count == distinctKeys.Count)
+            {
+                break;
+            }
         }
 
         return map;
     }
 
+    /// <summary>
+    /// Scans <paramref name="table"/> for the children of each key in
+    /// <paramref name="distinctKeys"/> and groups them by key. Only those rows are mapped, so a
+    /// row no root references cannot fail the conversion to <paramref name="type"/>.
+    /// </summary>
+    /// <param name="metadata">The per-call metadata cache.</param>
+    /// <param name="table">The child table.</param>
+    /// <param name="type">The child entity type.</param>
+    /// <param name="keyColumns">The child's foreign-key columns.</param>
+    /// <param name="distinctKeys">The keys the roots hold, by normalized key.</param>
+    /// <param name="cancellationToken">A token used to cancel the scan.</param>
+    /// <returns>The children by normalized key.</returns>
     private static async ValueTask<Dictionary<string, List<object>>> GroupRelatedAsync(
         IncludeMetadataCache metadata,
         string table,
         Type type,
         IReadOnlyList<string> keyColumns,
+        Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
         (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
@@ -464,7 +507,7 @@ internal static class IncludeLoader
         await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, keyIndices);
-            if (key is null)
+            if (key is null || !distinctKeys.ContainsKey(key))
             {
                 continue;
             }

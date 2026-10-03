@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -15,17 +14,15 @@ using JetDatabaseWriter.Models;
 /// Maps <c>object[]</c> rows (keyed by column headers) to POCO instances of <typeparamref name="T"/>.
 /// Each column binds to the property <see cref="EntityMap"/> maps it to: the property's <c>[Column("...")]</c>
 /// name, or else its own name, compared case-insensitively; <c>[NotMapped]</c> properties are skipped.
-/// Unmatched properties are left at their default value.
+/// Unmatched properties are left at their default value. A value of another type than its
+/// property converts through <see cref="ValueCoercer"/>, which throws
+/// <see cref="InvalidCastException"/> naming the column and the property when it cannot.
 /// Uses compiled expression trees for high-performance property access.
 /// </summary>
 /// <typeparam name="T">The row type whose public properties are bound to column headers.</typeparam>
 internal static class RowMapper<T>
     where T : new()
 {
-    private static readonly MethodInfo CoerceToTargetMethod =
-        typeof(RowMapper<T>).GetMethod(nameof(CoerceToTarget), BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException("Failed to get method info for CoerceToTarget.");
-
     /// <summary>
     /// Per-TableDef cache for the compiled write delegate. Keyed by
     /// reference identity so the same TableDef instance reused across many
@@ -87,14 +84,14 @@ internal static class RowMapper<T>
     /// <para>
     /// When <paramref name="sourceTypes"/> is supplied and a column's source type
     /// matches the target property's underlying type, the generated expression
-    /// emits a direct unbox-and-assign (skipping the runtime <c>GetType()</c>
-    /// check and the <see cref="Convert.ChangeType(object, Type, IFormatProvider)"/>
-    /// fallback). Hyperlink ↔ string interop is preserved via the
-    /// <see cref="CoerceToTarget"/> helper.
+    /// emits a direct unbox-and-assign. Every other column converts through
+    /// <see cref="ValueCoercer.Coerce(object, Type, string, PropertyInfo)"/>,
+    /// which passes through a value the property can already hold.
     /// </para>
     /// </summary>
     /// <param name="headers">The headers.</param>
     /// <param name="sourceTypes">The source types.</param>
+    /// <returns>The mapper. It throws <see cref="InvalidCastException"/> for a value its property cannot hold.</returns>
     public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null)
     {
         Guard.NotNull(headers, nameof(headers));
@@ -150,16 +147,18 @@ internal static class RowMapper<T>
             }
             else
             {
-                // Mixed/unknown source type: defer to the shared coercion
-                // helper, then assign only when it returns a non-null result
-                // ("skip on Hyperlink.Parse failure").
+                // Mixed/unknown source type: defer to the shared coercer,
+                // then assign only when it returns a non-null result
+                // ("skip on an empty Hyperlink").
                 // Reuse `valueLocal` as the in/out slot so we don't need a
                 // second local — the original `value` is no longer needed
                 // after the coerce call.
                 MethodCallExpression coerceCall = Expression.Call(
-                    CoerceToTargetMethod,
+                    ValueCoercer.CoerceMethod,
                     valueLocal,
-                    Expression.Constant(underlying, typeof(Type)));
+                    Expression.Constant(underlying, typeof(Type)),
+                    Expression.Constant(headers[i], typeof(string)),
+                    Expression.Constant(prop, typeof(PropertyInfo)));
                 BinaryExpression assign = Expression.Assign(
                     Expression.Property(itemLocal, prop),
                     Expression.Convert(valueLocal, propType));
@@ -271,38 +270,6 @@ internal static class RowMapper<T>
 
         NewArrayExpression body = Expression.NewArrayInit(typeof(object), values);
         return Expression.Lambda<Func<T, object[]>>(body, itemParam).Compile();
-    }
-
-    /// <summary>
-    /// Runtime coercion fallback used by <see cref="Build(IReadOnlyList{string}, IReadOnlyList{Type}?)"/>
-    /// for columns whose source type is unknown or differs
-    /// from the property's underlying type. Returns <see langword="null"/> when a
-    /// Hyperlink-typed property cannot parse the supplied string (signals "skip
-    /// this assignment").
-    /// </summary>
-    /// <param name="value">The value.</param>
-    /// <param name="targetUnderlying">The target underlying.</param>
-    private static object? CoerceToTarget(object value, Type targetUnderlying)
-    {
-        // Values the property can already hold pass through unchanged. That
-        // covers object-typed properties bound to byte[] or complex-column
-        // cells, which Convert.ChangeType rejects as not IConvertible.
-        if (targetUnderlying.IsInstanceOfType(value))
-        {
-            return value;
-        }
-
-        if (targetUnderlying == typeof(Hyperlink) && value is string hs)
-        {
-            return Hyperlink.Parse(hs);
-        }
-
-        if (targetUnderlying == typeof(string) && value is Hyperlink hv)
-        {
-            return hv.ToString();
-        }
-
-        return Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
     }
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
