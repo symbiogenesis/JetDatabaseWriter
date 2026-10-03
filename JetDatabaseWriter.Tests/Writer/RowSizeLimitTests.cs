@@ -27,7 +27,9 @@ public sealed class RowSizeLimitTests
 
     /// <summary>
     /// Inserts a row of <c>Id</c> plus inline 250-byte OLE values that adds up
-    /// to more than a page. The insert throws before anything is written.
+    /// to more than a page. The insert throws before anything is written: the
+    /// file is byte-for-byte what it was, in every write mode (an explicit
+    /// transaction is committed after the failure).
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">"direct", "transactional" or "explicit".</param>
@@ -47,27 +49,9 @@ public sealed class RowSizeLimitTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         int oleColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
         await using MemoryStream ms = await CreateDatabaseAsync(format, oleColumns, ct);
-        byte[] before = ms.ToArray();
+        object[] row = [1, .. Enumerable.Range(0, oleColumns).Select(i => (object)Ole(250, i))];
 
-        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, ct))
-        {
-            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
-            object[] row = [1, .. Enumerable.Range(0, oleColumns).Select(i => (object)Ole(250, i))];
-            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync(TableName, row, ct));
-            Assert.Contains($"{MaxRowLength(format)}-byte maximum", ex.Message, StringComparison.Ordinal);
-
-            if (transaction is not null)
-            {
-                await transaction.CommitAsync(ct);
-                await transaction.DisposeAsync();
-            }
-        }
-
-        Assert.Equal(before.Length, ms.Length);
-        await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        Assert.Equal(0, await reader.GetRealRowCountAsync(TableName, ct));
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
-        Assert.Empty(table.Rows);
+        await AssertOversizedInsertWritesNothingAsync(ms, format, mode, row, ct);
     }
 
     /// <summary>
@@ -155,6 +139,41 @@ public sealed class RowSizeLimitTests
     }
 
     private static int MaxRowLength(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb ? 2036 : 4080;
+
+    /// <summary>
+    /// Inserts <paramref name="row"/> in <paramref name="mode"/>, expects the
+    /// row-size <see cref="JetLimitationException"/>, and checks that the file
+    /// is byte-for-byte unchanged and the table still empty.
+    /// </summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="row">A row larger than a page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    private static async Task AssertOversizedInsertWritesNothingAsync(MemoryStream ms, DatabaseFormat format, string mode, object[] row, CancellationToken cancellationToken)
+    {
+        byte[] before = ms.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, cancellationToken))
+        {
+            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(cancellationToken) : null;
+            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync(TableName, row, cancellationToken));
+            Assert.Contains($"{MaxRowLength(format)}-byte maximum", ex.Message, StringComparison.Ordinal);
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                await transaction.DisposeAsync();
+            }
+        }
+
+        Assert.Equal(before.Length, ms.Length);
+        Assert.Equal(before, ms.ToArray());
+        await using AccessReader reader = await OpenReaderAsync(ms, cancellationToken);
+        Assert.Equal(0, await reader.GetRealRowCountAsync(TableName, cancellationToken));
+        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: cancellationToken);
+        Assert.Empty(table.Rows);
+    }
 
     /// <summary>OLE bytes that start <c>11 22</c> and carry no file signature, so the read API returns them unchanged.</summary>
     /// <param name="length">The length.</param>
