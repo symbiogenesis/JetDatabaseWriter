@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
+using JetDatabaseWriter.Enums;
 
 public enum ConcurrentScanBenchmarkShape
 {
@@ -17,11 +18,21 @@ public enum ConcurrentScanBenchmarkShape
 /// <summary>
 /// Runs <see cref="Concurrency"/> full scans of the 25,000-row numeric table at
 /// once, either all on one shared reader or one scan on each of that many
-/// readers. A shared reader serializes stream reads through its I/O gate and,
-/// on an AES-encrypted file, runs every page through one set of AES transforms
-/// under a lock; separate readers share neither. Comparing the two shows what
-/// that serialization costs as concurrency grows. Every scan must return all
-/// 25,000 rows, and setup runs both benchmarks once to check that.
+/// path-opened readers. Scans on a shared reader share its page cache, its one
+/// file handle and, on an AES-encrypted file, one set of AES transforms used
+/// under a lock; separate readers share none of them. How a shared reader's
+/// page reads meet depends on <see cref="PageReadOptimizationMode"/>:
+/// <list type="bullet">
+/// <item><see cref="PageReadOptimizationMode.Disabled"/> seeks and reads its
+/// stream, so every page read the cache misses waits for the reader's I/O
+/// gate.</item>
+/// <item><see cref="PageReadOptimizationMode.Auto"/> on .NET 6 or later reads
+/// pages through <c>RandomAccess</c> at an offset, which bypasses the gate.
+/// Windows still serializes I/O on the reader's synchronous handle.</item>
+/// </list>
+/// Comparing the two benchmarks shows what that sharing costs or saves as
+/// concurrency grows. Every scan must return all 25,000 rows, and setup runs
+/// both benchmarks once to check that.
 /// </summary>
 [MemoryDiagnoser]
 public class AccessReaderConcurrentScanBenchmarks
@@ -34,6 +45,9 @@ public class AccessReaderConcurrentScanBenchmarks
 
     [Params(ConcurrentScanBenchmarkShape.Plain, ConcurrentScanBenchmarkShape.AesEncrypted)]
     public ConcurrentScanBenchmarkShape Shape { get; set; }
+
+    [Params(PageReadOptimizationMode.Disabled, PageReadOptimizationMode.Auto)]
+    public PageReadOptimizationMode PageReadOptimizationMode { get; set; }
 
     [GlobalSetup]
     public async Task Setup()
@@ -118,6 +132,10 @@ public class AccessReaderConcurrentScanBenchmarks
     }
 
     private ValueTask<AccessReader> OpenReaderAsync() => this.Shape == ConcurrentScanBenchmarkShape.Plain
-        ? AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath)
-        : AccessReader.OpenAsync(SyntheticDatabases.AesNumericDbPath, new AccessReaderOptions(SyntheticDatabases.AesPassword));
+        ? AccessReader.OpenAsync(
+            SyntheticDatabases.NumericDbPath,
+            new AccessReaderOptions { PageReadOptimizationMode = this.PageReadOptimizationMode })
+        : AccessReader.OpenAsync(
+            SyntheticDatabases.AesNumericDbPath,
+            new AccessReaderOptions(SyntheticDatabases.AesPassword) { PageReadOptimizationMode = this.PageReadOptimizationMode });
 }
