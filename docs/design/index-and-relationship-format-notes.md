@@ -31,13 +31,13 @@ Phases R2/R3 require the encoded sort-key implementation that the writer also ne
 
 ## 3. TDEF layout (per [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) "TDEF (Table Definition) Pages")
 
-The TDEF page chain (page type `0x02`, linked through `next_pg` at offset `4`) is concatenated by `AccessBase.ReadTDefBytesAsync` into a single byte array. Within that buffer, the layout (Jet4 / ACE) is:
+The TDEF page chain (page type `0x02`, linked through `next_pg` at offset `4`) is concatenated by `DatabaseFile.ReadTDefBytesAsync` into a single byte array. Within that buffer, the layout (Jet4 / ACE) is:
 
 | Section | Size | Notes |
 |---|---|---|
 | Page header | 8 bytes | `page_type=0x02`, `unknown=0x01`, `tdef_id`, `next_pg` |
 | Jet4 TDEF block | 55 bytes | `tdef_len`, `unknown`, `num_rows`, `autonumber`, `autonum_flag`, `unknown[3]`, `ct_autonum`, `unknown[8]`, `table_type`, `max_cols`, `num_var_cols`, `num_cols`, **`num_idx`** at relative offset 39 (absolute 47 from page start), **`num_real_idx`** at absolute 51, `used_pages`, `free_pages` |
-| Real-index entries | `num_real_idx × 12` (Jet4) / `× 8` (Jet3) | Already skipped by `AccessBase.ReadTableDefAsync`. Per mdbtools each Jet4 entry: `unknown(4) + num_idx_rows(4) + unknown(4)` |
+| Real-index entries | `num_real_idx × 12` (Jet4) / `× 8` (Jet3) | Already skipped by `DatabaseFile.ReadTableDefAsync`. Per mdbtools each Jet4 entry: `unknown(4) + num_idx_rows(4) + unknown(4)` |
 | Column descriptors | `num_cols × 25` (Jet4) / `× 18` (Jet3) | Already parsed |
 | Column names | `num_cols ×` length-prefixed | 2-byte len + UTF-16 (Jet4); 1-byte len + ANSI (Jet3) |
 | **Real-index "physical" descriptors** | `num_real_idx × 52` (Jet4) / `× 39` (Jet3) | See §3.1 |
@@ -535,7 +535,7 @@ What landed:
 - New top-level probe `WriteJet3IndexAppendixAsync` in [`JetDatabaseWriter.FormatProbe/Program.cs`](../../JetDatabaseWriter.FormatProbe/Program.cs) — iterates a curated short-list of Jet3 fixtures (`Jackcess/V1997/indexTestV1997.mdb`, `compIndexTestV1997.mdb`, `testIndexCodesV1997.mdb`, `testV1997.mdb`, `mdbtools/nwind.mdb`, `Jet3Test.mdb`) and dumps the TDEF + the first leaf page reachable from each real-idx for up to 4 user tables per fixture.
 - Jet3-specific decoded annotation blocks added to `EmitTDefAsync` (real-idx phys descriptor, leading 8-byte skip entry, logical-idx entry).
 - New helper `EmitJet3LeafPagesAsync` runs a candidate-resolution table (`skip entry [0..3]`, `skip entry [4..7]`, `phys desc [34..37]`) per real-idx and dumps the first page that resolves to `page_type ∈ {0x03, 0x04}`. Output: [`format-probe-appendix-jet3-index.md`](../format-probe/format-probe-appendix-jet3-index.md).
-- New internal accessor `AccessReader.GetRawPageBytesAsync(long, CancellationToken)` so the probe can read individual index leaf / intermediate pages by absolute page number (previously only TDEF chains were exposed).
+- New internal accessor `AccessReader.GetRawPageBytesAsync(long, CancellationToken)` so the probe can read individual index leaf / intermediate pages by absolute page number (previously only TDEF chains were exposed). It has since moved off the reader facade into the probe's own `ProbeDatabase.GetRawPageBytesAsync`.
 
 What W17a confirmed (carried into §3.1, §3.2, §4.2):
 
@@ -729,7 +729,7 @@ What's persisted:
 
 - `ColumnDefinition.NumericPrecision` (`byte`, default 18) and `NumericScale` (`byte`, default 0) — the Access "Number → Decimal" UI defaults. Validation: precision must be 1–28, scale must be ≤ precision and ≤ 28.
 - `AccessWriter.BuildTableDefinition` writes precision at TDEF column-descriptor offset 11 and scale at offset 12 for every `Numeric (0x10)` column on Jet4 / ACE (Jet3 has no NUMERIC). These are the same bytes Jackcess' `FixedPointColumnDescriptor` reads on parse, and the same bytes Access-authored `fixedNumericTest.accdb` carries (verified via `docs/design/format-probe-appendix-complex.md` — descriptor bytes `12 00 00 00` = precision 0x12 = 18, scale 0).
-- `AccessBase.LoadColumnInfos` parses both bytes back into `ColumnInfo.NumericPrecision` / `NumericScale`. `ColumnMetadata` exposes them on the public reader API.
+- `DatabaseFile.ReadTableDefAsync` parses both bytes back into `ColumnInfo.NumericPrecision` / `NumericScale`. `ColumnMetadata` exposes them on the public reader API.
 
 What changed in encoding: new `IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, declaredScale, legacy)` rounds the input value to the declared scale via `decimal.Round(d, declaredScale, MidpointRounding.ToEven)` before delegating to the existing `EncodeNumericEntry`. This matches Access's "round half to even" (banker's rounding) on store. Half-even is `MidpointRounding.ToEven`'s default behaviour and is what Access has used since at least Jet 4.
 

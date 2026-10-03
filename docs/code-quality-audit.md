@@ -2,7 +2,7 @@
 
 **Scope:** the `JetDatabaseWriter` library project (production code only — tests, benchmarks,
 and FormatProbe excluded except where noted).
-**Date:** 2026-06-16; trimmed to open items 2026-06-30 (line numbers re-verified 2026-06-30); #1, #2, #9, and #10 updated 2026-10-02 after the writer facade split.
+**Date:** 2026-06-16; trimmed to open items 2026-06-30 (line numbers re-verified 2026-06-30); #1, #2, #9, and #10 updated 2026-10-02 after the writer and reader facade splits.
 **Status:** this list tracks **open findings only**. #1 (god classes) and #2 (monster methods) are
 **High**; #9–#11 are **Low**. Resolved findings #3–#8 were removed on 2026-06-30 — their durable
 essence is preserved in repo memory and the linked design docs (for example the former #7 lives in
@@ -37,31 +37,36 @@ so each is a single, monolithic, hard-to-navigate file.
 
 | Type | Lines | Role |
 |------|------:|------|
-| [JetDatabaseWriter/AccessReader.cs](../JetDatabaseWriter/AccessReader.cs) | 2,885 | public reader facade |
 | [JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs) | 1,937 | B-tree mutation |
-| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,688 | attachments/multivalue |
+| [JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs) | 1,691 | attachments/multivalue |
 | [JetDatabaseWriter/Indexes/IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs) | 1,673 | index orchestration |
-| [JetDatabaseWriter/Relationships/RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,528 | FK lifecycle |
-| [JetDatabaseWriter/AccessBase.cs](../JetDatabaseWriter/AccessBase.cs) | 1,470 | shared base |
+| [JetDatabaseWriter/Relationships/RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) | 1,531 | FK lifecycle |
+| [JetDatabaseWriter/DatabaseFile.cs](../JetDatabaseWriter/DatabaseFile.cs) | 1,420 | shared page I/O and format core |
+| [JetDatabaseWriter/Tables/TableReader.cs](../JetDatabaseWriter/Tables/TableReader.cs) | 1,138 | table scans and reads |
 
-`AccessWriter` was the clearest offender (3,148 lines) and is now resolved. The root cause was that
-the facade doubled as the shared context: its collaborators took `AccessWriter` and found each other
-through its internal `Relationships`, `ComplexColumns`, and `Constraints` properties, so the class graph
-was cyclic and the facade could not shrink. `WriterServices` now builds the collaborators and injects
-their dependencies; they depend on the `AccessBase` page I/O context, not the facade; and the DML, DDL,
-and catalog-plan logic moved into `TableDataWriter`, `TableSchemaEditor`, and `CatalogArtifactWriter`.
-[AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) is now an 853-line facade, and
-`WriterServiceGraphTests` guards against regressions.
+`AccessWriter` (3,148 lines), `AccessReader` (2,885), and `AccessBase` (1,470) were the clearest
+offenders and are now resolved. The root cause was the same in each: the facade doubled as the shared
+context. Writer collaborators took `AccessWriter` and found each other through its internal
+`Relationships`, `ComplexColumns`, and `Constraints` properties; reader helpers took `AccessReader`
+and some called its public methods back; and page I/O lived in the `AccessBase` base class, so any
+service that read pages held the facade object. `ReaderServices` and `WriterServices` now build each
+facade's collaborators and inject their dependencies; the collaborators depend on `DatabaseFile` (the
+page I/O extracted from `AccessBase`), not on a facade; and the read and write workflows live in
+services (`TableReader`, `IndexRowReader`, `SchemaReader`, `TableDataWriter`, `TableSchemaEditor`,
+`CatalogArtifactWriter`). The facades are now [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs)
+(522 lines, mostly XML docs and one-line forwarders), [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs)
+(804), and [AccessBase.cs](../JetDatabaseWriter/AccessBase.cs) (35). `ServiceGraphTests` guards against
+regressions, including a check that neither facade is reachable from its services at runtime.
 
-`AccessReader` still has the same shape: it hosts much of the read path directly, and its
-collaborators take `AccessReader` as their context.
+`DatabaseFile` and `TableReader` remain large but are each cohesive around one concern (the bytes of
+one open file; reading a table's rows). They are listed so they are watched, not because they mix roles.
 
 **Why it matters:** these files exceed what a reviewer can hold in working memory, force wide-ranging
 merge conflicts, and make it impossible to unit-test slices in isolation.
 
-**Remediation:** apply the writer pattern to `AccessReader`: a reader composition root, and read-side
-services that depend on `AccessBase` instead of the reader. Moving inline logic into partial files
-would only hide the coupling.
+**Remediation:** split the remaining large types along their internal seams (B-tree descent vs. splice
+vs. page rewrite in `IndexBTreeEditor`; scaffolding vs. row-level writes vs. cascades in
+`ComplexColumnManager`). Moving inline logic into partial files would only hide the coupling.
 
 ---
 
@@ -76,8 +81,8 @@ each longer than many entire classes:
 
 Moved unchanged out of `AccessWriter` in the facade split:
 
-- [`TableDataWriter.UpdateRowsAsync`](../JetDatabaseWriter/Tables/TableDataWriter.cs#L194) — ~146 lines.
-- [`CatalogArtifactWriter.CreateCatalogTableArtifactAsync`](../JetDatabaseWriter/Catalog/CatalogArtifactWriter.cs#L228) — ~139 lines.
+- [`TableDataWriter.UpdateRowsAsync`](../JetDatabaseWriter/Tables/TableDataWriter.cs#L197) — ~146 lines.
+- [`CatalogArtifactWriter.CreateCatalogTableArtifactAsync`](../JetDatabaseWriter/Catalog/CatalogArtifactWriter.cs#L230) — ~139 lines.
 
 These methods interleave several distinct phases (descent, validation, splice, page rewrite,
 parent/ancestor patching) with deep nesting and many local mutable variables. They are the riskiest
@@ -117,7 +122,7 @@ correlate exactly with findings #1 and #2.
 ## 10. `Public`/`Core` Method-Pair Duplication — **Low**
 
 Every mutating public API on `AccessWriter` is a one-line forwarder that wraps a service method in
-[`RunAutoCommitAsync`](../JetDatabaseWriter/AccessWriter.cs#L781) — e.g. `InsertRowAsync` →
+[`RunAutoCommitAsync`](../JetDatabaseWriter/AccessWriter.cs#L732) — e.g. `InsertRowAsync` →
 `TableDataWriter.InsertRowAsync`, `DropTableAsync` → `TableSchemaEditor.DropTableAsync`. Since the facade
 split the pairs no longer share a class, so they no longer inflate the facade, but each service method
 still repeats the same `Guard.*` + `ThrowIfDisposedOrCancelled` preamble.
@@ -143,7 +148,6 @@ analyzers on) so the bar is enforced before merge.
 ## Recommended Order of Attack
 
 1. Decompose the large `IndexBTreeEditor` methods (#2) — highest defect risk per line.
-2. Give `AccessReader` the same treatment as `AccessWriter`: a composition root and read-side services
-   that depend on `AccessBase` rather than the reader (#1).
+2. Split the remaining large types along their internal seams (#1).
 3. Hoist the repeated guard/disposal preamble into `RunAutoCommitAsync` (#10).
 4. Build the Tests project in Release / with analyzers on in CI so its bar matches production (#11).

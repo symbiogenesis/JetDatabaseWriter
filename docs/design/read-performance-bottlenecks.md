@@ -33,8 +33,8 @@ guidance below to produce new evidence before changing the core reader.
 - Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
 - Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderTableScanReadAheadBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs`
-- Main read path: `JetDatabaseWriter/AccessReader.cs`
-- Shared page, row, and text decode helpers: `JetDatabaseWriter/AccessBase.cs`
+- Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
+- Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
 
 ## Current architecture
@@ -174,10 +174,10 @@ string materialization.
 
 Primary code path:
 
-- `AccessBase.DecodeJet4Text`
-- `AccessBase.DecompressJet4`
-- `AccessBase.CreateFromCompressed`
-- `AccessBase.DecompressJet4Slow`
+- `JetTypeInfo.DecodeJet4Text`
+- `JetTypeInfo.DecompressJet4`
+- `JetTypeInfo.CreateFromCompressed`
+- `JetTypeInfo.DecompressJet4Slow`
 - `JetTypeInfo.DecodeUtf16LE`
 
 ### 4. Unprojected wide-row decode
@@ -192,9 +192,9 @@ There is no pending change here without a new API shape or fresh profiling.
 
 Primary code path:
 
-- `AccessReader.EnumerateTypedRowsAsync`
-- `AccessReader.TryCrackRowSyncIntoBuffer`
-- `AccessReader.ResolveColumnSliceForDirectDecode`
+- `TableReader.EnumerateTypedRowsAsync`
+- `RowDecoder.TryCrackRowSyncIntoBuffer`
+- `RowDecodePlan.ResolveColumnSliceForDirectDecode`
 - `DirectRowDecoderBuilder.TryBuild`
 
 ### 5. Cold owned-page discovery on large files
@@ -210,9 +210,9 @@ before the actual table scan.
 
 Primary code path:
 
-- `AccessReader.GetOwnedDataPagesAsync`
-- `AccessReader.BuildOwnedDataPageIndexAsync`
-- `AccessReader.ReadPageCachedAsync`
+- `DatabaseFile.GetOwnedDataPagesAsync`
+- `DatabaseFile.BuildOwnedDataPageIndexAsync`
+- `ReaderPageCache.ReadPageAsync`
 
 ### 6. Table-scan read-ahead
 
@@ -240,9 +240,9 @@ Primary code path:
 
 - `AccessReaderOptions.PageReadOptimizationMode`
 - `AccessReader.CreateStream`
-- `AccessBase.EnableRandomAccessPageReadsIfSupported`
-- `AccessBase.ReadPageAsync`
-- `AccessReader.EnumerateTableScanPagesAsync`
+- `DatabaseFile.EnableRandomAccessPageReadsIfSupported`
+- `DatabaseFile.ReadPageAsync`
+- `TableReader.EnumerateTableScanPagesAsync`
 - Table scan loops in `Rows()`, `Rows<T>()`, `RowsAsStrings`,
   `ReadDataTableAsync`, `ReadFirstTableAsStringsAsync`, and list materialization paths
 
