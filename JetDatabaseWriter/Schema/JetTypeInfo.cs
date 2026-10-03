@@ -220,6 +220,21 @@ internal static class JetTypeInfo
     };
 
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
+        => TypeCodeFromDefinition(column, nameof(column));
+
+    /// <summary>
+    /// Returns the column type <paramref name="column"/> declares: its
+    /// calculated result type, the complex type for an Attachment or
+    /// multi-value column, its descriptor type override, Currency, Date/Time
+    /// Extended, or the type its CLR type maps to.
+    /// </summary>
+    /// <param name="column">The column definition.</param>
+    /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
+    /// <returns>The declared column type.</returns>
+    /// <exception cref="ArgumentException">The definition's flags conflict: both Attachment and multi-value, Currency on a complex or non-decimal column, or Date/Time Extended on a non-<see cref="DateTime"/> column.</exception>
+    /// <exception cref="NotSupportedException">The CLR type has no Access column type.</exception>
+    /// <exception cref="InvalidOperationException">The CLR type is unknown.</exception>
+    internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column, string paramName)
     {
         if (column.IsCalculated && column.CalculatedResultType != 0)
         {
@@ -231,7 +246,7 @@ internal static class JetTypeInfo
         // descriptors; the subtype lives in MSysComplexColumns.
         if (column.IsAttachment && column.IsMultiValue)
         {
-            throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
+            throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", paramName);
         }
 
         // Access has no multi-value Currency template (MSysComplexType_*).
@@ -239,7 +254,7 @@ internal static class JetTypeInfo
         {
             throw new ArgumentException(
                 $"Column '{column.Name}' cannot be both Currency and {(column.IsAttachment ? "Attachment" : "MultiValue")}; Access has no multi-value Currency type.",
-                nameof(column));
+                paramName);
         }
 
         if (column.IsAttachment)
@@ -263,7 +278,7 @@ internal static class JetTypeInfo
             {
                 throw new ArgumentException(
                     $"Column '{column.Name}' has IsCurrency = true but CLR type '{column.ClrType}' is not decimal.",
-                    nameof(column));
+                    paramName);
             }
 
             return MoneyType;
@@ -275,7 +290,7 @@ internal static class JetTypeInfo
             {
                 throw new ArgumentException(
                     $"Column '{column.Name}' has IsDateTimeExtended = true but CLR type '{column.ClrType}' is not DateTime.",
-                    nameof(column));
+                    paramName);
             }
 
             return DateTimeExtendedType;
@@ -338,7 +353,19 @@ internal static class JetTypeInfo
         }
     }
 
-    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
+    /// <summary>
+    /// Checks a calculated column: the format is ACCDB, it has an expression,
+    /// it is not AutoNumber, Attachment, multi-value or Hyperlink, and its
+    /// result type is one Access computes. The expression itself is not
+    /// parsed here.
+    /// </summary>
+    /// <param name="column">The column definition; a column that is not calculated passes.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
+    /// <exception cref="NotSupportedException">The format or the column's kind cannot be calculated, or the result type is not supported.</exception>
+    /// <exception cref="ArgumentException">The column has no expression, or its flags conflict.</exception>
+    /// <exception cref="InvalidOperationException">The result type is unknown.</exception>
+    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format, string paramName)
     {
         if (!column.IsCalculated)
         {
@@ -355,7 +382,7 @@ internal static class JetTypeInfo
         {
             throw new ArgumentException(
                 $"Column '{column.Name}' is calculated but has no CalculationExpression.",
-                nameof(column));
+                paramName);
         }
 
         if (column.IsAttachment || column.IsMultiValue || column.IsHyperlink || column.ClrType == typeof(Hyperlink))
@@ -370,7 +397,7 @@ internal static class JetTypeInfo
                 $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
         }
 
-        ColumnType type = TypeCodeFromDefinition(column);
+        ColumnType type = TypeCodeFromDefinition(column, paramName);
         switch (type)
         {
             case BooleanType:
@@ -425,20 +452,21 @@ internal static class JetTypeInfo
     /// Numeric column that an earlier build wrote stays Numeric.
     /// </summary>
     /// <param name="definition">The column definition.</param>
-    /// <param name="declaredType">The type <see cref="TypeCodeFromDefinition"/> returned for it.</param>
+    /// <param name="declaredType">The type <see cref="TypeCodeFromDefinition(ColumnDefinition, string)"/> returned for it.</param>
     /// <param name="format">The database format.</param>
+    /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column type to write into the descriptor.</returns>
     /// <exception cref="ArgumentOutOfRangeException">A <c>Numeric</c> column's precision is not 1..28 or its scale is above its precision.</exception>
     /// <exception cref="NotSupportedException">A Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
-    internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, DatabaseFormat format)
+    internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, DatabaseFormat format, string paramName)
     {
         if (declaredType != NumericType)
         {
             return declaredType;
         }
 
-        byte precision = ResolveNumericPrecision(definition);
-        byte scale = ResolveNumericScale(definition);
+        byte precision = ResolveNumericPrecision(definition, paramName);
+        byte scale = ResolveNumericScale(definition, paramName);
         if (format != DatabaseFormat.Jet3Mdb || definition.ColumnTypeOverride is not null)
         {
             return NumericType;
@@ -465,10 +493,17 @@ internal static class JetTypeInfo
     /// initial value (matches Access "Number → Decimal" UI default).
     /// </summary>
     /// <param name="definition">The definition.</param>
-    internal static byte ResolveNumericPrecision(ColumnDefinition definition)
+    /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
+    /// <returns>The precision.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The precision is above 28.</exception>
+    internal static byte ResolveNumericPrecision(ColumnDefinition definition, string paramName)
     {
         byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        Guard.InRange(p, 1, 28, $"Column '{definition.Name}' NumericPrecision");
+        if (p > 28)
+        {
+            throw new ArgumentOutOfRangeException(paramName, p, $"Column '{definition.Name}': NumericPrecision must be between 1 and 28.");
+        }
+
         return p;
     }
 
@@ -479,12 +514,23 @@ internal static class JetTypeInfo
     /// canonical sort-key scale.
     /// </summary>
     /// <param name="definition">The definition.</param>
-    internal static byte ResolveNumericScale(ColumnDefinition definition)
+    /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
+    /// <returns>The scale.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is above 28 or above the precision.</exception>
+    internal static byte ResolveNumericScale(ColumnDefinition definition, string paramName)
     {
         byte s = definition.NumericScale;
         byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        Guard.InRange(s, 0, 28, $"Column '{definition.Name}' NumericScale");
-        Guard.InRange(s, 0, p, $"Column '{definition.Name}' NumericScale (NumericPrecision={p})");
+        if (s > 28)
+        {
+            throw new ArgumentOutOfRangeException(paramName, s, $"Column '{definition.Name}': NumericScale must be between 0 and 28.");
+        }
+
+        if (s > p)
+        {
+            throw new ArgumentOutOfRangeException(paramName, s, $"Column '{definition.Name}': NumericScale must not exceed NumericPrecision ({p}).");
+        }
+
         return s;
     }
 

@@ -120,9 +120,11 @@ public sealed record ColumnDefinition
     /// Persisted in the JET TDEF column-flag bit <c>HYPERLINK_FLAG_MASK = 0x80</c> so that
     /// Access opens the column with the Hyperlink data-format affordance (clickable values,
     /// Insert Hyperlink dialog, etc.). Implies <c>Memo</c>: the underlying CLR type must be
-    /// <see cref="string"/> or <see cref="Hyperlink"/> and any <see cref="MaxLength"/> hint
-    /// is ignored. <c>CreateTableAsync</c> throws <see cref="ArgumentException"/>
-    /// if the bit is requested on a non-text column. Surfaced to readers via
+    /// <see cref="Hyperlink"/>, whose <see cref="MaxLength"/> hint is ignored, or
+    /// <see cref="string"/> with no <see cref="MaxLength"/> (or one above 255).
+    /// <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw <see cref="ArgumentException"/>,
+    /// before anything is written, if the bit is requested on a column that is not a
+    /// <c>Memo</c>. Surfaced to readers via
     /// <see cref="ColumnMetadata.IsHyperlink"/>; values are auto-materialized as
     /// <see cref="Hyperlink"/> instances when the bit is observed on read.
     /// See <see href="docs/design/hyperlink-format-notes.md" />.

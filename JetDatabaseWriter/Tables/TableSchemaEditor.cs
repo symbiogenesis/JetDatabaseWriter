@@ -106,7 +106,7 @@ internal sealed class TableSchemaEditor(
         {
             if (columns[i] is { } column)
             {
-                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
+                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format, nameof(columns));
             }
         }
 
@@ -232,7 +232,7 @@ internal sealed class TableSchemaEditor(
         // Argument checks before the table is read: the name, then the format,
         // so a calculated column on an .mdb reports that, then the expression,
         // then the default.
-        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
+        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column));
         ValidateDeclaredDefault(column, nameof(column));
 

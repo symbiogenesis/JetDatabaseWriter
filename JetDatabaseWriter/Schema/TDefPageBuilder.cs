@@ -27,20 +27,24 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
     /// and returns the column type it is stored as: calculated, Large Number,
     /// Date/Time Extended, Attachment and multi-value columns need ACCDB, a
     /// calculated column needs an expression, a supported result type and no
-    /// AutoNumber, Attachment, multi-value or Hyperlink flag, and a decimal
-    /// column on Jet3, which has no Decimal type, is stored as Currency
+    /// AutoNumber, Attachment, multi-value or Hyperlink flag, a Hyperlink
+    /// column must be a Memo, and a decimal column on Jet3, which has no
+    /// Decimal type, is stored as Currency
     /// (<see cref="JetTypeInfo.ResolveStorageType"/>). The expression itself
-    /// is not parsed here.
+    /// is not parsed here. Every <see cref="ArgumentException"/> it throws
+    /// carries <paramref name="paramName"/>, so <c>CreateTableAsync</c> reports
+    /// <c>columns</c> and <c>AddColumnAsync</c> reports <c>column</c>.
     /// </summary>
     /// <param name="definition">The column definition.</param>
     /// <param name="format">The database format.</param>
+    /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column's type code.</returns>
     /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
-    /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
-    internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format)
+    /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, a Hyperlink column is not a Memo, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
+    internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format, string paramName)
     {
-        ValidateCalculatedColumn(definition, format);
-        ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition), format);
+        ValidateCalculatedColumn(definition, format, paramName);
+        ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition, paramName), format, paramName);
 
         if (type == BigIntType && format != DatabaseFormat.AceAccdb)
         {
@@ -65,8 +69,18 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         // parent table; check them before anything is written.
         if (definition.IsMultiValue && definition.MultiValueElementType == typeof(decimal))
         {
-            _ = ResolveNumericPrecision(definition);
-            _ = ResolveNumericScale(definition);
+            _ = ResolveNumericPrecision(definition, paramName);
+            _ = ResolveNumericScale(definition, paramName);
+        }
+
+        // The Hyperlink flag marks a Memo column. A complex column carries no
+        // descriptor flags, so the flag is ignored on one.
+        if ((definition.IsHyperlink || definition.ClrType == typeof(Hyperlink)) && type is not (MemoType or AttachmentType or ComplexType))
+        {
+            throw new ArgumentException(
+                $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type {GetTypeDisplayName(type)}; " +
+                "hyperlink columns must be MEMO (string with no MaxLength, or typeof(Hyperlink)).",
+                paramName);
         }
 
         return type;
@@ -81,7 +95,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         for (int i = 0; i < columns.Count; i++)
         {
             ColumnDefinition definition = columns[i];
-            ColumnType type = ValidateColumnForFormat(definition, format);
+            ColumnType type = ValidateColumnForFormat(definition, format, nameof(columns));
 
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);
@@ -116,17 +130,9 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
                     flags |= Constants.ColumnDescriptorFlags.AutoNumber;
                 }
 
-                bool wantsHyperlink = definition.IsHyperlink || definition.ClrType == typeof(Hyperlink);
-                if (wantsHyperlink)
+                // ValidateColumnForFormat has checked that a Hyperlink column is a Memo.
+                if (definition.IsHyperlink || definition.ClrType == typeof(Hyperlink))
                 {
-                    if (type != MemoType)
-                    {
-                        throw new ArgumentException(
-                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type {GetTypeDisplayName(type)}; " +
-                            "hyperlink columns must be MEMO (string with no MaxLength, or typeof(Hyperlink)).",
-                            nameof(columns));
-                    }
-
                     flags |= Constants.ColumnDescriptorFlags.Hyperlink;
                 }
             }
@@ -143,8 +149,8 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
                 Size = size,
                 Flags = flags,
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
-                NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition) : (byte)0,
-                NumericScale = type == NumericType ? ResolveNumericScale(definition) : (byte)0,
+                NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition, nameof(columns)) : (byte)0,
+                NumericScale = type == NumericType ? ResolveNumericScale(definition, nameof(columns)) : (byte)0,
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
