@@ -295,7 +295,6 @@ internal sealed class TableSchemaEditor(
             return;
         }
 
-        CalculatedExpressionNormalizer.ValidateDefinition(column.Name, expression);
         try
         {
             _ = CalculatedExpressionPlan.Parse(expression);

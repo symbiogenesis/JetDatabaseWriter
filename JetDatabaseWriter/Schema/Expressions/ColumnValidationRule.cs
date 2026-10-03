@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -382,7 +381,7 @@ internal sealed class ColumnValidationRule
                     : this.ParseRule(start + 1, end - 1);
             }
 
-            string text = this.TermText(start, end);
+            string text = source[tokens[start].Start..tokens[end - 1].End];
             string expression;
             if (this.StartsWithImplicitOperand(start, end))
             {
@@ -452,38 +451,6 @@ internal sealed class ColumnValidationRule
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// Returns the source text of a term, rewriting single-quoted string literals
-        /// (which Access accepts) to the double-quoted form the expression engine parses.
-        /// </summary>
-        /// <param name="start">The index of the term's first token.</param>
-        /// <param name="end">The index one past the term's last token.</param>
-        /// <returns>The term's expression text.</returns>
-        private string TermText(int start, int end)
-        {
-            var builder = new StringBuilder(tokens[end - 1].End - tokens[start].Start + 8);
-            for (int index = start; index < end; index++)
-            {
-                Token token = tokens[index];
-                if (index > start)
-                {
-                    builder.Append(source, tokens[index - 1].End, token.Start - tokens[index - 1].End);
-                }
-
-                if (token.Kind == TokenKind.Literal && token.Text[0] == '\'')
-                {
-                    string inner = token.Text[1..^1].Replace("''", "'", StringComparison.Ordinal);
-                    builder.Append('"').Append(inner.Replace("\"", "\"\"", StringComparison.Ordinal)).Append('"');
-                }
-                else
-                {
-                    builder.Append(token.Text);
-                }
-            }
-
-            return builder.ToString();
         }
     }
 

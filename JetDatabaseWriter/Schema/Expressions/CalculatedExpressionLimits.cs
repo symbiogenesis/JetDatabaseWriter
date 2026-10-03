@@ -28,9 +28,9 @@ internal static class CalculatedExpressionLimits
         for (int charIndex = 0; charIndex < expression.Length; charIndex++)
         {
             char current = expression[charIndex];
-            if (current == '"')
+            if (current is '"' or '\'')
             {
-                charIndex = SkipQuotedString(expression, charIndex);
+                charIndex = SkipQuotedString(expression, charIndex, current);
                 continue;
             }
 
@@ -88,16 +88,16 @@ internal static class CalculatedExpressionLimits
         }
     }
 
-    private static int SkipQuotedString(string expression, int quoteIndex)
+    private static int SkipQuotedString(string expression, int quoteIndex, char quote)
     {
         for (int charIndex = quoteIndex + 1; charIndex < expression.Length; charIndex++)
         {
-            if (expression[charIndex] != '"')
+            if (expression[charIndex] != quote)
             {
                 continue;
             }
 
-            if (charIndex + 1 < expression.Length && expression[charIndex + 1] == '"')
+            if (charIndex + 1 < expression.Length && expression[charIndex + 1] == quote)
             {
                 charIndex++;
                 continue;
