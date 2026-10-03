@@ -514,6 +514,98 @@ public sealed class ScaffoldRunnerTests : IDisposable
         Assert.Empty(Directory.GetFiles(this.outputDir));
     }
 
+    /// <summary>
+    /// The usings sit above the namespace, and C# looks a type name up in every enclosing
+    /// namespace before it consults them, so a namespace segment named like a type the
+    /// generated code names would hide that type: a property type (CS0118) or a mapping
+    /// attribute class (CS0616). The tool stops before it creates the output directory.
+    /// </summary>
+    /// <param name="ns">The namespace.</param>
+    /// <param name="columnType">The type of the table's one column besides the key.</param>
+    /// <param name="segment">The segment the error names.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("MyApp.DateTime", typeof(DateTime), "DateTime")]
+    [InlineData("X.Hyperlink", typeof(Hyperlink), "Hyperlink")]
+    [InlineData("Guid.Models", typeof(Guid), "Guid")]
+    [InlineData("MyApp.TimeSpan.Data", typeof(TimeSpan), "TimeSpan")]
+    [InlineData("MyApp.Version", typeof(Version), "Version")]
+    [InlineData("MyApp.Hyperlink", typeof(int), "Hyperlink")]
+    [InlineData("DateOnly.TimeOnly", typeof(string), "DateOnly")]
+    [InlineData("MyApp.ColumnAttribute", typeof(int), "ColumnAttribute")]
+    [InlineData("TableAttribute.Models", typeof(int), "TableAttribute")]
+    public async Task RunAsync_NamespaceSegmentNamedLikeGeneratedCodeType_ReturnsMinusOneAndWritesNoFiles(string ns, Type columnType, string segment)
+    {
+        ArgumentNullException.ThrowIfNull(columnType);
+        string nested = Path.Combine(this.outputDir, "Models");
+        await using var reader = new FakeAccessReader(
+            tables: ["Orders"],
+            columnsByTable: new() { ["Orders"] = [Col("Id", typeof(int)), Col("Value", columnType)] });
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+
+        int result = await runner.RunAsync(nested, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(-1, result);
+        Assert.Contains(
+            $"Error: the namespace '{ns}' has a segment named '{segment}', which would hide the {segment} type the generated code uses.",
+            stderr.ToString(),
+            StringComparison.Ordinal);
+        Assert.False(Directory.Exists(nested));
+    }
+
+    /// <summary>
+    /// A namespace segment that names no type the generated code uses works, even when it
+    /// is named like a namespace the usings import, an attribute's short name, a generic
+    /// collection type, or a reserved type name in another case: the generated files
+    /// compile, with the attributes and property types bound to the right types.
+    /// </summary>
+    /// <param name="ns">The namespace.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("MyApp.System")]
+    [InlineData("MyCompany.JetDatabaseWriter.Models")]
+    [InlineData("MyApp.Column")]
+    [InlineData("Table.Models")]
+    [InlineData("MyApp.ICollection.List")]
+    [InlineData("MyApp.datetime")]
+    [InlineData("MyApp.Columnattribute")]
+    public async Task RunAsync_NamespaceSegmentNamingNoGeneratedCodeType_WritesCompilableFiles(string ns)
+    {
+        Dictionary<string, List<ColumnMetadata>> columnsByTable = new(StringComparer.Ordinal)
+        {
+            ["tbl Orders"] = [Col("Order ID", typeof(int)), Col("Order Date", typeof(DateTime)), Col("Key", typeof(Guid)), Col("Link", typeof(Hyperlink)), Col("Photo", typeof(byte[]))],
+            ["Order Lines"] = [Col("Id", typeof(int)), Col("Order ID", typeof(int))],
+        };
+        await using var reader = new FakeAccessReader(
+            [.. columnsByTable.Keys],
+            columnsByTable,
+            relationships: [new() { Name = "OrdersLines", PrimaryTable = "tbl Orders", PrimaryColumns = ["Order ID"], ForeignTable = "Order Lines", ForeignColumns = ["Order ID"] }]);
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+
+        int result = await runner.RunAsync(this.outputDir, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, result);
+        List<string> sources = [];
+        foreach (string file in Directory.GetFiles(this.outputDir, "*.cs"))
+        {
+            sources.Add(await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+
+        Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
+        Type orders = assembly.GetType(ns + ".TblOrders", throwOnError: true)!;
+        Type lines = assembly.GetType(ns + ".OrderLines", throwOnError: true)!;
+        Assert.Equal("tbl Orders", orders.GetCustomAttribute<TableAttribute>()!.Name);
+        Assert.Equal("Order ID", orders.GetProperty("OrderID")!.GetCustomAttribute<ColumnAttribute>()!.Name);
+        Assert.Equal(typeof(DateTime?), orders.GetProperty("OrderDate")!.PropertyType);
+        Assert.Equal(typeof(Guid?), orders.GetProperty("Key")!.PropertyType);
+        Assert.Equal(typeof(Hyperlink), orders.GetProperty("Link")!.PropertyType);
+        Assert.Equal(typeof(ICollection<>).MakeGenericType(lines), orders.GetProperty("OrderLines")!.PropertyType);
+    }
+
     private static ColumnMetadata Col(string name, Type clrType) =>
         new() { Name = name, ClrType = clrType, IsNullable = clrType != typeof(byte[]), TypeName = clrType.Name, Size = ColumnSize.FromBytes(4) };
 
