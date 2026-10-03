@@ -46,7 +46,7 @@ internal sealed class ColumnConstraint
     public ColumnType CalculatedResultType { get; set; }
 
     /// <summary>
-    /// Gets or sets lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
+    /// Gets or sets lazy-seeded next auto-increment value (max(TDEF counter, existing) + 1). Null until first use.
     /// </summary>
     public long? NextAutoValue { get; set; }
 

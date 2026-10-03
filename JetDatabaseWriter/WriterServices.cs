@@ -50,6 +50,8 @@ internal sealed class WriterServices
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator);
         var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
         var tableRows = new TableRowStore(db, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
+        var autoNumbers = new AutoNumberMaintainer(db);
+        CatalogRowReader catalogRows = this.CatalogRows;
         var constraints = new ConstraintRegistry(
             snapshots.ReadTableSnapshotAsync,
             async (tableName, ct) =>
@@ -61,12 +63,21 @@ internal sealed class WriterServices
                 }
 
                 return await snapshots.ReadLvPropBlockAsync(entry.TDefPage, ct).ConfigureAwait(false);
+            },
+            async (tableName, ct) =>
+            {
+                // Complex-column flat tables are system tables, so they are
+                // not in the user-table catalog.
+                CatalogEntry? entry = await catalog.GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
+                long tdefPage = entry?.TDefPage
+                    ?? await catalogRows.FindSystemTableTdefPageAsync(tableName, ct).ConfigureAwait(false);
+                return await autoNumbers.ReadHighWaterAsync(tdefPage, ct).ConfigureAwait(false);
             });
 
         this.Indexes = new IndexMaintainer(db, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
         this.CatalogArtifacts = new CatalogArtifactWriter(db, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
-        this.ComplexColumns = new ComplexColumnManager(db, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints);
+        this.ComplexColumns = new ComplexColumnManager(db, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers);
 
         var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots);
         var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
@@ -79,7 +90,7 @@ internal sealed class WriterServices
             tableRows,
             this.Indexes,
             new UniqueIndexChecker(db, snapshots),
-            new AutoNumberMaintainer(db),
+            autoNumbers,
             constraints,
             enforcer,
             this.ComplexColumns,
@@ -95,7 +106,8 @@ internal sealed class WriterServices
             this.CatalogArtifacts,
             this.ComplexColumns,
             constraints,
-            snapshots);
+            snapshots,
+            autoNumbers);
     }
 
     /// <summary>Gets the explicit and auto-commit transaction lifecycle.</summary>

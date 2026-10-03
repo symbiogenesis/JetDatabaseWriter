@@ -42,6 +42,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
+/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert.</param>
 internal sealed class ComplexColumnManager(
     DatabaseFile db,
     TableCatalog catalog,
@@ -49,7 +50,8 @@ internal sealed class ComplexColumnManager(
     IndexMaintainer indexes,
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
-    ConstraintRegistry constraints)
+    ConstraintRegistry constraints,
+    AutoNumberMaintainer autoNumbers)
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
@@ -837,13 +839,15 @@ internal sealed class ComplexColumnManager(
         // The flat table carries an autoincrement scalar PK column.
         // ApplyConstraintsAsync hydrates the constraint registry from the
         // persisted FLAG_AUTO_LONG bit and seeds the next value from the
-        // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
-        // a single-call surface.
+        // larger of the flat table's TDEF AutoNumber counter and its existing
+        // rows, so AddAttachmentAsync / AddMultiValueItemAsync stay a
+        // single-call surface. The counter is raised after the insert below.
         string flatTableName = await this.ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
         await constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
         await tableRows.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
         await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+        await autoNumbers.UpdateHighWaterAsync(flatTdefPage, flatDef, [flatValues], cancellationToken).ConfigureAwait(false);
     }
 
     private static ComplexColumnKind ClassifyComplexColumnKind(ColumnType parentType, TableDef flatDef)

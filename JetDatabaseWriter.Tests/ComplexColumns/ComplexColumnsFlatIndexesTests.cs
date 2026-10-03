@@ -159,6 +159,54 @@ public sealed class ComplexColumnsFlatIndexesTests
         Assert.Equal(2, attachments.Count);
     }
 
+    [Fact]
+    public async Task AddAttachment_AfterTopFlatRowsDeletedInEarlierSession_DoesNotReuseScalarPk()
+    {
+        // AddAttachmentAsync persists the flat table's AutoNumber high-water
+        // value, and a later session seeds from it, so deleting the parent
+        // that owned the highest scalar PKs does not free those values.
+        var parent1 = new Dictionary<string, object?> { ["Id"] = 1 };
+        var parent2 = new Dictionary<string, object?> { ["Id"] = 2 };
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Documents",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync("Documents", [1, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Documents", [2, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync("Documents", "Files", parent1, new AttachmentInput("a.txt", [1]), TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync("Documents", "Files", parent2, new AttachmentInput("b.txt", [2]), TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync("Documents", "Files", parent2, new AttachmentInput("c.txt", [3]), TestContext.Current.CancellationToken);
+            Assert.Equal(1, await writer.DeleteRowsAsync("Documents", "Id", 2, TestContext.Current.CancellationToken));
+        }
+
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.AddAttachmentAsync("Documents", "Files", parent1, new AttachmentInput("d.txt", [4]), TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        ComplexColumnInfo att = Assert.Single(await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
+        System.Data.DataTable dt = await reader.ReadDataTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
+            ?? throw new InvalidOperationException("Flat table not found.");
+
+        var scalarsByFile = dt.Rows.Cast<System.Data.DataRow>().ToDictionary(
+            r => (string)r["FileName"],
+            r => Convert.ToInt32(r["Documents_Files"], System.Globalization.CultureInfo.InvariantCulture),
+            StringComparer.Ordinal);
+        Assert.Equal(2, scalarsByFile.Count);
+        Assert.Equal(1, scalarsByFile["a.txt"]);
+        Assert.Equal(4, scalarsByFile["d.txt"]);
+    }
+
     private static async ValueTask<AccessReader> CreateAndReadAttachmentFlat()
     {
         var ms = new MemoryStream();
