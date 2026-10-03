@@ -426,9 +426,10 @@ internal static class EntityEmitter
     }
 
     /// <summary>
-    /// Replaces each control character, such as a line break in a column name, and each
-    /// character XML cannot hold with a space, so the doc comment stays on one line and
-    /// <see cref="XmlText(string)"/> accepts it.
+    /// Replaces each control character, such as a line break in a column name, each other
+    /// character C# reads as a line break (U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+    /// SEPARATOR), and each character XML cannot hold with a space, so the doc comment
+    /// stays on one line and <see cref="XmlText(string)"/> accepts it.
     /// </summary>
     /// <param name="text">The text.</param>
     /// <returns>The text to put in the doc comment.</returns>
@@ -441,7 +442,7 @@ internal static class EntityEmitter
             {
                 i++;
             }
-            else if (char.IsControl(chars[i]) || !XmlConvert.IsXmlChar(chars[i]))
+            else if (char.IsControl(chars[i]) || SyntaxFacts.IsNewLine(chars[i]) || !XmlConvert.IsXmlChar(chars[i]))
             {
                 chars[i] = ' ';
             }

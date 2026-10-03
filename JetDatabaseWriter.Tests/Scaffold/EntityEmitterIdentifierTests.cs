@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Scaffold;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 /// <summary>
@@ -83,17 +84,29 @@ public sealed class EntityEmitterIdentifierTests
         Assert.Equal("Parent", type.GetProperty("GetTypeNavigation")!.PropertyType.Name);
     }
 
+    /// <summary>
+    /// A column name holding a character that ends a C# comment line (a line break,
+    /// U+0085, U+2028 or U+2029) or a character XML cannot hold still gives a doc
+    /// comment on one line, and the <c>[Column]</c> attribute keeps the exact name.
+    /// </summary>
+    /// <param name="name">The column name.</param>
     [Theory]
     [InlineData("Line\nBreak")]
     [InlineData("Cr\r\nLf")]
     [InlineData("Tab\tAnd\u0001")]
+    [InlineData("Next\u0085Line")]
+    [InlineData("Line\u2028Sep")]
+    [InlineData("Para\u2029Sep")]
     public void Emit_ColumnNameWithControlCharacters_KeepsDocCommentOnOneLine(string name)
     {
         string source = EntityEmitter.Emit("Item", "Item", [Column(name, typeof(int))], [], "NS", useRecords: false, nullable: true);
 
-        ScaffoldCompilation.CompileCleanly(source);
+        Type type = ScaffoldCompilation.CompileCleanly(source).GetType("NS.Item", throwOnError: true)!;
+        PropertyInfo property = Assert.Single(type.GetProperties());
+        Assert.Equal(name, property.GetCustomAttribute<System.ComponentModel.DataAnnotations.Schema.ColumnAttribute>()!.Name);
         string summary = Assert.Single(source.Split("\r\n"), line => line.Contains("<summary>", StringComparison.Ordinal));
         Assert.EndsWith("</summary>", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain(summary, SyntaxFacts.IsNewLine);
     }
 
     [Fact]
