@@ -619,25 +619,28 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            if (column.Type == TextType)
+            // Access stores the cached value by the column's ResultType, which can
+            // differ from the descriptor type (a Memo result in a Text descriptor
+            // keeps a long-value header in the row), so the codec follows it.
+            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+            if (valueType == TextType)
             {
                 byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
                 return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
             }
 
-            if (column.Type == BinaryType)
+            if (valueType == BinaryType)
             {
                 return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)));
             }
 
-            if (column.Type is MemoType or OleType)
+            if (valueType is MemoType or OleType)
             {
                 byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
                 byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-                return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, column.Type == OleType);
+                return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType);
             }
 
-            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
                 return CalculatedColumnUtil.ReadPayloadString(
@@ -768,24 +771,26 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            if (column.Type == TextType)
+            // The cached value is encoded by the ResultType, not the descriptor
+            // type; see DecodeCalculatedStringVariableValueAsync.
+            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+            if (valueType == TextType)
             {
                 byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
                 return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
             }
 
-            if (column.Type == BinaryType)
+            if (valueType == BinaryType)
             {
                 return CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
             }
 
-            if (column.Type is MemoType or OleType)
+            if (valueType is MemoType or OleType)
             {
                 needsLongValue = true;
-                return new CalculatedLongValueRef(start, length, column.Type == OleType);
+                return new CalculatedLongValueRef(start, length, valueType == OleType);
             }
 
-            ColumnType valueType = JetTypeInfo.ResolveValueType(column);
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
                 return CalculatedColumnUtil.ReadPayloadTyped(

@@ -49,9 +49,21 @@ internal sealed class RowEncoder(DatabaseFile db)
         return LongValueStore.WrapInlineLongValue(data);
     }
 
-    private static int TryEncodeFixedValue(ColumnInfo column, object value, Span<byte> dest)
+    /// <summary>
+    /// Encodes <paramref name="value"/> as the fixed-size payload of
+    /// <paramref name="type"/>, which is the column's descriptor type for a stored
+    /// column and its result type for a calculated one.
+    /// </summary>
+    /// <param name="type">The type to encode the value as.</param>
+    /// <param name="column">The column, for its name and numeric precision and scale.</param>
+    /// <param name="value">The value.</param>
+    /// <param name="dest">The destination buffer.</param>
+    /// <returns>The number of bytes written, or 0 when the type has no fixed payload.</returns>
+    /// <exception cref="FormatException">A GUID column value is not a GUID.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="type"/> is not a known column type.</exception>
+    private static int TryEncodeFixedValue(ColumnType type, ColumnInfo column, object value, Span<byte> dest)
     {
-        switch (column.Type)
+        switch (type)
         {
             case ByteType:
                 dest[0] = Convert.ToByte(value, CultureInfo.InvariantCulture);
@@ -126,7 +138,7 @@ internal sealed class RowEncoder(DatabaseFile db)
             case MemoType:
                 return 0;
             default:
-                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(type)}");
         }
     }
 
@@ -175,25 +187,25 @@ internal sealed class RowEncoder(DatabaseFile db)
         magnitudeBe.CopyTo(dest.Slice(1, 16));
     }
 
-    private static byte[]? EncodeCalculatedFixedPayload(ColumnInfo column, object value)
+    private static byte[]? EncodeCalculatedFixedPayload(ColumnInfo column, ColumnType valueType, object value)
     {
-        if (column.Type == BooleanType)
+        if (valueType == BooleanType)
         {
             return [Convert.ToBoolean(value, CultureInfo.InvariantCulture) ? (byte)0xFF : (byte)0x00];
         }
 
-        if (column.Type == NumericType)
+        if (valueType == NumericType)
         {
             return EncodeCalculatedNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture));
         }
 
-        if (!JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int fixedSize))
+        if (!JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out int fixedSize))
         {
             return null;
         }
 
         byte[] payload = new byte[fixedSize];
-        int written = TryEncodeFixedValue(column, value, payload);
+        int written = TryEncodeFixedValue(valueType, column, value, payload);
         if (written <= 0)
         {
             return null;
@@ -251,10 +263,23 @@ internal sealed class RowEncoder(DatabaseFile db)
         return payload;
     }
 
-    private static int GetCalculatedVariableSize(ColumnInfo column)
-        => column.Size > Constants.CalculatedColumn.ExtraDataLen
-            ? column.Size - Constants.CalculatedColumn.ExtraDataLen
-            : column.Size;
+    /// <summary>
+    /// Returns the payload size limit of a calculated Text or Binary value: the
+    /// descriptor size less the 23-byte wrapper. A descriptor too small to hold
+    /// the wrapper (Access writes size 0 on a Text descriptor whose result type
+    /// is something else) gives a Text result Access's 255-character limit.
+    /// </summary>
+    /// <param name="column">The calculated column.</param>
+    /// <param name="valueType">The column's result type.</param>
+    private static int GetCalculatedVariableSize(ColumnInfo column, ColumnType valueType)
+    {
+        if (column.Size > Constants.CalculatedColumn.ExtraDataLen)
+        {
+            return column.Size - Constants.CalculatedColumn.ExtraDataLen;
+        }
+
+        return valueType == TextType ? Constants.CalculatedColumn.MaxTextResultBytes : column.Size;
+    }
 
     /// <summary>
     /// Serializes a typed value array into the binary row format understood
@@ -337,7 +362,7 @@ internal sealed class RowEncoder(DatabaseFile db)
                     continue;
                 }
 
-                int written = TryEncodeFixedValue(column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
+                int written = TryEncodeFixedValue(column.Type, column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
                 if (written == 0)
                 {
                     continue;
@@ -439,7 +464,7 @@ internal sealed class RowEncoder(DatabaseFile db)
         if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int fixedSize))
         {
             byte[] payload = new byte[fixedSize];
-            int written = TryEncodeFixedValue(column, value, payload);
+            int written = TryEncodeFixedValue(column.Type, column, value, payload);
             if (written <= 0)
             {
                 return null;
@@ -485,34 +510,39 @@ internal sealed class RowEncoder(DatabaseFile db)
 
     private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
     {
-        if (column.Type == TextType)
+        // Access encodes the cached value by the column's ResultType, which can
+        // differ from the descriptor type: a Memo result in a Text descriptor
+        // still stores a long-value header in the row. The row slot stays where
+        // the descriptor puts it.
+        ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+        if (valueType == TextType)
         {
             return CalculatedColumnUtil.Wrap(
-                this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
+                this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column, valueType), compress: false) ?? []);
         }
 
-        if (column.Type == BinaryType)
+        if (valueType == BinaryType)
         {
-            return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
+            return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column, valueType)) ?? []);
         }
 
-        if (column.Type == MemoType)
+        if (valueType == MemoType)
         {
             return this.EncodeCalculatedMemoValue(value);
         }
 
-        if (column.Type == OleType)
+        if (valueType == OleType)
         {
             return EncodeCalculatedOleValue(value);
         }
 
-        if (column.Type == BooleanType || column.Type == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out _))
+        if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
         {
-            byte[]? payload = EncodeCalculatedFixedPayload(column, value);
+            byte[]? payload = EncodeCalculatedFixedPayload(column, valueType, value);
             return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
         }
 
-        throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+        throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(valueType)}");
     }
 
     private byte[]? EncodeCalculatedMemoValue(object value)

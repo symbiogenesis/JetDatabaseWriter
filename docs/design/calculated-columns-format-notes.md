@@ -63,11 +63,39 @@ to `CALC_FIXED_FIELD_LEN` regardless of the underlying type. Long-value result
 types (`MEMO` / `OLE`) keep the normal LVAL row header in the row; the bytes
 inside the LVAL payload are wrapped.
 
-The descriptor `col_type` controls how the wrapped value is placed in the row,
-but the `ResultType` LvProp controls how the wrapped payload is decoded. Access
-can store boolean calculated columns with an integer descriptor type while
-declaring `ResultType = Boolean`, so readers must honour `ResultType` for the
-payload.
+#### Descriptor `col_type` vs `ResultType`
+
+The descriptor `col_type` controls where the wrapped value is placed in the row
+(the column is always in the variable area), but the `ResultType` LvProp
+controls how the value is encoded, including whether the row slot holds an
+inline wrapper or a long-value header. Access-authored columns can have a
+descriptor type that differs from their result type. In
+`calcFieldTestV2010.accdb` `Table1`:
+
+| Column | Descriptor `col_type` | `ResultType` |
+| --- | --- | --- |
+| `AllNames` | Text (`col_len` 0) | Memo |
+| `MonthlySalary` | Double | Currency |
+| `WeeklySalary` | Double | Decimal |
+| `IsRich`, `BoolTest` | Integer | Boolean |
+| `FloatTest` | Decimal | Single |
+
+`AllNames`' row slots are 12-byte LVAL headers, as for any Memo: three rows
+point at single-page LVAL rows (byte 3 = `0x40`) and the short `John Doe` value
+is inline (`0x80`). The LVAL payload is the 23-byte wrapper around the
+uncompressed UCS-2 text. Jackcess does the same: `ColumnImpl.create` replaces
+the column type with `ResultType` for calculated columns.
+
+So the reader (`RowDecodePlan`) and the writer (`RowEncoder`,
+`LongValueEncoder`) both pick the payload codec with
+`JetTypeInfo.ResolveValueType`, which is the hydrated `ResultType` for a
+calculated column. The writer's `TableCatalog` hydrates `ResultType` through
+`ColumnPropertyReader` when it resolves a table, once per table until the next
+`Invalidate`. A schema rewrite (`AddColumnAsync`, `DropColumnAsync`,
+`RenameColumnAsync`) projects each calculated column from its result type, so
+the rebuilt descriptor carries the result type, as the writer's own tables do.
+Rows that earlier builds of this library inserted into or updated in such
+tables were encoded by the descriptor type and are not repaired.
 
 Two result types have Access-specific payload encodings inside the wrapper:
 

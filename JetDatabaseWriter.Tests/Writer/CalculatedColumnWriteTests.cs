@@ -1,15 +1,23 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Expressions;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 public sealed class CalculatedColumnWriteTests
@@ -995,6 +1003,299 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken));
     }
 
+    /// <summary>
+    /// calcFieldTestV2010's Table1 has calculated columns whose descriptor type
+    /// differs from their <c>ResultType</c> (AllNames: Text/Memo, MonthlySalary:
+    /// Double/Currency, WeeklySalary: Double/Decimal, IsRich and BoolTest:
+    /// Integer/Boolean, FloatTest: Decimal/Single). Access stores the cached value
+    /// by the result type, so an insert and an update must too: a default
+    /// (strict) reader then reads every row, and every cached value equals its
+    /// expression re-evaluated against the row.
+    /// </summary>
+    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("transactional")]
+    [InlineData("explicit")]
+    public async Task AccessAuthoredCalculatedColumns_InsertAndUpdate_StoreEachValueAsItsResultType(string mode)
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+
+        await WriteInModeAsync(stream, mode, async writer =>
+        {
+            await writer.InsertRowAsync(
+                "Table1",
+                new RowValues { ["FirstName"] = "Ann", ["LastName"] = "Lee", ["City"] = "X", ["Salary"] = 120000m, ["Popularity"] = 3.5m },
+                TestContext.Current.CancellationToken);
+            int updated = await writer.UpdateRowsAsync(
+                "Table1",
+                RowCriteria.Where("FirstName", "Bruce"),
+                new RowValues { ["City"] = "Gotham2" },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        });
+
+        DataTable table = await AssertCalculatedValuesMatchExpressionsAsync(stream, "Table1");
+        Assert.Equal(5, table.Rows.Count);
+
+        DataRow ann = Assert.Single(table.AsEnumerable(), r => (string)r["FirstName"] == "Ann");
+        Assert.Equal("Lee, Ann=Lee, Ann", ann["AllNames"]);
+        Assert.Equal(10000m, ann["MonthlySalary"]);
+        Assert.Equal(true, ann["IsRich"]);
+        Assert.Equal(true, ann["BoolTest"]);
+
+        DataRow bruce = Assert.Single(table.AsEnumerable(), r => (string)r["FirstName"] == "Bruce");
+        Assert.Equal("Gotham2", bruce["City"]);
+        Assert.Equal("Wayne, Bruce=Wayne, Bruce", bruce["AllNames"]);
+        Assert.Equal(83333.3333m, bruce["MonthlySalary"]);
+    }
+
+    /// <summary>
+    /// The inserted row's cached values use Access's payload layout for each
+    /// result type: a 1-byte 0xFF Boolean, an 8-byte Currency, and a long-value
+    /// header (inline, single-page or chained) in front of the wrapped Memo text,
+    /// even though the descriptors say Integer, Double and Text.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AccessAuthoredCalculatedColumns_InsertedRow_UsesAccessPayloadLayout()
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(
+                "Table1",
+                new RowValues { ["FirstName"] = "Ann", ["LastName"] = "Lee", ["City"] = "X", ["Salary"] = 120000m, ["Popularity"] = 3.5m },
+                TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", TestContext.Current.CancellationToken));
+        TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
+        DatabaseFile db = harness.Database;
+        ColumnInfo firstName = tableDef.Columns.Single(c => c.Name == "FirstName");
+        ColumnInfo[] calculated = [.. tableDef.Columns.Where(c => c.Name is "IsRich" or "MonthlySalary" or "AllNames")];
+        Assert.Equal(ColumnType.IntegerType, calculated.Single(c => c.Name == "IsRich").Type);
+        Assert.Equal(ColumnType.DoubleType, calculated.Single(c => c.Name == "MonthlySalary").Type);
+        Assert.Equal(ColumnType.TextType, calculated.Single(c => c.Name == "AllNames").Type);
+
+        Dictionary<string, byte[]>? slots = null;
+        await db.ForEachLiveTableRowAsync(
+            entry.TDefPage,
+            (row, _) =>
+            {
+                byte[] page = row.Page;
+                int rowStart = row.Location.RowStart;
+                int rowSize = row.Location.RowSize;
+                Assert.True(db.TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice nameSlice = db.ResolveColumnSlice(page, rowStart, rowSize, layout, firstName);
+                if (db.DecodeTextForFormat(page, rowStart + nameSlice.DataStart, nameSlice.DataLen) == "Ann")
+                {
+                    slots = calculated.ToDictionary(
+                        c => c.Name,
+                        c =>
+                        {
+                            ColumnSlice slice = db.ResolveColumnSlice(page, rowStart, rowSize, layout, c);
+                            return page.AsSpan(rowStart + slice.DataStart, slice.DataLen).ToArray();
+                        });
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(slots);
+
+        byte[] isRich = CalculatedColumnUtil.Unwrap(slots["IsRich"]);
+        Assert.Equal([0xFF], isRich);
+
+        byte[] monthlySalary = CalculatedColumnUtil.Unwrap(slots["MonthlySalary"]);
+        Assert.Equal(8, monthlySalary.Length);
+        Assert.Equal(10000m, decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(monthlySalary)));
+
+        byte[] allNames = slots["AllNames"];
+        Assert.True(allNames.Length >= Constants.LongValue.HeaderSize, $"AllNames slot is {allNames.Length} bytes, shorter than a long-value header.");
+        Assert.Contains(allNames[3], new byte[] { 0x80, 0x40, 0x00 });
+        var longValues = new LongValueDecoder(db, harness.Services.PageCache);
+        byte[] lval = await longValues.ReadLongValueRawBytesAsync(allNames, 0, allNames.Length, TestContext.Current.CancellationToken);
+        byte[] text = CalculatedColumnUtil.Unwrap(lval);
+        Assert.Equal("Lee, Ann=Lee, Ann", db.DecodeTextForFormat(text, 0, text.Length));
+    }
+
+    /// <summary>
+    /// A Memo result over the 1,024-byte inline limit spills to LVAL pages and
+    /// reads back exactly, although the column descriptor says Text.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AccessAuthoredCalculatedMemo_OverInlineLimit_SpillsToLval()
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+        string first = new('f', 200);
+        string last = new('l', 200);
+        string lastFirst = last + ", " + first;
+        string expected = lastFirst + "=" + lastFirst;
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(
+                "Table1",
+                new RowValues { ["FirstName"] = first, ["LastName"] = last, ["Salary"] = 1m, ["Popularity"] = 1m },
+                TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable(), r => (string)r["FirstName"] == first);
+        Assert.Equal(expected, row["AllNames"]);
+
+        DataTable strings = await reader.ReadTableAsStringsAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Contains(expected, strings.AsEnumerable().Select(r => (string)r["AllNames"]));
+    }
+
+    /// <summary>
+    /// A schema rewrite of the Access-authored table carries each calculated
+    /// column by its result type: the cached values still match their
+    /// expressions, and AllNames's rebuilt descriptor is Memo.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AccessAuthoredCalculatedTable_AddColumn_KeepsCalculatedValues()
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.AddColumnAsync("Table1", new("Note", typeof(string), maxLength: 20), TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(
+                "Table1",
+                new RowValues { ["FirstName"] = "Ann", ["LastName"] = "Lee", ["Salary"] = 120000m, ["Popularity"] = 3.5m, ["Note"] = "n" },
+                TestContext.Current.CancellationToken);
+        }
+
+        DataTable table = await AssertCalculatedValuesMatchExpressionsAsync(stream, "Table1");
+        Assert.Equal(
+            ["Doe, John=Doe, John", "Lee, Ann=Lee, Ann", "Simpson, Bart=Simpson, Bart", "User, Test=User, Test", "Wayne, Bruce=Wayne, Bruce"],
+            table.AsEnumerable().Select(r => (string)r["AllNames"]).Order(StringComparer.Ordinal));
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
+            Assert.Equal(0x0C, Assert.Single(metadata, c => c.Name == "AllNames").CalculatedResultType);
+            Assert.Equal(typeof(decimal), Assert.Single(metadata, c => c.Name == "MonthlySalary").ClrType);
+        }
+
+        stream.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", TestContext.Current.CancellationToken));
+        TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
+        Assert.Equal(ColumnType.MemoType, tableDef.Columns.Single(c => c.Name == "AllNames").Type);
+    }
+
+    private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
+    {
+        await using AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" });
+        if (mode == "explicit")
+        {
+            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await work(writer);
+            await transaction.CommitAsync(TestContext.Current.CancellationToken);
+        }
+        else
+        {
+            await work(writer);
+        }
+    }
+
+    /// <summary>
+    /// Reads <paramref name="tableName"/> with a default (strict) reader and checks
+    /// that every calculated column of every row equals its expression re-evaluated
+    /// against the row's other values.
+    /// </summary>
+    /// <param name="stream">The database.</param>
+    /// <param name="tableName">The table to check.</param>
+    /// <returns>The table as read.</returns>
+    private static async Task<DataTable> AssertCalculatedValuesMatchExpressionsAsync(MemoryStream stream, string tableName)
+    {
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+
+        var tableDef = new TableDef();
+        var constraints = new List<ColumnConstraint>(meta.Count);
+        foreach (ColumnMetadata column in meta)
+        {
+            tableDef.Columns.Add(new ColumnInfo { Name = column.Name });
+            constraints.Add(new ColumnConstraint
+            {
+                Name = column.Name,
+                ClrType = column.ClrType,
+                IsCalculated = column.IsCalculated,
+                CalculationExpression = column.CalculationExpression,
+            });
+        }
+
+        DataTable table = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        var mismatches = new List<string>();
+        foreach (DataRow row in table.Rows)
+        {
+            object[] values = new object[meta.Count];
+            for (int i = 0; i < meta.Count; i++)
+            {
+                values[i] = meta[i].IsCalculated ? DBNull.Value : row[meta[i].Name];
+            }
+
+            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false);
+            for (int i = 0; i < meta.Count; i++)
+            {
+                if (!meta[i].IsCalculated)
+                {
+                    continue;
+                }
+
+                object stored = row[meta[i].Name];
+                object computed = values[i];
+                string label = $"{meta[i].Name} = {meta[i].CalculationExpression}";
+                if (stored is DBNull || computed is DBNull)
+                {
+                    if (!(stored is DBNull && computed is DBNull))
+                    {
+                        mismatches.Add($"{label}: stored {stored}, computed {computed}");
+                    }
+                }
+                else if (stored is float or double or decimal)
+                {
+                    double expected = Convert.ToDouble(stored, CultureInfo.InvariantCulture);
+                    double actual = Convert.ToDouble(computed, CultureInfo.InvariantCulture);
+                    if (Math.Abs(expected - actual) > Math.Max(1e-4, Math.Abs(expected) * 1e-6))
+                    {
+                        mismatches.Add($"{label}: stored {expected}, computed {actual}");
+                    }
+                }
+                else if (!Equals(stored, computed))
+                {
+                    mismatches.Add($"{label}: stored {stored} ({stored.GetType().Name}), computed {computed}");
+                }
+            }
+        }
+
+        Assert.True(mismatches.Count == 0, string.Join(Environment.NewLine, mismatches));
+        return table;
+    }
+
+    private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)
+    {
+        Assert.True(File.Exists(path), $"Fixture not found: {path}");
+        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+        var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        return stream;
+    }
+
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var stream = new MemoryStream();
@@ -1011,12 +1312,12 @@ public sealed class CalculatedColumnWriteTests
         return stream;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, AccessWriterOptions? options = null)
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false },
+            options ?? new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
     }

@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
@@ -49,7 +50,11 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
-            if (col.IsFixed || (col.Type != OleType && col.Type != MemoType))
+
+            // A calculated column stores its cached value by its result type,
+            // so a Memo result in a Text descriptor is a long value too.
+            ColumnType valueType = ResolveValueType(col);
+            if (col.IsFixed || (valueType != OleType && valueType != MemoType))
             {
                 continue;
             }
@@ -62,7 +67,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
 
             byte[]? data;
             int inlineCap;
-            if (col.Type == OleType)
+            if (valueType == OleType)
             {
                 data = value as byte[];
                 if (data == null)
@@ -212,7 +217,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
 
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (column.Type is not MemoType and not OleType)
+            if (ResolveValueType(column) is not MemoType and not OleType)
             {
                 continue;
             }

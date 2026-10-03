@@ -41,7 +41,7 @@ internal sealed class WriterServices
         var columnProperties = new ColumnPropertyReader(db, snapshotRows);
 
         this.CatalogRows = new CatalogRowReader(db);
-        this.Catalog = new TableCatalog(db, this.CatalogRows);
+        this.Catalog = new TableCatalog(db, this.CatalogRows, columnProperties);
         this.PageAllocator = new PageAllocator(db, options);
 
         TableCatalog catalog = this.Catalog;

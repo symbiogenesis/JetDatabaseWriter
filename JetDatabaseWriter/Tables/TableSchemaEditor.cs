@@ -307,6 +307,19 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
+    /// Returns the payload size of a calculated Text or Binary column: its descriptor
+    /// size less the calculated-value wrapper, or <paramref name="fallback"/> when the
+    /// descriptor is another type or too small to hold the wrapper.
+    /// </summary>
+    /// <param name="column">The calculated column.</param>
+    /// <param name="sizedByDescriptor">Whether the descriptor type is the result type.</param>
+    /// <param name="fallback">The size to use when the descriptor does not give one.</param>
+    private static int CalculatedPayloadSize(ColumnInfo column, bool sizedByDescriptor, int fallback)
+        => sizedByDescriptor && column.Size > Constants.CalculatedColumn.ExtraDataLen
+            ? column.Size - Constants.CalculatedColumn.ExtraDataLen
+            : fallback;
+
+    /// <summary>
     /// Rebuilds <paramref name="tableName"/> into a temporary copy with the
     /// projected schema, copies every row, and swaps the copy in. The table's
     /// foreign-key index entries are re-emitted on the copy, and its partner
@@ -638,20 +651,22 @@ internal sealed class TableSchemaEditor(
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column, ColumnPropertyBlock? properties = null)
     {
+        // A calculated column is projected from its result type, which can differ
+        // from its descriptor type in Access-authored tables (a Memo result in a
+        // Text descriptor, a Currency result in a Double one); the rebuilt
+        // descriptor then carries the result type, as the writer's own do.
+        ColumnType valueType = ResolveValueType(column);
+        bool sizedByDescriptor = !column.IsCalculated || valueType == column.Type;
         ColumnDefinition baseDef;
-        switch (column.Type)
+        switch (valueType)
         {
             case TextType:
-                int textSize = column.IsCalculated
-                    ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
-                    : column.Size;
+                int textSize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, Constants.CalculatedColumn.MaxTextResultBytes) : column.Size;
                 int charLen = db.Format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:
-                int binarySize = column.IsCalculated
-                    ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
-                    : column.Size;
+                int binarySize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, 0) : column.Size;
                 baseDef = new ColumnDefinition(column.Name, typeof(byte[]), binarySize > 0 ? binarySize : 255);
                 break;
             case AttachmentType:
@@ -693,22 +708,22 @@ internal sealed class TableSchemaEditor(
             case GuidType:
             case NumericType:
             case BigIntType:
-                Type clrType = GetClrType(column.Type)
-                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type {GetTypeDisplayName(column.Type)}.");
+                Type clrType = GetClrType(valueType)
+                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type {GetTypeDisplayName(valueType)}.");
                 baseDef = new ColumnDefinition(column.Name, clrType)
                 {
-                    ColumnTypeOverride = column.Type,
+                    ColumnTypeOverride = valueType,
                 };
                 break;
             case DateTimeExtendedType:
                 baseDef = new ColumnDefinition(column.Name, typeof(DateTime))
                 {
                     IsDateTimeExtended = true,
-                    ColumnTypeOverride = column.Type,
+                    ColumnTypeOverride = valueType,
                 };
                 break;
             default:
-                throw new InvalidOperationException($"Column '{column.Name}' has unknown type {GetTypeDisplayName(column.Type)}.");
+                throw new InvalidOperationException($"Column '{column.Name}' has unknown type {GetTypeDisplayName(valueType)}.");
         }
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the
@@ -728,7 +743,7 @@ internal sealed class TableSchemaEditor(
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
             IsHyperlink = column.Type == MemoType && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
-            IsDateTimeExtended = column.Type == DateTimeExtendedType,
+            IsDateTimeExtended = valueType == DateTimeExtendedType,
             IsCompressedUnicode = column.IsCompressedUnicode,
         };
 
@@ -736,7 +751,7 @@ internal sealed class TableSchemaEditor(
         // AddColumn / DropColumn / RenameColumn don't silently reset a NUMERIC
         // column to default 18/0. Access-authored files always populate these
         // descriptor bytes for Numeric columns.
-        if (column.Type == NumericType)
+        if (column.Type == NumericType && valueType == NumericType)
         {
             def = def with { NumericPrecision = column.NumericPrecision, NumericScale = column.NumericScale };
         }
@@ -744,7 +759,7 @@ internal sealed class TableSchemaEditor(
         if (column.IsCalculated)
         {
             ColumnPropertyTarget? target = properties?.FindTarget(column.Name);
-            byte resultType = (byte)column.Type;
+            byte resultType = (byte)valueType;
             ColumnPropertyEntry? resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
             if (resultTypeEntry?.Value.Length >= 1)
             {
