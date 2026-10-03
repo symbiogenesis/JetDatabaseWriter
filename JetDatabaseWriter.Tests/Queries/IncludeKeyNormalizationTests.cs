@@ -70,10 +70,7 @@ public sealed class IncludeKeyNormalizationTests
     }
 
     [Fact]
-    public void StringDigits_DoNotMatchNumericValue()
-    {
-        Assert.NotEqual(IncludeLoader.Normalize(5), IncludeLoader.Normalize("5"));
-    }
+    public void StringDigits_DoNotMatchNumericValue() => Assert.NotEqual(IncludeLoader.Normalize(5), IncludeLoader.Normalize("5"));
 
     [Fact]
     public void NullAndDbNull_NormalizeToNull()

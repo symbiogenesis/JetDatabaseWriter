@@ -19,16 +19,10 @@ public sealed class BoxCacheTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void Bool_ReturnsSameInstance_ForSameValue(bool value)
-    {
-        Assert.Same(BoxCache.Bool(value), BoxCache.Bool(value));
-    }
+    public void Bool_ReturnsSameInstance_ForSameValue(bool value) => Assert.Same(BoxCache.Bool(value), BoxCache.Bool(value));
 
     [Fact]
-    public void Bool_TrueAndFalse_AreDistinctInstances()
-    {
-        Assert.NotSame(BoxCache.Bool(true), BoxCache.Bool(false));
-    }
+    public void Bool_TrueAndFalse_AreDistinctInstances() => Assert.NotSame(BoxCache.Bool(true), BoxCache.Bool(false));
 
     [Fact]
     public void Byte_ReturnsBoxedByte_AndCachedInstance_ForEveryValue()

@@ -29,12 +29,12 @@ public sealed class ReadSurfaceConsistencyTests
 
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
-    public static TheoryData<DatabaseFormat> Formats => new()
-    {
+    public static TheoryData<DatabaseFormat> Formats =>
+    [
         DatabaseFormat.Jet3Mdb,
         DatabaseFormat.Jet4Mdb,
         DatabaseFormat.AceAccdb,
-    };
+    ];
 
     public static TheoryData<DatabaseFormat, PageReadOptimizationMode> FormatsAndReadModes => new()
     {
@@ -224,6 +224,9 @@ public sealed class ReadSurfaceConsistencyTests
     /// second data page owned by <see cref="TableName"/>, and lets
     /// <paramref name="corrupt"/> rewrite that page in place.
     /// </summary>
+    /// <param name="bytes">The database image to corrupt in place.</param>
+    /// <param name="corrupt">Rewrites the page; receives the open file, the whole image and the page's byte offset.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
     private static async ValueTask CorruptAsync(byte[] bytes, Action<DatabaseFile, byte[], int> corrupt, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: true);

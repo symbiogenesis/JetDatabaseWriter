@@ -49,7 +49,7 @@ public sealed class InferredIndexReadTests
         await AssertInferredMatchesScanAsync(reader, all, p => p.Id == 3);
         await AssertInferredMatchesScanAsync(reader, all, p => p.Score > 1000);
         await AssertInferredMatchesScanAsync(reader, all, p => p.Score >= 30 && p.Name == "Bob");
-        await AssertInferredMatchesScanAsync(reader, all, p => p.Name.StartsWith("B", StringComparison.Ordinal));
+        await AssertInferredMatchesScanAsync(reader, all, p => p.Name.StartsWith('B'));
     }
 
     [Theory]
@@ -91,7 +91,7 @@ public sealed class InferredIndexReadTests
         Expression<Func<Person, bool>> predicate)
     {
         Func<Person, bool> compiled = predicate.Compile();
-        int[] expected = all.Where(compiled).Select(p => p.Id).OrderBy(id => id).ToArray();
+        int[] expected = all.Where(compiled).Select(p => p.Id).Order().ToArray();
 
         var matched = new List<int>();
         await foreach (Person person in reader.Rows<Person>("People", predicate, cancellationToken: TestContext.Current.CancellationToken))
@@ -157,7 +157,7 @@ public sealed class InferredIndexReadTests
             TestContext.Current.CancellationToken);
     }
 
-    public sealed class Person
+    internal sealed class Person
     {
         public int Id { get; set; }
 

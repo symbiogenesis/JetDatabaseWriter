@@ -25,7 +25,7 @@ public sealed class IndexPlannerTests
         Assert.NotNull(plan);
         Assert.Equal("IX_Id", plan.Index.Name);
         Assert.Equal(IndexQueryKind.Exact, plan.Criteria.Kind);
-        Assert.Equal(new object?[] { 5 }, plan.Criteria.Values);
+        Assert.Equal([5], plan.Criteria.Values);
         Assert.Equal(1, plan.MatchedKeyColumns);
     }
 
@@ -39,7 +39,7 @@ public sealed class IndexPlannerTests
 
         Assert.NotNull(plan);
         Assert.Equal(IndexQueryKind.KeyPrefix, plan.Criteria.Kind);
-        Assert.Equal(new object?[] { 1 }, plan.Criteria.Values);
+        Assert.Equal([1], plan.Criteria.Values);
         Assert.Equal(1, plan.MatchedKeyColumns);
     }
 
@@ -53,7 +53,7 @@ public sealed class IndexPlannerTests
 
         Assert.NotNull(plan);
         Assert.Equal(IndexQueryKind.Exact, plan.Criteria.Kind);
-        Assert.Equal(new object?[] { 1, 2 }, plan.Criteria.Values);
+        Assert.Equal([1, 2], plan.Criteria.Values);
         Assert.Equal(2, plan.MatchedKeyColumns);
     }
 
@@ -70,11 +70,11 @@ public sealed class IndexPlannerTests
         Assert.Equal(2, plan.MatchedKeyColumns);
 
         Assert.NotNull(plan.Criteria.Lower);
-        Assert.Equal(new object?[] { 1, 2 }, plan.Criteria.Lower.Values);
+        Assert.Equal([1, 2], plan.Criteria.Lower.Values);
         Assert.False(plan.Criteria.Lower.IsInclusive);
 
         Assert.NotNull(plan.Criteria.Upper);
-        Assert.Equal(new object?[] { 1 }, plan.Criteria.Upper.Values);
+        Assert.Equal([1], plan.Criteria.Upper.Values);
         Assert.True(plan.Criteria.Upper.IsInclusive);
     }
 
@@ -89,10 +89,10 @@ public sealed class IndexPlannerTests
         Assert.NotNull(plan);
         Assert.Equal(IndexQueryKind.Range, plan.Criteria.Kind);
         Assert.NotNull(plan.Criteria.Lower);
-        Assert.Equal(new object?[] { 5 }, plan.Criteria.Lower.Values);
+        Assert.Equal([5], plan.Criteria.Lower.Values);
         Assert.True(plan.Criteria.Lower.IsInclusive);
         Assert.NotNull(plan.Criteria.Upper);
-        Assert.Equal(new object?[] { 9 }, plan.Criteria.Upper.Values);
+        Assert.Equal([9], plan.Criteria.Upper.Values);
         Assert.True(plan.Criteria.Upper.IsInclusive);
     }
 
@@ -108,7 +108,7 @@ public sealed class IndexPlannerTests
         Assert.Equal(IndexQueryKind.Range, plan.Criteria.Kind);
         Assert.Null(plan.Criteria.Lower);
         Assert.NotNull(plan.Criteria.Upper);
-        Assert.Equal(new object?[] { 9 }, plan.Criteria.Upper.Values);
+        Assert.Equal([9], plan.Criteria.Upper.Values);
         Assert.True(plan.Criteria.Upper.IsInclusive);
     }
 
@@ -156,7 +156,7 @@ public sealed class IndexPlannerTests
     {
         var indexes = new List<IndexMetadata> { MakeIndex("IX_Id", firstDp: 10, indexNumber: 0, unique: false, ("Id", true)) };
 
-        Assert.Null(IndexPlanner.TryPlan(indexes, new RowCriteria()));
+        Assert.Null(IndexPlanner.TryPlan(indexes, []));
     }
 
     [Fact]

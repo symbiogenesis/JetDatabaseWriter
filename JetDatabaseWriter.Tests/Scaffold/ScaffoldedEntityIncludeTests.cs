@@ -175,7 +175,9 @@ public sealed class ScaffoldedEntityIncludeTests(DatabaseCache db) : IClassFixtu
         public Supplier? Supplier { get; set; }
     }
 
+#pragma warning disable CA1812 // Only the include loader creates it, through reflection.
     internal sealed class Party
+#pragma warning restore CA1812
     {
         public int PartyId { get; set; }
 

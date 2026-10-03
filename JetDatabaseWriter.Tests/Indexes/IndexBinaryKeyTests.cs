@@ -6,8 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>

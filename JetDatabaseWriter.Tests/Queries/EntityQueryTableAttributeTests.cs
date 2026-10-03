@@ -22,13 +22,14 @@ using Xunit;
 /// attribute. A parallel unmapped pair proves the constraint the attribute relieves: a
 /// mismatched type name with no attribute fails to infer the relationship.
 /// </summary>
+/// <param name="db">The database input.</param>
 public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
     public async Task Include_Reference_ResolvesRelatedTableFromTableAttribute()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<AttrChild> children = await reader.Query<AttrChild>("JdwAttrChild")
@@ -47,7 +48,7 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
     public async Task Include_Collection_ResolvesRelatedTableFromTableAttribute()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         List<AttrParent> parents = await reader.Query<AttrParent>("JdwAttrParent")
@@ -69,7 +70,7 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
         // "UnmappedChild" does not match the "JdwAttrChild" table, so without a [Table]
         // attribute the relationship cannot be inferred.
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await BuildAsync(ct);
+        await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -78,6 +79,18 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
                 .ToListAsync(ct));
 
         Assert.Contains("[Table(", ex.Message, StringComparison.Ordinal);
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
     }
 
     private async Task<MemoryStream> BuildAsync(CancellationToken ct)
@@ -97,29 +110,17 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
             new RelationshipDefinition("FK_JdwAttrChild_JdwAttrParent", "JdwAttrParent", "Id", "JdwAttrChild", "ParentId"),
             ct);
 
-        await writer.InsertRowsAsync("JdwAttrParent", new[] { new object[] { 1, "Alice" }, new object[] { 2, "Bob" } }, ct);
+        await writer.InsertRowsAsync("JdwAttrParent", [[1, "Alice"], [2, "Bob"]], ct);
         await writer.InsertRowsAsync(
             "JdwAttrChild",
-            new[] { new object[] { 10, 1, "a1" }, new object[] { 11, 1, "a2" }, new object[] { 12, 2, "b1" } },
+            [[10, 1, "a1"], [11, 1, "a2"], [12, 2, "b1"]],
             ct);
 
         return temp;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-    }
-
     [Table("JdwAttrParent")]
-    public sealed class AttrParent
+    internal sealed class AttrParent
     {
         public int Id { get; set; }
 
@@ -129,7 +130,7 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
     }
 
     [Table("JdwAttrChild")]
-    public sealed class AttrChild
+    internal sealed class AttrChild
     {
         public int Id { get; set; }
 
@@ -140,7 +141,7 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
         public AttrParent? Parent { get; set; }
     }
 
-    public sealed class UnmappedParent
+    internal sealed class UnmappedParent
     {
         public int Id { get; set; }
 
@@ -149,7 +150,9 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
         public List<UnmappedChild> Children { get; set; } = [];
     }
 
-    public sealed class UnmappedChild
+#pragma warning disable CA1812 // A navigation the include must reject; never instantiated.
+    internal sealed class UnmappedChild
+#pragma warning restore CA1812
     {
         public int Id { get; set; }
 
