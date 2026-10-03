@@ -22,6 +22,38 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="db">The database page I/O and format context.</param>
 internal sealed class TDefPageBuilder(DatabaseFile db)
 {
+    /// <summary>
+    /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
+    /// and returns its column type: calculated, Large Number and Date/Time
+    /// Extended columns need ACCDB, and a calculated column needs an
+    /// expression, a supported result type and no AutoNumber, Attachment,
+    /// multi-value or Hyperlink flag. The expression itself is not parsed here.
+    /// </summary>
+    /// <param name="definition">The column definition.</param>
+    /// <param name="format">The database format.</param>
+    /// <returns>The column's type code.</returns>
+    /// <exception cref="NotSupportedException">The format cannot hold the column.</exception>
+    /// <exception cref="ArgumentException">A calculated column has no expression, or the definition's flags conflict.</exception>
+    internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format)
+    {
+        ValidateCalculatedColumn(definition, format);
+        ColumnType type = TypeCodeFromDefinition(definition);
+
+        if (type == BigIntType && format != DatabaseFormat.AceAccdb)
+        {
+            throw new NotSupportedException(
+                $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
+        }
+
+        if (type == DateTimeExtendedType && format != DatabaseFormat.AceAccdb)
+        {
+            throw new NotSupportedException(
+                $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
+        }
+
+        return type;
+    }
+
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
         var result = new TableDef();
@@ -31,20 +63,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         for (int i = 0; i < columns.Count; i++)
         {
             ColumnDefinition definition = columns[i];
-            ValidateCalculatedColumn(definition, format);
-            ColumnType type = TypeCodeFromDefinition(definition);
-
-            if (type == BigIntType && format != DatabaseFormat.AceAccdb)
-            {
-                throw new NotSupportedException(
-                    $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
-            }
-
-            if (type == DateTimeExtendedType && format != DatabaseFormat.AceAccdb)
-            {
-                throw new NotSupportedException(
-                    $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
-            }
+            ColumnType type = ValidateColumnForFormat(definition, format);
 
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);

@@ -69,8 +69,10 @@ internal sealed class TableSchemaEditor(
     AutoNumberMaintainer autoNumbers)
 {
     /// <summary>
-    /// Public CreateTable entry point: runs the definition-time checks for the
-    /// columns the caller is declaring, then creates the table.
+    /// Public CreateTable entry point: checks the arguments before any catalog
+    /// I/O, in this order: the table name and the argument lists, then that
+    /// the format can hold each declared column, then each calculated
+    /// expression's syntax. Then it creates the table.
     /// <see cref="RewriteTableAsync"/> calls <see cref="CreateTableAsync"/>
     /// directly, so a table holding an older expression can still be altered.
     /// </summary>
@@ -81,10 +83,22 @@ internal sealed class TableSchemaEditor(
     /// <returns>A task that completes when the table is in the catalog.</returns>
     internal ValueTask CreateDeclaredTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
+        Guard.NotNull(indexes, nameof(indexes));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
         for (int i = 0; i < columns.Count; i++)
         {
-            ValidateDeclaredCalculatedExpression(columns[i]);
+            if (columns[i] is { } column)
+            {
+                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
+            }
+        }
+
+        for (int i = 0; i < columns.Count; i++)
+        {
+            ValidateDeclaredCalculatedExpression(columns[i], nameof(columns));
         }
 
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
@@ -177,7 +191,11 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
-        ValidateDeclaredCalculatedExpression(column);
+
+        // Argument checks before the table is read: the format first, so a
+        // calculated column on an .mdb reports that, then the expression.
+        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format);
+        ValidateDeclaredCalculatedExpression(column, nameof(column));
 
         return this.RewriteTableAsync(
             tableName,
@@ -286,12 +304,15 @@ internal sealed class TableSchemaEditor(
     /// <summary>
     /// Definition-time check for a calculated column the caller is declaring
     /// now (CreateTable / AddColumn): rejects operators Access does not have
-    /// and syntax the expression parser cannot read, so the error surfaces
-    /// when the column is defined rather than on the first insert. Functions
-    /// and column names are still resolved at evaluation.
+    /// (such as Excel's postfix <c>%</c>) and syntax the expression parser
+    /// cannot read, so the error surfaces when the column is defined rather
+    /// than on the first insert. Functions and column names are still resolved
+    /// at evaluation.
     /// </summary>
     /// <param name="column">The column being declared.</param>
-    private static void ValidateDeclaredCalculatedExpression(ColumnDefinition? column)
+    /// <param name="paramName">The public parameter that carries the column.</param>
+    /// <exception cref="ArgumentException">The expression is not valid Access expression syntax.</exception>
+    private static void ValidateDeclaredCalculatedExpression(ColumnDefinition? column, string paramName)
     {
         if (column is not { IsCalculated: true, CalculationExpression: { } expression } || string.IsNullOrWhiteSpace(expression))
         {
@@ -304,7 +325,7 @@ internal sealed class TableSchemaEditor(
         }
         catch (ArgumentException ex)
         {
-            throw new ArgumentException($"Column '{column.Name}': {ex.Message}", ex);
+            throw new ArgumentException($"Column '{column.Name}': {ex.Message}", paramName, ex);
         }
     }
 

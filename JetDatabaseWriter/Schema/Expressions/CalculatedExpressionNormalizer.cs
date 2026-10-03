@@ -193,8 +193,7 @@ internal static class CalculatedExpressionNormalizer
             if (tokens.Exists(static token => token.IsPercent))
             {
                 throw new ArgumentException(
-                    $"Calculated-column expression '{originalExpression}' uses '%', which is not an Access operator. Divide by 100 instead.",
-                    nameof(expression));
+                    $"Calculated-column expression '{originalExpression}' uses '%', which is not an Access operator. Divide by 100 instead.");
             }
 
             var normalizer = new AccessExpressionNormalizer(tokens, originalExpression);

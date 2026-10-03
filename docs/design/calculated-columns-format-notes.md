@@ -16,7 +16,11 @@ files we translate from:
 
 Calculated columns are an ACCDB-only (ACE) feature. The Jet3 MDB
 descriptor has no slot for the extra-flags byte, so calc columns cannot exist in
-those files. The writer rejects calculated columns for Jet3/Jet4 `.mdb` output.
+those files. The writer rejects calculated columns for Jet3/Jet4 `.mdb` output
+with `NotSupportedException` ("calculated columns are only supported in ACCDB
+databases"). `CreateTableAsync` and `AddColumnAsync` make that check before they
+parse the expression, so an `.mdb` reports it even for an expression the parser
+would reject, and `AddColumnAsync` makes it before it reads the table.
 
 ### 1. Extra-flags byte (column descriptor)
 
@@ -215,9 +219,14 @@ Delivered:
   `AddColumnAsync` reject a calculated column whose expression uses it
   (outside string literals and `[field]` names), or whose expression the
   parser cannot read, with an `ArgumentException` naming the column and the
-  expression. Columns carried over by a table rewrite are not re-checked, so
-  schema edits such as adding a plain column still work on a table that
-  already stores such an expression. Its rows still read, and
+  expression; its `ParamName` is `columns` for `CreateTableAsync` and `column`
+  for `AddColumnAsync`. The checks run in this order, all before any catalog
+  I/O: the table name, then whether the format can hold each column (ACCDB
+  only, a result type and no AutoNumber, Attachment, multi-value or Hyperlink
+  flag; `NotSupportedException`), then the expression syntax. The "already
+  exists" check comes last. Columns carried over by a table rewrite are not
+  re-checked, so schema edits such as adding a plain column still work on a
+  table that already stores such an expression. Its rows still read, and
   an insert that supplies the calculated value keeps it, but an insert that
   leaves the column Null and every `UpdateRowsAsync` (which re-evaluates all
   calculated columns) throw the same `ArgumentException`, much as a stored

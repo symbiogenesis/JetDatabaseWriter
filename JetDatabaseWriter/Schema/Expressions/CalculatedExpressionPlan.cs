@@ -33,7 +33,7 @@ internal sealed class CalculatedExpressionPlan
         }
         catch (ParsingException ex)
         {
-            throw new ArgumentException($"Calculated-column expression '{expression}' is not valid expression syntax.", nameof(expression), ex);
+            throw new ArgumentException($"Calculated-column expression '{expression}' is not valid expression syntax.", ex);
         }
     }
 }
