@@ -16,8 +16,6 @@ JetDatabaseWriter/
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
 ├── AccessReaderOptions.cs
 ├── AccessWriterOptions.cs
-├── AccessQueryExtensions.cs               (public LINQ Include/ThenInclude + async terminal operators)
-├── IIncludableQueryable.cs                (public Include/ThenInclude chaining marker interface)
 ├── JetTransaction.cs
 ├── Constants.cs                           (format constants, magic numbers, page offsets)
 ├── IsExternalInit.cs                      (compiler shim for init-only properties)
@@ -320,6 +318,10 @@ JetDatabaseWriter/
 │   ├── TableRowStore.cs                   (row primitives: write row bytes, mark deleted, adjust TDEF row count)
 │   └── TableSnapshotReader.cs             (writer's decoded reads of its own rows, through its own DatabaseFile and journal)
 │
+├── Linq/                                  (public LINQ surface, namespace JetDatabaseWriter.Linq)
+│   ├── AccessQueryExtensions.cs           (Include/ThenInclude + async terminal operators for Query<T>)
+│   └── IAccessIncludableQueryable.cs      (the Include/ThenInclude chaining interface)
+│
 ├── Queries/                               (read-path: LINQ IQueryable provider over a single table)
 │   ├── AccessQueryable.cs                 (composable, async-enumerable IQueryable<T> over one table)
 │   ├── AccessOrderedQueryable.cs          (IOrderedQueryable<T> marker produced only by ordering operators)
@@ -335,7 +337,7 @@ JetDatabaseWriter/
 │   ├── OrderingKey.cs                     (one sort key: selector plus direction)
 │   ├── QueryKeyComparer.cs                (null-first, type-tolerant ordering-key comparison)
 │   ├── RuntimeRowMapper.cs                (maps object?[] rows onto a runtime-resolved POCO type)
-│   ├── IncludableQueryable.cs             (adapts a composed query to IIncludableQueryable)
+│   ├── IncludableQueryable.cs             (adapts a composed query to IAccessIncludableQueryable)
 │   ├── IncludeLoader.cs                   (relationship-inferred eager loading and stitching)
 │   ├── IncludeStep.cs                     (one Include/ThenInclude navigation plus inline operators)
 │   ├── IncludeOperation.cs                (base for inline filtered/ordered/paged include operators)
@@ -483,7 +485,8 @@ Relationships/    → Catalog/, ComplexColumns/, DelimitedText/, Indexes/, Pages
                     Infrastructure/; DatabaseFile; opens a reader (linked sources)
 Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, Relationships/, Schema/,
                     ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
-Queries/          → Indexes/, Mapping/, Tables/, Infrastructure/
+Queries/          → Indexes/, Linq/, Mapping/, Tables/, Infrastructure/
+Linq/             → Queries/, Infrastructure/
 DatabaseFile (root)   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
 AccessBase (root)     → DatabaseFile
 AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
@@ -492,7 +495,7 @@ ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```
 
-Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Pages` ↔ `Schema`, and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
+Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
 
 ---
 
@@ -533,11 +536,12 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `ComplexColumns/Models/` | `JetDatabaseWriter.ComplexColumns.Models` |
 | `Tables/` | `JetDatabaseWriter.Tables` |
 | `Queries/` | `JetDatabaseWriter.Queries` |
+| `Linq/` | `JetDatabaseWriter.Linq` |
 | `Mapping/` | `JetDatabaseWriter.Mapping` |
 | `CompoundFile/` | `JetDatabaseWriter.CompoundFile` |
 | `Infrastructure/` | `JetDatabaseWriter.Infrastructure` |
 
-Public API types live at the root namespace (`JetDatabaseWriter`) — no sub-namespace required for consumers to access the main entry points.
+Public API types live at the root namespace (`JetDatabaseWriter`) — no sub-namespace required for consumers to access the main entry points. The LINQ extensions are the exception: `AccessQueryExtensions` and `IAccessIncludableQueryable` live in `JetDatabaseWriter.Linq`, because EF Core declares extension methods (`Include`, `ThenInclude`, `ToListAsync`, …) and an `IIncludableQueryable` with the same names, and a file that imports both libraries' namespaces would otherwise get ambiguity errors.
 
 ---
 
@@ -704,7 +708,7 @@ Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning,
 
 ### 12. The LINQ query layer is read-only and degrades gracefully
 
-`Queries/` adds an `IQueryable<T>` over a single table (`AccessReader.Query<T>`). The provider and `IncludeLoader` hold the reader's `TableReader`, `IndexRowReader`, and `SchemaReader`, not the facade. `AccessQueryProvider` translates only the operators it can run natively against the storage engine — a leading run of `Where` filters (AND-combined and pushed into index inference by `IndexPredicateTranslator`/`IndexPlanner`), `OrderBy`/`ThenBy`, `Skip`, and `Take` — into an ordered `QueryStage` pipeline that honors written order. `AccessQueryTranslator` marks the engine boundary at the first unsupported operator (notably `Select` projections): the prefix runs in the engine and the tail replays in memory through LINQ-to-Objects. Relationship-inferred eager loading (`Include`/`ThenInclude`, including filtered/ordered/paged collection includes) is a post-materialization step driven by the `MSysRelationships` catalog. Index selection is intentionally sound-but-not-exact — a seek can return a superset — so the compiled residual predicate is always reapplied to every row the seek yields. The values the translators need while planning (the constant side of a pushed comparison, and the `Skip`/`Take` counts of an include) are read by `Infrastructure/ClosureValueReader`, which follows constants, static members and closure field and property chains through reflection and compiles only a computed operand such as `DateTime.Today` or `id + 1`. Typed results convert each value to its property through `Mapping/ValueCoercer`, for the root entities and the included ones alike.
+`Queries/` adds an `IQueryable<T>` over a single table (`AccessReader.Query<T>`), and `Linq/` holds its public extensions (`Include`, `ThenInclude` and the async terminals). The provider and `IncludeLoader` hold the reader's `TableReader`, `IndexRowReader`, and `SchemaReader`, not the facade. `AccessQueryProvider` translates only the operators it can run natively against the storage engine — a leading run of `Where` filters (AND-combined and pushed into index inference by `IndexPredicateTranslator`/`IndexPlanner`), `OrderBy`/`ThenBy`, `Skip`, and `Take` — into an ordered `QueryStage` pipeline that honors written order. `AccessQueryTranslator` marks the engine boundary at the first unsupported operator (notably `Select` projections): the prefix runs in the engine and the tail replays in memory through LINQ-to-Objects. Relationship-inferred eager loading (`Include`/`ThenInclude`, including filtered/ordered/paged collection includes) is a post-materialization step driven by the `MSysRelationships` catalog. Index selection is intentionally sound-but-not-exact — a seek can return a superset — so the compiled residual predicate is always reapplied to every row the seek yields. The values the translators need while planning (the constant side of a pushed comparison, and the `Skip`/`Take` counts of an include) are read by `Infrastructure/ClosureValueReader`, which follows constants, static members and closure field and property chains through reflection and compiles only a computed operand such as `DateTime.Today` or `id + 1`. Typed results convert each value to its property through `Mapping/ValueCoercer`, for the root entities and the included ones alike.
 
 ---
 
@@ -719,8 +723,8 @@ The public entry points are:
 | `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file/byte-range locking, linked-source path policy, linked-text limits |
 | `AccessWriterOptions` | Writer configuration: password, full catalog schema, lock-file/byte-range locking, transaction page budget, secure erase, implicit transactional writes |
 | `JetTransaction` | Disposable transaction handle returned by `BeginTransactionAsync` |
-| `AccessQueryExtensions` | LINQ extensions for `Query<T>` results — relationship-inferred `Include`/`ThenInclude` eager loading and async terminal operators |
-| `IIncludableQueryable<TEntity, TProperty>` | Marker returned by `Include`/`ThenInclude` so a chain can carry the most recently included navigation type |
+| `Linq.AccessQueryExtensions` | LINQ extensions for `Query<T>` results — relationship-inferred `Include`/`ThenInclude` eager loading and async terminal operators |
+| `Linq.IAccessIncludableQueryable<TEntity, TProperty>` | Interface returned by `Include`/`ThenInclude` so a chain can carry the most recently included navigation type |
 | `Models/*` | Public DTOs for column definitions, index metadata, relationships, etc. |
 | `Enums/*` | Public enumerations (database format, encryption format, linked-table kind, secure erase mode, etc.) |
 | `Exceptions/*` | Domain-specific exceptions |

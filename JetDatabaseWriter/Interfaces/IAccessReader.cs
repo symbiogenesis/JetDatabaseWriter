@@ -197,7 +197,8 @@ public interface IAccessReader : IAccessBase
     /// <c>ThenBy</c>, <c>Skip</c>/<c>Take</c>, and the <c>Include</c> extension) translate
     /// to reader operations; <c>Where</c> drives index inference and <c>Include</c> eager-loads
     /// an inferred relationship. Use the async terminal extensions (<c>ToListAsync</c>, …) or
-    /// <c>await foreach</c> to execute.
+    /// <c>await foreach</c> to execute. <c>Include</c>, <c>ThenInclude</c> and the async
+    /// terminals are extension methods in <see cref="JetDatabaseWriter.Linq.AccessQueryExtensions"/>.
     /// </summary>
     /// <remarks>
     /// <c>Include</c> / <c>ThenInclude</c> resolve the related table from the navigation's

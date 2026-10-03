@@ -7,6 +7,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Linq;
 
 /// <summary>
 /// Splits a LINQ query expression tree into the operators the provider can execute
