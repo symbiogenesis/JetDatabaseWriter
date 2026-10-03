@@ -507,7 +507,9 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// applied. A schema rewrite carries the property over to the rebuilt
     /// column, and re-registering the rebuilt table used to turn it into the
     /// column's default, so after an AddColumn every insert stored 0 instead of
-    /// the next AutoNumber. Runs with no transaction, with
+    /// the next AutoNumber. An explicit null never takes a default, so the rows
+    /// after the rewrite ask for it, with <see cref="DbDefault.Value"/> or by
+    /// leaving the column out. Runs with no transaction, with
     /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> and in an
     /// explicit committed transaction.
     /// </summary>
@@ -548,8 +550,8 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
             await writer.InsertRowAsync("Items", [DBNull.Value, "a"], ct);
             await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), ct);
-            await writer.InsertRowAsync("Items", [DBNull.Value, "b", DBNull.Value], ct);
-            await writer.InsertRowAsync("Items", [DBNull.Value, "c", DBNull.Value], ct);
+            await writer.InsertRowAsync("Items", [DbDefault.Value, "b", DBNull.Value], ct);
+            await writer.InsertRowAsync("Items", new RowValues { ["Label"] = "c" }, ct);
             if (tx is not null)
             {
                 await tx.CommitAsync(ct);
@@ -559,7 +561,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
         {
-            await writer.InsertRowAsync("Items", [DBNull.Value, "d", DBNull.Value], ct);
+            await writer.InsertRowAsync("Items", [DbDefault.Value, "d", DBNull.Value], ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
