@@ -940,7 +940,7 @@ internal static class EncryptionManager
 
         if (keys.HasAesPageKey)
         {
-            AesEcbInPlace(keys.GetAesDecryptor(), buf, offset, pageSize);
+            keys.AesDecryptInPlace(buf, offset, pageSize);
         }
     }
 
@@ -980,7 +980,7 @@ internal static class EncryptionManager
         // Inverse order of DecryptPageInPlace: AES → RC4 → Jet3 XOR.
         if (keys.HasAesPageKey)
         {
-            AesEcbInPlace(keys.GetAesEncryptor(), buf, offset, pageSize);
+            keys.AesEncryptInPlace(buf, offset, pageSize);
         }
 
         if (keys.TryGetRc4DbKey(out uint dbKey))
@@ -1107,29 +1107,6 @@ internal static class EncryptionManager
             CryptographicOperations.ZeroMemory(s);
         }
     }
-
-#pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
-    /// <summary>
-    /// Runs an ECB <see cref="ICryptoTransform"/> over a buffer in place.
-    /// ECB has no chaining state between 16-byte blocks, so passing the same
-    /// array as both input and output is safe and avoids any temporary
-    /// allocations or block copies.
-    /// </summary>
-    /// <param name="xform">The xform.</param>
-    /// <param name="data">The data bytes or values.</param>
-    /// <param name="offset">The offset.</param>
-    /// <param name="length">The length.</param>
-    /// <exception cref="CryptographicException">Thrown when the AES transform writes an unexpected byte count.</exception>
-    private static void AesEcbInPlace(ICryptoTransform xform, byte[] data, int offset, int length)
-    {
-        int written = xform.TransformBlock(data, offset, length, data, offset);
-        if (written != length)
-        {
-            throw new CryptographicException(
-                $"AES-ECB TransformBlock processed {written} bytes but {length} were expected.");
-        }
-    }
-#pragma warning restore CA5358
 
     private static bool HeaderPasswordMatches(byte[] hdr, ReadOnlySpan<byte> mask, ReadOnlySpan<char> password)
     {

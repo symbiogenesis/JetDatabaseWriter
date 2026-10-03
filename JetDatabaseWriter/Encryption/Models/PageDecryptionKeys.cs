@@ -11,11 +11,19 @@ using JetDatabaseWriter.Encryption;
 /// objects derived from the AES page key so AES-encrypted databases pay
 /// the key-schedule + transform-creation cost once per file open instead of once
 /// per page. ECB mode has no chaining state, so the same transforms are reused
-/// across every page (callers must serialize access — the existing per-reader
-/// I/O gate already provides this).
+/// across every page. Pages are decrypted after the I/O gate is released, and
+/// table-scan read-ahead and concurrent reads keep several page reads in
+/// flight, so <see cref="AesDecryptInPlace"/> and <see cref="AesEncryptInPlace"/>
+/// build and run the shared transforms under a private lock. The Jet3 XOR and
+/// Jet4 RC4 paths keep no state between pages and need no lock.
 /// </summary>
 internal sealed class PageDecryptionKeys : IDisposable
 {
+#if NET9_0_OR_GREATER
+    private readonly System.Threading.Lock aesGate = new();
+#else
+    private readonly object aesGate = new();
+#endif
     private Aes? aes;
     private ICryptoTransform? aesEncryptor;
     private ICryptoTransform? aesDecryptor;
@@ -60,27 +68,66 @@ internal sealed class PageDecryptionKeys : IDisposable
         return this.HasRc4DbKey;
     }
 
-    /// <summary>Returns the cached AES decryptor for the current AES page key, building it on first use.</summary>
-    internal ICryptoTransform GetAesDecryptor()
-    {
-        this.EnsureAesTransforms();
-        return this.aesDecryptor!;
-    }
+    /// <summary>
+    /// Decrypts whole AES-ECB blocks in place with the cached decryptor,
+    /// building it on first use. Safe to call from several threads at once.
+    /// </summary>
+    /// <param name="data">The buffer holding the blocks.</param>
+    /// <param name="offset">The offset of the first block.</param>
+    /// <param name="length">The byte count; a multiple of the AES block size.</param>
+    /// <exception cref="CryptographicException">Thrown when the AES transform writes an unexpected byte count.</exception>
+    internal void AesDecryptInPlace(byte[] data, int offset, int length) =>
+        this.TransformAesInPlace(encrypt: false, data, offset, length);
 
-    /// <summary>Returns the cached AES encryptor for the current AES page key, building it on first use.</summary>
-    internal ICryptoTransform GetAesEncryptor()
-    {
-        this.EnsureAesTransforms();
-        return this.aesEncryptor!;
-    }
+    /// <summary>
+    /// Encrypts whole AES-ECB blocks in place with the cached encryptor,
+    /// building it on first use. Safe to call from several threads at once.
+    /// </summary>
+    /// <param name="data">The buffer holding the blocks.</param>
+    /// <param name="offset">The offset of the first block.</param>
+    /// <param name="length">The byte count; a multiple of the AES block size.</param>
+    /// <exception cref="CryptographicException">Thrown when the AES transform writes an unexpected byte count.</exception>
+    internal void AesEncryptInPlace(byte[] data, int offset, int length) =>
+        this.TransformAesInPlace(encrypt: true, data, offset, length);
 
     /// <inheritdoc/>
     public void Dispose()
     {
-        this.DisposeAesTransforms();
-        this.DisposeAesPageKey();
+        lock (this.aesGate)
+        {
+            this.DisposeAesTransforms();
+            this.DisposeAesPageKey();
+        }
+
         this.DisposeJet3XorMask();
         this.DisposeRc4DbKey();
+    }
+
+    /// <summary>
+    /// Runs the cached ECB transform over a buffer in place. ECB has no
+    /// chaining state between 16-byte blocks, so passing the same array as
+    /// input and output is safe, but an <see cref="ICryptoTransform"/> instance
+    /// is not safe to use from two threads at once, and neither is the lazy
+    /// build, so both run under <see cref="aesGate"/>.
+    /// </summary>
+    /// <param name="encrypt"><see langword="true"/> to encrypt; <see langword="false"/> to decrypt.</param>
+    /// <param name="data">The buffer holding the blocks.</param>
+    /// <param name="offset">The offset of the first block.</param>
+    /// <param name="length">The byte count; a multiple of the AES block size.</param>
+    /// <exception cref="CryptographicException">Thrown when the AES transform writes an unexpected byte count.</exception>
+    private void TransformAesInPlace(bool encrypt, byte[] data, int offset, int length)
+    {
+        lock (this.aesGate)
+        {
+            this.EnsureAesTransforms();
+            ICryptoTransform transform = encrypt ? this.aesEncryptor! : this.aesDecryptor!;
+            int written = transform.TransformBlock(data, offset, length, data, offset);
+            if (written != length)
+            {
+                throw new CryptographicException(
+                    $"AES-ECB TransformBlock processed {written} bytes but {length} were expected.");
+            }
+        }
     }
 
     private void EnsureAesTransforms()
