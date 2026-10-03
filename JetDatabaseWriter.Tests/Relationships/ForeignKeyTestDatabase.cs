@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -129,6 +130,45 @@ internal static class ForeignKeyTestDatabase
         await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
         await work();
         await tx.CommitAsync(Ct);
+    }
+
+    /// <summary>
+    /// Writes an enforced one-column relationship straight into
+    /// <c>MSysRelationships</c>, without the checks
+    /// <c>CreateRelationshipAsync</c> makes, so it can name a table or column
+    /// that does not exist. No foreign-key index entries are written.
+    /// </summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="name">The relationship name.</param>
+    /// <param name="foreignTable">The foreign (child) table.</param>
+    /// <param name="foreignColumn">The foreign-key column.</param>
+    /// <param name="primaryTable">The primary (parent) table.</param>
+    /// <param name="primaryColumn">The referenced column.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    public static async Task PlantRelationshipAsync(MemoryStream ms, string name, string foreignTable, string foreignColumn, string primaryTable, string primaryColumn)
+    {
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        long relationshipsPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
+        Assert.True(relationshipsPage > 0, "The database has no MSysRelationships table.");
+        TableDef relationshipsDef = await harness.Database.ReadRequiredTableDefAsync(relationshipsPage, Constants.SystemTableNames.Relationships, Ct);
+
+        object[] row = relationshipsDef.CreateNullValueRow();
+        relationshipsDef.SetValueByName(row, "ccolumn", 1);
+        relationshipsDef.SetValueByName(row, "grbit", 0);
+        relationshipsDef.SetValueByName(row, "icolumn", 0);
+        relationshipsDef.SetValueByName(row, "szColumn", foreignColumn);
+        relationshipsDef.SetValueByName(row, "szObject", foreignTable);
+        relationshipsDef.SetValueByName(row, "szReferencedColumn", primaryColumn);
+        relationshipsDef.SetValueByName(row, "szReferencedObject", primaryTable);
+        relationshipsDef.SetValueByName(row, "szRelationship", name);
+        await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(
+            relationshipsPage,
+            relationshipsDef,
+            Constants.SystemTableNames.Relationships,
+            row,
+            cancellationToken: Ct);
+        ms.Position = 0;
     }
 
     /// <summary>

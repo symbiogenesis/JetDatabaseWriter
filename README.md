@@ -762,6 +762,8 @@ await writer.DropTableAsync("Orders");
 
 An insert must give each non-null foreign key a value the primary table has; a null foreign key is never checked. An update is checked, as in Access, only on the rows whose foreign key it changes: assigning other columns, or assigning a key the value it already has, does not check the key, so such an update succeeds even on a row whose key has no parent. Changing a key to a value with no parent row throws `InvalidOperationException` before any row is written.
 
+An enforced relationship whose table or key column cannot be found, which Access never leaves behind but another tool or a damaged file can, is not skipped: every write it would have to check throws `InvalidOperationException` naming the relationship and what is missing. Writes it does not constrain still succeed: an update that leaves the key alone, a delete that matches no row, and an insert with a null foreign key, unless the missing object is the foreign-key column itself, which makes every insert into the table throw. `DropRelationshipAsync` removes such a relationship.
+
 ```csharp
 // Single-column FK
 await writer.CreateRelationshipAsync(new RelationshipDefinition(
