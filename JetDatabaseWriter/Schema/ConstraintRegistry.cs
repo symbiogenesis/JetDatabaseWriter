@@ -259,6 +259,67 @@ internal sealed class ConstraintRegistry(
         ValidateCalculatedResults(tableName, list, values);
     }
 
+    /// <summary>
+    /// Applies the update-time constraint pass to <paramref name="values"/>, the
+    /// full post-update image of one row. Every column in
+    /// <paramref name="assignedColumns"/> is checked the way an insert checks a
+    /// supplied value: null is rejected for a NOT NULL or AutoNumber column, and
+    /// a non-null value must satisfy the column's validation rule. Defaults are
+    /// not substituted, because a default applies only when a row is created.
+    /// Calculated columns are then recomputed from the new values.
+    /// </summary>
+    /// <param name="tableName">The table name, for error messages.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="values">The post-update row, in table-column order.</param>
+    /// <param name="assignedColumns">The indexes of the columns the update assigns.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">An assigned NOT NULL or AutoNumber column is set to null.</exception>
+    /// <exception cref="ArgumentException">A validation rule rejects an assigned value.</exception>
+    public async ValueTask ApplyUpdateAsync(
+        string tableName,
+        TableDef tableDef,
+        object[] values,
+        IEnumerable<int> assignedColumns,
+        CancellationToken cancellationToken)
+    {
+        List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
+        {
+            return;
+        }
+
+        foreach (int i in assignedColumns)
+        {
+            ColumnConstraint c = list[i];
+            if (c.IsCalculated)
+            {
+                // Recomputed below; the stored value never comes from the caller.
+                continue;
+            }
+
+            object? value = values[i];
+            bool isNull = value is null or DBNull;
+
+            // An AutoNumber column is NOT NULL whatever IsNullable says: insert
+            // only accepts null there because it generates a value, and an
+            // update never renumbers a row.
+            if (isNull && (!c.IsNullable || c.IsAutoIncrement))
+            {
+                throw new InvalidOperationException(
+                    $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.");
+            }
+
+            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+            {
+                throw new ArgumentException(
+                    $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.");
+            }
+        }
+
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true);
+        ValidateCalculatedResults(tableName, list, values);
+    }
+
     private static ColumnConstraint ToConstraint(ColumnDefinition def) => new()
     {
         Name = def.Name,

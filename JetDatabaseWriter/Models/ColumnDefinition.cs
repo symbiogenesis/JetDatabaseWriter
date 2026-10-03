@@ -36,7 +36,9 @@ public sealed record ColumnDefinition
     /// Gets a value indicating whether this column accepts null / <see cref="DBNull.Value"/>.
     /// Default is <c>true</c>. When <c>false</c>, the writer rejects inserts whose value for
     /// this column is null after <see cref="DefaultValue"/> substitution and auto-increment
-    /// assignment have run.
+    /// assignment have run, and updates that set the column to null, with
+    /// <see cref="InvalidOperationException"/>. An update is checked only for the columns
+    /// it assigns.
     /// </summary>
     /// <remarks>
     /// Persisted as the boolean <c>Required = True</c> property in <c>MSysObjects.LvProp</c>
@@ -64,7 +66,10 @@ public sealed record ColumnDefinition
     /// </summary>
     /// <remarks>
     /// Persisted in the JET TDEF column-flag bit <c>FLAG_AUTO_LONG (0x04)</c>. The
-    /// auto-increment behaviour is restored when the database is reopened.
+    /// auto-increment behaviour is restored when the database is reopened. An update
+    /// may assign an explicit value, which raises the stored high-water as an explicit
+    /// insert value does, but setting the column to null throws
+    /// <see cref="InvalidOperationException"/>.
     /// </remarks>
     public bool IsAutoIncrement { get; init; }
 
@@ -118,10 +123,10 @@ public sealed record ColumnDefinition
     public bool IsDateTimeExtended { get; init; }
 
     /// <summary>
-    /// Gets an optional client-side validation predicate invoked for every supplied
-    /// non-null value before the row is written. Returning <c>false</c> raises an
-    /// <see cref="ArgumentException"/>. Not persisted — a CLR delegate cannot be
-    /// serialized into the JET file.
+    /// Gets an optional client-side validation predicate invoked for every non-null value
+    /// an insert supplies or an update assigns, before the row is written. Returning
+    /// <c>false</c> raises an <see cref="ArgumentException"/>. Not persisted — a CLR delegate
+    /// cannot be serialized into the JET file.
     /// </summary>
     public Func<object?, bool>? ValidationRule { get; init; }
 

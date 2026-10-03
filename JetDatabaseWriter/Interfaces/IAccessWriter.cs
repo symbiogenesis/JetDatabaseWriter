@@ -114,7 +114,8 @@ public interface IAccessWriter : IAccessBase
     /// <param name="updatedValues">The named columns to assign on each matching row.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    /// <exception cref="System.ArgumentException">Thrown when the criteria or updated values name a column that does not exist on the table.</exception>
+    /// <exception cref="System.ArgumentException">Thrown when the criteria or updated values name a column that does not exist on the table, or when a column's validation rule rejects an assigned value.</exception>
+    /// <exception cref="System.InvalidOperationException">Thrown when an assigned NOT NULL or AutoNumber column is set to null. Constraint checks run before any row is written, so a rejected update changes nothing.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before any row changes, when a matching row holds a MEMO or OLE value in a column not being assigned whose stored data cannot be read; rewriting the row would lose that value. Assigning a new value to that column is allowed. A cascade update checks each child table the same way before changing that table's rows; when several relationships cascade, child tables rewritten before the refusal keep their new keys unless the update runs in a transaction or with <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</exception>
     public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default);
 
@@ -132,6 +133,8 @@ public interface IAccessWriter : IAccessBase
     /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply. <see langword="null"/> and <see cref="System.DBNull.Value"/> both clear the column to database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when a column's validation rule rejects an assigned value.</exception>
+    /// <exception cref="System.InvalidOperationException">Thrown when an assigned NOT NULL or AutoNumber column is set to null.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before any row changes, when a matching row holds a MEMO or OLE value in a column not being assigned whose stored data cannot be read; rewriting the row would lose that value. Assigning a new value to that column is allowed. A cascade update checks each child table the same way before changing that table's rows; when several relationships cascade, child tables rewritten before the refusal keep their new keys unless the update runs in a transaction or with <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</exception>
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
 

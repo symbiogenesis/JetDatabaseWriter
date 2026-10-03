@@ -1,13 +1,16 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -181,6 +184,243 @@ public sealed class ColumnConstraintTests
             await writer.InsertRowAsync(table, [2, 250], TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task Update_NullIntoNotNullColumn_IsRejected(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "RequiredUpdate";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 50) { IsNullable = false },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, "x"], TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = null }, TestContext.Current.CancellationToken));
+        }
+
+        // A later writer hydrates NOT NULL from the persisted Required property.
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = DBNull.Value }, TestContext.Current.CancellationToken));
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = "y" }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal("y", row["Name"]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public async Task Update_NullIntoAutoNumberColumn_IsRejected(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "AutoUpdate";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true },
+                    new("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [DBNull.Value, "a"], TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.UpdateRowsAsync(table, "Name", "a", new Dictionary<string, object?> { ["Id"] = null }, TestContext.Current.CancellationToken));
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.UpdateRowsAsync(table, "Name", "a", new Dictionary<string, object?> { ["Id"] = null }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal(1, row["Id"]);
+    }
+
+    /// <summary>
+    /// Like an insert, an update that assigns an explicit AutoNumber value raises
+    /// the TDEF high-water so Access never issues that number again.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public async Task Update_ExplicitAutoNumberValue_RaisesTdefHighWater(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "AutoHighWater";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true },
+                    new("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(table, [[DBNull.Value, "a"], [DBNull.Value, "b"], [DBNull.Value, "c"]], TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(3u, await ReadTdefAutoNumberAsync(stream, table));
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync(table, "Name", "c", new Dictionary<string, object?> { ["Id"] = 50 }, TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(50u, await ReadTdefAutoNumberAsync(stream, table));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task Update_ValidationRule_RejectsAssignedValue(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "ValidatedUpdate";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { ValidationRule = v => v is int i && i is >= 0 and <= 100 },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, 50], TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 250 }, TestContext.Current.CancellationToken));
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 75 }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal(75, row["Score"]);
+    }
+
+    /// <summary>
+    /// The update constraint pass runs while rows are staged, before any page is
+    /// written, so a rejection leaves every matching row untouched, including rows
+    /// on later data pages, with or without a transaction around the call.
+    /// </summary>
+    /// <param name="useTransactionalWrites">Whether the writer wraps each call in an auto-commit transaction.</param>
+    /// <param name="explicitTransaction">"none", "commit" or "rollback".</param>
+    [Theory]
+    [InlineData(false, "none")]
+    [InlineData(true, "none")]
+    [InlineData(false, "commit")]
+    [InlineData(false, "rollback")]
+    public async Task Update_NullIntoNotNullColumn_LeavesEveryRowUnchanged(bool useTransactionalWrites, string explicitTransaction)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "RequiredMultiPage";
+        const int rowCount = 300;
+        string padding = new('p', 200);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 255) { IsNullable = false },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(
+                table,
+                Enumerable.Range(1, rowCount).Select(i => new object?[] { i, padding + i }),
+                TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = useTransactionalWrites }))
+        {
+            JetTransaction? transaction = explicitTransaction == "none"
+                ? null
+                : await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.UpdateRowsAsync(table, RowCriteria.All(), new RowValues { ["Name"] = null }, TestContext.Current.CancellationToken));
+
+            if (transaction is not null)
+            {
+                if (explicitTransaction == "commit")
+                {
+                    await transaction.CommitAsync(TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+                }
+
+                await transaction.DisposeAsync();
+            }
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(rowCount, dt.Rows.Count);
+        Assert.All(dt.AsEnumerable(), row => Assert.Equal(padding + (int)row["Id"], row["Name"]));
+    }
+
+    /// <summary>
+    /// Update checks only the columns it assigns: a row that already holds null in a
+    /// NOT NULL column (here, one added after the row was written) can still have
+    /// its other columns updated.
+    /// </summary>
+    [Fact]
+    public async Task Update_OtherColumn_DoesNotRecheckUnassignedNotNullColumn()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "LegacyNulls";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, "a"], TestContext.Current.CancellationToken);
+            await writer.AddColumnAsync(table, new ColumnDefinition("Code", typeof(string), 10) { IsNullable = false }, TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = "b" }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal("b", row["Name"]);
+        Assert.Equal(DBNull.Value, row["Code"]);
+    }
+
     [Fact]
     public async Task ValidationRule_IsNotPersistedAcrossReopen()
     {
@@ -298,14 +538,31 @@ public sealed class ColumnConstraintTests
         return ms;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, AccessWriterOptions? options = null)
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false },
+            options ?? new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
+    }
+
+    private static async ValueTask<uint> ReadTdefAutoNumberAsync(MemoryStream stream, string table)
+    {
+        long tdefPage;
+        stream.Position = 0;
+        await using (ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+            Assert.NotNull(entry);
+            tdefPage = entry.TDefPage;
+        }
+
+        // Jet4 and ACE pages are both 4 KB; the counter is a uint32 in the TDEF header.
+        byte[] file = stream.ToArray();
+        return BinaryPrimitives.ReadUInt32LittleEndian(
+            file.AsSpan(checked((int)(tdefPage * Constants.PageSizes.Jet4)) + Constants.TableDefinition.AutoNumberOffset));
     }
 
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
