@@ -31,6 +31,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
 internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled)
 {
+    /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
+    private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
+
+    /// <summary>The <c>MSysComplexColumns</c> columns the flat-table lookup by column name reads.</summary>
+    private static readonly string[] FlatTableLookupColumns = ["ColumnName", "ConceptualTableID", "FlatTableID"];
+
+    /// <summary>The <c>MSysObjects</c> columns the object-name lookup reads; the LvProp, LvModule and LvExtra blobs are not decoded.</summary>
+    private static readonly string[] ObjectNameColumns = ["Id", "Name"];
+
     /// <summary>
     /// Replaces each complex column's <see cref="ComplexIdRef"/> in a typed row
     /// with the <see cref="ComplexCellValue"/> cell holding every item stored
@@ -491,7 +500,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
-        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, msys, ComplexColumnJoinColumns, cancellationToken).ConfigureAwait(false))
         {
             if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
             {
@@ -600,7 +609,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             return map;
         }
 
-        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, ObjectNameColumns, cancellationToken).ConfigureAwait(false))
         {
             if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
@@ -639,7 +648,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
 
-            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, FlatTableLookupColumns, cancellationToken).ConfigureAwait(false))
             {
                 string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
                 if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))

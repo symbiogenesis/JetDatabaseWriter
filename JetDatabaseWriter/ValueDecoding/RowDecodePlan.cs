@@ -62,8 +62,17 @@ internal sealed class RowDecodePlan
     internal static RowDecodePlan CreateTypedForWriteBack(TableDef tableDef, bool strictParsing)
         => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing, preserveLongValueBytes: true);
 
-    internal static RowDecodePlan CreateStrings(TableDef tableDef, bool strictParsing)
-        => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing);
+    /// <summary>
+    /// Creates a plan that decodes rows as strings. With
+    /// <paramref name="wantedColumns"/>, only the selected columns are decoded and
+    /// every other column is <see cref="string.Empty"/>, so a catalog scan never
+    /// reads the long values of columns it does not use.
+    /// </summary>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
+    /// <param name="wantedColumns">The columns to decode, by column index, or <see langword="null"/> for every column.</param>
+    internal static RowDecodePlan CreateStrings(TableDef tableDef, bool strictParsing, bool[]? wantedColumns = null)
+        => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing);
 
     internal static RowDecodePlan CreatePartial(TableDef tableDef, int[] columnOrdinals)
     {
@@ -382,6 +391,12 @@ internal sealed class RowDecodePlan
         for (int columnIndex = 0; columnIndex < this.columns.Count; columnIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (this.wantedColumns?[columnIndex] == false)
+            {
+                result[columnIndex] = string.Empty;
+                continue;
+            }
 
             ColumnInfo column = this.columns[columnIndex];
             ColumnSlice slice = ResolveColumnSlice(source.RowFields, page, rowStart, rowSize, layout, column);
