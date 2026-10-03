@@ -112,13 +112,18 @@ public interface IAccessSchema : IAccessBase
     /// column property are preserved. Implemented by copying the table to a new schema
     /// and renaming the result back to <paramref name="tableName"/>. When the column is a
     /// key column of a foreign-key relationship, the relationship's <c>MSysRelationships</c>
-    /// rows are updated to the new name.
+    /// rows are updated to the new name. Every calculated expression, validation rule and
+    /// default value expression in the table that names the column (as <c>[Old]</c>, a bare
+    /// <c>Old</c>, or qualified by the table's name) is rewritten to name it as
+    /// <c>[New]</c>, so it keeps evaluating; the rest of each expression, including text
+    /// inside string literals, is kept as it was.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>
     /// <param name="newColumnName">The new column name. Must not already exist on the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before the table changes, when an expression names the column and <paramref name="newColumnName"/> contains <c>]</c>, which a <c>[field]</c> reference cannot hold, or when the new name would push such an expression past the expression engine's length limit.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 

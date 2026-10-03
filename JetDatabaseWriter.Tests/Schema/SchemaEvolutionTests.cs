@@ -457,7 +457,14 @@ public sealed class SchemaEvolutionTests
             Assert.Equal(metadataBefore.Count, metadataAfter.Count);
             for (int i = 0; i < metadataBefore.Count; i++)
             {
-                Assert.Equal(metadataBefore[i] with { Name = metadataBefore[i].Name + "2" }, metadataAfter[i]);
+                // Renaming Small also renames it in the expression of Twice.
+                ColumnMetadata expected = metadataBefore[i] with { Name = metadataBefore[i].Name + "2" };
+                if (expected.CalculationExpression == "[Small] * 2")
+                {
+                    expected = expected with { CalculationExpression = "[Small2] * 2" };
+                }
+
+                Assert.Equal(expected, metadataAfter[i]);
             }
 
             object?[] valuesAfter = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;

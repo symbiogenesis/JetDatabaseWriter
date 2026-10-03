@@ -31,10 +31,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Table DDL workflows behind <see cref="Interfaces.IAccessSchema"/>: create
 /// and drop tables, and add, drop, or rename columns. Column changes rebuild
-/// the table through a temporary copy that preserves rows, indexes, persisted
-/// column properties, client-side constraints, complex-column artifacts, and
-/// foreign-key relationships (the table's FK index entries, its partners'
-/// links to it, and renamed key columns in <c>MSysRelationships</c>). A
+/// the table through a temporary copy that preserves rows, indexes, the
+/// persisted column properties the writer models, client-side constraints,
+/// complex-column artifacts, and foreign-key relationships (the table's FK
+/// index entries, its partners' links to it, and renamed key columns in
+/// <c>MSysRelationships</c>). A renamed column's new name is written into the
+/// calculated expressions, validation rules and defaults that name it. A
 /// column that a relationship uses as a key column cannot be dropped.
 /// Dropped tables return their data, LVAL, index, usage-map, and TDEF pages to
 /// the global free map. The public facade owns the auto-commit scope around
@@ -343,6 +345,107 @@ internal sealed class TableSchemaEditor(
             : fallback;
 
     /// <summary>
+    /// Carries a rewrite's column rename into every calculated expression,
+    /// validation rule and default of the projected columns that names the
+    /// renamed column, so they keep evaluating: <c>[Old]</c> and a bare
+    /// <c>Old</c>, qualified by the table's own name or not, become
+    /// <c>[New]</c>, and the rest of the text is kept as it was
+    /// (<see cref="ExpressionFieldReferences"/>). <c>ValidationText</c> and
+    /// <c>Description</c> are free text and are left alone.
+    /// </summary>
+    /// <param name="tableName">The table being rewritten, which may qualify a reference.</param>
+    /// <param name="existingDefs">The columns before the rewrite.</param>
+    /// <param name="newDefs">The projected columns, updated in place.</param>
+    /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    /// <exception cref="ArgumentException">A renamed reference would need a name containing <c>]</c>, or would push an expression past the engine's limits.</exception>
+    private static void ProjectExpressionReferences(
+        string tableName,
+        List<ColumnDefinition> existingDefs,
+        List<ColumnDefinition> newDefs,
+        Func<string, string?> mapColumnName)
+    {
+        foreach (ColumnDefinition existing in existingDefs)
+        {
+            string? mapped = mapColumnName(existing.Name);
+            if (mapped is null || string.Equals(mapped, existing.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < newDefs.Count; i++)
+            {
+                ColumnDefinition column = newDefs[i];
+                string? calculation = RenameReference(tableName, column, "calculated expression", column.CalculationExpression, existing.Name, mapped);
+                string? rule = RenameReference(tableName, column, "validation rule", column.ValidationRuleExpression, existing.Name, mapped);
+                string? defaultValue = RenameReference(tableName, column, "default value", column.DefaultValueExpression, existing.Name, mapped);
+                if (!ReferenceEquals(calculation, column.CalculationExpression)
+                    || !ReferenceEquals(rule, column.ValidationRuleExpression)
+                    || !ReferenceEquals(defaultValue, column.DefaultValueExpression))
+                {
+                    newDefs[i] = column with
+                    {
+                        CalculationExpression = calculation,
+                        ValidationRuleExpression = rule,
+                        DefaultValueExpression = defaultValue,
+                    };
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Renames the references to <paramref name="oldColumnName"/> in one of
+    /// <paramref name="column"/>'s expressions.
+    /// </summary>
+    /// <param name="tableName">The table being rewritten.</param>
+    /// <param name="column">The column the expression belongs to.</param>
+    /// <param name="property">The expression's property, for the message.</param>
+    /// <param name="expression">The expression text, or <see langword="null"/>.</param>
+    /// <param name="oldColumnName">The renamed column's current name.</param>
+    /// <param name="newColumnName">The renamed column's new name.</param>
+    /// <returns>The rewritten text, or <paramref name="expression"/> itself when it does not name the column.</returns>
+    /// <exception cref="ArgumentException">The expression names the column and the new name contains <c>]</c>, or the rewritten text breaks a limit the original met.</exception>
+    private static string? RenameReference(string tableName, ColumnDefinition column, string property, string? expression, string oldColumnName, string newColumnName)
+    {
+        if (expression is null || !ExpressionFieldReferences.References(expression, oldColumnName, tableName))
+        {
+            return expression;
+        }
+
+        string conflict = $"Cannot rename column '{oldColumnName}' of table '{tableName}' to '{newColumnName}': the {property} of column '{column.Name}' ('{expression}') names it";
+        if (newColumnName.Contains(']', StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"{conflict}, and a name containing ']' cannot be written as a [field] reference.", nameof(newColumnName));
+        }
+
+        // A bare reference gains brackets and the new name may be longer. An
+        // expression past the limits stops evaluating (a rule or default
+        // silently), so refuse a rename that would push one over them.
+        string renamed = ExpressionFieldReferences.Rename(expression, oldColumnName, newColumnName, tableName)!;
+        if (!FitsExpressionLimits(renamed) && FitsExpressionLimits(expression))
+        {
+            throw new ArgumentException(
+                $"{conflict}, and with the new name it would exceed the expression limits ({CalculatedExpressionLimits.MaxExpressionLength} characters, {CalculatedExpressionLimits.MaxColumnReferences} [field] references).",
+                nameof(newColumnName));
+        }
+
+        return renamed;
+    }
+
+    private static bool FitsExpressionLimits(string expression)
+    {
+        try
+        {
+            CalculatedExpressionLimits.ValidateExpressionShape(expression, CalculatedExpressionLimits.MaxExpressionLength, "Expression");
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Rejects a Jet3 table of more than 255 columns before anything is
     /// written: a Jet3 row stores <c>num_cols</c> in one byte, and Access
     /// allows 255 fields per table.
@@ -371,10 +474,12 @@ internal sealed class TableSchemaEditor(
     /// <param name="mapColumnName">
     /// Maps a current column name to its name after the rewrite, or to
     /// <see langword="null"/> for a dropped column. Drives the index
-    /// projection, the relationship key columns, and the FK index entries.
+    /// projection, the relationship key columns, the FK index entries, and
+    /// the column references in the table's expressions.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns or drops a relationship key column.</exception>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name cannot be written into an expression that names it.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     private async ValueTask RewriteTableAsync(
         string tableName,
@@ -442,6 +547,11 @@ internal sealed class TableSchemaEditor(
         }
 
         this.ThrowIfTooManyColumns(tableName, newDefs.Count);
+
+        // Carry renamed columns into the expressions that name them, before
+        // anything is written; the LvProp blob and the constraint registry are
+        // both built from newDefs.
+        ProjectExpressionReferences(tableName, existingDefs, newDefs, mapColumnName);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
