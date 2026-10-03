@@ -382,18 +382,107 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
 
         Assert.Contains(path, ex.Message, StringComparison.Ordinal);
         Assert.Contains("FileShare.Delete", ex.Message, StringComparison.Ordinal);
+        Assert.False(ex.Data.Contains(EncryptionManager.ReplacementFileDataKey));
         Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
         Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
         await AssertOpenableAsync(path, TestDatabases.EncryptedFixturePassword, ["T"]);
     }
 
     /// <summary>
+    /// Windows also refuses to rename over a read-only file, with no handle
+    /// open. The refusal must name that, not blame a handle without
+    /// <see cref="FileShare.Delete"/>, which closing handles cannot fix, and
+    /// must leave the file, its attribute and its directory as they were.
+    /// </summary>
+    [Fact]
+    public async Task ChangePassword_WhenTargetReadOnly_ThrowsNamingItAndLeavesOriginalAndNoTempFile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to rename a file over a read-only one.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        byte[] original = await File.ReadAllBytesAsync(path, ct);
+
+        IOException ex;
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            ex = await Assert.ThrowsAsync<IOException>(async () =>
+                await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct));
+            Assert.Equal(FileAttributes.ReadOnly, File.GetAttributes(path) & FileAttributes.ReadOnly);
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+        }
+
+        Assert.Contains(path, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("read-only", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileShare.Delete", ex.Message, StringComparison.Ordinal);
+        Assert.IsType<UnauthorizedAccessException>(ex.InnerException);
+        Assert.False(ex.Data.Contains(EncryptionManager.ReplacementFileDataKey));
+        Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        await AssertOpenableAsync(path, TestDatabases.EncryptedFixturePassword, ["T"]);
+    }
+
+    /// <summary>
+    /// A temp write that is cancelled deletes the temp file and leaves the
+    /// original as it was. The token is cancelled before the call, so the
+    /// temp file is created and its first write throws.
+    /// </summary>
+    [Fact]
+    public async Task ReplaceFileAtomic_WhenTempWriteCancelled_LeavesOriginalAndNoTempFile()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        byte[] original = await File.ReadAllBytesAsync(path, ct);
+        var cancelled = new CancellationToken(canceled: true);
+
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await EncryptionManager.ReplaceFileAtomicAsync(path, new byte[original.Length], cancelled));
+
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
+    }
+
+    /// <summary>
+    /// When the original is gone and the temp file cannot be renamed to its
+    /// name, the temp file holds the only copy of the new contents. It is
+    /// kept, and the exception names it and carries its path under
+    /// <see cref="EncryptionManager.ReplacementFileDataKey"/>, so a caller can
+    /// tell this from a refusal that left the original. A missing original
+    /// and a handle on the temp file without <see cref="FileShare.Delete"/>
+    /// stand in for Windows' <c>ERROR_UNABLE_TO_MOVE_REPLACEMENT</c>, which
+    /// removes the original and leaves the temp file under its own name.
+    /// </summary>
+    [Fact]
+    public async Task ReplaceFileWithTemp_WhenOriginalGoneAndTempHeld_KeepsTempAndNamesItInData()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to rename a file another handle holds without FileShare.Delete.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string tempPath = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string path = Path.Combine(Path.GetDirectoryName(tempPath)!, "Replaced.accdb");
+        byte[] contents = await File.ReadAllBytesAsync(tempPath, ct);
+
+        IOException ex;
+        await using (var holder = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            ex = Assert.Throws<IOException>(() => EncryptionManager.ReplaceFileWithTemp(tempPath, path));
+        }
+
+        Assert.Equal(tempPath, ex.Data[EncryptionManager.ReplacementFileDataKey]);
+        Assert.Contains(tempPath, ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(path));
+        Assert.Equal(contents, await File.ReadAllBytesAsync(tempPath, ct));
+    }
+
+    /// <summary>
     /// An <see cref="AccessReader"/> opened by path shares the file with
     /// <see cref="FileShare.ReadWrite"/> by default, without
     /// <see cref="FileShare.Delete"/>. A password change under it must
-    /// either swap the file whole or refuse and leave it byte for byte as it
-    /// was; Windows refuses. No temp file stays behind either way, and the
-    /// change succeeds once the reader is closed.
+    /// either swap the file whole or refuse, naming that sharing mode, and
+    /// leave it byte for byte as it was; Windows refuses. No temp file stays
+    /// behind either way, and the change succeeds once the reader is closed.
     /// </summary>
     [Fact]
     public async Task ChangePassword_WithOpenReader_LeavesOriginalIntact()
@@ -420,6 +509,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         }
 
         Assert.IsType<IOException>(failure);
+        Assert.Contains("FileShare.Delete", failure.Message, StringComparison.Ordinal);
         Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
 
         await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct);

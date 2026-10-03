@@ -3,6 +3,9 @@ namespace JetDatabaseWriter.Encryption;
 using System;
 using System.Collections.Generic;
 using System.IO;
+#if !NET6_0_OR_GREATER
+using System.Runtime.InteropServices;
+#endif
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -28,6 +31,16 @@ internal static class EncryptionManager
 
     /// <summary>Where <c>ChangePasswordAsync</c> and <c>DecryptAsync</c> take the current password from, as a missing-password message names it.</summary>
     internal const string OldPasswordArgument = "the oldPassword argument";
+
+    /// <summary>
+    /// The <see cref="Exception.Data"/> key under which an
+    /// <see cref="IOException"/> from <see cref="ReplaceFileWithTemp"/> (and so
+    /// from <see cref="ReplaceFileAtomicAsync"/>) carries the temp file's path
+    /// when the original file was removed and the temp file, which then holds
+    /// the only copy of the new contents, could not be renamed to its name.
+    /// Every other failure leaves the original unchanged and has no entry.
+    /// </summary>
+    internal const string ReplacementFileDataKey = "JetDatabaseWriter.ReplacementFile";
 
     /// <summary>
     /// Jet3 XOR mask (128 bytes, applied cyclically to pages 1+ when the
@@ -127,6 +140,12 @@ internal static class EncryptionManager
     private const int HeaderPasswordCharSize = 2;
 
     private const int HeaderPasswordNormalizedLength = HeaderPasswordLengthPrefixLength + HeaderPasswordLength;
+
+    /// <summary>The <see cref="Exception.HResult"/> of Windows' <c>ERROR_SHARING_VIOLATION</c>, which <see cref="File.Replace(string, string, string?, bool)"/> reports while a handle holds the file without <see cref="FileShare.Delete"/>.</summary>
+    private const int SharingViolationHResult = unchecked((int)0x80070020);
+
+    /// <summary>The <see cref="Exception.HResult"/> of Windows' <c>ERROR_UNABLE_TO_REMOVE_REPLACED</c>: the file to be replaced could not be removed, and both files keep their names.</summary>
+    private const int UnableToRemoveReplacedHResult = unchecked((int)0x80070497);
 
     /// <summary>
     /// Inspects the database header for Jet3 / Jet4 / ACCDB page-encryption or
@@ -541,14 +560,17 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Changes the password of an already-encrypted JET / ACE database in place,
-    /// preserving the existing on-disk encryption format.
+    /// Changes the password of an already-encrypted JET / ACE database,
+    /// preserving the existing on-disk encryption format. The re-encrypted
+    /// file replaces the original through <see cref="ReplaceFileAtomicAsync"/>,
+    /// a temp file renamed over it, never an overwrite in place.
     /// </summary>
     /// <param name="path">Path to the file.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="newPassword">The new password.</param>
     /// <param name="options">The options.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
     public static ValueTask ChangePasswordAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
@@ -569,8 +591,10 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
-    /// requested <paramref name="targetFormat"/>.
+    /// Encrypts a currently-unencrypted JET / ACE database, applying the
+    /// requested <paramref name="targetFormat"/>. The encrypted file replaces
+    /// the original through <see cref="ReplaceFileAtomicAsync"/>, a temp file
+    /// renamed over it, never an overwrite in place.
     /// </summary>
     /// <param name="path">Path to the file.</param>
     /// <param name="newPassword">The new password.</param>
@@ -578,6 +602,7 @@ internal static class EncryptionManager
     /// <param name="options">The options.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
+    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
     public static ValueTask EncryptAsync(
         string path,
         ReadOnlyMemory<char> newPassword,
@@ -605,12 +630,15 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Removes encryption from a JET / ACE database in place.
+    /// Removes encryption from a JET / ACE database. The decrypted file
+    /// replaces the original through <see cref="ReplaceFileAtomicAsync"/>, a
+    /// temp file renamed over it, never an overwrite in place.
     /// </summary>
     /// <param name="path">Path to the file.</param>
     /// <param name="oldPassword">The old password.</param>
     /// <param name="options">The options.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
     public static ValueTask DecryptAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
@@ -955,16 +983,26 @@ internal static class EncryptionManager
     /// <para>
     /// When the replace is refused, as it is on Windows while any handle
     /// holds the file without <see cref="FileShare.Delete"/> (an open
-    /// <see cref="AccessReader"/> does by default), this throws and leaves
-    /// the original untouched. It never overwrites the original in place.
-    /// The temp file is deleted on every failure that leaves the original.
+    /// <see cref="AccessReader"/> does by default) or while the file is
+    /// read-only, this deletes the temp file, throws, and leaves the original
+    /// untouched. It never overwrites the original in place. The one failure
+    /// that does not leave the original is described under
+    /// <see cref="ReplaceFileWithTemp"/>: its exception carries the temp
+    /// file's path under <see cref="ReplacementFileDataKey"/>.
     /// </para>
     /// </summary>
     /// <param name="path">The file to replace.</param>
     /// <param name="contents">Its new contents.</param>
     /// <param name="cancellationToken">A token used to cancel the operation; it is honoured until the temp file is written.</param>
     /// <returns>A <see cref="ValueTask"/> that completes once the file is replaced.</returns>
-    /// <exception cref="IOException">Thrown when the temp file cannot be written or the replace is refused; the original is unchanged.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is cancelled while the temp file is written; the temp file is deleted and the original is unchanged.</exception>
+    /// <exception cref="IOException">
+    /// Thrown when the temp file cannot be written or the replace is refused.
+    /// The temp file is deleted and the original is unchanged, unless the
+    /// exception's <see cref="Exception.Data"/> holds
+    /// <see cref="ReplacementFileDataKey"/>: then the original was removed and
+    /// the new contents are only in the temp file that entry names.
+    /// </exception>
     internal static async ValueTask ReplaceFileAtomicAsync(string path, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken)
     {
         string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
@@ -1007,19 +1045,26 @@ internal static class EncryptionManager
     /// <para>
     /// It never deletes or overwrites <paramref name="path"/> first: that
     /// would leave no good copy if it failed partway or the process died. When
-    /// both renames are refused it deletes the temp file and throws, and the
-    /// original is unchanged. netstandard2.1 has no overwriting move, so
-    /// there the refused <see cref="File.Replace(string, string, string?, bool)"/>
-    /// is final. The one exception is a replace that removed the original
-    /// but could not rename the temp file (Windows'
+    /// both renames are refused it deletes the temp file and throws an
+    /// <see cref="IOException"/> that says what refused it (a handle without
+    /// <see cref="FileShare.Delete"/>, a read-only file, denied access, or a
+    /// platform with no rename-over), and the original is unchanged.
+    /// netstandard2.1 has no overwriting move, so there the refused
+    /// <see cref="File.Replace(string, string, string?, bool)"/> is final.
+    /// </para>
+    /// <para>
+    /// The one exception is a replace that removed the original but could
+    /// not rename the temp file (Windows'
     /// <c>ERROR_UNABLE_TO_MOVE_REPLACEMENT</c>): the temp file is then moved
-    /// to <paramref name="path"/>, or, if that fails too, kept and named in
-    /// the exception, since it holds the only copy.
+    /// to <paramref name="path"/>, or, if that fails too, kept, since it
+    /// holds the only copy. The exception then names it and carries its path
+    /// in <see cref="Exception.Data"/> under <see cref="ReplacementFileDataKey"/>,
+    /// so a caller can tell this case from a refusal that left the original.
     /// </para>
     /// </summary>
     /// <param name="tempPath">The flushed temp file holding the new contents.</param>
     /// <param name="path">The file to replace.</param>
-    /// <exception cref="IOException">Thrown when the file cannot be replaced.</exception>
+    /// <exception cref="IOException">Thrown when the file cannot be replaced; the original is unchanged unless the exception carries <see cref="ReplacementFileDataKey"/>.</exception>
     internal static void ReplaceFileWithTemp(string tempPath, string path)
     {
         Exception replaceError;
@@ -1033,6 +1078,7 @@ internal static class EncryptionManager
             replaceError = ex;
         }
 
+        Exception cause = replaceError;
         try
         {
 #if NET6_0_OR_GREATER
@@ -1048,22 +1094,87 @@ internal static class EncryptionManager
         }
         catch (Exception moveError) when (moveError is IOException or UnauthorizedAccessException)
         {
-            // Report the replace's error, the first and usually the same refusal.
+            // The replace's error is the first and usually the same refusal;
+            // only on a platform without File.Replace does the move's say more.
+            if (replaceError is PlatformNotSupportedException)
+            {
+                cause = moveError;
+            }
         }
 
         if (!File.Exists(path))
         {
-            throw new IOException(
-                $"Could not replace '{path}': {replaceError.Message} The original file was removed, and its new contents are in '{tempPath}'.",
-                replaceError);
+            var stranded = new IOException(
+                $"Could not replace '{path}': {cause.Message} The original file was removed, and its new contents are in '{tempPath}'. " +
+                $"Move that file to '{path}' to finish the replace.",
+                cause);
+            stranded.Data[ReplacementFileDataKey] = tempPath;
+            throw stranded;
         }
 
         TryDeleteFile(tempPath);
-        throw new IOException(
-            $"Could not replace '{path}': {replaceError.Message} The file was left unchanged. " +
-            "It is replaced by renaming a temp file over it, which Windows refuses while any process holds the file open " +
-            "without FileShare.Delete; an open AccessReader holds it so by default. Close every handle on the file and try again.",
-            replaceError);
+        string message = $"Could not replace '{path}': {cause.Message} The file was left unchanged.";
+        string? refusal = DescribeReplaceRefusal(cause, path);
+        throw new IOException(refusal is null ? message : message + " " + refusal, cause);
+    }
+
+    /// <summary>
+    /// Says what refused <see cref="ReplaceFileWithTemp"/>, as far as the
+    /// error shows it, for the end of its exception's message.
+    /// </summary>
+    /// <param name="error">The error the refused replace (or move) threw.</param>
+    /// <param name="path">The file that was to be replaced.</param>
+    /// <returns>The sentences to append, or <see langword="null"/> when the error's own message is all there is to say.</returns>
+    private static string? DescribeReplaceRefusal(Exception error, string path)
+    {
+        if (error is IOException && error.HResult is SharingViolationHResult or UnableToRemoveReplacedHResult)
+        {
+            return "It is replaced by renaming a temp file over it, which Windows refuses while any process holds the file open " +
+                "without FileShare.Delete; an open AccessReader holds it so by default. Close every handle on the file and try again.";
+        }
+
+        if (error is UnauthorizedAccessException)
+        {
+            return IsReadOnlyOnWindows(path)
+                ? "The file is read-only, and Windows does not rename a file over a read-only one. Clear its read-only attribute and try again."
+                : "Access to the file or its directory was denied: replacing the file needs permission to delete it and to write to its directory.";
+        }
+
+        // Only the netstandard2.1 build gets here with this: the net10.0
+        // build reports the overwriting move's error instead.
+        return error is PlatformNotSupportedException
+            ? "This platform does not support File.Replace, and this build of the library has no other way to rename a file over another."
+            : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> has the read-only attribute on Windows,
+    /// where that alone refuses a rename over it. On other systems a file's
+    /// own permissions do not block a rename over it, so this is always false
+    /// there.
+    /// </summary>
+    /// <param name="path">The file to check.</param>
+    /// <returns><see langword="true"/> for a read-only file on Windows.</returns>
+    private static bool IsReadOnlyOnWindows(string path)
+    {
+#if NET6_0_OR_GREATER
+        bool isWindows = OperatingSystem.IsWindows();
+#else
+        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+#endif
+        if (!isWindows)
+        {
+            return false;
+        }
+
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static void TryDeleteFile(string path)
