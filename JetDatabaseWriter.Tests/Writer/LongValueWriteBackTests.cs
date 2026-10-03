@@ -59,7 +59,7 @@ public sealed class LongValueWriteBackTests
         var data = new TheoryData<DatabaseFormat, string>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
-            foreach (OlePayload payload in PayloadsFor(format))
+            foreach (OlePayload payload in Enum.GetValues<OlePayload>())
             {
                 data.Add(format, payload.ToString());
             }
@@ -73,7 +73,7 @@ public sealed class LongValueWriteBackTests
         var data = new TheoryData<DatabaseFormat, string, string>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
-            foreach (OlePayload payload in PayloadsFor(format))
+            foreach (OlePayload payload in Enum.GetValues<OlePayload>())
             {
                 foreach (SchemaRewrite rewrite in Enum.GetValues<SchemaRewrite>())
                 {
@@ -276,6 +276,7 @@ public sealed class LongValueWriteBackTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task UpdateRowsAsync_UnreadableMemo_RefusesRowAndLeavesItUntouched(DatabaseFormat format)
@@ -340,17 +341,6 @@ public sealed class LongValueWriteBackTests
         Assert.Equal(["Id", "Note"], columns.Select(c => c.Name));
         Assert.Equal(2, await reader.GetRealRowCountAsync(TableName, TestContext.Current.CancellationToken));
     }
-
-    /// <summary>
-    /// Jet3 runs only the inline payloads: LVAL pages this library writes into a
-    /// Jet3 file use the Jet4 page header, so its own reader cannot locate them.
-    /// </summary>
-    /// <param name="format">The database format.</param>
-    /// <returns>The payload kinds to run.</returns>
-    private static OlePayload[] PayloadsFor(DatabaseFormat format) =>
-        format == DatabaseFormat.Jet3Mdb
-            ? [OlePayload.InlineBitmapSignature, OlePayload.InlinePackage]
-            : Enum.GetValues<OlePayload>();
 
     private static byte[] BuildPayload(OlePayload kind)
     {

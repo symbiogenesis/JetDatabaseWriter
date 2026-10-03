@@ -204,7 +204,7 @@ Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes.
 +--------+--------+--------+--------+
 | lval_dp (32 LE)                   |   bytes 4..7  ((page<<8) | row_index)
 +--------+--------+--------+--------+
-| LVAL token (32 LE)                |   bytes 8..11 (copied to bytes 8..11 of every LVAL page in the value)
+| LVAL token (32 LE)                |   bytes 8..11 (Jet4/ACE: copied to bytes 8..11 of every LVAL page in the value; Jet3: 0)
 +--------+--------+--------+--------+
 ```
 
@@ -214,21 +214,22 @@ Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes.
 - `0x40` — single LVAL page. `lval_dp` points at one row on a freshly-appended LVAL data page; the row body **is** the payload (no next-pointer prefix).
 - `0x00` — chained LVAL pages. `lval_dp` points at the first chained row, whose first 4 bytes are the next-pointer (LE `(page<<8)|row`), followed by that page's chunk of the payload. The terminal row's next-pointer is `0`.
 
-LVAL page layout (one row per page, written by `LongValueStore.BuildSinglePageBuffer` / `BuildChainedPageBuffer`):
+LVAL page layout (one row per page, written by `LongValueStore.BuildSinglePageBuffer` / `BuildChainedPageBuffer` from the per-format `LvalPageLayout`):
 
 - `page_type = 0x01` (ordinary data page with an `LVAL` marker in bytes 4..7; `0x05` is the usage-map page type in this codebase, not the writer's LVAL page form).
 - bytes 4..7 are ASCII `LVAL`.
-- bytes 8..11 store the descriptor token from header bytes 8..11.
-- `num_rows = 1`, single row offset entry pointing at byte 20 (`Constants.LongValue.LvalRowStart`).
-- Rows grow from byte 20; chained rows store the next pointer in bytes 20..23 and the payload chunk at byte 24.
+- The row count and the row-offset table sit where every data page of the format keeps them (`DataPageLayout`): `num_rows = 1` at offset 12 and the row offset at 14 on Jet4/ACE, at 8 and 10 on Jet3.
+- Jet4/ACE: bytes 8..11 store the descriptor token from header bytes 8..11 (Access-authored pages leave them zero). Rows start at byte 20, so free space is 4; chained rows store the next pointer in bytes 20..23 and the payload chunk at byte 24.
+- Jet3: no token; offsets 8..11 are the row count and the row offset. The pages match Access 97's byte for byte (test2V1997.mdb pages 37-49): a full chained row starts at byte 12, right after the one-entry offset table, with free space 0; a single-page row and a chain's last chunk are packed at the end of the page, with free space `row start − 12`.
 
-Allocation order for the chained form is **reverse**: `EncodeAsLvalChainAsync` appends the *last* chunk's page first (next-pointer `= 0`), then walks backwards so each newly-appended page can carry its successor's `lval_dp` as its row-prefix next-pointer. The header's `lval_dp` ends up pointing at whatever page was appended *last* (the highest page number, holding the *first* chunk).
+Allocation order for the chained form is **reverse**: `EncodeAsLvalChainAsync` appends the *last* chunk's page first (next-pointer `= 0`), then walks backwards so each newly-appended page can carry its successor's `lval_dp` as its row-prefix next-pointer. The header's `lval_dp` ends up pointing at whatever page was appended *last* (the highest page number, holding the *first* chunk). Access 97 chains run in ascending page order instead; readers follow the pointers either way.
 
 Chunking math:
 
 - One row per LVAL page.
-- Single-page row max = `pgSize − Constants.LongValue.LvalRowStart` (Jet4/ACE: `4096 − 20 = 4076` bytes payload).
-- Chain row max = single-page row max − 4 (the in-row next-pointer prefix).
+- Single-page row max = `pgSize − LvalPageLayout.MinRowStart`: `4096 − 20 = 4076` bytes on Jet4/ACE, `2048 − 12 = 2036` on Jet3.
+- Chain row max = single-page row max − 4 (the in-row next-pointer prefix): 4072 on Jet4/ACE, 2032 on Jet3 (Access 97's chunk size).
+- The inline caps apply on every format. Access 97 itself keeps only values of 32 bytes or less inline; the writer keeps the larger caps because it writes one value per LVAL page.
 
 C8 caveats:
 

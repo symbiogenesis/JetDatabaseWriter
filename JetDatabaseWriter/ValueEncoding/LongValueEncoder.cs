@@ -133,8 +133,8 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
     /// </summary>
     /// <param name="data">The data bytes or values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <param name="lvalTokenOverride">The long value token override.</param>
-    /// <param name="packRowsAtEnd">The pack rows at end.</param>
+    /// <param name="lvalTokenOverride">The token to store instead of the payload hash; ignored on Jet3, which stores none.</param>
+    /// <param name="packRowsAtEnd">Whether to write each row at the end of its page on Jet4/ACE too; Jet3 always does.</param>
     /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
@@ -149,17 +149,21 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         }
 
         int pgSz = db.PageSizeBytes;
-        uint lvalToken = lvalTokenOverride ?? LongValueStore.ComputeToken(data);
+        LvalPageLayout layout = db.LvalPage;
 
-        // One row per LVAL page. Access-authored Jet4/ACE LVAL pages use a
-        // 20-byte LVAL header area; chained rows reserve their first four bytes
-        // for the next-page pointer.
-        int singleRowMax = LongValueStore.SinglePagePayloadCapacity(pgSz);
-        int chainRowMax = LongValueStore.ChainedPagePayloadCapacity(pgSz);
+        // Jet3 LVAL pages have no room for a token, and Access 97 leaves the
+        // descriptor's token bytes zero.
+        uint lvalToken = layout.WritesToken ? lvalTokenOverride ?? LongValueStore.ComputeToken(data) : 0u;
+
+        // One row per LVAL page; chained rows reserve their first four bytes
+        // for the next-page pointer. LvalPageLayout holds the per-format
+        // header area and row placement Access uses.
+        int singleRowMax = layout.SinglePagePayloadCapacity(pgSz);
+        int chainRowMax = layout.ChainedPagePayloadCapacity(pgSz);
 
         if (data.Length <= singleRowMax)
         {
-            byte[] page = LongValueStore.BuildSinglePageBuffer(data, lvalToken, pgSz, packRowsAtEnd);
+            byte[] page = LongValueStore.BuildSinglePageBuffer(data, lvalToken, pgSz, layout, packRowsAtEnd);
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -182,7 +186,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
             cancellationToken.ThrowIfCancellationRequested();
             int chunkStart = i * chainRowMax;
             int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
-            byte[] page = LongValueStore.BuildChainedPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken, pgSz, packRowsAtEnd);
+            byte[] page = LongValueStore.BuildChainedPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken, pgSz, layout, packRowsAtEnd);
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);

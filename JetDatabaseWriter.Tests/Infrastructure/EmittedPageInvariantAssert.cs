@@ -105,7 +105,7 @@ internal static class EmittedPageInvariantAssert
         bool isLval = IsLvalPage(page);
         if (isLval)
         {
-            AssertLvalPage(page, pageNumber, rowSlots);
+            AssertLvalPage(page, pageNumber, pageSize, format, rowSlots);
             return new DataPageSummary(ParentTdefPage: 0, LiveRowCount: 0);
         }
 
@@ -193,12 +193,33 @@ internal static class EmittedPageInvariantAssert
         return rowSlots;
     }
 
-    private static void AssertLvalPage(ReadOnlySpan<byte> page, int pageNumber, List<RowSlotInfo> rowSlots)
+    /// <summary>
+    /// Checks the one-row LVAL pages the writer emits. On Jet3 they match Access
+    /// 97: the row is packed at the end of the page and starts no lower than 12,
+    /// right after the one-entry row-offset table, and bytes 8-11 hold the row
+    /// count and offset, so there is no token. On Jet4/ACE the row starts at 20,
+    /// leaving 4 bytes of free space, and bytes 8-11 carry the writer's token.
+    /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageNumber">The page number, for messages.</param>
+    /// <param name="pageSize">The page size in bytes.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="rowSlots">The page's row slots.</param>
+    private static void AssertLvalPage(ReadOnlySpan<byte> page, int pageNumber, int pageSize, DatabaseFormat format, List<RowSlotInfo> rowSlots)
     {
         Assert.Single(rowSlots);
         RowSlotInfo rowSlot = rowSlots[0];
         Assert.True(rowSlot.IsLive, Message(pageNumber, "LVAL row slot is marked deleted or overflow."));
-        Assert.Equal(Constants.LongValue.LvalRowStart, rowSlot.Start);
+
+        if (format == DatabaseFormat.Jet3Mdb)
+        {
+            Assert.True(rowSlot.Start >= 12, Message(pageNumber, $"Jet3 LVAL row starts at {rowSlot.Start}, inside the page header."));
+            Assert.Equal(pageSize - 1, rowSlot.End);
+            Assert.Equal(rowSlot.Start - 12, ReadUInt16(page, 2));
+            return;
+        }
+
+        Assert.Equal(20, rowSlot.Start);
         Assert.Equal(4, ReadUInt16(page, 2));
 
         uint token = ReadUInt32(page, 8);
