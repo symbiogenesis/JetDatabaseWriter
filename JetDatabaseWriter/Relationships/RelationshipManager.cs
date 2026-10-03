@@ -68,7 +68,7 @@ internal sealed class RelationshipManager(
     /// <param name="relationship">The relationship to create.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">Thrown when a key column is missing from its table, or, before anything is read, when the relationship name breaks the Access naming rules (<see cref="AccessObjectName"/>).</exception>
+    /// <exception cref="ArgumentException">Thrown when a key column is missing from its table, or, before anything is read, when the relationship name breaks the Access naming rules (<see cref="AccessObjectName"/>) or a name is not in a Jet3 database's code page.</exception>
     /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists.</exception>
     /// <remarks>
@@ -86,6 +86,7 @@ internal sealed class RelationshipManager(
         AccessObjectName.ThrowIfInvalid(relationship.Name, "relationship.Name", "relationship");
         Guard.NotNullOrEmpty(relationship.PrimaryTable, "relationship.PrimaryTable");
         Guard.NotNullOrEmpty(relationship.ForeignTable, "relationship.ForeignTable");
+        this.ThrowIfNamesNotStorable(relationship);
         Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -168,6 +169,34 @@ internal sealed class RelationshipManager(
         {
             TableDef foreignDefAfter = await this.db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
             await this.indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Refuses, before anything is read, a relationship that names something a
+    /// Jet3 database's code page cannot store. <c>MSysRelationships</c> stores
+    /// the relationship name and the table and column names as the caller
+    /// spells them, and a lookup ignoring case can match a name the code page
+    /// does not have (Greek capital mu matches a column named µ).
+    /// </summary>
+    /// <param name="relationship">The relationship to create.</param>
+    /// <exception cref="ArgumentException">A name holds a character the database's code page does not have.</exception>
+    private void ThrowIfNamesNotStorable(RelationshipDefinition relationship)
+    {
+        AccessObjectName.ThrowIfNotStorable(this.db, relationship.Name, "relationship.Name", "relationship");
+        AccessObjectName.ThrowIfNotStorable(this.db, relationship.PrimaryTable, "relationship.PrimaryTable", "table");
+        AccessObjectName.ThrowIfNotStorable(this.db, relationship.ForeignTable, "relationship.ForeignTable", "table");
+        for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
+        {
+            if (relationship.PrimaryColumns[i] is { } primaryColumn)
+            {
+                AccessObjectName.ThrowIfNotStorable(this.db, primaryColumn, "relationship.PrimaryColumns", "column", i);
+            }
+
+            if (relationship.ForeignColumns[i] is { } foreignColumn)
+            {
+                AccessObjectName.ThrowIfNotStorable(this.db, foreignColumn, "relationship.ForeignColumns", "column", i);
+            }
         }
     }
 
@@ -1662,11 +1691,12 @@ internal sealed class RelationshipManager(
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="newName"/> is already taken, no relationship is named <paramref name="oldName"/>, or <c>MSysRelationships</c> has no <c>szRelationship</c> column.</exception>
-    /// <exception cref="ArgumentException">Thrown, before anything is read, when <paramref name="newName"/> breaks the Access naming rules (<see cref="AccessObjectName"/>).</exception>
+    /// <exception cref="ArgumentException">Thrown, before anything is read, when <paramref name="newName"/> breaks the Access naming rules (<see cref="AccessObjectName"/>) or is not in a Jet3 database's code page.</exception>
     internal async ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(oldName, nameof(oldName));
         AccessObjectName.ThrowIfInvalid(newName, nameof(newName), "relationship");
+        AccessObjectName.ThrowIfNotStorable(this.db, newName, nameof(newName), "relationship");
         Guard.ThrowIfDisposed(this.db.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 

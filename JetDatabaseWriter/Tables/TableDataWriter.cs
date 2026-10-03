@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -284,8 +286,10 @@ internal sealed class TableDataWriter(
             await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
             // The row is deleted and re-inserted, so every carried MEMO / OLE
-            // value must have been read; refuse before any page is touched.
+            // value must have been read, and every text value must encode;
+            // refuse before any page is touched.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
+            this.ThrowIfTextNotStorable(tableName, tableDef, newRow);
 
             pendingUpdates.Add((i, oldRow, newRow));
         }
@@ -546,6 +550,7 @@ internal sealed class TableDataWriter(
                     (autoCheckpoints ??= []).AddRange(rowCheckpoints);
                 }
 
+                this.ThrowIfTextNotStorable(tableName, tableDef, row);
                 pendingRows.Add(row);
             }
         }
@@ -632,6 +637,43 @@ internal sealed class TableDataWriter(
         }
 
         return inserted;
+    }
+
+    /// <summary>
+    /// Refuses, before any page is written, a row whose Text or Memo value
+    /// holds a character the database cannot store. Jet3 stores text in its
+    /// code page, where .NET would write a best-fit match or <c>?</c>, and an
+    /// index entry built from the caller's text would then not match the row
+    /// (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>). Checking the
+    /// whole row also keeps an update from deleting the old row and then
+    /// failing to encode the new one.
+    /// </summary>
+    /// <param name="tableName">The table name, for the message.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="row">The finished row, after defaults, in table-column order.</param>
+    /// <exception cref="JetLimitationException">A Text or Memo value holds a character the database's code page does not have.</exception>
+    private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row)
+    {
+        if (db.Format != DatabaseFormat.Jet3Mdb)
+        {
+            return;
+        }
+
+        for (int i = 0; i < tableDef.Columns.Count && i < row.Length; i++)
+        {
+            ColumnInfo column = tableDef.Columns[i];
+            if (row[i] is null or DBNull
+                || JetTypeInfo.ResolveValueType(column) is not (ColumnType.TextType or ColumnType.MemoType))
+            {
+                continue;
+            }
+
+            if (Convert.ToString(row[i], CultureInfo.InvariantCulture) is { } text
+                && db.DescribeUnstorableCharacter(text) is { } character)
+            {
+                throw new JetLimitationException(db.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character));
+            }
+        }
     }
 
     /// <summary>

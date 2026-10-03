@@ -79,7 +79,8 @@ internal sealed class TableSchemaEditor(
     /// Public CreateTable entry point: checks the arguments before any catalog
     /// I/O, in this order: the table name and the argument lists, including
     /// the Access naming rules for the table, column and index names
-    /// (<see cref="AccessObjectName"/>), then that the format can hold each
+    /// (<see cref="AccessObjectName"/>) and, on Jet3, that each name is in the
+    /// database's code page, then that the format can hold each
     /// declared column, then each calculated expression's syntax and each
     /// default. Then it creates the table. <see cref="RewriteTableAsync"/>
     /// calls <see cref="CreateTableAsync"/> directly, so a table holding an
@@ -94,11 +95,12 @@ internal sealed class TableSchemaEditor(
     internal ValueTask CreateDeclaredTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
         AccessObjectName.ThrowIfInvalid(tableName, nameof(tableName), "table");
+        AccessObjectName.ThrowIfNotStorable(db, tableName, nameof(tableName), "table");
         Guard.NotNull(columns, nameof(columns));
         Guard.NotNull(indexes, nameof(indexes));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        ValidateDeclaredNames(columns, indexes);
+        ValidateDeclaredNames(db, columns, indexes);
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -224,6 +226,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
         AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(column), "column");
+        AccessObjectName.ThrowIfNotStorable(db, column.Name, nameof(column), "column");
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         // Argument checks before the table is read: the name, then the format,
@@ -306,6 +309,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
         AccessObjectName.ThrowIfInvalid(newColumnName, nameof(newColumnName), "column");
+        AccessObjectName.ThrowIfNotStorable(db, newColumnName, nameof(newColumnName), "column");
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         return this.RewriteTableAsync(
@@ -340,14 +344,15 @@ internal sealed class TableSchemaEditor(
     /// <summary>
     /// Checks the column and index names a CreateTable caller declares: each
     /// definition is present, its name follows the Access naming rules
-    /// (<see cref="AccessObjectName"/>), and no two columns share a name,
-    /// which Access compares ignoring case. <see cref="IndexHelpers.ResolveIndexes"/>
-    /// rejects duplicate index names.
+    /// (<see cref="AccessObjectName"/>) and the database can store it, and no
+    /// two columns share a name, which Access compares ignoring case.
+    /// <see cref="IndexHelpers.ResolveIndexes"/> rejects duplicate index names.
     /// </summary>
+    /// <param name="db">The database the table is created in.</param>
     /// <param name="columns">The declared columns.</param>
     /// <param name="indexes">The declared indexes.</param>
-    /// <exception cref="ArgumentException">A definition is <see langword="null"/>, a name is missing or breaks a rule, or two columns share a name.</exception>
-    private static void ValidateDeclaredNames(IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes)
+    /// <exception cref="ArgumentException">A definition is <see langword="null"/>, a name is missing, breaks a rule or is not in a Jet3 database's code page, or two columns share a name.</exception>
+    private static void ValidateDeclaredNames(DatabaseFile db, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes)
     {
         var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < columns.Count; i++)
@@ -358,6 +363,7 @@ internal sealed class TableSchemaEditor(
             }
 
             AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(columns), "column", i);
+            AccessObjectName.ThrowIfNotStorable(db, column.Name, nameof(columns), "column", i);
             if (!columnNames.Add(column.Name))
             {
                 throw new ArgumentException(
@@ -374,6 +380,7 @@ internal sealed class TableSchemaEditor(
             }
 
             AccessObjectName.ThrowIfInvalidMember(index.Name, nameof(indexes), "index", i);
+            AccessObjectName.ThrowIfNotStorable(db, index.Name, nameof(indexes), "index", i);
         }
     }
 

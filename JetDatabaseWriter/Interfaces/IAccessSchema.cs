@@ -17,6 +17,13 @@ using JetDatabaseWriter.Models;
 /// copy-and-swap that preserves existing rows).
 /// </para>
 /// <para>
+/// A Jet3 (Access 97) database stores names in its ANSI code page, so on a Jet3
+/// file every new name, and a linked table's foreign name, path and connect string,
+/// must also be in that code page. A character outside it throws
+/// <see cref="ArgumentException"/> before anything is written, where .NET would
+/// otherwise store its closest match or <c>?</c>.
+/// </para>
+/// <para>
 /// Implementations are <em>not</em> thread-safe; callers must serialize DDL calls
 /// against the same <see cref="IAccessBase"/> instance. DDL and DML operations
 /// (see <see cref="IAccessWriter"/>) may be freely interleaved on the same instance

@@ -15,6 +15,8 @@ using JetDatabaseWriter.Infrastructure;
 /// existing file already holds, such as Access's own <c>.rB</c> foreign-key
 /// index names, are carried through schema rewrites unchecked, so those
 /// objects can still be read, altered, renamed and dropped.
+/// <see cref="ThrowIfNotStorable"/> adds the database's own limit: a Jet3
+/// name must be in its code page.
 /// </summary>
 internal static class AccessObjectName
 {
@@ -114,11 +116,31 @@ internal static class AccessObjectName
         }
     }
 
-    private static string Describe(string name, string kind, int? position, string reason)
+    /// <summary>
+    /// Refuses a new name that <paramref name="db"/> cannot store as given. A
+    /// Jet3 database stores names in its code page, where a character outside
+    /// it would be stored as a best-fit match or <c>?</c>, so the stored name
+    /// would no longer match the caller's (<see cref="DatabaseFile.DescribeUnstorableCharacter"/>).
+    /// Jet4 and ACE store any name.
+    /// </summary>
+    /// <param name="db">The database the name is written to.</param>
+    /// <param name="name">The name, already checked by <see cref="ThrowIfInvalid"/> or <see cref="ThrowIfInvalidMember"/>.</param>
+    /// <param name="paramName">The public parameter that carries the name.</param>
+    /// <param name="kind">The kind of object, for the message: "table", "column", "index" or "relationship".</param>
+    /// <param name="position">The definition's position in its list, or <see langword="null"/>.</param>
+    /// <exception cref="ArgumentException"><paramref name="name"/> holds a character the database's code page does not have.</exception>
+    internal static void ThrowIfNotStorable(DatabaseFile db, string name, string paramName, string kind, int? position = null)
     {
-        string at = position is { } index ? $" at position {index}" : string.Empty;
-        return $"The {kind} name '{Display(name)}'{at} is not valid: {reason}. {Rules}";
+        if (db.DescribeUnstorableCharacter(name) is { } character)
+        {
+            throw new ArgumentException(db.UnstorableTextMessage($"The {kind} name '{Display(name)}'{At(position)}", character), paramName);
+        }
     }
+
+    private static string Describe(string name, string kind, int? position, string reason)
+        => $"The {kind} name '{Display(name)}'{At(position)} is not valid: {reason}. {Rules}";
+
+    private static string At(int? position) => position is { } index ? $" at position {index}" : string.Empty;
 
     /// <summary>Returns <paramref name="name"/> with each control character written as <c>\uXXXX</c>.</summary>
     /// <param name="name">The name.</param>

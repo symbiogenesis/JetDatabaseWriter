@@ -21,6 +21,12 @@ using JetDatabaseWriter.Models;
 /// <see cref="IAccessSchema"/> for schema management, or the concrete type for both.
 /// </para>
 /// <para>
+/// A Jet3 (Access 97) database stores text in its ANSI code page. An insert or
+/// update whose Text or Memo value holds a character outside that code page throws
+/// <see cref="Exceptions.JetLimitationException"/> before anything is written, where
+/// .NET would otherwise store its closest match or <c>?</c>.
+/// </para>
+/// <para>
 /// Implementations are <em>not</em> thread-safe; callers must serialize DML calls
 /// against the same <see cref="IAccessBase"/> instance. DML and DDL operations
 /// may be freely interleaved on the same instance but must not overlap concurrently.
