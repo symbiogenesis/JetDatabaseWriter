@@ -135,9 +135,7 @@ internal sealed class CatalogArtifactWriter(
 
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
         {
-            int usedPagesOffset = usedPagesLogicalOffsets[i];
-            tdefPages[usedPagesOffset / db.PageSizeBytes][usedPagesOffset % db.PageSizeBytes] = checked((byte)(i + 2));
-            tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+            tdefPageBuilder.WriteLogicalUsedPagesPointer(tdefPages, usedPagesLogicalOffsets[i], i + 2, usageMapPageNumber);
         }
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
@@ -317,9 +315,11 @@ internal sealed class CatalogArtifactWriter(
 
                 for (int usedPagesIndex = 0; usedPagesIndex < usedPagesLogicalOffsets.Length; usedPagesIndex++)
                 {
-                    int usedPagesOffset = usedPagesLogicalOffsets[usedPagesIndex];
-                    tdefPages[usedPagesOffset / db.PageSizeBytes][usedPagesOffset % db.PageSizeBytes] = checked((byte)(usedPagesIndex + 2));
-                    tdefPageBuilder.WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+                    tdefPageBuilder.WriteLogicalUsedPagesPointer(
+                        tdefPages,
+                        usedPagesLogicalOffsets[usedPagesIndex],
+                        usedPagesIndex + 2,
+                        usageMapPageNumber);
                 }
             }
 

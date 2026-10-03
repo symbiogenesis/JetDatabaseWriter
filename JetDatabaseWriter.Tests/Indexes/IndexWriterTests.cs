@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -520,6 +522,21 @@ public sealed class IndexWriterTests
 
             IReadOnlyList<IndexMetadata> idxList = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(indexCount, idxList.Count);
+
+            // Every index keeps exactly the key column it was declared on.
+            // Most real-idx descriptors sit on a continuation page, so a
+            // used_pages pointer written at the wrong physical offset lands in
+            // a neighbouring col_map slot and reads back as a second key column.
+            for (int i = 0; i < indexCount; i++)
+            {
+                IndexMetadata idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
+                Assert.Equal($"C{i:D3}", Assert.Single(idx.Columns).Name);
+            }
+        }
+
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            await AssertUsedPagesPointersAsync(stream, tableName, indexCount);
         }
 
         // Pull the catalog row to recover the TDEF page number.
@@ -545,6 +562,38 @@ public sealed class IndexWriterTests
         Assert.True(
             chainLen > 1,
             $"Expected a multi-page TDEF chain on {format} (page size {pgSz}); got {chainLen} page(s).");
+    }
+
+    /// <summary>
+    /// Asserts that each Jet4 / ACE real index's <c>used_pages</c> pointer,
+    /// read from the logical TDEF, names row <c>realIdx + 2</c> of the table's
+    /// usage map, wherever in the TDEF chain the descriptor sits.
+    /// </summary>
+    /// <param name="stream">The database stream.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="realIndexCount">The number of real indexes the table declares.</param>
+    private static async ValueTask AssertUsedPagesPointersAsync(MemoryStream stream, string tableName, int realIndexCount)
+    {
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        DatabaseFile db = harness.Database;
+        CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.NotNull(entry);
+        byte[]? td = await db.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        Assert.NotNull(td);
+
+        int numCols = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, realIndexCount);
+        int usageMapPage = ReadUInt24(td, Constants.TableDefinition.OwnedPagesPageOffset);
+        Assert.True(usageMapPage > 0);
+        for (int realIdxNum = 0; realIdxNum < realIndexCount; realIdxNum++)
+        {
+            Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
+            int usedPagesOffset = slot.FirstDpOffset - 4;
+            Assert.Equal(realIdxNum + 2, td[usedPagesOffset]);
+            Assert.Equal(usageMapPage, ReadUInt24(td, usedPagesOffset + 1));
+        }
+
+        static int ReadUInt24(byte[] bytes, int offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
     }
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
