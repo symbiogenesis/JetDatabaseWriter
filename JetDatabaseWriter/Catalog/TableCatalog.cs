@@ -95,9 +95,16 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var result = new List<CatalogEntry>();
         var catalogPages = new HashSet<long>();
+        int rowsDecoded = 0;
         foreach (CatalogRow row in rows)
         {
             _ = catalogPages.Add(row.PageNumber);
+            if (!row.IsDecoded)
+            {
+                continue;
+            }
+
+            rowsDecoded++;
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
@@ -116,6 +123,6 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
             result.Add(new CatalogEntry(row.Name, row.TDefPage));
         }
 
-        return new CatalogScanSummary(msys, HasRequiredColumns: true, catalogPages.Count, rows.Count, totalPages, result);
+        return new CatalogScanSummary(msys, HasRequiredColumns: true, catalogPages.Count, rowsDecoded, totalPages, result);
     }
 }

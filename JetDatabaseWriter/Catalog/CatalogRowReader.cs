@@ -56,7 +56,8 @@ internal sealed class CatalogRowReader(DatabaseFile db)
                     Flags: CatalogValueReader.ParseInt64OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, flagsColumn!)),
                     TDefPage: CatalogValueReader.TdefPageFromId(id),
                     Id: id,
-                    ParentId: parentId));
+                    ParentId: parentId,
+                    IsDecoded: this.CanDecodeRow(page, location)));
                 return new ValueTask<bool>(true);
             },
             cancellationToken).ConfigureAwait(false);
@@ -91,4 +92,16 @@ internal sealed class CatalogRowReader(DatabaseFile db)
 
         return 0;
     }
+
+    /// <summary>
+    /// Applies the table reader's skip rules: a row shorter than the column-count
+    /// field, with a zero column count, or whose null mask and variable-column
+    /// offsets do not fit the row cannot be decoded.
+    /// </summary>
+    /// <param name="page">The data page holding the row.</param>
+    /// <param name="location">The row's location on <paramref name="page"/>.</param>
+    private bool CanDecodeRow(byte[] page, RowLocation location)
+        => location.RowSize >= db.RowColumnCountFieldSize
+            && db.ReadRowColumnCount(page, location.RowStart) != 0
+            && db.TryParseRowLayout(page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
 }
