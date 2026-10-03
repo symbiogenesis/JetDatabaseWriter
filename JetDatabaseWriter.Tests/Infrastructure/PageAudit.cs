@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Classifies pages against the global page-allocation map, for tests that
@@ -65,6 +66,49 @@ internal static class PageAudit
         }
 
         return unlinked;
+    }
+
+    /// <summary>
+    /// Returns every index page (<c>0x03</c> or <c>0x04</c>) owned by the table
+    /// at <paramref name="tdefPage"/> that the global usage map does not list
+    /// as free, yet no real index of the table reaches from its
+    /// <c>first_dp</c>: a tree that a rebuild replaced and never gave back.
+    /// </summary>
+    /// <param name="db">The database file to read.</param>
+    /// <param name="allocator">The allocator that reads the global usage map.</param>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the reads.</param>
+    /// <returns>The unreachable index page numbers, ascending.</returns>
+    public static async ValueTask<SortedSet<long>> FindUnreachableIndexPagesAsync(DatabaseFile db, PageAllocator allocator, long tdefPage, CancellationToken cancellationToken)
+    {
+        var reachable = new HashSet<long>();
+        foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(db, tdefPage, cancellationToken))
+        {
+            if (root != 0)
+            {
+                reachable.UnionWith(await IndexLeafChain.ReadTreePagesAsync(db, tdefPage, root, cancellationToken));
+            }
+        }
+
+        var unreachable = new SortedSet<long>();
+        long pageCount = db.PageCount;
+        for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
+        {
+            if (reachable.Contains(pageNumber))
+            {
+                continue;
+            }
+
+            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            if (page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
+                && Ri32(page, 4) == tdefPage
+                && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
+            {
+                _ = unreachable.Add(pageNumber);
+            }
+        }
+
+        return unreachable;
     }
 
     private static bool IsAllZero(byte[] page)

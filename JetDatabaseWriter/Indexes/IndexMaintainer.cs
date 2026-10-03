@@ -375,8 +375,11 @@ internal sealed class IndexMaintainer(
     /// is encoded via <see cref="IndexKeyEncoder"/>, the entries are sorted by
     /// encoded key, and a fresh B-tree is built via <see cref="IndexBTreeBuilder"/>.
     /// The new root page is patched into the real-index <c>first_dp</c> field on
-    /// the TDEF. Old index pages are deliberately left unreferenced in this
-    /// conservative rebuild path; Access compact-and-repair can reclaim them.
+    /// the TDEF. The pages of the tree it replaces then go back to the global
+    /// usage map, except on system tables, complex flat tables and tables with
+    /// long or complex storage columns, and on Jet3 for an Access-authored
+    /// index, whose <c>used_pages</c> row still lists them; those stay
+    /// unreferenced until Access reclaims them on Compact &amp; Repair.
     /// </para>
     /// <para>
     /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
@@ -470,19 +473,27 @@ internal sealed class IndexMaintainer(
             ?? await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         bool tdefDirty = false;
-        long[][]? rebuiltIndexPageGroups = db.Format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
-        long[][]? oldIndexPageGroups = null;
-        if (rebuiltIndexPageGroups is not null)
-        {
-            for (int i = 0; i < rebuiltIndexPageGroups.Length; i++)
-            {
-                rebuiltIndexPageGroups[i] = [];
-            }
+        bool jet3 = db.Format == DatabaseFormat.Jet3Mdb;
+        long[][] rebuiltIndexPageGroups = CreateEmptyPageGroups(numRealIdx);
 
-            oldIndexPageGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(
-                this.ReadTableUsageMapPage(tdefBuffer),
-                numRealIdx,
-                cancellationToken).ConfigureAwait(false);
+        // The trees this rebuild replaces go back to the global usage map
+        // after the TDEF write. System tables, complex flat tables and tables
+        // with long or complex storage columns stay conservative and keep
+        // them. Jet4 / ACE find each old tree through its index usage-map row;
+        // Jet3 keeps none the writer can read back, so each old tree is walked
+        // from its first_dp, before anything is written.
+        bool freeReplacedTrees = !HasLongOrComplexStorageColumns(tableDef)
+            && !IsGeneratedComplexFlatTableName(tableName)
+            && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase);
+        long[][]? oldIndexPageGroups = null;
+        if (freeReplacedTrees)
+        {
+            oldIndexPageGroups = jet3
+                ? await this.CollectJet3ReplacedTreePagesAsync(tdefPage, tdefBuffer, leafLayout, realIdxByNum, numRealIdx, cancellationToken).ConfigureAwait(false)
+                : await this.ReadIndexPageGroupsFromUsageMapAsync(
+                    this.ReadTableUsageMapPage(tdefBuffer),
+                    numRealIdx,
+                    cancellationToken).ConfigureAwait(false);
         }
 
         // Each index's new tree is reserved and written in turn, but nothing
@@ -572,7 +583,7 @@ internal sealed class IndexMaintainer(
                 }
 
                 Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)rootPageNumber));
-                rebuiltIndexPageGroups?[rieKey] = pageNumbers;
+                rebuiltIndexPageGroups[rieKey] = pageNumbers;
 
                 tdefDirty = true;
             }
@@ -587,7 +598,7 @@ internal sealed class IndexMaintainer(
             throw;
         }
 
-        if (rebuiltIndexPageGroups is not null && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
+        if (!jet3 && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
         {
             long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
             await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
@@ -614,12 +625,21 @@ internal sealed class IndexMaintainer(
             await db.WriteTDefChainInPlaceAsync(preamble.Chain, cancellationToken).ConfigureAwait(false);
         }
 
-        if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null && !HasLongOrComplexStorageColumns(tableDef)
-                && !IsGeneratedComplexFlatTableName(tableName)
-                && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
+        if (oldIndexPageGroups is not null)
         {
             await this.DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static long[][] CreateEmptyPageGroups(int numRealIdx)
+    {
+        long[][] groups = new long[numRealIdx][];
+        for (int i = 0; i < groups.Length; i++)
+        {
+            groups[i] = [];
+        }
+
+        return groups;
     }
 
     private static bool HasLongOrComplexStorageColumns(TableDef tableDef)
@@ -711,6 +731,45 @@ internal sealed class IndexMaintainer(
         {
             DatabaseFile.ReturnPage(page);
         }
+    }
+
+    /// <summary>
+    /// Collects every page of the current tree of each real index a Jet3 bulk
+    /// rebuild is about to replace, by walking it from its <c>first_dp</c>:
+    /// Jet3 keeps no index usage map the writer can read back. Only an index
+    /// whose <c>used_pages</c> is 0, one the writer created, is collected. An
+    /// Access-authored index keeps a usage-map row that still names its old
+    /// pages, so its tree is left for Compact &amp; Repair rather than freed
+    /// while that row lists it. A tree that cannot be walked is not collected.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tdefBuffer">The logical TDEF bytes, before the rebuild patches them.</param>
+    /// <param name="layout">The index page layout.</param>
+    /// <param name="realIdxByNum">The real indexes the rebuild replaces, by real-index number.</param>
+    /// <param name="numRealIdx">The number of real indexes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The pages of each collected tree by real-index number, and an empty group for every other index.</returns>
+    private async ValueTask<long[][]> CollectJet3ReplacedTreePagesAsync(
+        long tdefPage,
+        byte[] tdefBuffer,
+        IndexPageLayout layout,
+        Dictionary<int, RealIdxEntry> realIdxByNum,
+        int numRealIdx,
+        CancellationToken cancellationToken)
+    {
+        long[][] groups = CreateEmptyPageGroups(numRealIdx);
+        foreach ((int realIdxNum, RealIdxEntry entry) in realIdxByNum)
+        {
+            long rootPage = (uint)Ri32(tdefBuffer, entry.FirstDpOffset);
+            if (realIdxNum < 0 || realIdxNum >= numRealIdx || rootPage == 0 || Ri32(tdefBuffer, entry.FirstDpOffset - 4) != 0)
+            {
+                continue;
+            }
+
+            groups[realIdxNum] = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false) ?? [];
+        }
+
+        return groups;
     }
 
     private async ValueTask DeallocateReplacedIndexPagesAsync(

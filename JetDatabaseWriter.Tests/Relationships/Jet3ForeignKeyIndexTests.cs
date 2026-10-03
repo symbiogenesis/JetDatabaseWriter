@@ -220,6 +220,94 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(survivors, (await reader.ReadDataTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
     }
 
+    /// <summary>
+    /// A table with a foreign-key entry takes the full index rebuild on every
+    /// insert, update and delete (bail C1c), and each rebuild places its
+    /// multi-page trees on new pages. The trees it replaces must go back to
+    /// the global usage map. Jet4 and ACCDB find them through the index usage
+    /// maps; Jet3 keeps none, so before, every mutation of a Jet3 table in a
+    /// writer-created relationship left both of its old trees allocated and
+    /// unreachable, and the file grew with each one.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="transactionalWrites">Whether the writer uses <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</param>
+    /// <param name="explicitTransaction">Whether the mutations run inside one explicit transaction.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false, false)]
+    public async Task SingleMutations_InTableWithForeignKeyEntry_FreeTheTreesTheRebuildReplaces(DatabaseFormat format, bool transactionalWrites, bool explicitTransaction)
+    {
+        const int seedRows = 1500;
+        bool jet3 = format == DatabaseFormat.Jet3Mdb;
+        string parent = jet3 ? Parent : "P";
+        string parentKey = jet3 ? ParentKey : "Id";
+        await using MemoryStream stream = jet3 ? await this.CopyFixtureAsync() : await CreateAccdbAsync(this.ct);
+        List<int> parentIds = jet3 ? await this.ReadParentIdsAsync(stream) : [1, 2, 3];
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            if (!jet3)
+            {
+                await writer.CreateTableAsync(parent, [new ColumnDefinition(parentKey, typeof(int)) { IsPrimaryKey = true }], this.ct);
+                _ = await writer.InsertRowsAsync(parent, [.. parentIds.Select(id => new object?[] { id })], this.ct);
+            }
+
+            await CreateChildAsync(writer, this.ct);
+            _ = await writer.InsertRowsAsync(Child, [.. Enumerable.Range(1, seedRows).Select(id => new object?[] { id, parentIds[id % parentIds.Count] })], this.ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, parent, parentKey, Child, "ParentId"), this.ct);
+        }
+
+        long childPage = await this.GetTDefPageAsync(stream, Child);
+        SortedSet<long> unreachableBefore;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        {
+            // Both of the child's trees span several pages, so no rebuild can
+            // reuse a single leaf in place.
+            List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct);
+            Assert.Equal(2, roots.Count);
+            foreach (long root in roots)
+            {
+                Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await harness.Database.ReadPageCopyAsync(root, this.ct))[0]);
+            }
+
+            unreachableBefore = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        {
+            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
+            for (int id = seedRows + 1; id <= seedRows + 10; id++)
+            {
+                await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
+                Assert.StartsWith("C1c", services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
+            }
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(Child, "Id", 5, new Dictionary<string, object?> { ["ParentId"] = parentIds[6 % parentIds.Count] }, this.ct));
+            Assert.Equal(1, await writer.DeleteRowsAsync(Child, "Id", 7, this.ct));
+            await this.AssertIndexesCoverRowsAsync(writer, Child);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(this.ct);
+            }
+        }
+
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        {
+            SortedSet<long> unreachableAfter = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
+            long[] leaked = [.. unreachableAfter.Except(unreachableBefore)];
+            Assert.True(leaked.Length == 0, $"{leaked.Length} replaced index pages of the child stayed allocated: {string.Join(", ", leaked)}.");
+            foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct))
+            {
+                await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, childPage, root, this.ct);
+            }
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, this.ct);
+        Assert.Equal(seedRows + 9, (await reader.ReadDataTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
+    }
+
     [Fact]
     public async Task DropRelationship_Jet3_RemovesBothEntriesAndReclaimsTheChildRealIndex()
     {
