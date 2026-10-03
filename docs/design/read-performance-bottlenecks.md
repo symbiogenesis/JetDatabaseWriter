@@ -42,7 +42,7 @@ guidance below to produce new evidence before changing the core reader.
 - Opening and scanning a file the OS has not cached (Windows only): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
-- Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
+- Page I/O: `JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
 
 ## Current architecture
@@ -287,7 +287,7 @@ whose path-opened readers use positionless `RandomAccess` page reads, was about
 20-30% slower than `Disabled`, which reads through the buffered `FileStream`,
 with or without read-ahead. Its investigation (2026-10-03, same machine) found
 that `RandomAccess` itself was not slower.
-`DatabaseFile.ReadPageRandomAccessAsync` read `FileStream.SafeFileHandle` for
+`ReadPageRandomAccessAsync` (then on `DatabaseFile`, now on `PageFile`) read `FileStream.SafeFileHandle` for
 every page, and that getter is not a field read: it flushes the stream's buffer
 and seeks the OS file pointer to the stream's position (a `SetFilePointerEx`
 call) before it returns the handle, which cost 1.7-2.0 µs per call in
@@ -309,8 +309,8 @@ Primary code path:
 
 - `AccessReaderOptions.PageReadOptimizationMode`
 - `AccessReader.CreateStream`
-- `DatabaseFile.EnableRandomAccessPageReadsIfSupported`
-- `DatabaseFile.ReadPageAsync`
+- `PageFile.EnableRandomAccessPageReadsIfSupported`
+- `PageFile.ReadPageAsync`
 - `TableReader.EnumerateTableScanPagesAsync`
 - Every table scan in `TableReader`: `Rows()`, `Rows<T>()`, `RowsAsStrings`,
   `ReadDataTableAsync`, `ReadTableAsync<T>`, `ReadTableAsStringsAsync`,
@@ -375,7 +375,7 @@ A caller that opens the `FileStream` itself for
 
 A path-opened reader also reads a page on the calling thread when that thread
 is a thread-pool thread with no `SynchronizationContext` and the default
-`TaskScheduler` (`DatabaseFile.ReadsInlineOnThreadPool`). That is where most
+`TaskScheduler` (`PageFile.ReadsInlineOnThreadPool`). That is where most
 reads start: the library awaits with `ConfigureAwait(false)`, and console,
 ASP.NET Core and worker-service callers have no context. Handing a read that
 takes a few microseconds to another pool thread, and waiting for it, cost more
@@ -416,9 +416,9 @@ Primary code path:
 
 - `AccessReader.CreateStream`
 - `AccessReader.OpenAsync(string, ...)`, which sets `ReadsInlineOnThreadPool`
-- `DatabaseFile.ReadPageAsync`
-- `DatabaseFile.ReadPageRandomAccessAsync` and `ReadPageRandomAccess`
-- `DatabaseFile.ReadPageFromStream`
+- `PageFile.ReadPageAsync`
+- `PageFile.ReadPageRandomAccessAsync` and `ReadPageRandomAccess`
+- `PageFile.ReadPageFromStream`
 
 ## When read performance still feels slow
 

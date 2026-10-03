@@ -5,13 +5,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// The reader's page cache: an LRU of decrypted page buffers plus a parallel
-/// LRU of each data page's parsed row directory. Every cached read falls
-/// through to the <see cref="DatabaseFile"/> while a transaction journal is
-/// attached, and the cache is absent altogether when its capacity is zero or
-/// negative, as it is for the writer's reads of its own rows.
+/// LRU of each data page's parsed row directory. The cache is absent
+/// altogether when its capacity is zero or negative, which it must be over
+/// the writer's file: those pages change, and every read must see the active
+/// transaction's journal, so the constructor refuses a positive capacity over
+/// a <see cref="Pager"/>.
 /// </summary>
 internal sealed class ReaderPageCache : IDisposable
 {
@@ -33,8 +35,16 @@ internal sealed class ReaderPageCache : IDisposable
     /// </summary>
     /// <param name="db">The database file pages are read from.</param>
     /// <param name="capacity">The number of pages to keep; zero or negative disables caching.</param>
+    /// <exception cref="ArgumentException"><paramref name="capacity"/> is positive and <paramref name="db"/> is the writer's file.</exception>
     internal ReaderPageCache(DatabaseFile db, int capacity)
     {
+        if (capacity > 0 && db.Pages is Pager)
+        {
+            throw new ArgumentException(
+                "A page cache over the writer's file must have capacity 0: its pages change, and every read must see the active transaction's journal.",
+                nameof(capacity));
+        }
+
         this.db = db;
         if (capacity > 0)
         {
@@ -55,20 +65,14 @@ internal sealed class ReaderPageCache : IDisposable
     internal long Misses => this.pageCache?.Misses ?? 0;
 
     /// <summary>
-    /// Reads a page through the cache when one is configured and no transaction
-    /// journal is active. Cached buffers are owned by the cache: callers must not
-    /// return them to the pool.
+    /// Reads a page through the cache when one is configured. Cached buffers
+    /// are owned by the cache: callers must not return them to the pool.
     /// </summary>
     /// <param name="n">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken)
     {
         this.db.ThrowIfDisposedOrCancelled(cancellationToken);
-
-        if (this.db.ActiveJournal is not null)
-        {
-            return await this.db.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
-        }
 
         if (this.pageCache is null)
         {
@@ -112,11 +116,6 @@ internal sealed class ReaderPageCache : IDisposable
     /// <param name="page">The page bytes.</param>
     internal RowBound[] GetRowDirectory(long pageNumber, byte[] page)
     {
-        if (this.db.ActiveJournal is not null)
-        {
-            return this.db.ComputeRowDirectory(page);
-        }
-
         if (this.rowBoundsCache is not null && this.rowBoundsCache.TryGetValue(pageNumber, out RowBound[]? cached))
         {
             return cached;

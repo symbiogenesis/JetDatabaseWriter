@@ -55,7 +55,9 @@ public abstract class AccessOptions(bool useByteRangeLocks) : IAccessOptions
     /// <summary>
     /// Gets a value indicating whether cooperative byte-range page locks are taken
     /// against the database file. No-op where <see cref="FileStream.Lock(long, long)"/>
-    /// is unsupported or when opened from a non-<see cref="FileStream"/>.
+    /// is unsupported or when opened from a non-<see cref="FileStream"/>. Only
+    /// <see cref="AccessWriter"/> takes them: <see cref="AccessReader"/> never
+    /// writes and ignores this option.
     /// </summary>
     public bool UseByteRangeLocks { get; init; } = useByteRangeLocks;
 

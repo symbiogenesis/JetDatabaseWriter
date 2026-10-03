@@ -54,7 +54,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             path,
             leaveOpen,
             typeof(AccessWriter),
-            canCacheOwnedDataPages: false))
+            writable: true))
     {
         this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);

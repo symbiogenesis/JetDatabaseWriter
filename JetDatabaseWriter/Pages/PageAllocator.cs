@@ -190,7 +190,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
     internal async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken)
     {
-        if (db.ActiveJournal is not null)
+        if (db.IsJournalActive)
         {
             throw new InvalidOperationException("ShrinkDatabaseAsync cannot run inside an active transaction.");
         }

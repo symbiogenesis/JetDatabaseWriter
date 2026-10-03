@@ -22,7 +22,7 @@ using JetDatabaseWriter.Infrastructure;
 /// </para>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied
-/// at commit time by <c>DatabaseFile.PrepareEncryptedPageForWrite</c>
+/// at commit time by <c>Pager.PrepareEncryptedPageForWrite</c>
 /// — buffering encrypted bytes would make repeated writes to the same page
 /// (a common pattern inside large multi-row inserts) needlessly re-encrypt.
 /// </para>

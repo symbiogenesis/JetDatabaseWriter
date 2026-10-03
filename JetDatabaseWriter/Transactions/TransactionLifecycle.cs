@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
@@ -16,8 +17,9 @@ using JetDatabaseWriter.Schema.Models;
 /// Manages the explicit page-buffered transaction lifecycle for an
 /// <see cref="AccessWriter"/>: begin, auto-commit wrapping, commit replay,
 /// rollback, and dispose-time teardown. Owns the active transaction; the
-/// page journal it attaches lives on <see cref="DatabaseFile.ActiveJournal"/>
-/// because every page read and write consults it.
+/// page journal it attaches lives in the writer's <see cref="Pager"/>, because
+/// every page read and write consults it, and is attached and detached only
+/// through the pager's <see cref="Pager.JournalGate"/>.
 /// </summary>
 /// <remarks>
 /// The journal holds only page images. The writer also caches state in
@@ -61,27 +63,19 @@ internal sealed class TransactionLifecycle(
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using Pager.JournalGate gate = await db.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
+        if (this.ActiveTransaction is not null)
         {
-            if (this.ActiveTransaction is not null)
-            {
-                throw new InvalidOperationException(
-                    "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
-            }
+            throw new InvalidOperationException(
+                "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
+        }
 
-            long baseLength = db.DatabaseLengthBytes;
-            var journal = new PageJournal(baseLength, db.PageSizeBytes, options.MaxTransactionPageBudget);
-            var tx = new JetTransaction(this, journal);
-            this.stateAtBegin = new WriterState(dataPages.CaptureState(), constraints.CaptureSnapshot());
-            db.ActiveJournal = journal;
-            this.ActiveTransaction = tx;
-            return tx;
-        }
-        finally
-        {
-            _ = db.IoGate.Release();
-        }
+        var journal = new PageJournal(gate.PhysicalLengthBytes, db.PageSizeBytes, options.MaxTransactionPageBudget);
+        var tx = new JetTransaction(this, journal);
+        this.stateAtBegin = new WriterState(dataPages.CaptureState(), constraints.CaptureSnapshot());
+        gate.Attach(journal);
+        this.ActiveTransaction = tx;
+        return tx;
     }
 
     /// <summary>
@@ -205,12 +199,12 @@ internal sealed class TransactionLifecycle(
         PageJournal journal;
         WriterState? state;
 
-        // The detach is memory-only, and IoGate is held only briefly per page
-        // by other callers, so it ignores the token: a token that is already
-        // cancelled then ends the transaction
-        // as a rollback below instead of leaving it half-detached.
-        await db.IoGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-        try
+        // The detach is memory-only, and the I/O gate is held only briefly per
+        // page by other callers, so it ignores the token: a token that is
+        // already cancelled then ends the transaction as a rollback below
+        // instead of leaving it half-detached. The gate is released before the
+        // page writes below, which take it themselves.
+        using (Pager.JournalGate gate = await db.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false))
         {
             if (transaction.IsTerminated)
             {
@@ -227,13 +221,9 @@ internal sealed class TransactionLifecycle(
 
             // Detach the journal first so the page-write loop below routes
             // straight to disk.
-            db.ActiveJournal = null;
+            gate.Detach();
             this.ActiveTransaction = null;
             this.stateAtBegin = null;
-        }
-        finally
-        {
-            _ = db.IoGate.Release();
         }
 
         long? commitLockOffset = null;
@@ -296,29 +286,22 @@ internal sealed class TransactionLifecycle(
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using Pager.JournalGate gate = await db.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
+        if (transaction.IsTerminated)
         {
-            if (transaction.IsTerminated)
-            {
-                throw new InvalidOperationException(JetTransaction.TerminatedMessage);
-            }
-
-            if (!ReferenceEquals(this.ActiveTransaction, transaction))
-            {
-                throw new InvalidOperationException("The transaction is not active on this writer.");
-            }
-
-            db.ActiveJournal = null;
-            this.ActiveTransaction = null;
-            this.RestoreWriterState(this.stateAtBegin);
-            this.stateAtBegin = null;
-            transaction.MarkRolledBack();
+            throw new InvalidOperationException(JetTransaction.TerminatedMessage);
         }
-        finally
+
+        if (!ReferenceEquals(this.ActiveTransaction, transaction))
         {
-            _ = db.IoGate.Release();
+            throw new InvalidOperationException("The transaction is not active on this writer.");
         }
+
+        gate.Detach();
+        this.ActiveTransaction = null;
+        this.RestoreWriterState(this.stateAtBegin);
+        this.stateAtBegin = null;
+        transaction.MarkRolledBack();
     }
 
     /// <summary>
@@ -339,7 +322,9 @@ internal sealed class TransactionLifecycle(
         }
         finally
         {
-            db.ActiveJournal = null;
+            // The rollback above detaches the journal under the gate; when it
+            // fails, the journal is dropped here without waiting for the gate.
+            db.ForceDetachJournal();
             this.ActiveTransaction = null;
             this.stateAtBegin = null;
         }

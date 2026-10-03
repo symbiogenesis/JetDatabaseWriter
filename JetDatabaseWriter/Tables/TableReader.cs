@@ -1037,8 +1037,8 @@ internal sealed class TableReader(
     /// caller decodes the current one. Auto mode needs a file-backed stream
     /// and at least <see cref="MinimumAutoTableScanReadAheadPages"/> pages, and
     /// yields the first page before prefetch begins to preserve first-row
-    /// latency; Enabled needs two pages; Disabled never reads ahead. Reads
-    /// through an attached transaction journal stay sequential.
+    /// latency; Enabled needs two pages; Disabled never reads ahead. The
+    /// reader's file has no transaction journal, so no journal check is needed.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1061,7 +1061,7 @@ internal sealed class TableReader(
     /// </para>
     /// <para>
     /// When the scan runs on a thread-pool thread, a path-opened reader reads
-    /// pages on that thread (<see cref="DatabaseFile.ReadsInlineOnThreadPool"/>),
+    /// pages on that thread (<see cref="Pages.Paging.PageFile.ReadsInlineOnThreadPool"/>),
     /// so the prefetch completes before the current page is yielded and no
     /// longer overlaps decode. That still measured faster in each of four
     /// interleaved runs: a warm scan of the 25,000-row numeric table took
@@ -1074,8 +1074,7 @@ internal sealed class TableReader(
     /// <param name="pageNumbers">The list of page numbers for the table.</param>
     /// <returns><c>true</c> if table pages should be read ahead; otherwise, <c>false</c>.</returns>
     internal bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
-        db.ActiveJournal is null
-            && !HasLongValueOrComplexColumns(tableDef)
+        !HasLongValueOrComplexColumns(tableDef)
             && this.HasEligibleTableScanReadAheadPageCount(pageNumbers);
 
     private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>

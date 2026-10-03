@@ -7,7 +7,9 @@ Last updated: 2026-10-03
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
 [AccessWriter](../../JetDatabaseWriter/AccessWriter.cs), their services, and the
-[DatabaseFile](../../JetDatabaseWriter/DatabaseFile.cs) each facade owns. It exists to answer one
+[DatabaseFile](../../JetDatabaseWriter/DatabaseFile.cs) each facade owns, with its page file: a
+read-only [PageFile](../../JetDatabaseWriter/Pages/Paging/PageFile.cs) for the reader, the
+writer's [Pager](../../JetDatabaseWriter/Pages/Paging/Pager.cs). It exists to answer one
 question that the code alone makes hard to verify: **when more than one
 synchronization primitive is involved, which one is outer and which is inner?**
 
@@ -26,14 +28,14 @@ closing section).
 
 | # | Primitive | Type | Declared in | Scope | Protects |
 |---|-----------|------|-------------|-------|----------|
-| 1 | `operationGate` (`ReaderServices.Operations`) | `AsyncReentrantOperationGate` | [ReaderServices.cs#L34](../../JetDatabaseWriter/ReaderServices.cs#L34) | Reader instance; entered by each reader service's public operations | Drains in-flight reader operations against async disposal |
-| 2 | `IoGate` | `SemaphoreSlim(1,1)` | [DatabaseFile.cs#L190](../../JetDatabaseWriter/DatabaseFile.cs#L190) | One open database file (reader or writer) | Serializes seek-based stream I/O and journal attach/detach |
-| 3 | `ByteRangeLock` | `JetByteRangeLock` | [DatabaseFile.cs#L177](../../JetDatabaseWriter/DatabaseFile.cs#L177) | One open database file | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
-| 4 | `insertPageHintLock` | `Lock` / `object` | [DataPageInserter.cs#L28](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L28) | Writer instance (`DataPageInserter`) | The two-field insert-page hint cache only |
-| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [DatabaseFile.cs#L42](../../JetDatabaseWriter/DatabaseFile.cs#L42) | One open database file | The `ownedDataPagesByTdef` dictionary only |
+| 1 | `operationGate` (`ReaderServices.Operations`) | `AsyncReentrantOperationGate` | [ReaderServices.cs](../../JetDatabaseWriter/ReaderServices.cs) | Reader instance; entered by each reader service's public operations | Drains in-flight reader operations against async disposal |
+| 2 | `IoGate` | `SemaphoreSlim(1,1)` | [PageFile.cs](../../JetDatabaseWriter/Pages/Paging/PageFile.cs) (`PageFile.IoGate`) | One open database file (reader or writer) | Serializes seek-based stream I/O; in the writer, also journal attach/detach through a `Pager.JournalGate` lease |
+| 3 | `ByteRangeLock` | `JetByteRangeLock` | [Pager.cs](../../JetDatabaseWriter/Pages/Paging/Pager.cs) (`Pager.ByteRangeLock`) | The writer's open database file | Cooperative JET byte-range page / commit-lock sentinels (advisory) |
+| 4 | `insertPageHintLock` | `Lock` / `object` | [DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs) | Writer instance (`DataPageInserter`) | The two-field insert-page hint cache only |
+| 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [DatabaseFile.cs](../../JetDatabaseWriter/DatabaseFile.cs) | One open database file (reader only) | The `ownedDataPagesByTdef` dictionary only |
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
-| 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs#L21](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs#L21) | Internal to #1 | The gate's own drain bookkeeping |
-| 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs#L23](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs#L23) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
+| 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs) | Internal to #1 | The gate's own drain bookkeeping |
+| 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
 | 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [DatabaseFile.cs](../../JetDatabaseWriter/DatabaseFile.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
 
 > Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
@@ -54,7 +56,8 @@ order. Never acquire one earlier in this list while holding one later in it.
 1. operationGate lease            (reader only; wraps a whole public operation; reentrant)
 2. ownedDataPageIndex gate        (reader only; held across the whole-file owned-page pass,
                                    whose page reads take IoGate on the seek-and-read path)
-3. IoGate                         (one logical page I/O, or a journal attach/detach)
+3. IoGate                         (one logical page I/O, or one Pager.JournalGate lease:
+                                   a journal attach/detach with the writer-state capture/restore)
 4. ByteRangeLock per-page     (one durable page write; INSIDE IoGate)
 
 — leaf locks (never held across an await, never nested under each other) —
@@ -69,48 +72,53 @@ order. Never acquire one earlier in this list while holding one later in it.
 ```
 
 The only pair that genuinely nests on a hot path is **`IoGate` (outer) →
-`ByteRangeLock` per-page (inner)**, inside
-[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L750) and
-[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782). The
+`ByteRangeLock` per-page (inner)**, inside `Pager.WritePageAsync` and
+`Pager.AppendPageAsync` ([Pager.cs](../../JetDatabaseWriter/Pages/Paging/Pager.cs)). The
 `ownedDataPageIndex` gate also nests outside `IoGate`, but at most once per
 reader, for the whole-file pass. Everything else is either strictly outer (the
 operation gate), a leaf, or lifetime-scoped.
 
 ### Key invariant: do not hold `IoGate` across a page-write call
 
-[`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L750) and
-[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782) always acquire
-`IoGate` themselves; [`ReadPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L377)
-acquires it on its seek-and-read path (the positionless `RandomAccess` fast path
-— uncached `FileStream` reads outside a transaction — bypasses the gate because
-it never touches the shared stream position). Callers must **not** already hold
-`IoGate` when calling any of them: the gated path would self-deadlock. The
-transaction commit path depends on this: it takes `IoGate` only to detach the
-journal, then **releases it before** the replay loop so each replayed
-`WritePageAsync` can re-acquire it. See
-[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L199).
+`Pager.WritePageAsync` and `Pager.AppendPageAsync` always acquire `IoGate`
+themselves; `PageFile.ReadPageAsync` acquires it on its seek-and-read path (the
+positionless `RandomAccess` fast path — a path-opened reader's uncached
+`FileStream` reads; the writer never takes it, and `Pager.CanReadPositionally`
+turns it off while a journal is attached — bypasses the gate because it never
+touches the shared stream position). On that path a pending page of the
+writer's journal is copied under the same gate acquisition
+(`Pager.TryCopyPendingPage`) and is not decrypted. Callers must **not** already
+hold `IoGate` when calling any of them, and so must not hold a
+`Pager.JournalGate` lease, which holds `IoGate`: the gated path would
+self-deadlock. `IoGate` itself is private to the page file; only a
+`JournalGate` lease (`Pager.EnterJournalGateAsync`) holds it outside a page
+call. The transaction commit path depends on this: it takes a lease only to
+detach the journal, then **disposes it before** the replay loop so each
+replayed `WritePageAsync` can re-acquire the gate. See `CommitTransactionAsync`
+in [TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs).
 
 ## Annotated call paths
 
 ### Writer auto-commit (`UseTransactionalWrites = true`)
 
-`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L771)
-→ [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L95)
+`InsertRowsAsync` → `RunAutoCommitAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs))
+→ `TransactionLifecycle.RunAutoCommitAsync` ([TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs))
 → `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
 
 ```
 BeginTransactionAsync
-  └─ IoGate ──▶ capture writer state (insertPageHintLock briefly)
-              ──▶ set ActiveJournal / ActiveTransaction ──▶ release IoGate
+  └─ JournalGate lease (IoGate) ──▶ capture writer state (insertPageHintLock briefly)
+              ──▶ gate.Attach(journal); set ActiveTransaction ──▶ dispose the lease
 
 work phase (row encode, index maintenance, page allocation)
-  └─ no durable locks held: every WritePageAsync/AppendPageAsync sees
-     ActiveJournal and buffers into the in-memory journal while holding only
-     IoGate for the buffer swap.
-  └─ insertPageHintLock and ownedDataPagesCacheLock may be taken briefly (leaf, memory only).
+  └─ no durable locks held: every WritePageAsync/AppendPageAsync sees the
+     attached journal and buffers into it while holding only IoGate for the
+     buffer swap.
+  └─ insertPageHintLock may be taken briefly (leaf, memory only). The writer's file never
+     caches owned pages, so the writer never takes ownedDataPagesCacheLock.
 
 CommitTransactionAsync
-  ├─ IoGate ──▶ detach journal (ActiveJournal = ActiveTransaction = null) ──▶ release IoGate
+  ├─ JournalGate lease (IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
   ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
   │     last cancellation check (nothing written yet)
   │     foreach buffered page (ascending page order), with CancellationToken.None:
@@ -120,8 +128,8 @@ CommitTransactionAsync
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
-  └─ IoGate ──▶ detach journal ──▶ restore writer state (catalog invalidated,
-                insertPageHintLock briefly, constraint registry) ──▶ release IoGate
+  └─ JournalGate lease (IoGate) ──▶ gate.Detach() ──▶ restore writer state (catalog invalidated,
+                insertPageHintLock briefly, constraint registry) ──▶ dispose the lease
 ```
 
 The commit-lock sentinel is "outer" only in the sense that it spans the replay
@@ -148,15 +156,15 @@ WritePageAsync
 
 Every public reader operation opens with
 `using AsyncReentrantOperationGate.Lease operation = operations.Enter();` in the
-reader service that implements it (for example
-[TableReader.cs#L126](../../JetDatabaseWriter/Tables/TableReader.cs#L126)). The
+reader service that implements it (for example `TableReader.Rows` in
+[TableReader.cs](../../JetDatabaseWriter/Tables/TableReader.cs)). The
 LINQ provider and the index-query handles call those services directly, so they
 enter the same gate.
 
 ```
 operationGate lease  (reentrant: nested reader calls on the same async flow join the root)
   └─ per page read: IoGate ──▶ seek/read ──▶ release IoGate ──▶ aesGate decrypt (AES files only)
-       (uncached FileStream reads outside a transaction instead use a
+       (a path-opened reader's uncached FileStream reads instead use a
         positionless RandomAccess read that bypasses IoGate)
   └─ table-scan read-ahead: the next data page's read runs alongside the
      caller's decode of the current page, so two page reads can be in flight
@@ -185,7 +193,7 @@ an overlapped handle.
 
 When the read starts on a thread-pool thread with no synchronization context
 and the default task scheduler, a path-opened reader runs it on that thread
-instead of another pool thread (`DatabaseFile.ReadsInlineOnThreadPool`). On
+instead of another pool thread (`PageFile.ReadsInlineOnThreadPool`). On
 the seek-and-read path that thread holds `IoGate` across the blocking read,
 just as an offloaded read held it across the awaited one, so the hierarchy is
 unchanged. An inline read cannot be cancelled once started; the token is
@@ -194,24 +202,26 @@ never block on a page read.
 
 ### Disposal
 
-Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L402):
+Reader — `DisposeAsync` ([AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)):
 
 ```
 operationGate.TryBeginDispose(out waitForOperations)
   └─ lockFile.DisposeAfterAsync(waitForOperations, DisposeReaderResourcesAsync)
         ├─ await waitForOperations   (in-flight reader operations drain)
         ├─ DisposeReaderResourcesAsync → services.Dispose (page and catalog caches)
-        │                                 → DatabaseFile.DisposeAsync
+        │                                 → DatabaseFile.DisposeAsync (PageFile: stream, IoGate,
+        │                                   page cipher; then the owned-page caches)
         └─ release .ldb / .laccdb slot  (always last)
   └─ operationGate.CompleteDispose()
 ```
 
-Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L690) (no
+Writer — `DisposeAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)) (no
 operation gate; the writer is single-writer by construction):
 
 ```
 lockFileCoordinator.DisposeAfterAsync(
-    TransactionLifecycle.DisposeActiveTransactionAsync,  (implicit rollback of any open tx)
+    TransactionLifecycle.DisposeActiveTransactionAsync,  (implicit rollback of any open tx; then
+                                                          Pager.ForceDetachJournal without the gate)
     RewrapAndCloseOuterEncryptedStreamAsync,             (Agile re-encrypt on close)
     DatabaseFile.DisposeAsync)
   └─ release .ldb / .laccdb slot  (always last)
@@ -223,7 +233,7 @@ lockFileCoordinator.DisposeAfterAsync(
 |-----------|-----------|--------------------------|
 | `operationGate` | Yes | `AsyncLocal<int> operationDepth`; nested calls on one async flow join the active root operation |
 | `ownedDataPageIndex` gate | No | Binary `SemaphoreSlim(1,1)` — the index build only reads pages; it must never ask for the owned-page index itself |
-| `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it across a `*PageAsync` call |
+| `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it, or a `Pager.JournalGate` lease, across a `*PageAsync` call |
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
@@ -258,8 +268,9 @@ writes those rows some other way must call `RelationshipCatalogStore.Invalidate`
 
 1. Acquire primitives in the documented order. If you need two, the one higher
    in the hierarchy is taken first and released last.
-2. Never hold `IoGate` when calling `ReadPageAsync` / `WritePageAsync` /
-   `AppendPageAsync` — they take it themselves on their gated paths.
+2. Never hold `IoGate`, or a `Pager.JournalGate` lease, when calling
+   `ReadPageAsync` / `WritePageAsync` / `AppendPageAsync` — they take the gate
+   themselves on their gated paths.
 3. Keep `insertPageHintLock`, `ownedDataPagesCacheLock` and `aesGate` as leaf locks: pure
    in-memory work, no `await` and no other lock acquired while held.
 4. Per-page byte-range locks go **inside** `IoGate`, never the reverse.
@@ -281,8 +292,8 @@ separate because their responsibilities do not actually overlap:
   operations once disposal starts. Merging it into `IoGate` would serialize
   reads that are intentionally allowed to overlap.
 - **`insertPageHintLock`** guards a two-field insert-page hint cache
-  ([`TryGetCachedInsertPageNumber`](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L120) /
-  [`SetCachedInsertPageNumber`](../../JetDatabaseWriter/Pages/DataPageInserter.cs#L135)).
+  (`TryGetCachedInsertPageNumber` / `SetCachedInsertPageNumber` in
+  [DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs)).
   It is a pure-memory leaf lock with no I/O; routing it through the I/O mutex
   would add contention for no benefit.
 

@@ -88,7 +88,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             path,
             leaveOpen,
             typeof(AccessReader),
-            canCacheOwnedDataPages: true))
+            writable: false))
     {
         Guard.NotNull(options, nameof(options));
 
@@ -124,7 +124,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // half-built reader, so failed construction after slot acquisition
             // must release the lock-file slot here.
             this.lockFile.Acquire();
-            this.Database.ByteRangeLock = options.CreateByteRangeLock(stream);
+
+            // The reader never writes, so it takes no byte-range locks; the
+            // timeout is still checked here, where the lock was once built.
+            _ = AccessOptions.ValidateLockTimeoutMilliseconds(options.LockTimeoutMilliseconds);
             constructionComplete = true;
         }
         finally

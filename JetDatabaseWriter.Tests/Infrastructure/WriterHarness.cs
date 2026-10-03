@@ -57,7 +57,7 @@ internal sealed class WriterHarness : IAsyncDisposable
         options ??= new AccessWriterOptions { UseLockFile = false };
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
         byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessWriter), canCacheOwnedDataPages: false);
+        var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessWriter), writable: true);
         try
         {
             database.ByteRangeLock = options.CreateByteRangeLock(stream);

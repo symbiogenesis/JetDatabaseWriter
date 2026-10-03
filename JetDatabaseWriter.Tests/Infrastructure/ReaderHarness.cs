@@ -56,7 +56,7 @@ internal sealed class ReaderHarness : IAsyncDisposable
         options ??= new AccessReaderOptions { UseLockFile = false };
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
         byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessReader), canCacheOwnedDataPages: true);
+        var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessReader), writable: false);
         try
         {
             return new ReaderHarness(database, new ReaderServices(database, options));

@@ -11,7 +11,7 @@ JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
-├── DatabaseFile.cs                        (one open database: stream, page I/O, TDEF parsing, owned-page and live-row enumeration; forwards its format members to JetFormat)
+├── DatabaseFile.cs                        (one open database: composes its JetFormat and its PageFile or Pager and forwards to them; TDEF parsing, owned-page and live-row enumeration)
 ├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
@@ -148,6 +148,11 @@ JetDatabaseWriter/
 │   ├── ReaderPageCache.cs                 (the reader's page and row-directory LRU caches)
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
 │   ├── PageJournal.cs                     (in-memory after-images of a transaction's pages, replayed in place on commit)
+│   ├── Paging/                            (one open file's page I/O)
+│   │   ├── IPageSource.cs                 (read decrypted pages: the interface read-side code depends on)
+│   │   ├── PageBuffers.cs                 (pooled page-buffer return and caller-owned page copies)
+│   │   ├── PageFile.cs                    (read-only page I/O: stream, I/O gate, page cipher, RandomAccess reads)
+│   │   └── Pager.cs                       (the writer's PageFile: writes, appends, flushes, byte-range locks, the transaction journal and its JournalGate)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (insert hint + writable owned-map set, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
@@ -387,12 +392,18 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 | **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Tables/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; run the reader's and writer's table workflows; translate and run LINQ queries; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`, `ReaderServices`, `WriterServices`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and composition |
 
-Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only what is genuinely its own: opening or creating the database (header read, Agile unwrap, lock-file slot, byte-range lock), disposal order, and, for the writer, the refusal of flat-Agile files on open, the Agile re-wrap, the auto-commit scope, and the static encryption helpers. Every other public method forwards to one service:
+Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only what is genuinely its own: opening or creating the database (header read, Agile unwrap, lock-file slot, and for the writer the byte-range lock), disposal order, and, for the writer, the refusal of flat-Agile files on open, the Agile re-wrap, the auto-commit scope, and the static encryption helpers. Every other public method forwards to one service:
 
 - reader: `TableReader`, `IndexRowReader`, `SchemaReader`, or `ComplexItemReader`; `FromIndex` and `Query<T>` return handles built over those services;
 - writer: `TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, or `TransactionLifecycle`, inside the auto-commit scope.
 
-Each facade owns one **`DatabaseFile`**: the backing stream, its format profile (`JetFormat`, exposed as `DatabaseFile.Profile`: the format, page size, code page, byte layouts and text codecs, built once from the header), page read/write/append (decryption, the transaction journal, cooperative byte-range locks), TDEF parsing, and owned data-page and live-row enumeration. Its `PageCount` is the one end of file: inside a transaction it includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds it, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
+Each facade owns one **`DatabaseFile`**, which composes the file's parts and forwards to them:
+
+- its format profile, `JetFormat` (`DatabaseFile.Profile`): the format, page size, code page, byte layouts and text codecs, built once from the header;
+- its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. The reader's object graph holds no `Pager`, so its write forwarders throw;
+- TDEF parsing, and owned data-page and live-row enumeration.
+
+Its `PageCount` is the one end of file: inside a transaction the `Pager` includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds the `DatabaseFile`, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
 
 `ReaderServices` and `WriterServices` are the **composition roots**. Each builds its facade's collaborators once and passes each one two kinds of dependency through its constructor:
 
@@ -409,7 +420,7 @@ No collaborator receives a facade, `AccessBase`, or a composition root, and none
 - the writer's services hold exactly one `DatabaseFile`, the writer's own, and no `AccessReader`; and
 - the facades declare no internal members.
 
-The writer reads its own file only through its own `DatabaseFile`. Workflows that read a table before changing it (update, delete, cascades, index rebuilds, schema rewrites, constraint seeding, and relationship enforcement) decode rows through `TableSnapshotReader`, which `WriterServices` builds from a `RowDecoder` over a capacity-0 `ReaderPageCache` and a `CatalogReader` over the writer's own `TableCatalog`. Every page therefore comes through `DatabaseFile.ReadPageAsync`, which consults an active transaction's journal and decrypts with the writer's page keys, and nothing read this way is cached between calls. Workflows that then change those rows read them with `TableSnapshotReader.ReadRowsAsync`, which returns each decoded row as a `LocatedRow` paired with the location it came from, and mutate exactly that location; nothing pairs separately read rows and locations by position.
+The writer reads its own file only through its own `DatabaseFile`. Workflows that read a table before changing it (update, delete, cascades, index rebuilds, schema rewrites, constraint seeding, and relationship enforcement) decode rows through `TableSnapshotReader`, which `WriterServices` builds from a `RowDecoder` over a capacity-0 `ReaderPageCache` and a `CatalogReader` over the writer's own `TableCatalog`. Every page therefore comes through the writer's `Pager`, which returns an active transaction's pending pages and decrypts the rest with the writer's page keys, and nothing read this way is cached between calls: a `ReaderPageCache` over a `Pager` refuses any capacity but 0. Workflows that then change those rows read them with `TableSnapshotReader.ReadRowsAsync`, which returns each decoded row as a `LocatedRow` paired with the location it came from, and mutate exactly that location; nothing pairs separately read rows and locations by position.
 
 Two exceptions are deliberate. The public `JetTransaction` handle calls back into the `TransactionLifecycle` that issued it, the same owner/handle shape as `DbConnection` and `DbTransaction`. `LinkedTableReader` opens a separate `AccessReader` on each Access-file link's source database; it does not receive or hold the reader that owns it.
 
@@ -524,6 +535,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `ValueDecoding/Models/` | `JetDatabaseWriter.ValueDecoding.Models` |
 | `Pages/` | `JetDatabaseWriter.Pages` |
 | `Pages/Models/` | `JetDatabaseWriter.Pages.Models` |
+| `Pages/Paging/` | `JetDatabaseWriter.Pages.Paging` |
 | `Indexes/` | `JetDatabaseWriter.Indexes` |
 | `Indexes/Helpers/` | `JetDatabaseWriter.Indexes.Helpers` |
 | `Indexes/Collation/` | `JetDatabaseWriter.Indexes.Collation` |
@@ -578,7 +590,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps read-only B-tree descent and in-place mutation planning separate from TDEF/catalog orchestration |
 | **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
-| **Pager** | `DatabaseFile` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O with the reader's 256-page LRU eviction cache and an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
+| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
 | **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |
@@ -661,7 +673,7 @@ Internal access goes to the internal types, not through the facades. Tests that 
 
 ### 1. Thin facades over composition roots and one database file
 
-`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file and byte-range-lock lifetime, disposal order, and for the writer the refusal of flat-Agile files on open, the auto-commit scope, the Agile-encryption re-wrap, and the static encryption helpers.
+`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file lifetime, disposal order, and for the writer the byte-range lock, the refusal of flat-Agile files on open, the auto-commit scope, the Agile-encryption re-wrap, and the static encryption helpers.
 
 Both used to be the shared context their collaborators reached through. Writer managers took `AccessWriter` and found their siblings through internal `Relationships`, `ComplexColumns`, and `Constraints` properties. Reader helpers (`ComplexColumnReader`, `LongValueDecoder`, the index queries, the LINQ provider, `IncludeLoader`, and the reader half of `LinkedTableManager`) took `AccessReader` itself, and some called its public methods back. Page I/O lived in the `AccessBase` base class, so even a service that only read pages held the facade object. `ReaderServices` and `WriterServices` now wire each graph explicitly. Page I/O moved out of `AccessBase` into `DatabaseFile`, which every service depends on instead, and the user-table catalog moved into the shared `TableCatalog`.
 
@@ -723,7 +735,7 @@ The public entry points are:
 |------|---------|
 | `AccessReader` | Open and read .mdb/.accdb files — stream rows, materialize DataTables/POCOs, LINQ `Query<T>` with relationship-inferred eager loading, exact index seek, read schema, relationship metadata, linked-table metadata/read-through, complex-column metadata/items |
 | `AccessWriter` | Create/open/write .mdb/.accdb files — CRUD with named-column `RowValues`/`RowCriteria` filters, DDL, linked-table catalog rows, relationships, complex-column row APIs, transactions, storage maintenance, encryption conversion helpers |
-| `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file/byte-range locking, linked-source path policy, linked-text limits |
+| `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file settings (the reader never writes, so it takes no byte-range locks and ignores `UseByteRangeLocks`), linked-source path policy, linked-text limits |
 | `AccessWriterOptions` | Writer configuration: password, full catalog schema, lock-file/byte-range locking, transaction page budget, secure erase, implicit transactional writes |
 | `JetTransaction` | Disposable transaction handle returned by `BeginTransactionAsync` |
 | `Linq.AccessQueryExtensions` | LINQ extensions for `Query<T>` results — relationship-inferred `Include`/`ThenInclude` eager loading and async terminal operators |

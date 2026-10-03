@@ -93,8 +93,8 @@ internal sealed class JetByteRangeLock
 
     /// <summary>
     /// Gets a shared inert instance whose acquire methods always return the no-op
-    /// disposable. Used as the default for <see cref="DatabaseFile"/> before its owning
-    /// reader/writer constructor has had a chance to bind real options, so callers can
+    /// disposable. Used as the default for <see cref="Pages.Paging.Pager"/> before its owning
+    /// writer's constructor has had a chance to bind real options, so callers can
     /// dispatch through a non-nullable field without per-call null checks.
     /// </summary>
     public static JetByteRangeLock Disabled { get; } = new(fileStream: null, enabled: false, lockTimeoutMs: 0);

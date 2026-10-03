@@ -16,6 +16,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
@@ -33,10 +34,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal sealed class DatabaseFile : IAsyncDisposable
 {
-    private readonly bool leaveOpen;
-    private readonly bool canCacheOwnedDataPages;
-    private readonly Type ownerType;
-    private readonly PageDecryptionKeys pageKeys;
+    /// <summary>
+    /// <see langword="true"/> for the writer's file, whose pages change; a
+    /// read-only file memoizes each table's owned data pages instead.
+    /// </summary>
+    private readonly bool writable;
 
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
 #if NET9_0_OR_GREATER
@@ -45,15 +47,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     private readonly object ownedDataPagesCacheLock = new();
 #endif
     private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
-
-#if NET6_0_OR_GREATER
-    /// <summary>
-    /// The backing <see cref="FileStream"/>'s handle, read once by
-    /// <see cref="EnableRandomAccessPageReadsIfSupported"/>; <see langword="null"/>
-    /// until then. The stream owns the handle and closes it on dispose.
-    /// </summary>
-    private Microsoft.Win32.SafeHandles.SafeFileHandle? randomAccessHandle;
-#endif
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DatabaseFile"/> class
@@ -65,9 +58,12 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
     /// <param name="ownerType">The public type that owns this file, named by <see cref="ObjectDisposedException"/>s raised after disposal; its options type is named by a missing-password error.</param>
-    /// <param name="canCacheOwnedDataPages">
-    /// <see langword="true"/> to memoize each table's owned data pages; only safe when
-    /// nothing writes through this file (the reader).
+    /// <param name="writable">
+    /// <see langword="true"/> for the writer: the file gets a <see cref="Pager"/>,
+    /// which can write and journal pages. <see langword="false"/> for a reader:
+    /// the file gets a read-only <see cref="PageFile"/>, its write members
+    /// throw, and each table's owned data pages are memoized, which is only
+    /// safe because nothing writes through it.
     /// </param>
     internal DatabaseFile(
         Stream stream,
@@ -76,12 +72,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
         string path,
         bool leaveOpen,
         Type ownerType,
-        bool canCacheOwnedDataPages)
+        bool writable)
     {
-        this.DatabaseStream = stream;
-        this.leaveOpen = leaveOpen;
-        this.ownerType = ownerType;
-        this.canCacheOwnedDataPages = canCacheOwnedDataPages;
+        this.writable = writable;
         this.DatabasePath = path ?? string.Empty;
         this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
 
@@ -94,7 +87,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
         string passwordOptionName = ownerType == typeof(AccessWriter)
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        this.pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Profile.Kind, isLegacyAesCfb, password, passwordOptionName);
+        PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Profile.Kind, isLegacyAesCfb, password, passwordOptionName);
+        this.Pages = writable
+            ? new Pager(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType)
+            : new PageFile(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType);
     }
 
     internal delegate ValueTask<bool> TableRowVisitor(TableRow row, CancellationToken cancellationToken);
@@ -106,6 +102,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// byte layouts and text codecs. The format members below forward to it.
     /// </summary>
     internal JetFormat Profile { get; }
+
+    /// <summary>
+    /// Gets the file's page I/O: a read-only <see cref="PageFile"/> for a
+    /// reader, or the writer's <see cref="Pager"/>. The I/O members below
+    /// forward to it; the write members throw on a read-only file.
+    /// </summary>
+    internal PageFile Pages { get; }
 
     // ── Format-specific layouts (forwarders to Profile) ──────────────
 
@@ -139,104 +142,73 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets the decoded database code page — see <see cref="JetFormat.CodePage"/>.</summary>
     internal int CodePage => this.Profile.CodePage;
 
-    /// <summary>Gets the database backing stream.</summary>
-    internal Stream DatabaseStream { get; }
+    // ── Page I/O state (forwarders to Pages) ─────────────────────────
+
+    /// <summary>Gets the database backing stream — see <see cref="PageFile.Stream"/>.</summary>
+    internal Stream DatabaseStream => this.Pages.Stream;
 
     /// <summary>Gets the database path, or an empty string when opened from a caller-owned stream.</summary>
     internal string DatabasePath { get; }
 
-    internal bool IsDisposed { get; private set; }
+    /// <summary>Gets a value indicating whether the file has been disposed — see <see cref="PageFile.IsDisposed"/>.</summary>
+    internal bool IsDisposed => this.Pages.IsDisposed;
 
     /// <summary>
-    /// Gets or sets the cooperative JET byte-range lock helper. Defaults to
-    /// <see cref="JetByteRangeLock.Disabled"/> so page-write paths can dispatch
-    /// without a null check; the owning reader or writer replaces it with a
-    /// stream-bound instance once its lock-file slot is held.
+    /// Gets or sets the writer's cooperative JET byte-range lock helper — see
+    /// <see cref="Pager.ByteRangeLock"/>.
     /// </summary>
-    internal JetByteRangeLock ByteRangeLock { get; set; } = JetByteRangeLock.Disabled;
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal JetByteRangeLock ByteRangeLock
+    {
+        get => this.WritablePages.ByteRangeLock;
+        set => this.WritablePages.ByteRangeLock = value;
+    }
 
-    /// <summary>
-    /// Gets or sets the in-memory page journal for an explicit <see cref="JetTransaction"/>.
-    /// When non-null, page writes/appends are buffered into the journal
-    /// instead of being flushed to the underlying stream, and page reads
-    /// consult the journal first so the transaction sees its own writes.
-    /// Set and cleared exclusively by <see cref="TransactionLifecycle"/> while
-    /// holding <see cref="IoGate"/>.
-    /// </summary>
-    internal PageJournal? ActiveJournal { get; set; }
-
-    /// <summary>Gets the I/O gate that serialises stream access and transaction commit / rollback.</summary>
-    internal SemaphoreSlim IoGate { get; } = new(1, 1);
+    /// <summary>Gets a value indicating whether the writer has a transaction journal attached — see <see cref="Pager.IsJournalActive"/>.</summary>
+    internal bool IsJournalActive => this.Pages is Pager { IsJournalActive: true };
 
     /// <summary>
     /// Gets a value indicating whether <see cref="EnableRandomAccessPageReadsIfSupported"/>
-    /// switched page reads outside a transaction to <c>RandomAccess</c> reads.
+    /// switched page reads to <c>RandomAccess</c> reads — see <see cref="PageFile.UsesRandomAccessPageReads"/>.
     /// </summary>
-    internal bool UsesRandomAccessPageReads { get; private set; }
+    internal bool UsesRandomAccessPageReads => this.Pages.UsesRandomAccessPageReads;
 
     /// <summary>
-    /// Gets or sets a value indicating whether a page read that starts on a
-    /// thread-pool thread, with no <see cref="SynchronizationContext"/> and the
-    /// default <see cref="TaskScheduler"/>, reads the file synchronously on that
-    /// thread instead of handing the read to another pool thread. Only
-    /// <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, CancellationToken)"/>
-    /// sets it, because its file handle is synchronous: a blocking read on a
-    /// caller's stream, which may be overlapped, or on the writer's overlapped
-    /// handle would be slower than the offloaded one.
+    /// Gets or sets a value indicating whether page reads that start on a
+    /// thread-pool thread run inline — see <see cref="PageFile.ReadsInlineOnThreadPool"/>.
     /// </summary>
-    /// <remarks>
-    /// An inline read cannot be cancelled once it has started; the token is
-    /// checked before it. Other callers, such as a UI thread or a thread with a
-    /// synchronization context, keep the offloaded read and never block on the disk.
-    /// </remarks>
-    internal bool ReadsInlineOnThreadPool { get; set; }
+    internal bool ReadsInlineOnThreadPool
+    {
+        get => this.Pages.ReadsInlineOnThreadPool;
+        set => this.Pages.ReadsInlineOnThreadPool = value;
+    }
+
+    /// <summary>Gets the length of the backing stream — see <see cref="PageFile.LengthBytes"/>.</summary>
+    internal long DatabaseLengthBytes => this.Pages.LengthBytes;
 
     /// <summary>
-    /// Gets the length of the backing stream. Inside a transaction this is
-    /// the length when the transaction began, because appended pages stay in
-    /// the journal until commit; use <see cref="PageCount"/> for page bounds.
+    /// Gets the end of file in pages, journal-aware in the writer — see
+    /// <see cref="IPageSource.PageCount"/>.
     /// </summary>
-    internal long DatabaseLengthBytes => this.DatabaseStream.Length;
-
-    /// <summary>
-    /// Gets the end of file in pages: one past the highest page number that
-    /// can be read. Inside a transaction this includes the pages the journal
-    /// has appended past the physical end of file, so it is the next page
-    /// number <see cref="AppendPageAsync"/> assigns. Every page-number bounds
-    /// check and every caller that numbers pages before appending them uses
-    /// this count.
-    /// </summary>
-    internal long PageCount => this.ActiveJournal?.NextAppendPageNumber ?? this.PhysicalPageCount;
+    internal long PageCount => this.Pages.PageCount;
 
     internal int RowColumnCountFieldSize => this.Profile.RowFields.NumCols;
 
-    /// <summary>
-    /// Gets the page count of the backing stream alone, ignoring any pages an
-    /// active transaction has appended. Only <see cref="PageCount"/> (when no
-    /// transaction is active) and the non-journaled append read it.
-    /// </summary>
-    private long PhysicalPageCount => this.DatabaseStream.Length / this.PageSizeBytes;
+    /// <summary>Gets the writer's <see cref="Pager"/>, or throws on a read-only file.</summary>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    private Pager WritablePages => this.Pages as Pager
+        ?? throw new InvalidOperationException("This database file was opened read-only; only the writer's file can write pages.");
 
-    /// <summary>
-    /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
-    /// </summary>
+    /// <summary>Asynchronously reads the fixed-size JET header — see <see cref="PageFile.ReadHeaderAsync"/>.</summary>
     /// <param name="fs">An open, seekable stream positioned anywhere.</param>
     /// <param name="cancellationToken">Token used to cancel the read operation.</param>
     /// <returns>A 0x80-byte header buffer.</returns>
-    internal static async ValueTask<byte[]> ReadHeaderAsync(Stream fs, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
+    internal static ValueTask<byte[]> ReadHeaderAsync(Stream fs, CancellationToken cancellationToken = default)
+        => PageFile.ReadHeaderAsync(fs, cancellationToken);
 
-        byte[] hdr = new byte[Constants.DatabaseHeader.Length];
-        _ = fs.Seek(0, SeekOrigin.Begin);
-        await fs.ReadExactlyAsync(hdr.AsMemory(), cancellationToken).ConfigureAwait(false);
-
-        return hdr;
-    }
-
-    // ── Static helpers ────────────────────────────────────────────────
-
-    internal static void ReturnPage(byte[] page) => ArrayPool<byte>.Shared.Return(page);
+    /// <summary>Gives a pooled page buffer back — see <see cref="PageBuffers.Return"/>.</summary>
+    /// <param name="page">The pooled page buffer.</param>
+    internal static void ReturnPage(byte[] page) => PageBuffers.Return(page);
 
     // Little-endian primitives (Ru16/Ri32/Ru32/Ri64/Wu16/Wu32/Wi32/Wi64) and
     // float/24-bit/hex helpers live in JetTypeInfo so non-Core callers
@@ -244,87 +216,50 @@ internal sealed class DatabaseFile : IAsyncDisposable
     // dependency on this class. They are surfaced here through the
     // file-level `using static JetDatabaseWriter.Schema.JetTypeInfo;`.
 
-    // ── File-stream factory ──────────────────────────────────────────
-
-    /// <summary>
-    /// Opens a database file with the given access / share / option combination.
-    /// Used by both <see cref="AccessReader"/> (a synchronous handle with no
-    /// access hint) and <see cref="AccessWriter"/> (an overlapped read-write
-    /// handle with the random-access hint).
-    /// </summary>
+    /// <summary>Opens a database file — see <see cref="PageFile.OpenFileStream"/>.</summary>
     /// <param name="path">Path to the file.</param>
     /// <param name="access">The access.</param>
     /// <param name="share">The share.</param>
     /// <param name="options">The options.</param>
-    internal static FileStream OpenFileStream(string path, FileAccess access, FileShare share, FileOptions options) => FileStreamFactory.Open(path, FileMode.Open, access, share, options);
+    /// <returns>The opened stream.</returns>
+    internal static FileStream OpenFileStream(string path, FileAccess access, FileShare share, FileOptions options) => PageFile.OpenFileStream(path, access, share, options);
+
+    /// <summary>Switches page reads to positional reads — see <see cref="PageFile.EnableRandomAccessPageReadsIfSupported"/>.</summary>
+    internal void EnableRandomAccessPageReadsIfSupported() => this.Pages.EnableRandomAccessPageReadsIfSupported();
+
+    /// <summary>Sets the length of the backing stream — see <see cref="Pager.SetLengthAsync"/>.</summary>
+    /// <param name="length">The new length in bytes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the stream is resized.</returns>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal ValueTask SetDatabaseLengthAsync(long length, CancellationToken cancellationToken)
+        => this.WritablePages.SetLengthAsync(length, cancellationToken);
+
+    /// <summary>Flushes the backing stream — see <see cref="Pager.FlushAsync"/>.</summary>
+    /// <param name="flushToDisk">Whether to flush a file through to the device.</param>
+    /// <param name="cancellationToken">A token used to cancel the flush.</param>
+    /// <returns>A task that completes when the stream is flushed.</returns>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal ValueTask FlushDatabaseStreamAsync(bool flushToDisk, CancellationToken cancellationToken)
+        => this.WritablePages.FlushAsync(flushToDisk, cancellationToken);
+
+    /// <summary>Takes the writer's I/O gate for a journal attach or detach — see <see cref="Pager.EnterJournalGateAsync"/>.</summary>
+    /// <param name="cancellationToken">A token used to cancel the wait for the gate.</param>
+    /// <returns>The lease, holding the gate.</returns>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal ValueTask<Pager.JournalGate> EnterJournalGateAsync(CancellationToken cancellationToken)
+        => this.WritablePages.EnterJournalGateAsync(cancellationToken);
+
+    /// <summary>Detaches the writer's journal without the gate, at dispose — see <see cref="Pager.ForceDetachJournal"/>.</summary>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal void ForceDetachJournal() => this.WritablePages.ForceDetachJournal();
 
     /// <summary>
-    /// Switches page reads outside a transaction to positional
-    /// <c>RandomAccess</c> reads on the backing <see cref="FileStream"/>'s handle,
-    /// which bypass <see cref="IoGate"/> and the shared stream position. Does
-    /// nothing for other streams and in the netstandard2.1 build, which has no
-    /// <c>RandomAccess</c>.
+    /// Disposes the page file (marking it disposed, then the stream unless the
+    /// caller kept it, then the I/O gate and the page cipher) and drops the
+    /// owned-page caches.
     /// </summary>
-    internal void EnableRandomAccessPageReadsIfSupported()
-    {
-#if NET6_0_OR_GREATER
-        // FileStream.SafeFileHandle is not a field read: every get flushes the
-        // stream's buffer and seeks the OS file pointer to the stream's
-        // position. Read once per page, it made RandomAccess page reads slower
-        // than seek-and-read through the stream, so the handle is kept here.
-        if (this.DatabaseStream is FileStream fileStream)
-        {
-            Microsoft.Win32.SafeHandles.SafeFileHandle handle = fileStream.SafeFileHandle;
-            if (!handle.IsInvalid && !handle.IsClosed)
-            {
-                this.randomAccessHandle = handle;
-                this.UsesRandomAccessPageReads = true;
-            }
-        }
-#else
-        this.UsesRandomAccessPageReads = false;
-
-        _ = this.UsesRandomAccessPageReads;
-#endif
-    }
-
-    internal async ValueTask SetDatabaseLengthAsync(long length, CancellationToken cancellationToken)
-    {
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            this.DatabaseStream.SetLength(length);
-            await this.DatabaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _ = this.IoGate.Release();
-        }
-    }
-
-    internal async ValueTask FlushDatabaseStreamAsync(bool flushToDisk, CancellationToken cancellationToken)
-    {
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (flushToDisk && this.DatabaseStream is FileStream fileStream)
-            {
-#pragma warning disable CA1849
-                fileStream.Flush(flushToDisk: true);
-#pragma warning restore CA1849
-            }
-            else
-            {
-                await this.DatabaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _ = this.IoGate.Release();
-        }
-    }
-
-    /// <inheritdoc/>
+    /// <returns>A task that completes when the file is disposed.</returns>
     public async ValueTask DisposeAsync()
     {
         if (this.IsDisposed)
@@ -332,17 +267,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
             return;
         }
 
-        this.IsDisposed = true;
         try
         {
-            if (!this.leaveOpen)
-            {
-                await this.DatabaseStream.DisposeAsync().ConfigureAwait(false);
-            }
+            await this.Pages.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
-            this.DisposeManagedResources();
+            this.DisposeOwnedPageCaches();
         }
     }
 
@@ -353,190 +284,38 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// </summary>
     internal void DisposeManagedResources()
     {
-        this.IoGate.Dispose();
-        this.pageKeys.Dispose();
-        this.ownedDataPagesByTdef.Clear();
-        this.ownedDataPageIndex.Dispose();
+        this.Pages.DisposeManagedResources();
+        this.DisposeOwnedPageCaches();
     }
 
-    /// <summary>
-    /// Throws <see cref="ObjectDisposedException"/>, naming the owning reader or
-    /// writer, when this file has been disposed.
-    /// </summary>
+    /// <summary>Throws when the file has been disposed — see <see cref="PageFile.ThrowIfDisposed"/>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void ThrowIfDisposed() => Guard.ThrowIfDisposed(this.IsDisposed, this.ownerType);
+    internal void ThrowIfDisposed() => this.Pages.ThrowIfDisposed();
 
-    /// <summary>
-    /// Combined disposed-and-cancelled guard. Mirrors the call-site pattern
-    /// <c>ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested();</c>
-    /// that opens nearly every public writer entry point.
-    /// </summary>
+    /// <summary>Throws when the file has been disposed or the token cancelled — see <see cref="PageFile.ThrowIfDisposedOrCancelled"/>.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
-    {
-        Guard.ThrowIfDisposed(this.IsDisposed, this.ownerType);
-        cancellationToken.ThrowIfCancellationRequested();
-    }
+    internal void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken) => this.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
     // Fixed-column decoding (ReadFixedString / ReadFixedTyped) lives in
     // JetTypeInfo so the per-type byte→value switch sits next to its
     // metadata siblings (GetFixedSize, GetClrType, GetTypeDisplayName).
 
-    // ── Page I/O ─────────────────────────────────────────────────────
+    // ── Page I/O (forwarders to Pages) ───────────────────────────────
 
-    internal async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
+    /// <summary>Reads and decrypts one page into a pooled buffer — see <see cref="PageFile.ReadPageAsync"/>.</summary>
+    /// <param name="n">The page number.</param>
+    /// <param name="cancellationToken">A token used to cancel the read.</param>
+    /// <returns>The pooled page buffer.</returns>
+    internal ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
+        => this.Pages.ReadPageAsync(n, cancellationToken);
 
-        byte[] buf = ArrayPool<byte>.Shared.Rent(this.PageSizeBytes);
-        try
-        {
-#if NET6_0_OR_GREATER
-            if (this.randomAccessHandle is { } handle && this.ActiveJournal is null)
-            {
-                if (this.CanReadInline())
-                {
-                    this.ReadPageRandomAccess(handle, n, buf);
-                }
-                else
-                {
-                    await this.ReadPageRandomAccessAsync(handle, n, buf, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            else
-#endif
-            {
-                await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    // Inside an explicit transaction, prefer the journal: the page may
-                    // be a transaction-local mutation (or an appended page that has no
-                    // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
-                    byte[]? journaled = this.ActiveJournal?.TryGet(n);
-                    if (journaled is not null)
-                    {
-                        Buffer.BlockCopy(journaled, 0, buf, 0, this.PageSizeBytes);
-                        return buf;
-                    }
-
-                    _ = this.DatabaseStream.Seek(n * this.PageSizeBytes, SeekOrigin.Begin);
-                    if (this.CanReadInline())
-                    {
-                        this.ReadPageFromStream(buf);
-                    }
-                    else
-                    {
-                        await this.DatabaseStream.ReadExactlyAsync(buf.AsMemory(0, this.PageSizeBytes), cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    _ = this.IoGate.Release();
-                }
-            }
-
-            EncryptionManager.DecryptPageInPlace(buf, n, this.PageSizeBytes, this.pageKeys);
-
-            return buf;
-        }
-        catch
-        {
-            ReturnPage(buf);
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Returns a heap-allocated copy of the raw bytes of <paramref name="pageNumber"/>
-    /// (post-decryption). The caller owns the result; nothing is returned to the pool.
-    /// </summary>
+    /// <summary>Returns a caller-owned copy of a decrypted page — see <see cref="PageBuffers.ReadPageCopyAsync"/>.</summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<byte[]> ReadPageCopyAsync(long pageNumber, CancellationToken cancellationToken = default)
-    {
-        byte[] pooled = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        byte[] copy = new byte[this.PageSizeBytes];
-        Buffer.BlockCopy(pooled, 0, copy, 0, this.PageSizeBytes);
-        ReturnPage(pooled);
-        return copy;
-    }
-
-    /// <summary>
-    /// Determines whether this page read runs synchronously on the calling
-    /// thread: see <see cref="ReadsInlineOnThreadPool"/>. A pool thread with no
-    /// synchronization context and the default scheduler would otherwise hand
-    /// the read to another pool thread and wait for it.
-    /// </summary>
-    private bool CanReadInline() =>
-        this.ReadsInlineOnThreadPool
-        && Thread.CurrentThread.IsThreadPoolThread
-        && SynchronizationContext.Current is null
-        && TaskScheduler.Current == TaskScheduler.Default;
-
-    /// <summary>
-    /// Reads one page from the backing stream's current position, blocking the
-    /// calling thread. The caller holds <see cref="IoGate"/>.
-    /// </summary>
-    /// <param name="page">The buffer that receives the page.</param>
-    /// <exception cref="EndOfStreamException">The stream ends before the page does.</exception>
-    private void ReadPageFromStream(byte[] page)
-    {
-        int totalRead = 0;
-        while (totalRead < this.PageSizeBytes)
-        {
-            int bytesRead = this.DatabaseStream.Read(page.AsSpan(totalRead, this.PageSizeBytes - totalRead));
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-
-#if NET6_0_OR_GREATER
-    /// <summary>Reads one page at its file offset through <paramref name="handle"/>, blocking the calling thread.</summary>
-    /// <param name="handle">The cached file handle.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="page">The buffer that receives the page.</param>
-    /// <exception cref="EndOfStreamException">The file ends before the page does.</exception>
-    private void ReadPageRandomAccess(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page)
-    {
-        long fileOffset = pageNumber * this.PageSizeBytes;
-        int totalRead = 0;
-        while (totalRead < this.PageSizeBytes)
-        {
-            int bytesRead = RandomAccess.Read(handle, page.AsSpan(totalRead, this.PageSizeBytes - totalRead), fileOffset + totalRead);
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-
-    private async ValueTask ReadPageRandomAccessAsync(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page, CancellationToken cancellationToken)
-    {
-        long fileOffset = pageNumber * this.PageSizeBytes;
-        int totalRead = 0;
-        while (totalRead < this.PageSizeBytes)
-        {
-            int bytesRead = await RandomAccess.ReadAsync(
-                handle,
-                page.AsMemory(totalRead, this.PageSizeBytes - totalRead),
-                fileOffset + totalRead,
-                cancellationToken).ConfigureAwait(false);
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-#endif
+    /// <returns>The page copy.</returns>
+    internal ValueTask<byte[]> ReadPageCopyAsync(long pageNumber, CancellationToken cancellationToken = default)
+        => this.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
 
     // ── TDEF parsing ─────────────────────────────────────────────────
 
@@ -777,93 +556,24 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <returns>The length-prefixed name record.</returns>
     internal byte[] EncodeTDefNameRecord(string name) => this.Profile.EncodeTDefNameRecord(name);
 
-    // ── Page write I/O ───────────────────────────────────────────────
+    // ── Page write I/O (forwarders to the writer's Pager) ────────────
 
-    internal async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (this.ActiveJournal is { } journal)
-            {
-                journal.Write(pageNumber, page.AsSpan(0, this.PageSizeBytes));
-                return;
-            }
-
-            byte[] toWrite = this.PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = await this.ByteRangeLock.AcquirePageLockAsync(pageNumber, this.PageSizeBytes, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                _ = this.DatabaseStream.Seek(pageNumber * this.PageSizeBytes, SeekOrigin.Begin);
-                await this.DatabaseStream.WriteAsync(toWrite.AsMemory(0, this.PageSizeBytes), cancellationToken).ConfigureAwait(false);
-                await this.DatabaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                pageLock.Dispose();
-            }
-        }
-        finally
-        {
-            _ = this.IoGate.Release();
-        }
-    }
-
-    internal async ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (this.ActiveJournal is { } journal)
-            {
-                return journal.Append(page.AsSpan(0, this.PageSizeBytes));
-            }
-
-            long pageNumber = this.PhysicalPageCount;
-            byte[] toWrite = this.PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = await this.ByteRangeLock.AcquirePageLockAsync(pageNumber, this.PageSizeBytes, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                _ = this.DatabaseStream.Seek(pageNumber * this.PageSizeBytes, SeekOrigin.Begin);
-                await this.DatabaseStream.WriteAsync(toWrite.AsMemory(0, this.PageSizeBytes), cancellationToken).ConfigureAwait(false);
-                await this.DatabaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return pageNumber;
-            }
-            finally
-            {
-                pageLock.Dispose();
-            }
-        }
-        finally
-        {
-            _ = this.IoGate.Release();
-        }
-    }
-
-    /// <summary>
-    /// Returns <paramref name="page"/> unchanged when no page-encryption is
-    /// active, or a freshly allocated, encrypted copy otherwise. The caller's
-    /// buffer is never mutated so it can be reused safely after writing.
-    /// Page 0 (the unencrypted header) is always returned as-is.
-    /// </summary>
+    /// <summary>Writes one page in place, or buffers it in the transaction journal — see <see cref="Pager.WritePageAsync"/>.</summary>
     /// <param name="pageNumber">The page number.</param>
-    /// <param name="page">The page bytes.</param>
-    private byte[] PrepareEncryptedPageForWrite(long pageNumber, byte[] page)
-    {
-        if (pageNumber < 1 || !EncryptionManager.HasPageEncryption(this.pageKeys))
-        {
-            return page;
-        }
+    /// <param name="page">The plaintext page.</param>
+    /// <param name="cancellationToken">A token used to cancel the write.</param>
+    /// <returns>A task that completes when the page is written or buffered.</returns>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
+        => this.WritablePages.WritePageAsync(pageNumber, page, cancellationToken);
 
-        byte[] copy = new byte[this.PageSizeBytes];
-        Buffer.BlockCopy(page, 0, copy, 0, this.PageSizeBytes);
-        EncryptionManager.EncryptPageInPlace(copy, pageNumber, this.PageSizeBytes, this.pageKeys);
-        return copy;
-    }
+    /// <summary>Appends one page at the end of file — see <see cref="Pager.AppendPageAsync"/>.</summary>
+    /// <param name="page">The plaintext page.</param>
+    /// <param name="cancellationToken">A token used to cancel the append.</param>
+    /// <returns>The appended page's number.</returns>
+    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
+    internal ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
+        => this.WritablePages.AppendPageAsync(page, cancellationToken);
 
     // ── Table page enumeration ───────────────────────────────────────
 
@@ -874,7 +584,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
             return [];
         }
 
-        bool canUseCache = this.canCacheOwnedDataPages && this.ActiveJournal is null;
+        bool canUseCache = !this.writable;
         if (canUseCache && this.TryGetCachedOwnedDataPages(tdefPage, out long[] cachedPages))
         {
             return cachedPages;
@@ -1495,6 +1205,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
         {
             ReturnPage(pageBytes);
         }
+    }
+
+    /// <summary>Drops the memoized owned data pages and the whole-file owner index.</summary>
+    private void DisposeOwnedPageCaches()
+    {
+        this.ownedDataPagesByTdef.Clear();
+        this.ownedDataPageIndex.Dispose();
     }
 
     private bool TryGetCachedOwnedDataPages(long tdefPage, out long[] pageNumbers)

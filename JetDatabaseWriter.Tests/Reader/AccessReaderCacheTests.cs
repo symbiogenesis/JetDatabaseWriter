@@ -291,8 +291,14 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         }
     }
 
+    /// <summary>
+    /// The writer's own reads go through a capacity-0 page cache over its
+    /// <see cref="JetDatabaseWriter.Pages.Paging.Pager"/>, so they see the pages its transaction
+    /// has pending, and the file's bytes again once it rolls back. (A reader
+    /// can no longer have a journal attached: its page file cannot write.)
+    /// </summary>
     [Fact]
-    public async Task PageCacheRead_WithActiveJournal_BypassesCachedPageBytes()
+    public async Task ReaderPageCache_OverWriterPager_ReadsThroughTheJournal()
     {
         await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
@@ -300,40 +306,37 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
                 ("JournalRows", 4, "J"),
             },
             TestContext.Current.CancellationToken);
-        var options = new AccessReaderOptions
-        {
-            PageCacheSize = 8,
-            UseLockFile = false,
-        };
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        using var cache = new ReaderPageCache(harness.Database, capacity: 0);
+        int pageSize = harness.Database.PageSizeBytes;
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            stream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
+        byte[] original = await harness.Database.ReadPageCopyAsync(1, TestContext.Current.CancellationToken);
+        byte[] changed = (byte[])original.Clone();
+        changed[pageSize - 1] ^= 0xFF;
 
-        byte[] cachedPage = await PageCacheOf(reader).ReadPageAsync(0, TestContext.Current.CancellationToken);
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
-        Assert.Equal(1, pageCache.Count);
+        JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await harness.Database.WritePageAsync(1, changed, TestContext.Current.CancellationToken);
 
-        byte[] journaledPage = new byte[reader.PageSize];
-        Buffer.BlockCopy(cachedPage, 0, journaledPage, 0, reader.PageSize);
-        journaledPage[0x14] = unchecked((byte)(journaledPage[0x14] + 1));
-
-        var journal = new PageJournal(stream.Length, reader.PageSize, maxPages: 4);
-        journal.Write(0, journaledPage);
-        FacadeInternals.Database(reader).ActiveJournal = journal;
-
-        byte[] rereadPage = await PageCacheOf(reader).ReadPageAsync(0, TestContext.Current.CancellationToken);
+        byte[] pending = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
         try
         {
-            Assert.NotSame(cachedPage, rereadPage);
-            Assert.Equal(journaledPage[0x14], rereadPage[0x14]);
+            Assert.Equal(changed, pending.AsSpan(0, pageSize).ToArray());
         }
         finally
         {
-            FacadeInternals.Database(reader).ActiveJournal = null;
-            DatabaseFile.ReturnPage(rereadPage);
+            DatabaseFile.ReturnPage(pending);
+        }
+
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+
+        byte[] afterRollback = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        try
+        {
+            Assert.Equal(original, afterRollback.AsSpan(0, pageSize).ToArray());
+        }
+        finally
+        {
+            DatabaseFile.ReturnPage(afterRollback);
         }
     }
 
