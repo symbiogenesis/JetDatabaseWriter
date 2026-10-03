@@ -23,7 +23,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Foreign-key relationship management for <see cref="AccessWriter"/>:
-/// create/drop/rename workflow and per-TDEF FK logical-index mutation.
+/// create/drop/rename workflow and per-TDEF FK logical-index mutation, the
+/// relationship state carried through copy-and-swap schema rewrites, and the
+/// relationship check and partner unlinking behind dropping a table.
 /// MSysRelationships row operations live in <see cref="RelationshipCatalogStore"/>,
 /// and runtime referential-integrity enforcement lives in <see cref="RelationshipEnforcer"/>.
 /// The public facade owns the auto-commit scope around each workflow.
@@ -839,22 +841,16 @@ internal sealed class RelationshipManager(
             await this.ReadFkLogicalIndexesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
 
         var keyColumns = new List<RelationshipKeyColumn>();
-        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
-        if (msysRelTdefPage > 0)
+        foreach (RelationshipRowSnapshot row in await this.CollectAllRelationshipRowsAsync(cancellationToken).ConfigureAwait(false))
         {
-            TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
-            List<RelationshipRowSnapshot> rows = await this.catalog.CollectRowsAsync(msysRelTdefPage, msysRelDef, _ => true, cancellationToken).ConfigureAwait(false);
-            foreach (RelationshipRowSnapshot row in rows)
+            if (string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase))
-                {
-                    keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzColumn));
-                }
+                keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzColumn));
+            }
 
-                if (string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase))
-                {
-                    keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzReferencedColumn));
-                }
+            if (string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzReferencedColumn));
             }
         }
 
@@ -1256,6 +1252,224 @@ internal sealed class RelationshipManager(
 
         bool IsRenamed(string columnName)
             => mapColumnName(columnName) is string mapped && !string.Equals(mapped, columnName, StringComparison.Ordinal);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Dropped tables (DropTableAsync)
+    // ════════════════════════════════════════════════════════════════
+    //
+    // Microsoft Access refuses to drop a table that a relationship names
+    // (DAO / Jet SQL error 3303), and so does TableSchemaEditor: it calls
+    // FindRelationshipNamesForTableAsync and EnsureTableHasNoRelationships
+    // before it writes anything, so the caller drops the relationships first.
+    // That decision is made from MSysRelationships, which every format has
+    // and which enforcement reads; it covers relationships that do not
+    // enforce referential integrity and self-referencing ones too.
+    //
+    // A table can still carry FK logical-idx entries that no MSysRelationships
+    // row names, left by earlier builds or by a catalog edited by hand. Once
+    // the table's TDEF page is freed, its partners' entries would name a free
+    // page, and later an unrelated table that reuses it. RemovePartnerLinksAsync
+    // removes them, by TDEF page rather than by catalog name, before the drop
+    // frees the page. A schema rewrite does not call it: CompleteRewriteAsync
+    // re-links the partners to the rebuilt table instead.
+
+    /// <summary>
+    /// Returns the names of the relationships whose <c>MSysRelationships</c>
+    /// rows name <paramref name="tableName"/> as their primary or foreign
+    /// table, whether or not they enforce referential integrity, distinct and
+    /// sorted (case-insensitive). Empty when the database has no
+    /// <c>MSysRelationships</c> table.
+    /// </summary>
+    /// <param name="tableName">The table name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The relationship names.</returns>
+    internal async ValueTask<IReadOnlyList<string>> FindRelationshipNamesForTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (RelationshipRowSnapshot row in await this.CollectAllRelationshipRowsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                _ = names.Add(row.SzRelationship);
+            }
+        }
+
+        return [.. names];
+    }
+
+    /// <summary>
+    /// Throws when <paramref name="relationshipNames"/> is not empty: a table
+    /// that takes part in a relationship cannot be dropped. Microsoft Access
+    /// refuses the same drop with error 3303 ("currently participates in one or
+    /// more relationships").
+    /// </summary>
+    /// <param name="tableName">The table being dropped.</param>
+    /// <param name="relationshipNames">The relationships that name it, from <see cref="FindRelationshipNamesForTableAsync"/>.</param>
+    /// <exception cref="InvalidOperationException">Thrown when any relationship names the table.</exception>
+    internal static void EnsureTableHasNoRelationships(string tableName, IReadOnlyList<string> relationshipNames)
+    {
+        if (relationshipNames.Count == 0)
+        {
+            return;
+        }
+
+        var quoted = new List<string>(relationshipNames.Count);
+        foreach (string name in relationshipNames)
+        {
+            quoted.Add("'" + name + "'");
+        }
+
+        string list = string.Join(", ", quoted);
+        throw new InvalidOperationException(relationshipNames.Count == 1
+            ? $"Table '{tableName}' participates in relationship {list}. Drop the relationship before dropping the table."
+            : $"Table '{tableName}' participates in relationships {list}. Drop the relationships before dropping the table.");
+    }
+
+    /// <summary>
+    /// Removes, from every other table, the FK logical-idx entries whose
+    /// <c>rel_tbl_page</c> names <paramref name="tdefPage"/>, the TDEF page of
+    /// a table about to be dropped, and reclaims the trailing real-idx slots
+    /// those removals leave unreferenced. The partners are found through the
+    /// dropped table's own FK entries, so tables the catalog does not list are
+    /// covered too; an entry on a partner whose page now holds an unrelated
+    /// table is left alone, because it does not name <paramref name="tdefPage"/>.
+    /// The removed entries' index leaves stay allocated until Compact &amp;
+    /// Repair, as after <see cref="DropRelationshipAsync"/>. Does nothing when
+    /// the page is not a TDEF or the table has no FK entries.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page of the table being dropped, still intact.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    internal async ValueTask RemovePartnerLinksAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            tdefPage,
+            this.db.PageSizeBytes,
+            this.db.ReadPageAsync,
+            DatabaseFile.ReturnPage,
+            retainPageNumbers: false,
+            cancellationToken).ConfigureAwait(false);
+        if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+        {
+            return;
+        }
+
+        byte[] td = chain.Bytes;
+        var partners = new SortedSet<long>();
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int f = this.db.IndexLayoutInfo.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] != (byte)IndexKind.ForeignKey)
+            {
+                continue;
+            }
+
+            long partnerPage = Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset);
+            if (partnerPage != tdefPage && this.IsTDefPageCandidate(partnerPage))
+            {
+                _ = partners.Add(partnerPage);
+            }
+        }
+
+        foreach (long partnerPage in partners)
+        {
+            await this.RemoveFkEntriesNamingAsync(partnerPage, tdefPage, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Removes every FK logical-idx entry on the TDEF at
+    /// <paramref name="partnerTdefPage"/> whose <c>rel_tbl_page</c> is
+    /// <paramref name="targetTdefPage"/>, one at a time, then reclaims the
+    /// trailing real-idx slots left unreferenced. Stops early when the TDEF
+    /// cannot be read or its name section cannot be walked.
+    /// </summary>
+    /// <param name="partnerTdefPage">The TDEF page to edit.</param>
+    /// <param name="targetTdefPage">The TDEF page the removed entries name.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask RemoveFkEntriesNamingAsync(long partnerTdefPage, long targetTdefPage, CancellationToken cancellationToken)
+    {
+        bool removed = false;
+        while (true)
+        {
+            LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+                partnerTdefPage,
+                this.db.PageSizeBytes,
+                this.db.ReadPageAsync,
+                DatabaseFile.ReturnPage,
+                retainPageNumbers: true,
+                cancellationToken).ConfigureAwait(false);
+            if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+            {
+                break;
+            }
+
+            int entryIndex = FindFkLogicalIdxEntryNaming(this.db.IndexLayoutInfo, chain.Bytes, in layout, targetTdefPage);
+            if (entryIndex < 0 || !await this.RemoveLogicalIdxEntryAsync(chain, layout, entryIndex, cancellationToken).ConfigureAwait(false))
+            {
+                break;
+            }
+
+            removed = true;
+        }
+
+        if (removed)
+        {
+            await this.TryReclaimTrailingRealIdxAsync(partnerTdefPage, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Returns the position of the first FK logical-idx entry whose
+    /// <c>rel_tbl_page</c> is <paramref name="relTblPage"/>, or <c>-1</c>.
+    /// </summary>
+    /// <param name="lay">The format's TDEF index layout.</param>
+    /// <param name="td">The stitched TDEF bytes.</param>
+    /// <param name="layout">The parsed layout of <paramref name="td"/>.</param>
+    /// <param name="relTblPage">The partner TDEF page to look for.</param>
+    private static int FindFkLogicalIdxEntryNaming(IndexLayout lay, byte[] td, in FkTDefLayout layout, long relTblPage)
+    {
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int f = lay.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] == (byte)IndexKind.ForeignKey
+                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) == relTblPage)
+            {
+                return li;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Returns whether <paramref name="page"/> can be a user table's TDEF
+    /// page: past the header (page 0), the global usage map (page 1) and
+    /// <c>MSysObjects</c> (page 2), and inside the file, journal-appended pages
+    /// included.
+    /// </summary>
+    /// <param name="page">The page number read from a <c>rel_tbl_page</c> field.</param>
+    private bool IsTDefPageCandidate(long page)
+        => page > 2 && page < this.db.PageCount;
+
+    /// <summary>
+    /// Reads every live <c>MSysRelationships</c> row, or none when the
+    /// database has no <c>MSysRelationships</c> table.
+    /// </summary>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The rows, in storage order.</returns>
+    private async ValueTask<List<RelationshipRowSnapshot>> CollectAllRelationshipRowsAsync(CancellationToken cancellationToken)
+    {
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage <= 0)
+        {
+            return [];
+        }
+
+        TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        return await this.catalog.CollectRowsAsync(msysRelTdefPage, msysRelDef, _ => true, cancellationToken).ConfigureAwait(false);
     }
 
     // ════════════════════════════════════════════════════════════════

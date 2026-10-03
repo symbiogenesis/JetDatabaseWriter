@@ -38,10 +38,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <c>MSysRelationships</c>). A renamed column's new name is written into the
 /// calculated expressions, validation rules and defaults that name it. A
 /// column that a relationship uses as a key column, or that another column's
-/// expression names, cannot be dropped.
-/// Dropped tables return their data, LVAL, index, usage-map, and TDEF pages to
-/// the global free map. The public facade owns the auto-commit scope around
-/// each call.
+/// expression names, cannot be dropped, and a table that any relationship
+/// names cannot be dropped either, as in Microsoft Access. Dropped tables
+/// return their data, LVAL, index, usage-map, and TDEF pages to the global
+/// free map, and no partner FK entry is left naming the freed TDEF page. The
+/// public facade owns the auto-commit scope around each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
@@ -53,7 +54,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates tables and applies catalog replacement plans.</param>
 /// <param name="complexColumns">Allocates, emits, re-parents, drops, and renames complex-column artifacts.</param>
 /// <param name="constraints">Carries client-side column constraints across schema changes.</param>
-/// <param name="relationships">Carries foreign-key index entries and relationship links across a rebuild.</param>
+/// <param name="relationships">Carries foreign-key index entries and relationship links across a rebuild, and refuses or unlinks a dropped table's relationships.</param>
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
 /// <param name="autoNumbers">Carries the AutoNumber high-water value over to the rebuilt TDEF.</param>
 internal sealed class TableSchemaEditor(
@@ -182,12 +183,32 @@ internal sealed class TableSchemaEditor(
         _ = tdefPageNumber;
     }
 
+    /// <summary>
+    /// Public DropTable entry point. Refuses, before anything is written, to
+    /// drop a table that any <c>MSysRelationships</c> row names, as Microsoft
+    /// Access does (error 3303); otherwise drops the table, its complex-column
+    /// children and any partner FK entries that still name it.
+    /// </summary>
+    /// <param name="tableName">The table to drop.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the table is gone.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the table does not exist or takes part in a relationship.</exception>
     internal async ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        await this.DropTableCoreAsync(tableName, dropComplexChildren: true, cancellationToken).ConfigureAwait(false);
+        // A missing table still reports "does not exist" from the drop below,
+        // even when MSysRelationships has rows left that name it.
+        IReadOnlyList<string> relationshipNames =
+            await relationships.FindRelationshipNamesForTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (relationshipNames.Count > 0
+            && await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            RelationshipManager.EnsureTableHasNoRelationships(tableName, relationshipNames);
+        }
+
+        await this.DropTableCoreAsync(tableName, rewriting: false, cancellationToken).ConfigureAwait(false);
     }
 
     internal ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken)
@@ -771,7 +792,7 @@ internal sealed class TableSchemaEditor(
         }
         else
         {
-            await this.DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
+            await this.DropTableCoreAsync(tableName, rewriting: true, cancellationToken).ConfigureAwait(false);
             await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
 
             foreach (ColumnDefinition survivor in newComplexById.Values)
@@ -1066,16 +1087,18 @@ internal sealed class TableSchemaEditor(
 
     /// <summary>
     /// Shared implementation backing <see cref="DropTableAsync"/> and the
-    /// <c>RewriteTableAsync</c> path. The <paramref name="dropComplexChildren"/>
-    /// flag is set to <see langword="false"/> by the rewrite path so that the
-    /// hidden flat child tables and matching <c>MSysComplexColumns</c> rows for
-    /// surviving complex columns stay attached to the rebuilt parent.
+    /// <c>RewriteTableAsync</c> path. The rewrite path sets
+    /// <paramref name="rewriting"/>, so the hidden flat child tables and
+    /// matching <c>MSysComplexColumns</c> rows for surviving complex columns
+    /// stay attached to the rebuilt parent, and the partner tables' FK entries
+    /// are left for <see cref="RelationshipManager.CompleteRewriteAsync"/> to
+    /// re-link. A real drop removes both.
     /// </summary>
     /// <param name="tableName">The table name.</param>
-    /// <param name="dropComplexChildren">The drop complex children.</param>
+    /// <param name="rewriting">Whether a schema rewrite is replacing the table with its rebuilt copy.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
-    private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
+    private async ValueTask DropTableCoreAsync(string tableName, bool rewriting, CancellationToken cancellationToken)
     {
         UserTableCatalogDeletionResult deleted = await catalogWriter.DeleteUserTableCatalogRowsAsync(
             tableName,
@@ -1086,8 +1109,18 @@ internal sealed class TableSchemaEditor(
             missingMessage: $"Table '{tableName}' does not exist.",
             cancellationToken).ConfigureAwait(false);
 
-        if (dropComplexChildren)
+        if (!rewriting)
         {
+            // No MSysRelationships row names the table (DropTableAsync refused
+            // otherwise), but its TDEF can still hold FK entries that earlier
+            // builds left behind. Remove the partner entries that name it
+            // while its TDEF is intact, so none is left naming a freed page
+            // or, later, the unrelated table that reuses it.
+            foreach (long tdefPage in deleted.TDefPages)
+            {
+                await relationships.RemovePartnerLinksAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            }
+
             foreach (long parentTdefPage in deleted.TDefPages)
             {
                 await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);

@@ -483,6 +483,8 @@ await writer.CreateTableAsync("Contacts", new[]
 await writer.DropTableAsync("Contacts");
 ```
 
+`DropTableAsync` refuses, with `InvalidOperationException` and before it writes anything, to drop a table that a relationship names, as Microsoft Access does; drop the relationships first (see [Foreign-key relationships](#foreign-key-relationships)).
+
 #### Column constraints
 
 `ColumnDefinition` accepts four optional constraints in addition to `Name`/`ClrType`/`MaxLength`:
@@ -722,6 +724,20 @@ DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationT
 Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. On Jet3 (Access 97) files the entries take the layout Access 97 writes.
 
 `DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the TDEF entries on every format, and leave Type=8 relationship rows in `MSysObjects` for Microsoft Access Compact & Repair to normalize from the canonical relationship rows.
+
+A table that takes part in a relationship, as its primary or foreign table, cannot be dropped: like Microsoft Access (error 3303), `DropTableAsync` throws `InvalidOperationException` naming the relationships, even when they do not enforce referential integrity or relate the table to itself. Drop them first; `AccessReader.ListRelationshipsAsync` lists them:
+
+```csharp
+foreach (RelationshipMetadata rel in await reader.ListRelationshipsAsync())
+{
+    if (rel.PrimaryTable == "Orders" || rel.ForeignTable == "Orders")
+    {
+        await writer.DropRelationshipAsync(rel.Name);
+    }
+}
+
+await writer.DropTableAsync("Orders");
+```
 
 **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` and `CascadeDeletes` honour the cascade flags. See the Limitations section for caveats.
 
