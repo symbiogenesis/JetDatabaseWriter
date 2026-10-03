@@ -132,6 +132,13 @@ internal static class Constants
         /// <c>col_len</c> + <see cref="ExtraDataLen"/>.
         /// </summary>
         public const short FixedFieldLen = 39;
+
+        /// <summary>
+        /// Payload limit, in bytes, of a calculated Text value whose column
+        /// descriptor is too small to hold the <see cref="ExtraDataLen"/>-byte
+        /// wrapper: Access's 255-character Text limit in UCS-2.
+        /// </summary>
+        public const int MaxTextResultBytes = 510;
     }
 
     /// <summary>

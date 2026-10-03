@@ -207,6 +207,42 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
+    /// <c>AllNames</c> has a Text column descriptor (size 0) but a Memo
+    /// <c>ResultType</c>, and Access stores its cached value as a long value: a
+    /// 12-byte LVAL header in the row (single-page LVAL rows for three rows,
+    /// inline for John Doe) whose payload is the calculated-value wrapper around
+    /// the UCS-2 text. Every read path decodes it by the result type.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AllNames_CalculatedMemo_DecodesAccessCachedText()
+    {
+        string[] expected =
+        [
+            "Doe, John=Doe, John",
+            "Simpson, Bart=Simpson, Bart",
+            "User, Test=User, Test",
+            "Wayne, Bruce=Wayne, Bruce",
+        ];
+
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.CalcFieldTestV2010, TestContext.Current.CancellationToken);
+
+        DataTable typed = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(expected, typed.AsEnumerable().Select(r => (string)r["AllNames"]).Order(StringComparer.Ordinal));
+
+        DataTable strings = await reader.ReadTableAsStringsAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(expected, strings.AsEnumerable().Select(r => (string)r["AllNames"]).Order(StringComparer.Ordinal));
+
+        var mapped = new List<string?>();
+        await foreach (AllNamesRow row in reader.Rows<AllNamesRow>("Table1", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            mapped.Add(row.AllNames);
+        }
+
+        Assert.Equal(expected, mapped.Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// Every Access-authored calculated expression in the fixtures parses with
     /// the Access-precedence engine, and re-evaluating it against each stored
     /// row reproduces the value Access cached in the file.
@@ -253,10 +289,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
 
             for (int i = 0; i < meta.Count; i++)
             {
-                // The reader does not decode AllNames' Access-cached value (it
-                // returns a few garbled characters instead of the text), so
-                // there is no stored value to compare against.
-                if (!meta[i].IsCalculated || meta[i].Name == "AllNames")
+                if (!meta[i].IsCalculated)
                 {
                     continue;
                 }
@@ -295,4 +328,9 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
 
     /// <summary>Gets the Access-authored fixtures that carry calculated columns.</summary>
     public static TheoryData<string> CalculatedFixtures => new(TestDatabases.CalcFieldTestV2010, TestDatabases.ExtDateTestV2019);
+
+    private sealed class AllNamesRow
+    {
+        public string? AllNames { get; set; }
+    }
 }

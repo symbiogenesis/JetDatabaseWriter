@@ -102,8 +102,11 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
                 foreach (ColumnInfo column in resolved.Definition.Columns)
                 {
                     // Complex columns hold raw references, and MEMO / OLE cells
-                    // may hold an UnreadableLongValue, so those columns are untyped.
-                    Type clrType = column.Type is ComplexType or AttachmentType or MemoType or OleType ? typeof(object) : ResolveClrType(column);
+                    // (including a calculated column whose result type is MEMO or
+                    // OLE) may hold an UnreadableLongValue, so those columns are untyped.
+                    Type clrType = column.Type is ComplexType or AttachmentType || ResolveValueType(column) is MemoType or OleType
+                        ? typeof(object)
+                        : ResolveClrType(column);
                     _ = table.Columns.Add(column.Name, clrType);
                 }
             }
