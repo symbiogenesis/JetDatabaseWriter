@@ -238,9 +238,11 @@ internal static class OfficeCryptoAgile
     /// <summary>
     /// Returns true when a flat ACCDB page-0 header embeds an Agile
     /// EncryptionInfo descriptor at offset 0x299, the layout emitted by ACE /
-    /// DAO for encrypted Access databases.
+    /// DAO for encrypted Access databases. Only page 0 is inspected, so
+    /// <paramref name="database"/> may be the whole file or just its first
+    /// 4096 bytes.
     /// </summary>
-    /// <param name="database">The database.</param>
+    /// <param name="database">The database image, or at least its page 0.</param>
     public static bool IsFlatAgileEncrypted(byte[] database)
     {
         if (!TryGetFlatEncryptionInfo(database, out byte[] encryptionInfo))
@@ -1060,8 +1062,11 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
+        // The descriptor is embedded in page 0, so it must end inside page 0
+        // (and inside the bytes supplied, when only a short prefix was read).
         int infoLength = Ru16(headerPage, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
-        if (infoLength < 8 || Constants.AgileEncryption.FlatEncryptionInfoOffset + infoLength > database.Length)
+        int available = Math.Min(database.Length, headerPage.Length);
+        if (infoLength < 8 || Constants.AgileEncryption.FlatEncryptionInfoOffset + infoLength > available)
         {
             return false;
         }

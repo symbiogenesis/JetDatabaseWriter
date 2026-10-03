@@ -333,13 +333,7 @@ internal static class EncryptionManager
         long origin = stream.Position;
         try
         {
-            _ = stream.Seek(0, SeekOrigin.Begin);
-            byte[] sniff = new byte[Constants.PageSizes.Jet4];
-            _ = await stream.ReadAtLeastAsync(
-                sniff.AsMemory(),
-                sniff.Length,
-                throwOnEndOfStream: false,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            byte[] sniff = await ReadHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
             AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
             if (headerFormat == AccessEncryptionFormat.AccdbAgileCfb)
@@ -359,6 +353,48 @@ internal static class EncryptionManager
         {
             _ = stream.Seek(origin, SeekOrigin.Begin);
         }
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="stream"/> holds an Access-native flat
+    /// Agile ACCDB. Only page 0 is read: the flat Agile descriptor lives
+    /// there. The stream position is restored afterwards.
+    /// </summary>
+    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> yielding whether page 0 carries a flat Agile descriptor.</returns>
+    internal static async ValueTask<bool> IsFlatAgileEncryptedAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        long origin = stream.Position;
+        try
+        {
+            byte[] headerPage = await ReadHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+            return !CompoundFileReader.HasCompoundFileMagic(headerPage) && OfficeCryptoAgile.IsFlatAgileEncrypted(headerPage);
+        }
+        finally
+        {
+            _ = stream.Seek(origin, SeekOrigin.Begin);
+        }
+    }
+
+    /// <summary>
+    /// Reads the 4096-byte Jet4 / ACE header page (page 0) from the start of
+    /// <paramref name="stream"/>. A shorter file leaves the tail zero-filled.
+    /// Jet3 pages are 2048 bytes, so for Jet3 this also covers page 1; no
+    /// caller looks past the Jet3 header.
+    /// </summary>
+    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private static async ValueTask<byte[]> ReadHeaderPageAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        _ = stream.Seek(0, SeekOrigin.Begin);
+        byte[] headerPage = new byte[Constants.PageSizes.Jet4];
+        _ = await stream.ReadAtLeastAsync(
+            headerPage.AsMemory(),
+            headerPage.Length,
+            throwOnEndOfStream: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return headerPage;
     }
 
     /// <summary>
@@ -534,6 +570,8 @@ internal static class EncryptionManager
     /// Office document.
     /// Throws <see cref="UnauthorizedAccessException"/> when an encrypted package
     /// is detected but no password was supplied.
+    /// For a file without CFB magic only page 0 is read, unless page 0 carries
+    /// a flat Agile descriptor; then the whole file is read and decrypted.
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="header">The header.</param>
@@ -551,10 +589,11 @@ internal static class EncryptionManager
             long originalPosition = stream.Position;
             try
             {
-                _ = stream.Seek(0, SeekOrigin.Begin);
-                byte[] rawFile = new byte[stream.Length];
-                await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
-                if (!OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
+                // The flat Agile descriptor lives in page 0, so probe that
+                // page alone; every unencrypted or page-cipher file stops
+                // here without reading the rest of the file.
+                byte[] headerPage = await ReadHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+                if (!OfficeCryptoAgile.IsFlatAgileEncrypted(headerPage))
                 {
                     return null;
                 }
@@ -566,6 +605,9 @@ internal static class EncryptionManager
                         "Provide the database password via AccessReaderOptions.Password to open it.");
                 }
 
+                _ = stream.Seek(0, SeekOrigin.Begin);
+                byte[] rawFile = new byte[stream.Length];
+                await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
                 return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span);
             }
             finally
