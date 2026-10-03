@@ -71,16 +71,22 @@ public sealed record ColumnDefinition
     /// <summary>
     /// Gets a value indicating whether this column auto-assigns a monotonically increasing
     /// integer when the supplied value is null / <see cref="DBNull.Value"/>. The next value
-    /// is seeded from <c>max(existing) + 1</c> on first use (or <c>1</c> for an empty table)
-    /// and incremented per insert. Only valid for <see cref="byte"/>, <see cref="short"/>,
+    /// is seeded on first use from the larger of the table's persisted AutoNumber counter
+    /// and the largest existing value, plus one (<c>1</c> for a new table), and incremented
+    /// per insert. Only valid for <see cref="byte"/>, <see cref="short"/>,
     /// <see cref="int"/>, and <see cref="long"/> columns.
     /// </summary>
     /// <remarks>
     /// Persisted in the JET TDEF column-flag bit <c>FLAG_AUTO_LONG (0x04)</c>. The
-    /// auto-increment behaviour is restored when the database is reopened. An update
-    /// may assign an explicit value, which raises the stored high-water as an explicit
-    /// insert value does, but setting the column to null throws
-    /// <see cref="InvalidOperationException"/>.
+    /// auto-increment behaviour is restored when the database is reopened. The TDEF
+    /// AutoNumber counter records the highest value inserted and is never lowered
+    /// (AddColumn, DropColumn and RenameColumn carry it over to the rebuilt table), so
+    /// values freed by deleting the top rows are not handed out again, in this or a
+    /// later session. The counter is a single unsigned 32-bit value per table, shared
+    /// by every AutoNumber column in it, so it cannot record values above
+    /// <see cref="uint.MaxValue"/>. An update may assign an explicit value, which
+    /// raises the stored high-water as an explicit insert value does, but setting the
+    /// column to null throws <see cref="InvalidOperationException"/>.
     /// </remarks>
     public bool IsAutoIncrement { get; init; }
 

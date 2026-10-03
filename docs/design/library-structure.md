@@ -209,7 +209,7 @@ JetDatabaseWriter/
 │   ├── TDefPageBuilder.cs                 (constructs Table Definition pages)
 │   ├── ColumnPropertyBlockBuilder.cs      (builds column property blocks)
 │   ├── ConstraintRegistry.cs              (manages column constraints — auto-increment, defaults, validation)
-│   ├── AutoNumberMaintainer.cs            (advances the per-table AutoNumber high-water value after inserts)
+│   ├── AutoNumberMaintainer.cs            (reads and advances the per-table AutoNumber high-water value)
 │   ├── JetTypeInfo.cs                     (column type metadata — sizes, flags, CLR mapping)
 │   ├── JetExpressionConverter.cs          (expression parsing for calculated columns)
 │   ├── CalculatedColumnUtil.cs            (utility methods for calculated column handling)
@@ -425,7 +425,8 @@ AccessWriter → WriterServices
                         CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, TableSnapshotReader
   RelationshipManager → TableCatalog, IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
-  ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry
+  ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
+                        AutoNumberMaintainer
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader

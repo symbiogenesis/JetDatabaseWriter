@@ -37,9 +37,18 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// when the table has no property block. Optional — if not supplied, hydration
 /// falls back to the legacy TDEF flag bit only.
 /// </param>
+/// <param name="readAutoNumberHighWater">
+/// Delegate that returns a table's persisted AutoNumber high-water value (the
+/// TDEF counter: the last value handed out) by name, or 0 when unknown. The
+/// first AutoNumber a writer session assigns follows the larger of this value
+/// and the largest value in the table, so values freed by deleting the top
+/// rows in an earlier session are not reused. Optional; when not supplied
+/// only the table's rows are consulted.
+/// </param>
 internal sealed class ConstraintRegistry(
     Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot,
-    Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null)
+    Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null,
+    Func<string, CancellationToken, ValueTask<long>>? readAutoNumberHighWater = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
@@ -587,7 +596,12 @@ internal sealed class ConstraintRegistry(
     {
         if (c.NextAutoValue == null)
         {
-            long max = 0;
+            // The TDEF counter is the persisted high-water mark; the row scan
+            // covers files whose counter lags their rows (explicit values
+            // written by another tool, or a counter Access never maintained).
+            long max = readAutoNumberHighWater is null
+                ? 0
+                : await readAutoNumberHighWater(tableName, cancellationToken).ConfigureAwait(false);
             using DataTable snapshot = await readTableSnapshot(tableName, cancellationToken).ConfigureAwait(false);
             if (snapshot.Columns.Count > columnIndex)
             {

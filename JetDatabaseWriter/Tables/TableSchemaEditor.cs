@@ -45,6 +45,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="complexColumns">Allocates, emits, re-parents, drops, and renames complex-column artifacts.</param>
 /// <param name="constraints">Carries client-side column constraints across schema changes.</param>
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
+/// <param name="autoNumbers">Carries the AutoNumber high-water value over to the rebuilt TDEF.</param>
 internal sealed class TableSchemaEditor(
     DatabaseFile db,
     TableCatalog catalog,
@@ -56,7 +57,8 @@ internal sealed class TableSchemaEditor(
     CatalogArtifactWriter catalogArtifacts,
     ComplexColumnManager complexColumns,
     ConstraintRegistry constraints,
-    TableSnapshotReader snapshots)
+    TableSnapshotReader snapshots,
+    AutoNumberMaintainer autoNumbers)
 {
     internal async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
@@ -429,11 +431,19 @@ internal sealed class TableSchemaEditor(
         CatalogEntry tempEntry = tempTable.Entry;
         TableDef tempDef = tempTable.Definition;
 
+        // The temp TDEF starts with an AutoNumber counter of 0. Carry the
+        // original's high-water value (and anything larger the copied rows
+        // hold) over to it, or values freed by deleting the top rows would be
+        // handed out again once the temp table takes the original's place.
+        long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         foreach (object[] projected in projectedRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await tableRows.InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
+            autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
         }
+
+        await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
 
         // rebuild forwarded indexes once after the bulk row copy completes,
         // so we don't pay the rebuild cost per row.
@@ -568,6 +578,13 @@ internal sealed class TableSchemaEditor(
             cancellationToken).ConfigureAwait(false);
         await catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+
+        // The rebuilt schema's constraints were registered under the temp name.
+        // Move them onto the table, as the drop-and-rename path does, so the
+        // stale pre-rewrite list (with its old column count and in-session
+        // AutoNumber seed) is not applied to the next insert.
+        constraints.Unregister(tableName);
+        constraints.Rename(tempName, tableName);
     }
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
