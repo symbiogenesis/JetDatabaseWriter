@@ -163,6 +163,38 @@ Delivered:
   in-flight row, `#date literal#` becomes `DATEVALUE("date literal")`, and
   Access word operators are lowered into evaluator functions before the
   ClosedXML.Parser pass.
+- Every expression is parsed with Access (VBA) operator precedence by
+  `CalculatedExpressionNormalizer` before ClosedXML.Parser sees it; the
+  normalizer emits a formula parenthesized wherever Excel's grammar would
+  group differently, so Excel precedence never decides the result. From
+  tightest to loosest: `^` (left-associative, and tighter than unary minus,
+  so `-2^2` is -4), unary `-`/`+`, `*` `/`, `\`, `Mod`, `+` `-`, `&`,
+  comparisons and `Like`/`Is`/`Between`/`In`, `Not`, `And`, `Or`, `Xor`,
+  `Eqv`, `Imp`. Syntax the Access grammar rejects throws `ArgumentException`
+  naming the expression instead of falling back to the spreadsheet grammar.
+- Excel's postfix `%` is not an Access operator. `CreateTableAsync` and
+  `AddColumnAsync` reject a calculated column whose expression uses it
+  (outside string literals and `[field]` names), or whose expression the
+  parser cannot read, with an `ArgumentException` naming the column and the
+  expression. Columns carried over by a table rewrite are not re-checked, so
+  schema edits such as adding a plain column still work on a table that
+  already stores such an expression. Its rows still read, and
+  an insert that supplies the calculated value keeps it, but an insert that
+  leaves the column Null and every `UpdateRowsAsync` (which re-evaluates all
+  calculated columns) throw the same `ArgumentException`, much as a stored
+  expression that calls an unsupported function makes them throw
+  `NotSupportedException`.
+- Each referenced field's value is converted to that field's declared type
+  before evaluation, with the same `Convert` call the row encoder stores it
+  with. The writer accepts `"10"` for an Integer field and `10` for a Text
+  field, so without this the text rules below would follow the CLR type the
+  caller passed instead of the field type.
+- Values follow Access rather than Excel: `True` is -1 and `False` is 0 in
+  arithmetic, comparisons, numeric result columns and the `CInt`, `CLng`,
+  `CDbl`, `CSng`, `CCur` and `CDec` conversions, and `"-1"` / `"0"` as text
+  (`&`, `CStr` and Text result columns); `+` concatenates when both operands
+  are text; and two text operands compare as text even when they look
+  numeric (`"10" < "9"`).
 - Calculated columns may reference earlier or later calculated columns in the
   same row; dependency evaluation is lazy and circular references are rejected.
 
@@ -196,8 +228,11 @@ cross-record or cross-table lookups; and spreadsheet-only parser constructs such
 as cell, sheet, external workbook, array, range, and structured references.
 
 Tests: focused insert/update/POCO coverage in
-`JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, plus the Phase
-1B Access-authored fixture coverage.
+`JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and
+value-semantics cases in
+`JetDatabaseWriter.Tests/Schema/CalculatedExpressionAccessSemanticsTests.cs`,
+plus the Phase 1B Access-authored fixture coverage, which also re-evaluates
+every Access-authored fixture expression against the values Access cached.
 
 ### Phase 3 — Non-row-local expression contexts **(DONE)**
 

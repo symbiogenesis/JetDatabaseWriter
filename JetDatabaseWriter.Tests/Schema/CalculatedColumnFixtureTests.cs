@@ -3,10 +3,14 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Expressions;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -201,4 +205,94 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
                 row["IsRich"] is DBNull || row["IsRich"].GetType() == isRich.ClrType,
                 $"Expected DBNull or {isRich.ClrType}; got {row["IsRich"].GetType()}"));
     }
+
+    /// <summary>
+    /// Every Access-authored calculated expression in the fixtures parses with
+    /// the Access-precedence engine, and re-evaluating it against each stored
+    /// row reproduces the value Access cached in the file.
+    /// </summary>
+    /// <param name="path">The fixture database path.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(CalculatedFixtures))]
+    public async Task AccessAuthoredExpressions_ReevaluateToCachedValues(string path)
+    {
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
+        Assert.Contains(meta, c => c.IsCalculated);
+
+        var tableDef = new TableDef();
+        var constraints = new List<ColumnConstraint>(meta.Count);
+        foreach (ColumnMetadata column in meta)
+        {
+            tableDef.Columns.Add(new ColumnInfo { Name = column.Name });
+            constraints.Add(new ColumnConstraint
+            {
+                Name = column.Name,
+                ClrType = column.ClrType,
+                IsCalculated = column.IsCalculated,
+                CalculationExpression = column.CalculationExpression,
+            });
+        }
+
+        DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotEqual(0, dt.Rows.Count);
+
+        int compared = 0;
+        var mismatches = new List<string>();
+        foreach (DataRow row in dt.Rows)
+        {
+            object[] values = new object[meta.Count];
+            for (int i = 0; i < meta.Count; i++)
+            {
+                values[i] = meta[i].IsCalculated ? DBNull.Value : row[meta[i].Name];
+            }
+
+            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false);
+
+            for (int i = 0; i < meta.Count; i++)
+            {
+                // The reader does not decode AllNames' Access-cached value (it
+                // returns a few garbled characters instead of the text), so
+                // there is no stored value to compare against.
+                if (!meta[i].IsCalculated || meta[i].Name == "AllNames")
+                {
+                    continue;
+                }
+
+                object stored = row[meta[i].Name];
+                object computed = values[i];
+                string label = $"{meta[i].Name} = {meta[i].CalculationExpression}";
+                if (stored is DBNull || computed is DBNull)
+                {
+                    if (!(stored is DBNull && computed is DBNull))
+                    {
+                        mismatches.Add($"{label}: stored {stored}, computed {computed}");
+                    }
+                }
+                else if (stored is float or double or decimal)
+                {
+                    double expected = Convert.ToDouble(stored, CultureInfo.InvariantCulture);
+                    double actual = Convert.ToDouble(computed, CultureInfo.InvariantCulture);
+                    if (Math.Abs(expected - actual) > Math.Max(1e-4, Math.Abs(expected) * 1e-6))
+                    {
+                        mismatches.Add($"{label}: stored {expected}, computed {actual}");
+                    }
+                }
+                else if (!Equals(stored, computed))
+                {
+                    mismatches.Add($"{label}: stored {stored} ({stored.GetType().Name}), computed {computed}");
+                }
+
+                compared++;
+            }
+        }
+
+        Assert.NotEqual(0, compared);
+        Assert.True(mismatches.Count == 0, string.Join(Environment.NewLine, mismatches));
+    }
+
+    /// <summary>Gets the Access-authored fixtures that carry calculated columns.</summary>
+    public static TheoryData<string> CalculatedFixtures => new(TestDatabases.CalcFieldTestV2010, TestDatabases.ExtDateTestV2019);
 }

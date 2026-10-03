@@ -95,8 +95,11 @@ internal sealed class CalculatedExpressionEvaluationContext
             throw new InvalidOperationException($"Calculated-column expression references unknown name '{name}'.");
         }
 
+        // Callers may pass "10" for an Integer field or 10 for a Text field;
+        // the expression must see the value as the field holds it.
         ColumnConstraint referenced = this.constraints[index];
-        return referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index] ?? DBNull.Value;
+        object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
+        return CoerceInput(value, referenced.ClrType);
     }
 
     public double NextRandom(object? seed)
