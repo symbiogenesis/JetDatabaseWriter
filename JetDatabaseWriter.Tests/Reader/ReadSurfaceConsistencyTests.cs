@@ -3,9 +3,11 @@ namespace JetDatabaseWriter.Tests.Reader;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,7 +29,21 @@ public sealed class ReadSurfaceConsistencyTests
     private const string TableName = "Items";
     private const int ItemCount = 300;
 
+    /// <summary>The rows in the Docs table <see cref="CreateDocsDatabaseAsync"/> builds.</summary>
+    private const int DocCount = 40;
+
+    /// <summary>The size of each Docs row's one attachment.</summary>
+    private const int DocAttachmentBytes = 64 * 1024;
+
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
+    /// <summary>Gets the Access-authored tables with complex columns: the fixture and the table name.</summary>
+    public static TheoryData<string, string> AccessAuthoredComplexTables => new()
+    {
+        { TestDatabases.ComplexFields, "Documents" },
+        { TestDatabases.ComplexDataTestV2007, "Table1" },
+        { TestDatabases.ComplexDataTestV2010, "Table1" },
+    };
 
     public static TheoryData<DatabaseFormat> Formats =>
     [
@@ -119,6 +135,120 @@ public sealed class ReadSurfaceConsistencyTests
 
         Assert.Equal([1, 2], read.Select(row => row.Id));
         Assert.Equal(streamed.Select(row => row.Labels), read.Select(row => row.Labels));
+    }
+
+    // ── Mapped reads skip the complex columns T does not bind ────────
+
+    [Fact]
+    public async Task ReadTableGeneric_UnboundComplexColumns_DoesNotLoadComplexData()
+    {
+        byte[] bytes = await this.CreateDocsDatabaseAsync();
+        List<object[]> expected = await this.ReadDocsRowsAsync(bytes);
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
+        counting.Reset();
+
+        IReadOnlyList<DocSummaryRow> read = await reader.ReadTableAsync<DocSummaryRow>("Docs", cancellationToken: this.ct);
+
+        AssertSummaries(expected, read);
+        AssertSkippedAttachments(counting, "ReadTableAsync<T>");
+    }
+
+    [Fact]
+    public async Task RowsGeneric_UnboundComplexColumns_DoesNotLoadComplexData()
+    {
+        byte[] bytes = await this.CreateDocsDatabaseAsync();
+        List<object[]> expected = await this.ReadDocsRowsAsync(bytes);
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
+        counting.Reset();
+
+        List<DocSummaryRow> read = await CollectAsync(reader.Rows<DocSummaryRow>("Docs", cancellationToken: this.ct));
+
+        AssertSummaries(expected, read);
+        AssertSkippedAttachments(counting, "Rows<T>");
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(1u)]
+    [InlineData(5u)]
+    public async Task ReadTableGeneric_UnboundComplexColumns_HonoursMaxRows(uint maxRows)
+    {
+        byte[] bytes = await this.CreateDocsDatabaseAsync();
+        List<object[]> expected = await this.ReadDocsRowsAsync(bytes);
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
+        counting.Reset();
+
+        IReadOnlyList<DocSummaryRow> read = await reader.ReadTableAsync<DocSummaryRow>("Docs", maxRows, this.ct);
+
+        AssertSummaries(expected.Take((int)maxRows).ToList(), read);
+        AssertSkippedAttachments(counting, $"ReadTableAsync<T> with maxRows {maxRows}");
+    }
+
+    [Fact]
+    public async Task ReadTableGeneric_BindsMultiValueOnly_LoadsOnlyThatColumn()
+    {
+        byte[] bytes = await this.CreateDocsDatabaseAsync();
+        List<object[]> expected = await this.ReadDocsRowsAsync(bytes);
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
+        counting.Reset();
+
+        IReadOnlyList<DocTagsRow> read = await reader.ReadTableAsync<DocTagsRow>("Docs", cancellationToken: this.ct);
+
+        Assert.Equal(expected.Select(row => row[0]), read.Select(row => (object)row.Id));
+        Assert.Equal(expected.Select(row => row[4]), read.Select(row => row.Tags));
+        Assert.All(read, row => Assert.IsType<byte[]>(row.Tags));
+        AssertSkippedAttachments(counting, "ReadTableAsync<T> binding the multi-value column");
+    }
+
+    [Fact]
+    public async Task RowsWithIndexedPredicate_UnboundComplexColumns_DoesNotLoadComplexData()
+    {
+        byte[] bytes = await this.CreateDocsDatabaseAsync();
+        List<object[]> expected = await this.ReadDocsRowsAsync(bytes);
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
+        counting.Reset();
+
+        // Id is the primary key, so the predicate is read through the index.
+        List<DocSummaryRow> read = await CollectAsync(reader.Rows<DocSummaryRow>("Docs", row => row.Id == 7, cancellationToken: this.ct));
+
+        AssertSummaries([expected.Single(row => (int)row[0] == 7)], read);
+        AssertSkippedAttachments(counting, "Rows<T>(predicate)");
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessAuthoredComplexTables))]
+    public async Task ReadTableGeneric_AccessAuthoredComplexTables_UnboundColumnsMatchRows(string fixture, string table)
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(fixture, new AccessReaderOptions { UseLockFile = false }, this.ct);
+        List<object[]> rows = await CollectAsync(reader.Rows(table, cancellationToken: this.ct));
+        Assert.NotEmpty(rows);
+
+        if (table == "Documents")
+        {
+            IReadOnlyList<ComplexFieldsDocumentRow> read = await reader.ReadTableAsync<ComplexFieldsDocumentRow>(table, cancellationToken: this.ct);
+            List<ComplexFieldsDocumentRow> streamed = await CollectAsync(reader.Rows<ComplexFieldsDocumentRow>(table, cancellationToken: this.ct));
+            Assert.Equal(rows.Select(row => row[0]), read.Select(row => (object)row.Id));
+            Assert.Equal(rows.Select(row => row[1] as string), read.Select(row => row.Title));
+            Assert.Equal(read.Select(row => (row.Id, row.Title)), streamed.Select(row => (row.Id, row.Title)));
+        }
+        else
+        {
+            IReadOnlyList<ComplexDataTestRow> read = await reader.ReadTableAsync<ComplexDataTestRow>(table, cancellationToken: this.ct);
+            List<ComplexDataTestRow> streamed = await CollectAsync(reader.Rows<ComplexDataTestRow>(table, cancellationToken: this.ct));
+            Assert.Equal(rows.Select(row => row[0] as string), read.Select(row => row.Id));
+            Assert.Equal(rows.Select(row => row[2] as string), read.Select(row => row.Memo));
+            Assert.Equal(read.Select(row => (row.Id, row.Memo)), streamed.Select(row => (row.Id, row.Memo)));
+        }
     }
 
     // ── Drift between the read loops ──────────────────────────────────
@@ -229,10 +359,38 @@ public sealed class ReadSurfaceConsistencyTests
         }
     }
 
-    private static async ValueTask<AccessReader> OpenReaderAsync(MemoryStream ms, CancellationToken cancellationToken)
+    private static async ValueTask<AccessReader> OpenReaderAsync(Stream ms, CancellationToken cancellationToken)
     {
         ms.Position = 0;
         return await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Checks the <c>Id</c>, <c>Name</c> and <c>Size</c> of each mapped row
+    /// against the matching <c>Rows()</c> row of the Docs table.
+    /// </summary>
+    /// <param name="expected">The <c>Rows()</c> rows, in table order.</param>
+    /// <param name="actual">The mapped rows.</param>
+    private static void AssertSummaries(IReadOnlyList<object[]> expected, IReadOnlyList<DocSummaryRow> actual)
+    {
+        Assert.Equal(expected.Select(row => row[0]), actual.Select(row => (object)row.Id));
+        Assert.Equal(expected.Select(row => row[1]), actual.Select(row => (object?)row.Name));
+        Assert.Equal(expected.Select(row => row[2]), actual.Select(row => (object)row.Size));
+    }
+
+    /// <summary>
+    /// Checks that a read of the Docs table left the attachment data alone:
+    /// it read less than a quarter of the bytes the attachments take, where
+    /// loading them reads the attachment flat table and every LVAL chain.
+    /// </summary>
+    /// <param name="counting">The stream the reader read through, reset before the read.</param>
+    /// <param name="read">The read, for the failure message.</param>
+    private static void AssertSkippedAttachments(CountingStream counting, string read)
+    {
+        const long attachmentBytes = (long)DocCount * DocAttachmentBytes;
+        Assert.True(
+            counting.BytesRead < attachmentBytes / 4,
+            $"{read} read {counting.BytesRead} bytes; the attachments it does not bind take {attachmentBytes}.");
     }
 
     private static async ValueTask<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
@@ -338,6 +496,70 @@ public sealed class ReadSurfaceConsistencyTests
         return ms;
     }
 
+    /// <summary>
+    /// Builds an ACCDB whose <c>Docs</c> table has <see cref="DocCount"/> rows,
+    /// each with one incompressible <see cref="DocAttachmentBytes"/>-byte
+    /// attachment in <c>Files</c> and two items in the multi-value <c>Tags</c>.
+    /// </summary>
+    /// <returns>The database image.</returns>
+    private async ValueTask<byte[]> CreateDocsDatabaseAsync()
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            this.ct))
+        {
+            await writer.CreateTableAsync(
+                "Docs",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+                    new ColumnDefinition("Name", typeof(string), maxLength: 50),
+                    new ColumnDefinition("Size", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                    new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) },
+                ],
+                [new IndexDefinition("PK_Docs", "Id") { IsPrimaryKey = true }],
+                this.ct);
+
+            var rows = new List<object[]>(DocCount);
+            for (int id = 1; id <= DocCount; id++)
+            {
+                rows.Add([DBNull.Value, $"Doc {id}", id * 10, DBNull.Value, DBNull.Value]);
+            }
+
+            await writer.InsertRowsAsync("Docs", rows, this.ct);
+
+            for (int id = 1; id <= DocCount; id++)
+            {
+                byte[] content = new byte[DocAttachmentBytes];
+                RandomNumberGenerator.Fill(content);
+                var key = new Dictionary<string, object?> { ["Id"] = id };
+                await writer.AddAttachmentAsync("Docs", "Files", key, new AttachmentInput($"doc{id}.jpg", content), this.ct);
+                await writer.AddMultiValueItemAsync("Docs", "Tags", key, id, this.ct);
+                await writer.AddMultiValueItemAsync("Docs", "Tags", key, 1000 + id, this.ct);
+            }
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>Reads every row of the Docs table through <c>Rows()</c>, which resolves every complex column.</summary>
+    /// <param name="bytes">The database image.</param>
+    /// <returns>The rows, in table order.</returns>
+    private async ValueTask<List<object[]>> ReadDocsRowsAsync(byte[] bytes)
+    {
+        await using var ms = new MemoryStream(bytes, writable: false);
+        await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
+        List<object[]> rows = await CollectAsync(reader.Rows("Docs", cancellationToken: this.ct));
+        Assert.Equal(DocCount, rows.Count);
+        Assert.All(rows, row => Assert.IsType<byte[]>(row[3]));
+        Assert.All(rows, row => Assert.IsType<byte[]>(row[4]));
+        return rows;
+    }
+
     private async ValueTask<Dictionary<string, long>> CountThroughEveryApiAsync(AccessReader reader)
     {
         var counts = new Dictionary<string, long>(StringComparer.Ordinal)
@@ -402,5 +624,36 @@ public sealed class ReadSurfaceConsistencyTests
     private sealed class IdOnlyRow
     {
         public int Id { get; set; }
+    }
+
+    private sealed class DocSummaryRow
+    {
+        public int Id { get; set; }
+
+        public string? Name { get; set; }
+
+        public int Size { get; set; }
+    }
+
+    private sealed class DocTagsRow
+    {
+        public int Id { get; set; }
+
+        public object? Tags { get; set; }
+    }
+
+    private sealed class ComplexFieldsDocumentRow
+    {
+        public int Id { get; set; }
+
+        public string? Title { get; set; }
+    }
+
+    private sealed class ComplexDataTestRow
+    {
+        public string? Id { get; set; }
+
+        [Column("memo-data")]
+        public string? Memo { get; set; }
     }
 }

@@ -126,10 +126,10 @@ internal sealed class IndexRowReader(
                     headers[i] = td.Columns[i].Name;
                 }
 
+                // Decode and load only the columns T binds; complex columns
+                // it leaves out are never read from their flat tables.
                 Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
-                bool[]? wantedColumns = td.HasComplexColumns
-                    ? null
-                    : RowMapper<T>.GetBoundColumnMask(headers);
+                bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
 
                 return (factory, wantedColumns);
             },
@@ -285,7 +285,7 @@ internal sealed class IndexRowReader(
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || TableReader.HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
