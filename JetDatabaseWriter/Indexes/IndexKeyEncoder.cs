@@ -139,12 +139,13 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// Decodes the value of an ascending, non-null <c>Integer</c> or
-    /// <c>Long Integer</c> key column from the start of an index entry: the
-    /// <see cref="Constants.IndexEntryFlags.AscendingNonNull"/> flag byte and
-    /// the big-endian value with its sign bit flipped, as
-    /// <see cref="EncodeEntry"/> writes them. Bytes after the column's key,
-    /// such as later key columns, are ignored.
+    /// Decodes the value of an ascending, non-null <c>Byte</c>,
+    /// <c>Integer</c>, <c>Long Integer</c> or <c>Large Number</c> key column
+    /// from the start of an index entry, as <see cref="EncodeEntry"/> writes
+    /// it: the <see cref="Constants.IndexEntryFlags.AscendingNonNull"/> flag
+    /// byte, then the value big-endian, with the sign bit flipped for the
+    /// signed types. Bytes after the column's key, such as later key columns,
+    /// are ignored.
     /// </summary>
     /// <param name="columnType">The key column's type.</param>
     /// <param name="entryKey">The entry's key bytes, starting at the column's flag byte.</param>
@@ -157,7 +158,11 @@ internal static class IndexKeyEncoder
     {
         value = 0;
         int size = 0;
-        if (columnType == IntegerType)
+        if (columnType == ByteType)
+        {
+            size = 1;
+        }
+        else if (columnType == IntegerType)
         {
             size = 2;
         }
@@ -165,18 +170,32 @@ internal static class IndexKeyEncoder
         {
             size = 4;
         }
+        else if (columnType == BigIntType)
+        {
+            size = 8;
+        }
 
         if (size == 0 || entryKey.Length < 1 + size || entryKey[0] != AscendingNonNull)
         {
             return false;
         }
 
-        Span<byte> bigEndian = stackalloc byte[4];
+        // Byte is unsigned and its key is the value itself.
+        if (size == 1)
+        {
+            value = entryKey[1];
+            return true;
+        }
+
+        Span<byte> bigEndian = stackalloc byte[8];
         entryKey.Slice(1, size).CopyTo(bigEndian);
         bigEndian[0] ^= 0x80;
-        value = size == 2
-            ? BinaryPrimitives.ReadInt16BigEndian(bigEndian)
-            : BinaryPrimitives.ReadInt32BigEndian(bigEndian);
+        value = size switch
+        {
+            2 => BinaryPrimitives.ReadInt16BigEndian(bigEndian),
+            4 => BinaryPrimitives.ReadInt32BigEndian(bigEndian),
+            _ => BinaryPrimitives.ReadInt64BigEndian(bigEndian),
+        };
         return true;
     }
 

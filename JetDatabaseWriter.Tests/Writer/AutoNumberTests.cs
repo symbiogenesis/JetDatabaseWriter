@@ -29,6 +29,32 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
+    /// <summary>The number of rows the <see cref="CreateWideItemsAsync"/> table gets, each on a data page of its own.</summary>
+    private const int WideRowCount = 40;
+
+    /// <summary>
+    /// Gets every format with each integral CLR type an AutoNumber column can
+    /// have there: <c>byte</c>, <c>short</c> and <c>int</c>, and <c>long</c>
+    /// (Large Number) on ACCDB.
+    /// </summary>
+    public static TheoryData<DatabaseFormat, Type> FormatsAndIntegralTypes
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, Type>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                foreach (Type idType in new[] { typeof(byte), typeof(short), typeof(int) })
+                {
+                    data.Add(format, idType);
+                }
+            }
+
+            data.Add(DatabaseFormat.AceAccdb, typeof(long));
+            return data;
+        }
+    }
+
     /// <summary>Gets every format in every write mode: <c>plain</c>, <c>transactional</c> and <c>explicit</c>.</summary>
     public static TheoryData<DatabaseFormat, string> FormatsAndModes
     {
@@ -816,7 +842,141 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.Equal(401, newest);
     }
 
+    /// <summary>
+    /// For each integral type an AutoNumber column can have, the seed takes
+    /// the largest value from the rightmost key of the primary-key index and
+    /// reads none of the table's data pages. The counter lags the rows, so the
+    /// index supplies the value. Each row fills a data page of its own, and a
+    /// warm-up update leaves the writer's insert-page hint on the table, so
+    /// the insert itself reads one data page and a scan would read them all.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="idType">The AutoNumber column's CLR type.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndIntegralTypes))]
+    public async Task AutoIncrement_IndexOnColumn_SeedsWithoutReadingDataPages(DatabaseFormat format, Type idType)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateWideItemsAsync(format, idType, WideRowCount, ct);
+        await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
+        HashSet<long> dataPages = await ReadDataPagesAsync(ms, "Items", ct);
+
+        int dataPagesRead;
+        ms.Position = 0;
+        await using (var counting = new CountingStream(ms))
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", ToId(idType, 1), new Dictionary<string, object?> { ["Label"] = "first" }, ct));
+
+            counting.Reset();
+            await writer.InsertRowAsync("Items", NewWideRow("new", format), ct);
+            dataPagesRead = counting.PagesRead(PageSize(format)).Count(dataPages.Contains);
+        }
+
+        Assert.True(dataPagesRead <= 2, $"The first insert of the session read {dataPagesRead} of the table's {dataPages.Count} data pages.");
+        Assert.Equal(WideRowCount + 1, (await ReadIdsAsInt64ByLabelAsync(ms, ct))["new"]);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
+
+    private static int PageSize(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static object ToId(Type idType, int value) => Convert.ChangeType(value, idType, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Creates a database with an <c>Items</c> table whose primary key is an
+    /// <c>Id</c> AutoNumber column of CLR type <paramref name="idType"/>, then a
+    /// <c>Label</c> and enough 255-byte binary columns that each row fills a
+    /// data page of its own, and inserts <paramref name="rowCount"/> rows
+    /// numbered 1 up. <see cref="ColumnDefinition.IsAutoIncrement"/> rejects
+    /// <c>byte</c> and <c>long</c>, so those columns get the AutoNumber flag
+    /// through their descriptor flags, as another tool writes it.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="idType">The AutoNumber column's CLR type.</param>
+    /// <param name="rowCount">How many rows to insert.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask<MemoryStream> CreateWideItemsAsync(DatabaseFormat format, Type idType, int rowCount, CancellationToken ct)
+    {
+        List<ColumnDefinition> columns =
+        [
+            idType == typeof(byte) || idType == typeof(long)
+                ? new("Id", idType) { IsNullable = false, DescriptorFlagsOverride = 0x07 }
+                : new("Id", idType) { IsAutoIncrement = true, IsNullable = false },
+            new("Label", typeof(string), maxLength: 50),
+        ];
+        for (int i = 0; i < WideBinaryColumns(format); i++)
+        {
+            columns.Add(new ColumnDefinition("B" + i.ToString(CultureInfo.InvariantCulture), typeof(byte[]), maxLength: 255));
+        }
+
+        var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("Items", columns, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], ct);
+            await writer.InsertRowsAsync(
+                "Items",
+                Enumerable.Range(1, rowCount).Select(i =>
+                {
+                    object[] row = new object[columns.Count];
+                    row[0] = ToId(idType, i);
+                    row[1] = "r" + i.ToString(CultureInfo.InvariantCulture);
+                    for (int c = 2; c < row.Length; c++)
+                    {
+                        byte[] blob = new byte[255];
+                        Array.Fill(blob, (byte)i);
+                        row[c] = blob;
+                    }
+
+                    return row;
+                }),
+                ct);
+        }
+
+        return ms;
+    }
+
+    private static int WideBinaryColumns(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb ? 5 : 10;
+
+    /// <summary>Returns a row for the <see cref="CreateWideItemsAsync"/> table with no Id, labelled <paramref name="label"/>, and null binary columns.</summary>
+    /// <param name="label">The row's label.</param>
+    /// <param name="format">The database format, which sets the column count.</param>
+    private static object[] NewWideRow(string label, DatabaseFormat format)
+    {
+        object[] row = new object[2 + WideBinaryColumns(format)];
+        Array.Fill(row, DBNull.Value);
+        row[1] = label;
+        return row;
+    }
+
+    /// <summary>Returns the data pages that <paramref name="table"/>'s rows are on.</summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="table">The table name.</param>
+    /// <param name="ct">A token used to cancel the operation.</param>
+    private static async ValueTask<HashSet<long>> ReadDataPagesAsync(MemoryStream ms, string table, CancellationToken ct)
+    {
+        ms.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: ct);
+        CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
+        Assert.NotNull(entry);
+        IReadOnlyList<long> owned = await harness.Database.GetOwnedDataPagesAsync(entry.TDefPage, ct);
+        HashSet<long> pages = [.. owned];
+        Assert.True(pages.Count >= WideRowCount, $"Expected a data page per row, but the {WideRowCount} rows are on {pages.Count} pages.");
+        return pages;
+    }
+
+    private static async ValueTask<Dictionary<string, long>> ReadIdsAsInt64ByLabelAsync(MemoryStream ms, CancellationToken ct)
+    {
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        var ids = new Dictionary<string, long>(StringComparer.Ordinal);
+        await foreach (object[] row in reader.Rows("Items", cancellationToken: ct))
+        {
+            ids[(string)row[1]] = Convert.ToInt64(row[0], CultureInfo.InvariantCulture);
+        }
+
+        return ids;
+    }
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)
     {
