@@ -126,34 +126,61 @@ internal static class ComplexColumnTestSupport
 
     /// <summary>
     /// Rewrites a table the way builds before per-row reference allocation
-    /// left it: every complex slot of every row null and the TDEF complex
-    /// AutoNumber 0. Flat rows are left alone.
+    /// left it: every complex slot of the selected rows null and, unless
+    /// <paramref name="clearCounter"/> is false, the TDEF complex AutoNumber 0.
+    /// Flat rows and indexes are left alone.
     /// </summary>
     /// <param name="ms">The database stream.</param>
     /// <param name="tableName">The user table name.</param>
-    public static async Task ClearComplexReferencesAsync(MemoryStream ms, string tableName)
+    /// <param name="rowFilter">Selects the rows to clear, from their snapshot values; every row when null.</param>
+    /// <param name="clearCounter">Whether to zero the TDEF complex AutoNumber too.</param>
+    public static async Task ClearComplexReferencesAsync(MemoryStream ms, string tableName, Func<object[], bool>? rowFilter = null, bool clearCounter = true) =>
+        await SetComplexSlotsAsync(ms, tableName, rowFilter ?? (_ => true), (_, _) => null, clearCounter);
+
+    /// <summary>
+    /// Overwrites the complex slots of the selected rows on their data pages,
+    /// the way earlier builds or other tools may have left them. Flat rows,
+    /// indexes and (unless <paramref name="clearCounter"/>) the TDEF complex
+    /// AutoNumber are left alone.
+    /// </summary>
+    /// <param name="ms">The database stream.</param>
+    /// <param name="tableName">The user table name.</param>
+    /// <param name="rowFilter">Selects the rows to change, from their snapshot values.</param>
+    /// <param name="slotFor">Returns the reference to store in a complex column's slot, from the row's snapshot values and the column name, or null to clear the slot.</param>
+    /// <param name="clearCounter">Whether to zero the TDEF complex AutoNumber too.</param>
+    public static async Task SetComplexSlotsAsync(MemoryStream ms, string tableName, Func<object[], bool> rowFilter, Func<object[], string, int?> slotFor, bool clearCounter = false)
     {
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
-        foreach (RowLocation location in await db.GetLiveRowLocationsAsync(table.Entry.TDefPage, Ct))
+        foreach (LocatedRow row in await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct))
         {
-            byte[] page = await db.ReadPageCopyAsync(location.PageNumber, Ct);
+            if (!rowFilter(row.Values))
+            {
+                continue;
+            }
+
+            RowLocation location = row.Location;
+            byte[] page = await db.ReadPageCopyAsync(location.DataPageNumber, Ct);
             int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.ReadRowColumnCount(page, location.RowStart));
             Span<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
             foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType or ColumnType.AttachmentType))
             {
-                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, false);
-                page.AsSpan(location.RowStart + db.RowFields.NumCols + column.FixedOff, 4).Clear();
+                int? reference = slotFor(row.Values, column.Name);
+                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, reference.HasValue);
+                BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
             }
 
-            await db.WritePageAsync(location.PageNumber, page, Ct);
+            await db.WritePageAsync(location.DataPageNumber, page, Ct);
         }
 
-        byte[] tdef = await db.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
-        tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
-        await db.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
+        if (clearCounter)
+        {
+            byte[] tdef = await db.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+            tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
+            await db.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
+        }
     }
 
     /// <summary>Reads the TDEF page of a system table such as <c>MSysComplexColumns</c>.</summary>
