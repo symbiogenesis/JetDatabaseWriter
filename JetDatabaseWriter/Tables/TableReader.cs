@@ -50,7 +50,6 @@ internal sealed class TableReader(
     AccessReaderOptions options)
 {
     private const int MinimumAutoTableScanReadAheadPages = 3;
-    private const int MinimumTableScanReadAheadCacheSlots = 3;
 
     /// <summary>
     /// Returns <see langword="true"/> when any column flagged in
@@ -483,7 +482,13 @@ internal sealed class TableReader(
         return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
     }
 
-    private static bool HasCacheReentrantScanColumns(TableDef tableDef)
+    /// <summary>
+    /// Returns <see langword="true"/> when the table has a MEMO, OLE, complex
+    /// or attachment column, whose scans <see cref="ShouldReadAheadTablePages"/>
+    /// leaves sequential.
+    /// </summary>
+    /// <param name="tableDef">The table definition.</param>
+    private static bool HasLongValueOrComplexColumns(TableDef tableDef)
     {
         foreach (ColumnInfo column in tableDef.Columns)
         {
@@ -971,19 +976,39 @@ internal sealed class TableReader(
     }
 
     /// <summary>
-    /// Determines whether table pages should be read ahead.
-    /// Auto mode stays conservative: only file-backed, non-transactional scans
-    /// with enough table pages use read-ahead, and the first page is yielded
-    /// before prefetch begins to preserve first-row latency.
+    /// Determines whether a table scan reads its next data page while the
+    /// caller decodes the current one. Auto mode needs a file-backed stream
+    /// and at least <see cref="MinimumAutoTableScanReadAheadPages"/> pages, and
+    /// yields the first page before prefetch begins to preserve first-row
+    /// latency; Enabled needs two pages; Disabled never reads ahead. Reads
+    /// through an attached transaction journal stay sequential.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Any page-cache size qualifies, including a disabled cache. Caches under
+    /// three pages used to be excluded because the cache returned evicted
+    /// buffers to the shared pool while a scan still read them; it now leaves
+    /// them to the GC, so the prefetch cannot overwrite the page being decoded.
+    /// The two reads in flight can decrypt pages on two threads at once, which
+    /// <see cref="Encryption.Models.PageDecryptionKeys"/> serializes for AES.
+    /// </para>
+    /// <para>
+    /// Tables with MEMO, OLE, complex or attachment columns stay sequential.
+    /// That is no longer a safety rule, since a long-value read that evicts the
+    /// scan's data page cannot overwrite it either, but a measured trade-off:
+    /// on a warm 5,000-row MEMO table and a 2,000-row OLE table, read-ahead
+    /// changed scan time by less than the run-to-run noise at cache sizes 0, 2
+    /// and 256, because each row's long-value page reads dwarf the one data
+    /// page the prefetch overlaps. Complex columns were not measured; their
+    /// exclusion is kept from before.
+    /// </para>
+    /// </remarks>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="pageNumbers">The list of page numbers for the table.</param>
     /// <returns><c>true</c> if table pages should be read ahead; otherwise, <c>false</c>.</returns>
-    private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
-        pages.IsEnabled
-            && options.PageCacheSize >= MinimumTableScanReadAheadCacheSlots
-            && db.ActiveJournal is null
-            && !HasCacheReentrantScanColumns(tableDef)
+    internal bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers) =>
+        db.ActiveJournal is null
+            && !HasLongValueOrComplexColumns(tableDef)
             && this.HasEligibleTableScanReadAheadPageCount(pageNumbers);
 
     private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>
