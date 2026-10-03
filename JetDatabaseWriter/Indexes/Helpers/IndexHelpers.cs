@@ -319,14 +319,20 @@ internal static class IndexHelpers
     }
 
     /// <summary>
-    /// Default <c>RewriteTableAsync</c> index projection: forwards every
-    /// surviving Normal / PrimaryKey index whose key columns are still present
-    /// (case-insensitive name match) in the rebuilt schema. Relationship-owned
-    /// FK indexes are excluded from this default projection.
+    /// <c>RewriteTableAsync</c> index projection, shared by AddColumn,
+    /// DropColumn and RenameColumn: forwards every Normal / PrimaryKey index
+    /// whose key columns all survive the rewrite, with each key column renamed
+    /// through <paramref name="mapColumnName"/>, and keeps its unique,
+    /// descending, ignore-nulls and required settings. Relationship-owned FK
+    /// indexes are excluded; the relationship manager re-emits them.
     /// </summary>
-    /// <param name="existing">The existing.</param>
-    /// <param name="newDefs">The new defs.</param>
-    public static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
+    /// <param name="existing">The indexes of the table before the rewrite.</param>
+    /// <param name="newDefs">The columns of the rebuilt table.</param>
+    /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    public static List<IndexDefinition> ProjectIndexes(
+        IReadOnlyList<IndexMetadata> existing,
+        IReadOnlyList<ColumnDefinition> newDefs,
+        Func<string, string?> mapColumnName)
     {
         var result = new List<IndexDefinition>(existing.Count);
         var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -347,46 +353,45 @@ internal static class IndexHelpers
                 continue;
             }
 
-            bool allSurvive = true;
+            var keyColumns = new List<string>(idx.Columns.Count);
+            var descendingCols = new List<string>();
             foreach (IndexColumnReference ic in idx.Columns)
             {
-                if (string.IsNullOrEmpty(ic.Name) || !newColumnNames.Contains(ic.Name))
+                string? mapped = string.IsNullOrEmpty(ic.Name) ? null : mapColumnName(ic.Name);
+                if (mapped is null || !newColumnNames.Contains(mapped))
                 {
-                    allSurvive = false;
                     break;
+                }
+
+                keyColumns.Add(mapped);
+                if (!ic.IsAscending)
+                {
+                    descendingCols.Add(mapped);
                 }
             }
 
-            if (!allSurvive)
+            if (keyColumns.Count != idx.Columns.Count)
             {
                 continue;
             }
 
-            string[] pkCols = new string[idx.Columns.Count];
-            var descendingCols = new List<string>();
-            for (int i = 0; i < idx.Columns.Count; i++)
-            {
-                pkCols[i] = idx.Columns[i].Name;
-                if (!idx.Columns[i].IsAscending)
-                {
-                    descendingCols.Add(idx.Columns[i].Name);
-                }
-            }
-
             if (idx.Kind == IndexKind.PrimaryKey)
             {
-                result.Add(new IndexDefinition(idx.Name, pkCols)
+                result.Add(new IndexDefinition(idx.Name, keyColumns)
                 {
                     IsPrimaryKey = true,
                     DescendingColumns = descendingCols,
+                    IgnoreNulls = idx.IgnoreNulls,
                 });
             }
             else
             {
-                result.Add(new IndexDefinition(idx.Name, pkCols)
+                result.Add(new IndexDefinition(idx.Name, keyColumns)
                 {
                     IsUnique = idx.HasUniqueFlag,
                     DescendingColumns = descendingCols,
+                    IgnoreNulls = idx.IgnoreNulls,
+                    IsRequired = idx.IsRequired,
                 });
             }
         }

@@ -465,6 +465,76 @@ public sealed class SchemaEvolutionTests
         }
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "add")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "drop")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "rename")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "add")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "drop")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "rename")]
+    [InlineData(DatabaseFormat.AceAccdb, "add")]
+    [InlineData(DatabaseFormat.AceAccdb, "drop")]
+    [InlineData(DatabaseFormat.AceAccdb, "rename")]
+    public async Task SchemaRewrite_KeepsIndexFlags(DatabaseFormat format, string operation)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Flags";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Code", typeof(int)),
+                    new("Tag", typeof(int)),
+                    new("Note", typeof(string), maxLength: 20),
+                ],
+                [
+                    new IndexDefinition("PK", "Id") { IsPrimaryKey = true, IgnoreNulls = true },
+                    new IndexDefinition("IX_Code", "Code") { IsUnique = true, IgnoreNulls = true, IsRequired = true },
+                    new IndexDefinition("IX_Tag", "Tag") { IgnoreNulls = true },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, 10, 100, "a"], TestContext.Current.CancellationToken);
+        }
+
+        IReadOnlyList<IndexMetadata> before;
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            before = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            switch (operation)
+            {
+                case "add":
+                    await writer.AddColumnAsync(table, new ColumnDefinition("Extra", typeof(int)), TestContext.Current.CancellationToken);
+                    break;
+                case "drop":
+                    await writer.DropColumnAsync(table, "Note", TestContext.Current.CancellationToken);
+                    break;
+                default:
+                    await writer.RenameColumnAsync(table, "Note", "Remark", TestContext.Current.CancellationToken);
+                    break;
+            }
+        }
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            IReadOnlyList<IndexMetadata> after = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+            Assert.Equal(before.Count, after.Count);
+            foreach (IndexMetadata expected in before)
+            {
+                IndexMetadata actual = Assert.Single(after, index => index.Name == expected.Name);
+                Assert.Equal(
+                    (expected.Kind, expected.HasUniqueFlag, expected.IgnoreNulls, expected.IsRequired),
+                    (actual.Kind, actual.HasUniqueFlag, actual.IgnoreNulls, actual.IsRequired));
+            }
+        }
+    }
+
     [Fact]
     public async Task FreshlyCreatedTable_HasNoUserDefinedIndexEntries()
     {

@@ -277,76 +277,7 @@ internal sealed class TableSchemaEditor(
             },
             (oldRow, _) => oldRow,
             name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
-            cancellationToken,
-            projectIndexes: (existingIndexes, newDefs) =>
-            {
-                var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (ColumnDefinition c in newDefs)
-                {
-                    newColumnNames.Add(c.Name);
-                }
-
-                var result = new List<IndexDefinition>(existingIndexes.Count);
-                foreach (IndexMetadata idx in existingIndexes)
-                {
-                    // Forward Normal (1..N column) and PrimaryKey indexes;
-                    // FK indexes are reconstructed from MSysRelationships.
-                    if (idx.Kind is not IndexKind.Normal and not IndexKind.PrimaryKey)
-                    {
-                        continue;
-                    }
-
-                    var remappedCols = new List<string>(idx.Columns.Count);
-                    var descendingCols = new List<string>();
-                    bool allSurvive = true;
-                    foreach (IndexColumnReference ic in idx.Columns)
-                    {
-                        string keyColumn = ic.Name;
-                        string remapped = string.Equals(keyColumn, oldColumnName, StringComparison.OrdinalIgnoreCase)
-                            ? newColumnName
-                            : keyColumn;
-
-                        if (string.IsNullOrEmpty(remapped) || !newColumnNames.Contains(remapped))
-                        {
-                            allSurvive = false;
-                            break;
-                        }
-
-                        remappedCols.Add(remapped);
-                        if (!ic.IsAscending)
-                        {
-                            descendingCols.Add(remapped);
-                        }
-                    }
-
-                    if (!allSurvive)
-                    {
-                        continue;
-                    }
-
-                    if (idx.Kind == IndexKind.PrimaryKey)
-                    {
-                        result.Add(new IndexDefinition(idx.Name, remappedCols)
-                        {
-                            IsPrimaryKey = true,
-                            DescendingColumns = descendingCols,
-                            IgnoreNulls = idx.IgnoreNulls,
-                        });
-                    }
-                    else
-                    {
-                        result.Add(new IndexDefinition(idx.Name, remappedCols)
-                        {
-                            IsUnique = idx.HasUniqueFlag,
-                            DescendingColumns = descendingCols,
-                            IgnoreNulls = idx.IgnoreNulls,
-                            IsRequired = idx.IsRequired,
-                        });
-                    }
-                }
-
-                return result;
-            });
+            cancellationToken);
     }
 
     /// <summary>
@@ -384,9 +315,12 @@ internal sealed class TableSchemaEditor(
     /// <param name="tableName">The table to rewrite.</param>
     /// <param name="projectColumns">Builds the new column list from the current one.</param>
     /// <param name="projectRow">Maps a current row to the new column list.</param>
-    /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    /// <param name="mapColumnName">
+    /// Maps a current column name to its name after the rewrite, or to
+    /// <see langword="null"/> for a dropped column. Drives the index
+    /// projection, the relationship key columns, and the FK index entries.
+    /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <param name="projectIndexes">Builds the new index list; defaults to <see cref="IndexHelpers.DefaultIndexProjection"/>.</param>
     /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns or drops a relationship key column.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     private async ValueTask RewriteTableAsync(
@@ -394,8 +328,7 @@ internal sealed class TableSchemaEditor(
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
         Func<object[], TableDef, object[]> projectRow,
         Func<string, string?> mapColumnName,
-        CancellationToken cancellationToken,
-        Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
+        CancellationToken cancellationToken)
     {
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
@@ -467,13 +400,10 @@ internal sealed class TableSchemaEditor(
         using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<IndexMetadata> existingIndexes = await snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
-        // Default index projection: keep every existing index whose single key
-        // column survives in the new schema (matched by case-insensitive name).
-        // AddColumn / DropColumn use this default; RenameColumn supplies a custom
-        // projection that rewrites references to the renamed column.
-        List<IndexDefinition> projectedIndexes = projectIndexes != null
-            ? projectIndexes(existingIndexes, newDefs)
-            : IndexHelpers.DefaultIndexProjection(existingIndexes, newDefs);
+        // Forward every Normal / PrimaryKey index whose key columns all survive,
+        // renamed through mapColumnName, with its flags. FK indexes are
+        // re-emitted below by the relationship manager.
+        List<IndexDefinition> projectedIndexes = IndexHelpers.ProjectIndexes(existingIndexes, newDefs, mapColumnName);
 
         // Project every row before creating the temp table, so a MEMO / OLE value
         // the snapshot could not read refuses the rewrite before anything changes.
