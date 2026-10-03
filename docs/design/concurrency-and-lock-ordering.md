@@ -19,7 +19,7 @@ recorded in [Why these are not consolidated](#why-these-are-not-consolidated).
 
 ## The primitives
 
-The library has **seven** distinct coordination mechanisms. Five are in-process;
+The library has **eight** distinct coordination mechanisms. Six are in-process;
 two are cross-process / cross-opener (advisory). Each has a single, distinct
 responsibility — the apparent overlap noted in the audit is superficial (see the
 closing section).
@@ -33,10 +33,16 @@ closing section).
 | 5 | `ownedDataPagesCacheLock` | `Lock` / `object` | [DatabaseFile.cs#L42](../../JetDatabaseWriter/DatabaseFile.cs#L42) | One open database file | The `ownedDataPagesByTdef` dictionary only |
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs#L21](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs#L21) | Internal to #1 | The gate's own drain bookkeeping |
+| 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs#L23](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs#L23) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
 
 > Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
 > state (the writer's insert-page hint and the reader gate's drain bookkeeping).
-> They never interact.
+> They never interact. #8 exists because pages are decrypted after `IoGate` is
+> released (and the `RandomAccess` read path never takes it), so table-scan
+> read-ahead or two operations on one reader can decrypt pages on two threads
+> at once, and an `ICryptoTransform` is not safe to share between threads.
+> Writes encrypt inside `IoGate`. The Jet3 XOR and Jet4 RC4 paths keep no state
+> between pages and take no lock.
 
 ## Acquisition-order hierarchy (outermost → innermost)
 
@@ -51,6 +57,8 @@ order. Never acquire one earlier in this list while holding one later in it.
 — leaf locks (never held across an await, never nested under each other) —
    insertPageHintLock             (insert-page cache; pure memory)
    ownedDataPagesCacheLock        (owned-page dictionary; pure memory)
+   aesGate                        (AES page transform; CPU only; reads take it after IoGate,
+                                   writes inside it)
 
 — cross-process, lifetime-scoped (not part of per-operation nesting) —
    ByteRangeLock commit-lock  (spans one transaction's replay window)
@@ -142,9 +150,11 @@ enter the same gate.
 
 ```
 operationGate lease  (reentrant: nested reader calls on the same async flow join the root)
-  └─ per page read: IoGate ──▶ seek/read ──▶ release IoGate
+  └─ per page read: IoGate ──▶ seek/read ──▶ release IoGate ──▶ aesGate decrypt (AES files only)
        (uncached FileStream reads outside a transaction instead use a
         positionless RandomAccess read that bypasses IoGate)
+  └─ table-scan read-ahead: the next data page's read runs alongside the
+     caller's decode of the current page, so two page reads can be in flight
   └─ owned-page cache build: ownedDataPagesCacheLock (leaf, memory only)
 ```
 
@@ -182,6 +192,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
+| `aesGate` | No | Plain `lock`; leaf only |
 
 ## Rules for new code
 
@@ -189,8 +200,8 @@ lockFileCoordinator.DisposeAfterAsync(
    in the hierarchy is taken first and released last.
 2. Never hold `IoGate` when calling `ReadPageAsync` / `WritePageAsync` /
    `AppendPageAsync` — they take it themselves on their gated paths.
-3. Keep `insertPageHintLock` and `ownedDataPagesCacheLock` as leaf locks: pure in-memory
-   work, no `await` and no other lock acquired while held.
+3. Keep `insertPageHintLock`, `ownedDataPagesCacheLock` and `aesGate` as leaf locks: pure
+   in-memory work, no `await` and no other lock acquired while held.
 4. Per-page byte-range locks go **inside** `IoGate`, never the reverse.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLock`
    commit-lock) are lifetime- or transaction-scoped, not per-page; do not fold
