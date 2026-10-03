@@ -18,6 +18,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
@@ -60,6 +61,28 @@ internal sealed class TableSchemaEditor(
     TableSnapshotReader snapshots,
     AutoNumberMaintainer autoNumbers)
 {
+    /// <summary>
+    /// Public CreateTable entry point: runs the definition-time checks for the
+    /// columns the caller is declaring, then creates the table.
+    /// <see cref="RewriteTableAsync"/> calls <see cref="CreateTableAsync"/>
+    /// directly, so a table holding an older expression can still be altered.
+    /// </summary>
+    /// <param name="tableName">The new table's name.</param>
+    /// <param name="columns">The column definitions.</param>
+    /// <param name="indexes">The index definitions.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A task that completes when the table is in the catalog.</returns>
+    internal ValueTask CreateDeclaredTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(columns, nameof(columns));
+        for (int i = 0; i < columns.Count; i++)
+        {
+            ValidateDeclaredCalculatedExpression(columns[i]);
+        }
+
+        return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
+    }
+
     internal async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -145,6 +168,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
+        ValidateDeclaredCalculatedExpression(column);
 
         return this.RewriteTableAsync(
             tableName,
@@ -331,6 +355,32 @@ internal sealed class TableSchemaEditor(
 
                 return result;
             });
+    }
+
+    /// <summary>
+    /// Definition-time check for a calculated column the caller is declaring
+    /// now (CreateTable / AddColumn): rejects operators Access does not have
+    /// and syntax the expression parser cannot read, so the error surfaces
+    /// when the column is defined rather than on the first insert. Functions
+    /// and column names are still resolved at evaluation.
+    /// </summary>
+    /// <param name="column">The column being declared.</param>
+    private static void ValidateDeclaredCalculatedExpression(ColumnDefinition? column)
+    {
+        if (column is not { IsCalculated: true, CalculationExpression: { } expression } || string.IsNullOrWhiteSpace(expression))
+        {
+            return;
+        }
+
+        CalculatedExpressionNormalizer.ValidateDefinition(column.Name, expression);
+        try
+        {
+            _ = CalculatedExpressionPlan.Parse(expression);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ArgumentException($"Column '{column.Name}': {ex.Message}", ex);
+        }
     }
 
     private async ValueTask RewriteTableAsync(

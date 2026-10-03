@@ -26,10 +26,10 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "ROUND", 1, 2, static function => Math.Round(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 0, MidpointRounding.ToEven)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "INT", 1, 1, static function => Math.Floor(ToDecimal(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "FIX", 1, 1, static function => EvaluateFix(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CINT", 1, 1, static function => Convert.ToInt16(function.Arg(0), CultureInfo.InvariantCulture)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CLNG", 1, 1, static function => Convert.ToInt32(function.Arg(0), CultureInfo.InvariantCulture)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDBL", 1, 1, static function => Convert.ToDouble(function.Arg(0), CultureInfo.InvariantCulture)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CSNG", 1, 1, static function => Convert.ToSingle(function.Arg(0), CultureInfo.InvariantCulture)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CINT", 1, 1, static function => Convert.ToInt16(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CLNG", 1, 1, static function => Convert.ToInt32(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDBL", 1, 1, static function => Convert.ToDouble(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CSNG", 1, 1, static function => Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CBYTE", 1, 1, static function => Convert.ToByte(function.Arg(0), CultureInfo.InvariantCulture)));
     }

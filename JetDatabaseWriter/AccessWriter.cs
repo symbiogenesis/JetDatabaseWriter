@@ -426,7 +426,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <inheritdoc/>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.CreateTableAsync(tableName, columns, indexes, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.services.Schema.CreateDeclaredTableAsync(tableName, columns, indexes, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)

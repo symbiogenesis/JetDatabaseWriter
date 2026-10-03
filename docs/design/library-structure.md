@@ -231,7 +231,7 @@ JetDatabaseWriter/
 │   │   ├── CalculatedExpressionMetadataFunctions.cs (metadata function catalog)
 │   │   ├── CalculatedExpressionNameNode.cs         (column/name AST node)
 │   │   ├── CalculatedExpressionNode.cs             (base calculated-expression AST node)
-│   │   ├── CalculatedExpressionNormalizer.cs       (Access syntax normalization: column brackets, date literals, word operators)
+│   │   ├── CalculatedExpressionNormalizer.cs       (Access-precedence parse of every expression: column brackets, date literals, word operators)
 │   │   ├── CalculatedExpressionNumericFunctions.cs (numeric function catalog)
 │   │   ├── CalculatedExpressionPlan.cs
 │   │   ├── CalculatedExpressionTextFunctions.cs    (text function catalog)

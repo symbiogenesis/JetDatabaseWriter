@@ -11,10 +11,14 @@ internal sealed class CalculatedExpressionBinaryNode(BinaryOperation operation, 
     {
         object leftValue = left.Evaluate(context, plan);
         object rightValue = right.Evaluate(context, plan);
+
+        // Access concatenates when both operands of + are text.
         return operation switch
         {
             BinaryOperation.Concat => CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue),
-            BinaryOperation.Addition => EvaluateNumeric(leftValue, rightValue, static (l, r) => l + r),
+            BinaryOperation.Addition => leftValue is string && rightValue is string
+                ? CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue)
+                : EvaluateNumeric(leftValue, rightValue, static (l, r) => l + r),
             BinaryOperation.Subtraction => EvaluateNumeric(leftValue, rightValue, static (l, r) => l - r),
             BinaryOperation.Multiplication => EvaluateNumeric(leftValue, rightValue, static (l, r) => l * r),
             BinaryOperation.Division => EvaluateNumeric(leftValue, rightValue, static (l, r) => l / r),

@@ -358,8 +358,12 @@ public sealed record ColumnDefinition
     /// Gets the Jet/VBA expression Microsoft Access evaluates to compute this
     /// column's value (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>).
     /// Required when <see cref="IsCalculated"/> is <see langword="true"/>;
-    /// ignored otherwise. Persisted in <c>MSysObjects.LvProp</c> as the
-    /// <see cref="Constants.ColumnPropertyNames.Expression"/> property.
+    /// ignored otherwise. Evaluated with Access operator precedence (<c>-2^2</c>
+    /// is -4) against the referenced fields' values converted to their column
+    /// types. Creating or adding a column whose expression uses the spreadsheet
+    /// <c>%</c> operator, or that the parser cannot read, throws
+    /// <see cref="ArgumentException"/>. Persisted in <c>MSysObjects.LvProp</c>
+    /// as the <see cref="Constants.ColumnPropertyNames.Expression"/> property.
     /// </summary>
     public string? CalculationExpression { get; init; }
 

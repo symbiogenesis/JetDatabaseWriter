@@ -7,9 +7,46 @@ using System.Text;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
+/// <summary>
+/// Rewrites an Access (Jet/VBA) calculated-column expression into a formula
+/// for the ClosedXML parser, parenthesized wherever Excel's grammar would
+/// group it differently. Every expression goes through the Access-precedence
+/// Pratt parser below, so the Excel grammar of the downstream parser never
+/// decides precedence: <c>^</c> binds tighter than unary minus and associates
+/// left to right, then <c>*</c> <c>/</c>, <c>\</c>, <c>Mod</c>, <c>+</c>
+/// <c>-</c>, <c>&amp;</c>, comparisons, <c>Not</c>, <c>And</c>, <c>Or</c>,
+/// <c>Xor</c>, <c>Eqv</c>, <c>Imp</c>. Syntax the Access grammar does not
+/// accept (including Excel's postfix <c>%</c>) throws
+/// <see cref="ArgumentException"/> naming the expression.
+/// </summary>
 internal static class CalculatedExpressionNormalizer
 {
     internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn)
+    {
+        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn);
+        return AccessExpressionNormalizer.Normalize(prepared, expression);
+    }
+
+    /// <summary>
+    /// Definition-time check run when a calculated column is created or added:
+    /// rejects operators that Access does not have, so a spreadsheet-only
+    /// expression such as <c>5%</c> is refused before it reaches the file.
+    /// </summary>
+    /// <param name="columnName">The calculated column's name, for the error message.</param>
+    /// <param name="expression">The expression text as the caller supplied it.</param>
+    /// <exception cref="ArgumentException">The expression uses the spreadsheet <c>%</c> operator.</exception>
+    internal static void ValidateDefinition(string columnName, string expression)
+    {
+        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out _);
+        if (AccessExpressionNormalizer.ContainsPercentOperator(prepared))
+        {
+            throw new ArgumentException(
+                $"Column '{columnName}': calculated-column expression '{expression}' uses '%', which is not an Access operator. Divide by 100 instead.",
+                nameof(expression));
+        }
+    }
+
+    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn)
     {
         placeholderToColumn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string trimmed = expression.Trim();
@@ -83,11 +120,14 @@ internal static class CalculatedExpressionNormalizer
             }
         }
 
-        return AccessExpressionNormalizer.Normalize(builder.ToString());
+        return builder.ToString();
     }
 
     private sealed class AccessExpressionNormalizer
     {
+        private const int UnaryLevel = 6;
+        private const int AtomLevel = 8;
+
         private static readonly Dictionary<string, string> WordOperators = new(StringComparer.OrdinalIgnoreCase)
         {
             ["AND"] = "AND",
@@ -111,24 +151,39 @@ internal static class CalculatedExpressionNormalizer
         };
 
         private readonly List<Token> tokens;
+        private readonly string originalExpression;
         private int position;
         private bool stopAtBetweenAnd;
 
-        private AccessExpressionNormalizer(List<Token> tokens)
-            => this.tokens = tokens;
+        private AccessExpressionNormalizer(List<Token> tokens, string originalExpression)
+        {
+            this.tokens = tokens;
+            this.originalExpression = originalExpression;
+        }
 
-        public static string Normalize(string expression)
+        public static string Normalize(string expression, string originalExpression)
         {
             List<Token> tokens = Tokenize(expression);
-            if (!tokens.Exists(static token => token.Kind is TokenKind.Word or TokenKind.Backslash || (token.Kind == TokenKind.Identifier && token.Text.EndsWith('$'))))
+            if (tokens.Exists(static token => token.IsPercent))
             {
-                return expression;
+                throw new ArgumentException(
+                    $"Calculated-column expression '{originalExpression}' uses '%', which is not an Access operator. Divide by 100 instead.",
+                    nameof(expression));
             }
 
-            var normalizer = new AccessExpressionNormalizer(tokens);
-            string normalized = normalizer.ParseExpression(0);
-            return normalizer.Peek().Kind == TokenKind.End ? normalized : expression;
+            var normalizer = new AccessExpressionNormalizer(tokens, originalExpression);
+            string normalized = normalizer.ParseExpression(0).Text;
+            Token trailing = normalizer.Peek();
+            if (trailing.Kind != TokenKind.End)
+            {
+                throw normalizer.SyntaxError($"unexpected {Describe(trailing)} after a complete expression");
+            }
+
+            return normalized;
         }
+
+        public static bool ContainsPercentOperator(string expression)
+            => Tokenize(expression).Exists(static token => token.IsPercent);
 
         private static List<Token> Tokenize(string expression)
         {
@@ -257,20 +312,24 @@ internal static class CalculatedExpressionNormalizer
         {
             if (token.Kind == TokenKind.Backslash)
             {
-                return new BinaryOperatorInfo("INTDIV", 10, false);
+                return new BinaryOperatorInfo("INTDIV", 10, AtomLevel);
             }
 
             if (token.Kind == TokenKind.Operator)
             {
+                // Every Access binary operator is left-associative, ^ included
+                // (2^3^2 = 64). ExcelLevel is the operator's rank in the
+                // downstream Excel grammar, used to decide where the emitted
+                // formula needs parentheses.
                 return token.Text switch
                 {
-                    "^" => new BinaryOperatorInfo("^", 12, true),
-                    "*" => new BinaryOperatorInfo("*", 11, false),
-                    "/" => new BinaryOperatorInfo("/", 11, false),
-                    "+" => new BinaryOperatorInfo("+", 8, false),
-                    "-" => new BinaryOperatorInfo("-", 8, false),
-                    "&" => new BinaryOperatorInfo("&", 7, false),
-                    "=" or "<>" or "<" or "<=" or ">" or ">=" => new BinaryOperatorInfo(token.Text, 6, false),
+                    "^" => new BinaryOperatorInfo("^", 12, 5),
+                    "*" => new BinaryOperatorInfo("*", 11, 4),
+                    "/" => new BinaryOperatorInfo("/", 11, 4),
+                    "+" => new BinaryOperatorInfo("+", 8, 3),
+                    "-" => new BinaryOperatorInfo("-", 8, 3),
+                    "&" => new BinaryOperatorInfo("&", 7, 2),
+                    "=" or "<>" or "<" or "<=" or ">" or ">=" => new BinaryOperatorInfo(token.Text, 6, 1),
                     _ => null,
                 };
             }
@@ -282,24 +341,32 @@ internal static class CalculatedExpressionNormalizer
 
             return token.Text.ToUpperInvariant() switch
             {
-                "IMP" => new BinaryOperatorInfo("IMP", 1, false),
-                "EQV" => new BinaryOperatorInfo("EQV", 2, false),
-                "XOR" => new BinaryOperatorInfo("XOR", 3, false),
-                "OR" => new BinaryOperatorInfo("OR", 4, false),
-                "AND" => new BinaryOperatorInfo("AND", 5, false),
-                "IS" => new BinaryOperatorInfo("IS", 6, false),
-                "LIKE" => new BinaryOperatorInfo("LIKE", 6, false),
-                "BETWEEN" => new BinaryOperatorInfo("BETWEEN", 6, false),
-                "IN" => new BinaryOperatorInfo("IN", 6, false),
-                "NOT" => new BinaryOperatorInfo("NOT", 6, false),
-                "MOD" => new BinaryOperatorInfo("MOD", 9, false),
+                "IMP" => new BinaryOperatorInfo("IMP", 1, AtomLevel),
+                "EQV" => new BinaryOperatorInfo("EQV", 2, AtomLevel),
+                "XOR" => new BinaryOperatorInfo("XOR", 3, AtomLevel),
+                "OR" => new BinaryOperatorInfo("OR", 4, AtomLevel),
+                "AND" => new BinaryOperatorInfo("AND", 5, AtomLevel),
+                "IS" => new BinaryOperatorInfo("IS", 6, AtomLevel),
+                "LIKE" => new BinaryOperatorInfo("LIKE", 6, AtomLevel),
+                "BETWEEN" => new BinaryOperatorInfo("BETWEEN", 6, AtomLevel),
+                "IN" => new BinaryOperatorInfo("IN", 6, AtomLevel),
+                "NOT" => new BinaryOperatorInfo("NOT", 6, AtomLevel),
+                "MOD" => new BinaryOperatorInfo("MOD", 9, AtomLevel),
                 _ => null,
             };
         }
 
-        private string ParseExpression(int minimumPrecedence)
+        private static string Parenthesize(Fragment fragment, bool needed)
+            => needed ? "(" + fragment.Text + ")" : fragment.Text;
+
+        private static Fragment Atom(string text) => new(text, AtomLevel);
+
+        private static string Describe(Token token)
+            => token.Text.StartsWith(PlaceholderPrefix, StringComparison.Ordinal) ? "a [field] reference" : $"'{token.Text}'";
+
+        private Fragment ParseExpression(int minimumPrecedence)
         {
-            string left = this.ParsePrefix();
+            Fragment left = this.ParsePrefix();
             while (true)
             {
                 Token token = this.Peek();
@@ -337,25 +404,30 @@ internal static class CalculatedExpressionNormalizer
             return left;
         }
 
-        private string ParsePrefix()
+        private Fragment ParsePrefix()
         {
             Token token = this.Peek();
             if (token.IsWord("NOT"))
             {
                 this.Read();
-                return "NOT(" + this.ParseExpression(6) + ")";
+                return Atom("NOT(" + this.ParseExpression(6).Text + ")");
             }
 
             if (token.Kind == TokenKind.Operator && (token.Text == "+" || token.Text == "-"))
             {
+                // Access ranks ^ above unary minus, so the operand takes any
+                // exponentiation with it: -2^2 is -(2^2) = -4. Excel ranks
+                // unary minus above ^, so an operand built from any binary
+                // operator is parenthesized to keep that grouping.
                 this.Read();
-                return token.Text + this.ParseExpression(12);
+                Fragment operand = this.ParseExpression(12);
+                return new Fragment(token.Text + Parenthesize(operand, operand.Level < UnaryLevel), UnaryLevel);
             }
 
             return this.ParsePrimary();
         }
 
-        private string ParsePrimary()
+        private Fragment ParsePrimary()
         {
             Token token = this.Read();
             switch (token.Kind)
@@ -366,32 +438,33 @@ internal static class CalculatedExpressionNormalizer
                         return this.ParseFunctionCall(token.Text);
                     }
 
-                    return token.Text;
+                    return Atom(token.Text);
                 case TokenKind.Word:
                     return token.Text.ToUpperInvariant() switch
                     {
-                        "YES" or "ON" => "TRUE",
-                        "NO" or "OFF" => "FALSE",
-                        _ => token.Text,
+                        "YES" or "ON" or "TRUE" => Atom("TRUE"),
+                        "NO" or "OFF" or "FALSE" => Atom("FALSE"),
+                        "NULL" => Atom(token.Text),
+                        _ => throw this.SyntaxError($"unexpected {Describe(token)} where an operand is expected"),
                     };
                 case TokenKind.Value:
-                    return token.Text;
+                    return Atom(token.Text);
                 case TokenKind.OpenParen:
-                    string inner = this.ParseExpression(0);
+                    Fragment inner = this.ParseExpression(0);
                     this.Expect(TokenKind.CloseParen, ")");
-                    return "(" + inner + ")";
+                    return Atom("(" + inner.Text + ")");
                 case TokenKind.End:
                 case TokenKind.Operator:
                 case TokenKind.Backslash:
                 case TokenKind.CloseParen:
                 case TokenKind.Comma:
-                    throw new ArgumentException($"Unexpected token '{token.Text}' in calculated-column expression.");
+                    throw this.SyntaxError(token.Kind == TokenKind.End ? "the expression ends where an operand is expected" : $"unexpected {Describe(token)} where an operand is expected");
                 default:
                     throw new InvalidOperationException($"Unexpected calculated-column token kind '{token.Kind}'.");
             }
         }
 
-        private string ParseFunctionCall(string name)
+        private Fragment ParseFunctionCall(string name)
         {
             if (name.EndsWith('$'))
             {
@@ -404,7 +477,7 @@ internal static class CalculatedExpressionNormalizer
             {
                 while (true)
                 {
-                    arguments.Add(this.ParseExpression(0));
+                    arguments.Add(this.ParseExpression(0).Text);
                     ValidateFunctionArgumentCount(name, arguments.Count);
                     if (this.Peek().Kind != TokenKind.Comma)
                     {
@@ -416,10 +489,10 @@ internal static class CalculatedExpressionNormalizer
             }
 
             this.Expect(TokenKind.CloseParen, ")");
-            return name + "(" + string.Join(",", arguments) + ")";
+            return Atom(name + "(" + string.Join(",", arguments) + ")");
         }
 
-        private string ParseIs(string left)
+        private Fragment ParseIs(Fragment left)
         {
             bool negate = false;
             if (this.Peek().IsWord("NOT"))
@@ -431,19 +504,19 @@ internal static class CalculatedExpressionNormalizer
             Token token = this.Read();
             if (!token.IsWord("NULL"))
             {
-                throw new ArgumentException("Calculated-column 'Is' expressions are only supported for Null checks.");
+                throw this.SyntaxError("'Is' is only supported for Null checks");
             }
 
-            string call = "ISNULL(" + left + ")";
-            return negate ? "NOT(" + call + ")" : call;
+            string call = "ISNULL(" + left.Text + ")";
+            return Atom(negate ? "NOT(" + call + ")" : call);
         }
 
-        private string ParsePostfixNot(string left, int precedence)
+        private Fragment ParsePostfixNot(Fragment left, int precedence)
         {
             Token token = this.Read();
             if (token.IsWord("LIKE"))
             {
-                return "NOT(" + this.ParseFunctionBinary("LIKE", left, new BinaryOperatorInfo("LIKE", precedence, false)) + ")";
+                return Atom("NOT(" + this.ParseFunctionBinary("LIKE", left, new BinaryOperatorInfo("LIKE", precedence, AtomLevel)).Text + ")");
             }
 
             if (token.IsWord("IN"))
@@ -456,14 +529,14 @@ internal static class CalculatedExpressionNormalizer
                 return this.ParseBetween(left, negate: true);
             }
 
-            throw new ArgumentException($"Unexpected token '{token.Text}' after postfix Not in calculated-column expression.");
+            throw this.SyntaxError($"unexpected {Describe(token)} after Not");
         }
 
-        private string ParseBetween(string left, bool negate)
+        private Fragment ParseBetween(Fragment left, bool negate)
         {
             bool previousStop = this.stopAtBetweenAnd;
             this.stopAtBetweenAnd = true;
-            string lower;
+            Fragment lower;
             try
             {
                 lower = this.ParseExpression(0);
@@ -476,23 +549,23 @@ internal static class CalculatedExpressionNormalizer
             Token separator = this.Read();
             if (!separator.IsWord("AND"))
             {
-                throw new ArgumentException("Calculated-column Between expression is missing the And separator.");
+                throw this.SyntaxError("Between is missing its And separator");
             }
 
-            string upper = this.ParseExpression(7);
-            string call = "BETWEEN(" + left + "," + lower + "," + upper + ")";
-            return negate ? "NOT(" + call + ")" : call;
+            Fragment upper = this.ParseExpression(7);
+            string call = "BETWEEN(" + left.Text + "," + lower.Text + "," + upper.Text + ")";
+            return Atom(negate ? "NOT(" + call + ")" : call);
         }
 
-        private string ParseIn(string left, bool negate)
+        private Fragment ParseIn(Fragment left, bool negate)
         {
             this.Expect(TokenKind.OpenParen, "(");
-            var values = new List<string> { left };
+            var values = new List<string> { left.Text };
             if (this.Peek().Kind != TokenKind.CloseParen)
             {
                 while (true)
                 {
-                    values.Add(this.ParseExpression(0));
+                    values.Add(this.ParseExpression(0).Text);
                     if (this.Peek().Kind != TokenKind.Comma)
                     {
                         break;
@@ -504,20 +577,30 @@ internal static class CalculatedExpressionNormalizer
 
             this.Expect(TokenKind.CloseParen, ")");
             string call = "IN(" + string.Join(",", values) + ")";
-            return negate ? "NOT(" + call + ")" : call;
+            return Atom(negate ? "NOT(" + call + ")" : call);
         }
 
-        private string ParseFunctionBinary(string functionName, string left, BinaryOperatorInfo info)
+        private Fragment ParseFunctionBinary(string functionName, Fragment left, BinaryOperatorInfo info)
         {
-            string right = this.ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
-            return functionName + "(" + left + "," + right + ")";
+            Fragment right = this.ParseExpression(info.Precedence + 1);
+            return Atom(functionName + "(" + left.Text + "," + right.Text + ")");
         }
 
-        private string ParseInfix(string left, BinaryOperatorInfo info)
+        private Fragment ParseInfix(Fragment left, BinaryOperatorInfo info)
         {
-            string right = this.ParseExpression(info.RightAssociative ? info.Precedence : info.Precedence + 1);
-            return "(" + left + info.Name + right + ")";
+            // Left-associative in both grammars: a left operand of the same
+            // Excel rank needs no parentheses, a right operand of the same
+            // rank does. Keeping chains such as [A]+[B]+[C] flat keeps the
+            // emitted formula inside the nesting limit.
+            Fragment right = this.ParseExpression(info.Precedence + 1);
+            string text = Parenthesize(left, left.Level < info.ExcelLevel)
+                + info.Name
+                + Parenthesize(right, right.Level <= info.ExcelLevel);
+            return new Fragment(text, info.ExcelLevel);
         }
+
+        private ArgumentException SyntaxError(string detail)
+            => new($"Calculated-column expression '{this.originalExpression}' is not valid Access expression syntax: {detail}.");
 
         private Token Peek() => this.tokens[this.position];
 
@@ -528,14 +611,24 @@ internal static class CalculatedExpressionNormalizer
             Token token = this.Read();
             if (token.Kind != kind || (text.Length > 0 && token.Text != text))
             {
-                throw new ArgumentException($"Expected '{text}' in calculated-column expression, got '{token.Text}'.");
+                throw this.SyntaxError(token.Kind == TokenKind.End ? $"expected '{text}' before the end of the expression" : $"expected '{text}' but found {Describe(token)}");
             }
         }
 
-        private readonly record struct BinaryOperatorInfo(string Name, int Precedence, bool RightAssociative);
+        private readonly record struct BinaryOperatorInfo(string Name, int Precedence, int ExcelLevel);
+
+        /// <summary>A piece of the emitted Excel-syntax formula.</summary>
+        /// <param name="Text">The formula text.</param>
+        /// <param name="Level">
+        /// The fragment's rank in the Excel grammar: 1 comparison, 2 <c>&amp;</c>,
+        /// 3 <c>+ -</c>, 4 <c>* /</c>, 5 <c>^</c>, 6 unary sign, 8 operand or function call.
+        /// </param>
+        private readonly record struct Fragment(string Text, int Level);
 
         private readonly record struct Token(TokenKind Kind, string Text)
         {
+            public bool IsPercent => this.Kind == TokenKind.Operator && this.Text == "%";
+
             public bool IsWord(string text) => this.Kind == TokenKind.Word && this.Text.Equals(text, StringComparison.OrdinalIgnoreCase);
         }
 

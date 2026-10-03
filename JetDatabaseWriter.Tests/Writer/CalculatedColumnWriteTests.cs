@@ -5,9 +5,11 @@ using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 public sealed class CalculatedColumnWriteTests
@@ -503,7 +505,7 @@ public sealed class CalculatedColumnWriteTests
 
         Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
         Assert.Equal("second", row["ChoiceEdge"]);
-        Assert.Equal("fallback:True:True:True", row["NullEdge"]);
+        Assert.Equal("fallback:-1:-1:-1", row["NullEdge"]);
         Assert.Equal("cce:3:5:xxx:desserts", row["TextEdge"]);
         Assert.Equal("2026:30:Mon:February", row["DateEdge"]);
         Assert.Equal("-2:-1:2:FF:10:12", row["NumericEdge"]);
@@ -513,52 +515,49 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task InsertRow_InvalidCalculatedExpressionSyntax_ThrowsArgumentException()
+    public async Task CreateTable_InvalidCalculatedExpressionSyntax_ThrowsArgumentException()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
-        await writer.CreateTableAsync(
-            "CalcBadSyntax",
-            [
-                new("Score", typeof(int)),
-                new("BadCalc", typeof(int))
-                {
-                    IsCalculated = true,
-                    CalculationExpression = "[Score] +",
-                },
-            ],
-            TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync(
+                    "CalcBadSyntax",
+                    [
+                        new("Score", typeof(int)),
+                        new("BadCalc", typeof(int))
+                        {
+                            IsCalculated = true,
+                            CalculationExpression = "[Score] +",
+                        },
+                    ],
+                    TestContext.Current.CancellationToken));
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await writer.InsertRowAsync(
-                "CalcBadSyntax",
-                [1, DBNull.Value],
-                TestContext.Current.CancellationToken));
+            Assert.Contains("'BadCalc'", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("CalcBadSyntax", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task InsertRow_OverNestedCalculatedExpression_ThrowsArgumentException()
+    public async Task CreateTable_OverNestedCalculatedExpression_ThrowsArgumentException()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         string expression = new string('(', 129) + "1" + new string(')', 129);
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        await writer.CreateTableAsync(
-            "CalcDeepExpression",
-            [
-                new("DeepCalc", typeof(int))
-                {
-                    IsCalculated = true,
-                    CalculationExpression = expression,
-                },
-            ],
-            TestContext.Current.CancellationToken);
-
         ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await writer.InsertRowAsync(
+            await writer.CreateTableAsync(
                 "CalcDeepExpression",
-                [DBNull.Value],
+                [
+                    new("DeepCalc", typeof(int))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = expression,
+                    },
+                ],
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("nesting depth", exception.Message, StringComparison.Ordinal);
@@ -648,6 +647,323 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("Calculated-column", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InsertRow_CalculatedExpression_UsesAccessOperatorPrecedence()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcPrecedence",
+                [
+                    new("Id", typeof(int)),
+                    new("NegPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2" },
+                    new("NegPowMod", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2 + (0 Mod 5)" },
+                    new("NegFieldPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-[Id]^2" },
+                    new("PowChain", typeof(double)) { IsCalculated = true, CalculationExpression = "2^3^2" },
+                    new("DivChain", typeof(int)) { IsCalculated = true, CalculationExpression = "7 \\ 2 * 2" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcPrecedence",
+                [3, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcPrecedence", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+
+        Assert.Equal(-4d, Convert.ToDouble(row["NegPow"], CultureInfo.InvariantCulture));
+        Assert.Equal(-4d, Convert.ToDouble(row["NegPowMod"], CultureInfo.InvariantCulture));
+        Assert.Equal(-9d, Convert.ToDouble(row["NegFieldPow"], CultureInfo.InvariantCulture));
+        Assert.Equal(64d, Convert.ToDouble(row["PowChain"], CultureInfo.InvariantCulture));
+        Assert.Equal(1, Convert.ToInt32(row["DivChain"], CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("5%")]
+    [InlineData("[Rate]%")]
+    [InlineData("[Rate] * 5% + 1")]
+    public async Task CreateTable_PercentCalculatedExpression_ThrowsArgumentException(string expression)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync(
+                    "CalcPercent",
+                    [
+                        new("Rate", typeof(double)),
+                        new("Pct", typeof(double)) { IsCalculated = true, CalculationExpression = expression },
+                    ],
+                    TestContext.Current.CancellationToken));
+
+            Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'Pct'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'%'", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("CalcPercent", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task AddColumn_PercentCalculatedExpression_ThrowsArgumentException()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcAddPercent",
+                [new("Rate", typeof(double))],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcAddPercent", [2.5d], TestContext.Current.CancellationToken);
+
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.AddColumnAsync(
+                    "CalcAddPercent",
+                    new("Pct", typeof(double)) { IsCalculated = true, CalculationExpression = "[Rate]%" },
+                    TestContext.Current.CancellationToken));
+
+            Assert.Contains("[Rate]%", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcAddPercent", TestContext.Current.CancellationToken);
+        Assert.Equal("Rate", Assert.Single(metadata).Name);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAddPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal(2.5d, Convert.ToDouble(row["Rate"], CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("[Score] 2")]
+    [InlineData("[Score] + 1 )")]
+    [InlineData("{1, 2}")]
+    public async Task CreateTableAndAddColumn_UnparseableCalculatedExpression_ThrowsArgumentException(string expression)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException createException = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync(
+                    "CalcBadSyntax",
+                    [
+                        new("Score", typeof(int)),
+                        new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
+                    ],
+                    TestContext.Current.CancellationToken));
+            Assert.Contains("'Calc'", createException.Message, StringComparison.Ordinal);
+            Assert.Contains(expression, createException.Message, StringComparison.Ordinal);
+
+            await writer.CreateTableAsync("CalcAddBadSyntax", [new("Score", typeof(int))], TestContext.Current.CancellationToken);
+            ArgumentException addException = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.AddColumnAsync(
+                    "CalcAddBadSyntax",
+                    new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
+                    TestContext.Current.CancellationToken));
+            Assert.Contains(expression, addException.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("CalcBadSyntax", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("Score", Assert.Single(await reader.GetColumnMetadataAsync("CalcAddBadSyntax", TestContext.Current.CancellationToken)).Name);
+    }
+
+    [Fact]
+    public async Task StoredPercentExpression_ReadsButRejectsWritesThatReevaluateIt()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        // Only an earlier version of this library could have stored '%'; plant it
+        // through the internal schema service, which skips the definition check.
+        stream.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await harness.Services.Schema.CreateTableAsync(
+                "CalcLegacyPercent",
+                [
+                    new("Id", typeof(int)),
+                    new("R", typeof(int)),
+                    new("C", typeof(double)) { IsCalculated = true, CalculationExpression = "[R]%" },
+                ],
+                [],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync("CalcLegacyPercent", [1, 50, 0.5d], TestContext.Current.CancellationToken);
+
+            ArgumentException insert = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync("CalcLegacyPercent", [2, 60, DBNull.Value], TestContext.Current.CancellationToken));
+            Assert.Contains("[R]%", insert.Message, StringComparison.Ordinal);
+
+            ArgumentException update = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(
+                    "CalcLegacyPercent",
+                    "Id",
+                    1,
+                    new Dictionary<string, object?> { ["R"] = 70 },
+                    TestContext.Current.CancellationToken));
+            Assert.Contains("[R]%", update.Message, StringComparison.Ordinal);
+
+            await writer.AddColumnAsync("CalcLegacyPercent", new("Note", typeof(string), maxLength: 10), TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcLegacyPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal(50, Convert.ToInt32(row["R"], CultureInfo.InvariantCulture));
+        Assert.Equal(0.5d, Convert.ToDouble(row["C"], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task CreateTable_PercentInsideStringOrFieldName_IsAccepted()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcPercentText",
+                [
+                    new("Rate%", typeof(int)),
+                    new("Label", typeof(string), maxLength: 20) { IsCalculated = true, CalculationExpression = "[Rate%] & \"%\"" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync("CalcPercentText", [15, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcPercentText", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal("15%", row["Label"]);
+    }
+
+    [Fact]
+    public async Task StoredCalculatedExpressionTheEngineCannotParse_StillReadsAndAcceptsSuppliedValues()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        // The public CreateTableAsync now refuses this expression, so plant it
+        // through the internal schema service, the way an older writer (or a
+        // newer Access syntax this engine lacks) would have left it in the file.
+        stream.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await harness.Services.Schema.CreateTableAsync(
+                "CalcUnparsed",
+                [
+                    new("Score", typeof(int)),
+                    new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = "[Score] 2" },
+                ],
+                [],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync("CalcUnparsed", [1, 42], TestContext.Current.CancellationToken);
+
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync("CalcUnparsed", [2, DBNull.Value], TestContext.Current.CancellationToken));
+            Assert.Contains("[Score] 2", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        ColumnMetadata calc = Assert.Single(await reader.GetColumnMetadataAsync("CalcUnparsed", TestContext.Current.CancellationToken), c => c.Name == "Calc");
+        Assert.Equal("[Score] 2", calc.CalculationExpression);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcUnparsed", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal(42, Convert.ToInt32(row["Calc"], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task InsertAndUpdate_TextInputsForNumericAndDateColumns_EvaluateByColumnType()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcInputTypes",
+                [
+                    new("Id", typeof(int)),
+                    new("A", typeof(int)),
+                    new("B", typeof(int)),
+                    new("D1", typeof(DateTime)),
+                    new("D2", typeof(DateTime)),
+                    new("Sum", typeof(int)) { IsCalculated = true, CalculationExpression = "[A] + [B]" },
+                    new("Less", typeof(bool)) { IsCalculated = true, CalculationExpression = "[A] < [B]" },
+                    new("Earlier", typeof(bool)) { IsCalculated = true, CalculationExpression = "[D1] < [D2]" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcInputTypes",
+                [1, "10", "9", "10/1/2020", "2/1/2020", DBNull.Value, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(
+                "CalcInputTypes",
+                [2, 1, 2, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                "CalcInputTypes",
+                "Id",
+                2,
+                new Dictionary<string, object?> { ["A"] = "100", ["B"] = "25", ["D1"] = "1/5/2021", ["D2"] = "12/1/2020" },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow[] rows = [.. (await reader.ReadDataTableAsync("CalcInputTypes", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable()
+            .OrderBy(r => Convert.ToInt32(r["Id"], CultureInfo.InvariantCulture))];
+        Assert.Equal(2, rows.Length);
+
+        Assert.Equal(19, Convert.ToInt32(rows[0]["Sum"], CultureInfo.InvariantCulture));
+        Assert.False((bool)rows[0]["Less"]);
+        Assert.False((bool)rows[0]["Earlier"]);
+
+        Assert.Equal(125, Convert.ToInt32(rows[1]["Sum"], CultureInfo.InvariantCulture));
+        Assert.False((bool)rows[1]["Less"]);
+        Assert.False((bool)rows[1]["Earlier"]);
+    }
+
+    [Fact]
+    public async Task InsertRow_NumericInputsForTextColumns_ConcatenateAsText()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcTextInputs",
+                [
+                    new("T1", typeof(string), maxLength: 10),
+                    new("T2", typeof(string), maxLength: 10),
+                    new("Joined", typeof(string), maxLength: 20) { IsCalculated = true, CalculationExpression = "[T1] + [T2]" },
+                    new("Less", typeof(bool)) { IsCalculated = true, CalculationExpression = "[T1] < [T2]" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcTextInputs",
+                [10, 9, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcTextInputs", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal("10", row["T1"]);
+        Assert.Equal("109", row["Joined"]);
+        Assert.True((bool)row["Less"]);
     }
 
     [Fact]
