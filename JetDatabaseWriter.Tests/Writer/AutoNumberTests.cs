@@ -745,8 +745,11 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     /// <summary>
-    /// AddColumn rebuilds the table to a new TDEF and index inside the
-    /// transaction; the seed reads both through the transaction's journal.
+    /// AddColumn rebuilds the table to a new TDEF inside the transaction and
+    /// raises the rebuilt counter to the copied rows' largest value; the seed
+    /// reads that counter through the transaction's journal.
+    /// <see cref="AutoIncrement_TopRowDeletedInsideTransaction_SeedsFromJournaledIndex"/>
+    /// covers an index read through the journal.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode"><c>transactional</c> or <c>explicit</c>.</param>
@@ -758,7 +761,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
     [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
     [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task AutoIncrement_SeedAfterSchemaRewriteInsideTransaction_UsesJournaledCounterAndIndex(DatabaseFormat format, string mode)
+    public async Task AutoIncrement_SeedAfterSchemaRewriteInsideTransaction_UsesJournaledCounter(DatabaseFormat format, string mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 5, ct);
@@ -876,6 +879,52 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         Assert.True(dataPagesRead <= 2, $"The first insert of the session read {dataPagesRead} of the table's {dataPages.Count} data pages.");
         Assert.Equal(WideRowCount + 1, (await ReadIdsAsInt64ByLabelAsync(ms, ct))["new"]);
+    }
+
+    /// <summary>
+    /// Inside an explicit transaction the seed reads the index through the
+    /// journal. The transaction deletes the top row, which takes its key out
+    /// of a journaled index leaf, then inserts. The counter lags the rows, so
+    /// the seed follows the largest key left in that leaf, as a later session
+    /// would after the commit. Reading the leaf from the file would give one
+    /// more, and a scan of the column would read every data page.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public async Task AutoIncrement_TopRowDeletedInsideTransaction_SeedsFromJournaledIndex(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateWideItemsAsync(format, typeof(int), WideRowCount, ct);
+        await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
+        HashSet<long> dataPages = await ReadDataPagesAsync(ms, "Items", ct);
+
+        int dataPagesRead;
+        ms.Position = 0;
+        await using (var counting = new CountingStream(ms))
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Label"] = "first" }, ct));
+
+            await using JetTransaction tx = await writer.BeginTransactionAsync(ct);
+            Assert.Equal(1, await writer.DeleteRowsAsync("Items", "Id", WideRowCount, ct));
+
+            counting.Reset();
+            await writer.InsertRowAsync("Items", NewWideRow("new", format), ct);
+            dataPagesRead = counting.PagesRead(PageSize(format)).Count(dataPages.Contains);
+            await tx.CommitAsync(ct);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(ms, ct))
+        {
+            await writer.InsertRowAsync("Items", NewWideRow("later", format), ct);
+        }
+
+        Assert.True(dataPagesRead <= 2, $"The insert read {dataPagesRead} of the table's {dataPages.Count} data pages.");
+        Dictionary<string, long> ids = await ReadIdsAsInt64ByLabelAsync(ms, ct);
+        Assert.Equal(WideRowCount, ids["new"]);
+        Assert.Equal(WideRowCount + 1, ids["later"]);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
