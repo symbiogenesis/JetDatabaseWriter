@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -42,7 +41,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
-/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert.</param>
+/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, and a parent table's complex AutoNumber after a reference is allocated.</param>
+/// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 internal sealed class ComplexColumnManager(
     DatabaseFile db,
     TableCatalog catalog,
@@ -51,7 +51,8 @@ internal sealed class ComplexColumnManager(
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
     ConstraintRegistry constraints,
-    AutoNumberMaintainer autoNumbers)
+    AutoNumberMaintainer autoNumbers,
+    ComplexReferenceSeedReader seeds)
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
@@ -770,7 +771,7 @@ internal sealed class ComplexColumnManager(
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.
-        long flatTdefPage = await this.ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
+        long flatTdefPage = await seeds.ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
         if (flatTdefPage <= 0)
         {
             throw new InvalidOperationException(
@@ -820,15 +821,14 @@ internal sealed class ComplexColumnManager(
         RowLocation parentLocation = await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
             .ConfigureAwait(false);
 
-        // Read the existing ConceptualTableID from the parent row's complex slot;
-        // allocate a fresh one when the slot is null.
-        int conceptualTableId = await this.ReadOrAllocateConceptualTableIdAsync(
-            parentLocation.PageNumber,
-            parentLocation.RowStart,
-            parentLocation.RowSize,
+        // Read the parent row's per-row complex reference from its slot;
+        // allocate one when the slot is null.
+        int conceptualTableId = await this.ReadOrAllocateComplexReferenceAsync(
+            tableName,
+            parentEntry.TDefPage,
+            parentDef,
+            parentLocation,
             complexCol,
-            flatTdefPage,
-            flatDef,
             cancellationToken).ConfigureAwait(false);
 
         // Build the flat-table row values.
@@ -897,62 +897,6 @@ internal sealed class ComplexColumnManager(
             $"No MSysObjects row was found for flat-child TDEF page {flatTdefPage}.");
     }
 
-    /// <summary>
-    /// Looks up <c>MSysComplexColumns</c> for a row matching both
-    /// <paramref name="columnName"/> and <paramref name="complexId"/> and returns
-    /// the lower-24-bit TDEF page number of the hidden flat child table.
-    /// </summary>
-    /// <param name="columnName">The column name.</param>
-    /// <param name="complexId">The complex id.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<long> ResolveFlatTableTdefPageAsync(string columnName, int complexId, CancellationToken cancellationToken)
-    {
-        long msysPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysPg == 0)
-        {
-            return 0;
-        }
-
-        TableDef msys = await this.db.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msys.FindColumn("ColumnName");
-        ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
-        ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || complexIdCol == null)
-        {
-            return 0;
-        }
-
-        long flatTdefPage = 0;
-        await this.db.ForEachLiveTableRowAsync(
-            msysPg,
-            (row, _) =>
-            {
-                string rowName = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
-                if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return new ValueTask<bool>(true);
-                }
-
-                string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, complexIdCol);
-                if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
-                {
-                    return new ValueTask<bool>(true);
-                }
-
-                string flatText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
-                if (!CatalogValueReader.TryParseInt64(flatText, out long flatId))
-                {
-                    return new ValueTask<bool>(true);
-                }
-
-                flatTdefPage = CatalogValueReader.TdefPageFromId(flatId);
-                return new ValueTask<bool>(false);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        return flatTdefPage;
-    }
-
     private async ValueTask<RowLocation> FindUniqueParentRowAsync(
         long parentTdefPage,
         TableDef parentDef,
@@ -1005,32 +949,38 @@ internal sealed class ComplexColumnManager(
         return match;
     }
 
-    private async ValueTask<int> ReadOrAllocateConceptualTableIdAsync(
-        long parentPageNumber,
-        int parentRowStart,
-        int parentRowSize,
+    /// <summary>
+    /// Returns the per-row complex reference in <paramref name="complexCol"/>'s
+    /// slot of the parent row at <paramref name="parentLocation"/>. When the
+    /// slot is null (rows written by earlier builds of this library, or by a
+    /// tool that leaves it null), allocates the next reference from the
+    /// table's complex AutoNumber, raises that counter, and stores the
+    /// reference in every null complex slot of the row in one page write, so
+    /// the row's complex columns share it as Access's do. When the table has an
+    /// index on a complex column (Access gives each one a unique index), the
+    /// table's indexes are rebuilt to pick up the patched slots.
+    /// </summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="parentDef">The parent table definition.</param>
+    /// <param name="parentLocation">The parent row.</param>
+    /// <param name="complexCol">The complex column an item is being added to.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">The table has used every reference up to <see cref="int.MaxValue"/>.</exception>
+    private async ValueTask<int> ReadOrAllocateComplexReferenceAsync(
+        string tableName,
+        long parentTdefPage,
+        TableDef parentDef,
+        RowLocation parentLocation,
         ColumnInfo complexCol,
-        long flatTdefPage,
-        TableDef flatDef,
         CancellationToken cancellationToken)
     {
-        // Re-read parent page to inspect the complex slot null bit + 4 bytes.
-        byte[] page = await this.db.ReadPageAsync(parentPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.db.ReadPageAsync(parentLocation.PageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = this.db.ReadRowColumnCount(page, parentRowStart);
-            int nullMaskSz = GetNullMaskSizeBytes(numCols);
-            int nullMaskPos = parentRowSize - nullMaskSz;
-            bool slotSet = IsNullMaskBitSet(page.AsSpan(parentRowStart + nullMaskPos, nullMaskSz), complexCol.ColNum);
-
-            int slotOff = parentRowStart + this.db.RowFields.NumCols + complexCol.FixedOff;
-            if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
+            if (ComplexReferenceSeedReader.TryReadSlot(this.db, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing))
             {
-                int existing = Ri32(page, slotOff);
-                if (existing > 0)
-                {
-                    return existing;
-                }
+                return existing;
             }
         }
         finally
@@ -1038,38 +988,42 @@ internal sealed class ComplexColumnManager(
             DatabaseFile.ReturnPage(page);
         }
 
-        // Allocate a fresh ConceptualTableID by scanning the flat table for max(FK)+1.
-        int allocated = await this.GetNextConceptualTableIdForFlatAsync(flatTdefPage, flatDef, cancellationToken).ConfigureAwait(false);
+        long seed = await seeds.ReadSeedAsync(parentTdefPage, parentDef, cancellationToken).ConfigureAwait(false);
+        if (seed >= int.MaxValue)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' has used every complex column reference up to {int.MaxValue}.");
+        }
 
-        // Patch the parent row's complex slot in place: 4 bytes + null-mask bit.
-        await this.PatchParentComplexSlotAsync(parentPageNumber, parentRowStart, parentRowSize, complexCol, allocated, cancellationToken).ConfigureAwait(false);
+        int allocated = (int)(seed + 1);
+        await autoNumbers.RaiseComplexHighWaterAsync(parentTdefPage, allocated, cancellationToken).ConfigureAwait(false);
+        await this.PatchNullComplexSlotsAsync(parentDef, parentLocation, allocated, cancellationToken).ConfigureAwait(false);
+        if (await this.HasComplexColumnIndexAsync(parentTdefPage, parentDef, cancellationToken).ConfigureAwait(false))
+        {
+            await indexes.MaintainIndexesAsync(parentTdefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+
         return allocated;
     }
 
-    private async ValueTask PatchParentComplexSlotAsync(
-        long pageNumber,
-        int rowStart,
-        int rowSize,
-        ColumnInfo complexCol,
-        int conceptualTableId,
+    private async ValueTask PatchNullComplexSlotsAsync(
+        TableDef parentDef,
+        RowLocation location,
+        int reference,
         CancellationToken cancellationToken)
     {
-        byte[] page = await this.db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.db.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int numCols = this.db.ReadRowColumnCount(page, rowStart);
-            int nullMaskSz = GetNullMaskSizeBytes(numCols);
-            int nullMaskPos = rowSize - nullMaskSz;
-            int slotOff = rowStart + this.db.RowFields.NumCols + complexCol.FixedOff;
-            if (slotOff + 4 > rowStart + rowSize)
+            foreach (ColumnInfo column in parentDef.Columns)
             {
-                throw new InvalidDataException("Complex column slot is out of row bounds.");
+                if (column.Type is AttachmentType or ComplexType
+                    && !ComplexReferenceSeedReader.TryReadSlot(this.db, page, location.RowStart, location.RowSize, column, out _))
+                {
+                    ComplexReferenceSeedReader.WriteSlot(this.db, page, location.RowStart, location.RowSize, column, reference);
+                }
             }
 
-            Wi32(page, slotOff, conceptualTableId);
-            SetNullMaskBit(page.AsSpan(rowStart + nullMaskPos, nullMaskSz), complexCol.ColNum, true);
-
-            await this.db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            await this.db.WritePageAsync(location.PageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1077,35 +1031,26 @@ internal sealed class ComplexColumnManager(
         }
     }
 
-    /// <summary>
-    /// Returns one greater than the largest FK value stored in the
-    /// flat table, or <c>1</c> when the table is empty. The FK column is the
-    /// single <c>LongInteger</c> column whose name starts with <c>"_"</c> per
-    /// <c>BuildFlatTableSchema</c>.
-    /// </summary>
-    /// <param name="flatTdefPage">The flat TDEF page.</param>
-    /// <param name="flatDef">The flat def.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
+    private async ValueTask<bool> HasComplexColumnIndexAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
-        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
+        byte[]? tdef = await this.db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tdef is null || tdef.Length < this.db.TDef.BlockEnd)
+        {
+            return false;
+        }
 
-        int maxId = 0;
-        await this.db.ForEachLiveTableRowAsync(
-            flatTdefPage,
-            (row, _) =>
+        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.db, tdef, tableDef.Columns))
+        {
+            foreach (IndexColumnReference key in index.Columns)
             {
-                string text = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, fkCol);
-                if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
+                if (tableDef.FindColumn(key.Name)?.Type is AttachmentType or ComplexType)
                 {
-                    maxId = v;
+                    return true;
                 }
+            }
+        }
 
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        return maxId + 1;
+        return false;
     }
 
     private static object[] BuildAttachmentFlatRow(TableDef flatDef, int conceptualTableId, AttachmentInput input)
@@ -1212,7 +1157,7 @@ internal sealed class ComplexColumnManager(
         var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
         foreach (ColumnInfo col in complexCols)
         {
-            long flatPg = await this.ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
+            long flatPg = await seeds.ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
             if (flatPg > 0)
             {
                 flatPagesByCol[col.ColNum] = flatPg;
@@ -1243,33 +1188,12 @@ internal sealed class ComplexColumnManager(
             byte[] page = await this.db.ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                int numCols = this.db.ReadRowColumnCount(page, loc.RowStart);
-                int nullMaskSz = GetNullMaskSizeBytes(numCols);
-                int nullMaskPos = loc.RowSize - nullMaskSz;
-
                 foreach (ColumnInfo col in complexCols)
                 {
-                    if (!idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids))
+                    if (idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids)
+                        && ComplexReferenceSeedReader.TryReadSlot(this.db, page, loc.RowStart, loc.RowSize, col, out int reference))
                     {
-                        continue;
-                    }
-
-                    bool slotSet = IsNullMaskBitSet(page.AsSpan(loc.RowStart + nullMaskPos, nullMaskSz), col.ColNum);
-                    if (!slotSet)
-                    {
-                        continue;
-                    }
-
-                    int slotOff = loc.RowStart + this.db.RowFields.NumCols + col.FixedOff;
-                    if (slotOff + 4 > loc.RowStart + loc.RowSize)
-                    {
-                        continue;
-                    }
-
-                    int ctid = Ri32(page, slotOff);
-                    if (ctid > 0)
-                    {
-                        _ = ids.Add(ctid);
+                        _ = ids.Add(reference);
                     }
                 }
             }

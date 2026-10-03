@@ -39,6 +39,17 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 Access gives every complex column its own index on that reference: unique, Required, and named `<column>_<32 hex>` (truncated so the name fits in 64 characters), for example `Attachments_CFC7F98A63064F2DBDB6822D653AB763` in `ComplexFields.accdb`, `attach-data_071D71EDD53D45A1A9089929F06857D9` and `VersionHistory_F5F8918F-0A3F-4D_6E54CCBB170741DD8FD837271ED8B90C` in `complexDataTest*.accdb`, and `ProductCategoryImage_5C9A6A17CF9D4E1CA64DB2DECECEBB16` in `NorthwindTraders.accdb`. Its keys use the Long Integer layout (`7F` + big-endian int with the sign bit flipped; `7F 80 00 00 01` for reference 1), as Jackcess `IndexData` maps `COMPLEX_TYPE` to its integer descriptor. `IndexKeyEncoder` encodes `Complex` / `Attachment` keys that way, so updates, deletes and inserts on Access tables with complex columns keep these indexes current (`ComplexColumnIndexFixtureTests`). Users still cannot declare an index on a complex column, and tables the writer creates do not yet get this index.
 
+**Per-row references come from the TDEF complex AutoNumber.** ACE TDEF headers hold a second counter at offset 28 (`TDefHeaderLayout.ComplexAutoNumber`; Jackcess `JetFormat.OFFSET_NEXT_COMPLEX_AUTO_NUMBER`, mdbtools `ct_autonum`; Jet3 and Jet4 have none): the last per-row complex reference handed out. Access gives each row one reference, shared by all its complex columns, even a column with no items; it does not reuse the references of deleted rows. In the fixtures:
+
+| Fixture / table | TDEF@28 | Live slots |
+|---|---|---|
+| `ComplexFields.accdb` `Documents` | 2 | `[1]`, `[2]` |
+| `complexDataTestV2007.accdb` `Table1` | 7 | `[1,1,1]` … `[4,4,4]` (rows deleted in Access) |
+| `complexDataTestV2010.accdb` `Table1` | 8 | `[1,1,1]` … `[4,4,4]` |
+| `NorthwindTraders.accdb` `ProductCategories` | 17 | 1 … 16 |
+
+Byte 24 is `0x01` in all of them; bytes 32–39 hold values whose meaning is unknown, and the writer does not touch them. When `AddAttachmentAsync` / `AddMultiValueItemAsync` find the parent row's slot null (rows written by earlier builds of this library), `ComplexColumnManager` allocates the next reference as one more than the largest of TDEF@28, every live row's complex slots and every foreign key in the table's flat tables (`ComplexReferenceSeedReader`, which covers files whose counter earlier builds left at 0), raises TDEF@28, and stores the reference in every null complex slot of the row in one page write. If the table has an index on a complex column, its indexes are then rebuilt. `TableSchemaEditor.RewriteTableAsync` carries TDEF@28 to the rebuilt TDEF on both the transplant and the copy-and-swap path, as it does the AutoNumber counter at offset 20. `ComplexColumnsReferenceAllocationTests` covers this.
+
 ### 2.2 `MSysComplexColumns` catalog table
 
 **Verified against `ComplexFields.accdb`** ([appendix](../format-probe/format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns** (column names and order below are probe-confirmed):

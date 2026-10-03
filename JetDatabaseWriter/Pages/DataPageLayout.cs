@@ -90,6 +90,13 @@ internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinR
 /// <param name="FreePages">Offset of the free-space usage-map pointer (1-byte row + 3-byte page).</param>
 /// <param name="BlockEnd">The block end.</param>
 /// <param name="RealIdxEntrySz">The real index entry size.</param>
+/// <param name="ComplexAutoNumber">
+/// Offset of the complex AutoNumber (uint32): the last per-row complex
+/// reference handed out to the table's Attachment / multi-value / version
+/// history columns. ACE only (offset 28; Jackcess <c>JetFormat</c>
+/// <c>OFFSET_NEXT_COMPLEX_AUTO_NUMBER</c>, mdbtools <c>ct_autonum</c>);
+/// -1 on Jet3 and Jet4, which have no complex columns.
+/// </param>
 internal readonly record struct TDefHeaderLayout(
     int NumRows,
     int AutoNumber,
@@ -102,7 +109,8 @@ internal readonly record struct TDefHeaderLayout(
     int UsedPages,
     int FreePages,
     int BlockEnd,
-    int RealIdxEntrySz)
+    int RealIdxEntrySz,
+    int ComplexAutoNumber)
 {
     /// <summary>Returns the TDEF header layout for <paramref name="format"/>.</summary>
     /// <param name="format">The format.</param>
@@ -119,7 +127,8 @@ internal readonly record struct TDefHeaderLayout(
             UsedPages: 55,
             FreePages: 59,
             BlockEnd: 63,
-            RealIdxEntrySz: 12)
+            RealIdxEntrySz: 12,
+            ComplexAutoNumber: format == DatabaseFormat.AceAccdb ? 28 : -1)
         : new TDefHeaderLayout(
             NumRows: 12,
             AutoNumber: 16,
@@ -132,7 +141,8 @@ internal readonly record struct TDefHeaderLayout(
             UsedPages: 35,
             FreePages: 39,
             BlockEnd: 43,
-            RealIdxEntrySz: 8);
+            RealIdxEntrySz: 8,
+            ComplexAutoNumber: -1);
 
     /// <summary>Gets the offset of the owned-pages usage-map page number (3 bytes after the row byte).</summary>
     public int UsedPagesPage => this.UsedPages + 1;
