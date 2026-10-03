@@ -22,6 +22,17 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 /// </remarks>
 internal static class AccessVariantOperators
 {
+    /// <summary>The operand and result types of the bitwise operators, narrowest first.</summary>
+    private enum OperandKind
+    {
+        Bool = 0,
+        Byte = 1,
+        Int16 = 2,
+        Int32 = 3,
+        Int64 = 4,
+        Other = 5,
+    }
+
     /// <summary>Returns <c>left + right</c>.</summary>
     /// <param name="left">The left operand.</param>
     /// <param name="right">The right operand.</param>
@@ -186,6 +197,89 @@ internal static class AccessVariantOperators
     }
 
     /// <summary>
+    /// Returns <c>left And right</c>: logical on two Booleans, bitwise on numbers. With
+    /// Null, a False or zero operand decides the result; otherwise the result is Null.
+    /// </summary>
+    /// <param name="left">The left operand.</param>
+    /// <param name="right">The right operand.</param>
+    /// <returns>The result, typed by <see cref="ResultKind"/>, or Null.</returns>
+    /// <exception cref="InvalidCastException">An operand is not a number, Boolean or date.</exception>
+    /// <exception cref="OverflowException">An operand is outside the Long range.</exception>
+    internal static object And(object left, object right)
+    {
+        if (IsNull(left) || IsNull(right))
+        {
+            object other = IsNull(left) ? right : left;
+            return !IsNull(other) && IsZero(other) ? Bitwise(other, other, static (l, r) => l & r) : DBNull.Value;
+        }
+
+        return Bitwise(left, right, static (l, r) => l & r);
+    }
+
+    /// <summary>
+    /// Returns <c>left Or right</c>: logical on two Booleans, bitwise on numbers. With
+    /// Null, a True or nonzero operand decides the result; otherwise the result is Null.
+    /// </summary>
+    /// <param name="left">The left operand.</param>
+    /// <param name="right">The right operand.</param>
+    /// <returns>The result, typed by <see cref="ResultKind"/>, or Null.</returns>
+    /// <exception cref="InvalidCastException">An operand is not a number, Boolean or date.</exception>
+    /// <exception cref="OverflowException">An operand is outside the Long range.</exception>
+    internal static object Or(object left, object right)
+    {
+        if (IsNull(left) || IsNull(right))
+        {
+            object other = IsNull(left) ? right : left;
+            return !IsNull(other) && !IsZero(other) ? Bitwise(other, other, static (l, r) => l | r) : DBNull.Value;
+        }
+
+        return Bitwise(left, right, static (l, r) => l | r);
+    }
+
+    /// <summary>Returns <c>left Xor right</c>; Null when either operand is Null.</summary>
+    /// <param name="left">The left operand.</param>
+    /// <param name="right">The right operand.</param>
+    /// <returns>The result, typed by <see cref="ResultKind"/>, or Null.</returns>
+    /// <exception cref="InvalidCastException">An operand is not a number, Boolean or date.</exception>
+    /// <exception cref="OverflowException">An operand is outside the Long range.</exception>
+    internal static object Xor(object left, object right)
+        => IsNull(left) || IsNull(right) ? DBNull.Value : Bitwise(left, right, static (l, r) => l ^ r);
+
+    /// <summary>Returns <c>left Eqv right</c>, which is <c>Not (left Xor right)</c>.</summary>
+    /// <param name="left">The left operand.</param>
+    /// <param name="right">The right operand.</param>
+    /// <returns>The result, or Null.</returns>
+    internal static object Eqv(object left, object right) => Not(Xor(left, right));
+
+    /// <summary>
+    /// Returns <c>left Imp right</c>, which is <c>(Not left) Or right</c>, so
+    /// <c>False Imp Null</c> is True and <c>True Imp Null</c> is Null.
+    /// </summary>
+    /// <param name="left">The left operand.</param>
+    /// <param name="right">The right operand.</param>
+    /// <returns>The result, or Null.</returns>
+    internal static object Imp(object left, object right) => Or(Not(left), right);
+
+    /// <summary>
+    /// Returns <c>Not value</c>: logical on a Boolean, the bitwise complement of a
+    /// number (Byte stays Byte, Integer stays Integer), and Null for Null.
+    /// </summary>
+    /// <param name="value">The operand.</param>
+    /// <returns>The result, or Null.</returns>
+    /// <exception cref="InvalidCastException">The operand is not a number, Boolean or date.</exception>
+    /// <exception cref="OverflowException">The operand is outside the Long range.</exception>
+    internal static object Not(object value) => value switch
+    {
+        DBNull or null => DBNull.Value,
+        bool boolean => !boolean,
+        byte b => unchecked((byte)~b),
+        short s => unchecked((short)~s),
+        int i => ~i,
+        long l => ~l,
+        _ => ~ToRoundedLong(value),
+    };
+
+    /// <summary>
     /// Converts an operand to a date serial (days since 1899-12-30): a date by its
     /// serial, a Boolean as -1 or 0, a number as itself, and text that parses as a
     /// number. Anything else is a type mismatch.
@@ -233,6 +327,64 @@ internal static class AccessVariantOperators
     /// <returns>The exception to throw.</returns>
     internal static InvalidCastException TypeMismatch(object value)
         => new($"Type mismatch: {ToText(value)} ({value.GetType().Name}) is not a number or a date.");
+
+    /// <summary>
+    /// Returns the type of a bitwise result, as OLE Automation picks it: two Booleans
+    /// give a Boolean, two Bytes a Byte, any mix of Boolean, Byte and Integer an
+    /// Integer, anything with a 64-bit integer a 64-bit integer, and everything else
+    /// (Long, Single, Double, Decimal, dates and numeric text) a Long.
+    /// </summary>
+    /// <param name="left">The left operand's kind.</param>
+    /// <param name="right">The right operand's kind.</param>
+    /// <returns>The result kind.</returns>
+    private static OperandKind ResultKind(OperandKind left, OperandKind right)
+    {
+        if (left == right && left is OperandKind.Bool or OperandKind.Byte)
+        {
+            return left;
+        }
+
+        if (left <= OperandKind.Int16 && right <= OperandKind.Int16)
+        {
+            return OperandKind.Int16;
+        }
+
+        return left == OperandKind.Int64 || right == OperandKind.Int64 ? OperandKind.Int64 : OperandKind.Int32;
+    }
+
+    private static OperandKind KindOf(object value) => value switch
+    {
+        bool => OperandKind.Bool,
+        byte => OperandKind.Byte,
+        short => OperandKind.Int16,
+        int => OperandKind.Int32,
+        long => OperandKind.Int64,
+        _ => OperandKind.Other,
+    };
+
+    private static object Bitwise(object left, object right, Func<long, long, long> operation)
+    {
+        OperandKind kind = ResultKind(KindOf(left), KindOf(right));
+        long result = operation(ToBitwiseOperand(left), ToBitwiseOperand(right));
+        return kind switch
+        {
+            OperandKind.Bool => result != 0,
+            OperandKind.Byte => unchecked((byte)result),
+            OperandKind.Int16 => unchecked((short)result),
+            OperandKind.Int64 => result,
+            OperandKind.Int32 or OperandKind.Other => unchecked((int)result),
+            _ => throw new InvalidOperationException($"Unexpected bitwise result kind '{kind}'."),
+        };
+    }
+
+    private static long ToBitwiseOperand(object value) => value switch
+    {
+        bool boolean => boolean ? -1L : 0L,
+        byte or short or int or long => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+        _ => ToRoundedLong(value),
+    };
+
+    private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
 
     private static decimal RoundedDouble(double value)
     {

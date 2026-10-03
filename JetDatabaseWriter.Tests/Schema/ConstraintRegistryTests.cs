@@ -94,6 +94,8 @@ public sealed class ConstraintRegistryTests
     [InlineData("(>=0 And <=10) Or 99", 50, false)]
     [InlineData(">=0 and <=100", 101, false)]
     [InlineData("[Score] >= 0", -1, false)]
+    [InlineData("([Score] And 4) <> 0", 12, true)]
+    [InlineData("([Score] And 4) <> 0", 8, false)]
     public async Task ApplyAsync_HydratedValidationRule_NumberColumn_SuppliesTheImplicitOperand(string rule, int? value, bool accepted)
         => await AssertRuleAsync(rule, ColumnType.LongIntegerType, value, accepted);
 

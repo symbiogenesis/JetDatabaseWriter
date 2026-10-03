@@ -1280,6 +1280,45 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal((byte)200, row["Hundreds"]);
     }
 
+    /// <summary>
+    /// <c>And</c> on a number is bitwise, so a flags test stores the masked bits in an
+    /// Integer column and a Boolean comparison on them; a Null flags value stores Null
+    /// in both, because <c>Null And 4</c> is Null.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task InsertRow_BitwiseFlagsExpression_StoresAccessResult()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcFlags",
+                [
+                    new("Id", typeof(int)),
+                    new("Flags", typeof(int)),
+                    new("Bit2", typeof(short)) { IsCalculated = true, CalculationExpression = "[Flags] And 4" },
+                    new("HasBit2", typeof(bool)) { IsCalculated = true, CalculationExpression = "([Flags] And 4) <> 0" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcFlags", [1, 12, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcFlags", [2, 8, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcFlags", [3, DBNull.Value, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcFlags", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow twelve = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1);
+        DataRow eight = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2);
+        DataRow none = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3);
+        Assert.Equal((short)4, twelve["Bit2"]);
+        Assert.Equal(true, twelve["HasBit2"]);
+        Assert.Equal((short)0, eight["Bit2"]);
+        Assert.Equal(false, eight["HasBit2"]);
+        Assert.Equal(DBNull.Value, none["Bit2"]);
+        Assert.Equal(DBNull.Value, none["HasBit2"]);
+    }
+
     private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(
